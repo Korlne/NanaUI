@@ -481,6 +481,7 @@ impl UiScene {
                             text.value.as_str(),
                             node.rich_text.as_ref(),
                             presentation,
+                            node.style.writing_mode,
                         )
                     });
                 if let Some(presentation) = &mut glyph_presentation {
