@@ -733,6 +733,8 @@ CSS 路径只产出数据，不量容器（见下文「`@container`」）。
 
 x86_64 Windows（MSVC）上每层的栈：放置 debug 从 25.8 KiB 降到 9.0 KiB，release 从 4.8 KiB 降到 3.2 KiB；测量 debug 12.2 KiB，release 2.5 KiB。
 
+视图建成节点（`mount_view*` 经 `ViewBuilder::nest_dyn`，每个元素下降一层）同样按深度递归，每层也经过同一个兜底（`crate::stack::level`，与布局共用 256 KiB 警戒线和 4 MiB 栈段）。应用在小栈线程上挂载很深的视图树时，栈不再被建树耗尽；`view::tests::a_view_deeper_than_the_stack_still_mounts` 在 1 MiB 的线程上挂载、布局并析构 400 层视图。
+
 ### 路线：子树级调度，子树内递归
 
 目标是混合架构。测量自下而上，继续用递归加缓存；放置由调度器以子树为单位管理，子树内部递归。测量之后每个节点的尺寸都已确定，所以放置阶段任何节点都可以作为边界。按顺序：

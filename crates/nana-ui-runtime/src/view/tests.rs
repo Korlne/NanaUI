@@ -6388,3 +6388,43 @@ fn a_settings_rows_new_error_takes_the_focus_to_its_field() {
         "a reason that only changes words stays where it is"
     );
 }
+
+/// `depth` columns inside one another around a text, mounted as a document
+/// root and laid out; returns how many levels the mounted tree has.
+fn mount_nested(depth: usize) -> usize {
+    let mut cx = AppContext::new();
+    let document = DocumentId::new(1).unwrap();
+    let view = cx
+        .mount_view_root(document, move || {
+            let mut view = text("deepest").into_any();
+            for _ in 0..depth {
+                view = widget(Stack::column(0.0)).children((view,)).into_any();
+            }
+            view
+        })
+        .unwrap();
+    cx.layout_document(document, LayoutViewport::new(800.0, 600.0))
+        .unwrap();
+    let mut levels = 0;
+    let mut node = view.roots()[0];
+    while let Some(&child) = children(&cx, node).first() {
+        node = child;
+        levels += 1;
+    }
+    // Tear the tree down here: dropping it is as deep as building it.
+    drop(cx);
+    levels
+}
+
+#[test]
+fn a_view_deeper_than_the_stack_still_mounts() {
+    // Unguarded, 400 levels of views need several MiB of stack in a debug
+    // build; this thread has the 1 MiB of a Windows main thread.
+    let levels = std::thread::Builder::new()
+        .stack_size(1 << 20)
+        .spawn(|| mount_nested(400))
+        .unwrap()
+        .join()
+        .expect("mounting the view ran out of stack");
+    assert_eq!(levels, 400);
+}

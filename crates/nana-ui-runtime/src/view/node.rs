@@ -454,8 +454,10 @@ impl<'a> ViewBuilder<'_, 'a, '_> {
         let pending = self.st.pending_key.take();
         self.st.levels.push(Level::default());
         let st = &mut *self.st;
-        self.ui
-            .nest_dyn(parent, &mut |ui| f(&mut ViewBuilder { ui, st }));
+        let ui = &mut *self.ui;
+        // One view level per element: a tree deeper than the thread's stack
+        // carries on in a new segment (see `crate::stack`).
+        crate::stack::level(|| ui.nest_dyn(parent, &mut |ui| f(&mut ViewBuilder { ui, st })));
         self.st.levels.pop();
         self.st.pending_key = pending;
     }

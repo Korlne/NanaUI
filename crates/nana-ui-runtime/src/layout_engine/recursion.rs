@@ -15,13 +15,7 @@
 //! crashing, the budget keeps each level from growing back.
 
 use super::PassIntrinsicCache;
-
-/// Stack left below which a level moves to a new segment: room for one level
-/// and the non-recursive work it calls (text, intrinsic facts) before the
-/// next level checks again.
-const RED_ZONE: usize = 256 << 10;
-/// What a level that moves gets.
-const SEGMENT: usize = 4 << 20;
+use crate::stack::{RED_ZONE, SEGMENT};
 
 #[derive(Clone, Copy)]
 pub(super) enum Recursion {

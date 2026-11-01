@@ -66,6 +66,7 @@ mod key_layers;
 mod layout_engine;
 mod layout_frontier;
 mod layout_node;
+mod stack;
 pub use inline_content::{
     InlineAtomic, InlineContent, InlineContentBuilder, InlineItem, InlineTextSemantics,
     MixedInlineContent,
