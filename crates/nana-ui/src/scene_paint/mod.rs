@@ -2864,18 +2864,20 @@ fn sync_opacity_groups(
 ) -> bool {
     // Retain the scene's stacking/culling boundary for terminal holds without
     // keeping an identity composition pass alive once the card is opaque.
-    let needed = needed.iter().filter(|group| {
-        group.opacity != 1.0
-            || !group.filter.is_identity()
-            || !group.mix_blend.is_normal()
-            || group.inset_shadow.is_some()
-    });
+    // A scroll view keeps its group at either end of its content, where
+    // neither edge fade band shows.
+    let needed = needed.iter().filter(|group| !group.is_identity());
     // A triggered menu's trigger composites its menu's logical opacity while
-    // the hanging surface fades: one node, two groups.
+    // the hanging surface fades: one node, two groups. A scroll view's bars
+    // composite without the edge fade its content has.
     let common = stack
         .iter()
         .zip(needed.clone())
-        .take_while(|(open, want)| open.node == want.node && open.opacity == want.opacity)
+        .take_while(|(open, want)| {
+            open.node == want.node
+                && open.opacity == want.opacity
+                && open.edge_fade == want.edge_fade
+        })
         .count();
     let mut emitted = false;
     while stack.len() > common {
@@ -2956,6 +2958,30 @@ fn dest_group_slot(
             .paint_color
             .map(pack_paint_color)
             .unwrap_or_else(|| pack_linear(shadow.color));
+    }
+    if let Some(fade) = group
+        .edge_fade
+        .filter(nana_ui_scene::EdgeFadeMask::is_visible)
+        && let Some(port) = scene.draw_node_rect(group.node, fade.bounds)
+    {
+        let scale = if scale.is_finite() && scale > 0.0 {
+            scale
+        } else {
+            1.0
+        };
+        // The bands stretch with the scrollport under a scaling transform.
+        let along = if fade.bounds.height > 0.0 {
+            port.height / fade.bounds.height
+        } else {
+            1.0
+        };
+        let top = port.y + origin.offset[1];
+        slot.edge_fade = [
+            top * scale,
+            (top + port.height) * scale,
+            fade.top * along * scale,
+            fade.bottom * along * scale,
+        ];
     }
     slot
 }
@@ -3896,6 +3922,9 @@ mod tests;
 
 #[cfg(test)]
 mod presentation_tests;
+
+#[cfg(test)]
+mod scroll_fade_tests;
 
 #[cfg(all(test, feature = "rich-text"))]
 mod glyph_prefix_tests;
