@@ -159,6 +159,14 @@ pub(crate) fn derive_visual_shape(scene: &UiScene, logical: [f32; 2]) -> WindowV
             rect: [bounds.x + e, bounds.y + f, bounds.width, bounds.height],
             radii: *corner_radius,
         };
+        // The card holds the window's centre. A panel off to one side is not
+        // the body however large it is: in a small window it passes the area
+        // test, and the shadow would wrap the panel instead of the window.
+        let [x, y, width, height] = shape.rect;
+        let center = [logical[0] / 2.0, logical[1] / 2.0];
+        if !(x..=x + width).contains(&center[0]) || !(y..=y + height).contains(&center[1]) {
+            continue;
+        }
         if shape.is_valid() {
             return shape;
         }
@@ -278,6 +286,17 @@ mod tests {
         let badge = card_scene([40.0, 20.0], 20.0);
         assert_eq!(
             derive_visual_shape(&badge, [400.0, 300.0]),
+            WindowVisualShape::client(400.0, 300.0)
+        );
+    }
+
+    #[test]
+    fn a_large_panel_off_the_centre_is_not_the_body() {
+        // A quarter of the window, in its top-left corner: what a side panel
+        // becomes once the window is shrunk to its minimum.
+        let panel = card_scene([180.0, 170.0], 0.0);
+        assert_eq!(
+            derive_visual_shape(&panel, [400.0, 300.0]),
             WindowVisualShape::client(400.0, 300.0)
         );
     }
