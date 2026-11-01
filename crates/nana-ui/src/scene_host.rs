@@ -104,6 +104,11 @@ pub fn run_runtime_scene<Program: RuntimeProgram>(
     startup::startup_event(startup::StartupMark::Entry, Duration::ZERO);
     let event_loop = EventLoop::new().map_err(HostedRunError::EventLoop)?;
     event_loop.set_control_flow(ControlFlow::Wait);
+    // A callback that never returns is the one hang the log cannot show
+    // from inside: the watchdog reports it from another thread.
+    if nana_diagnostics::global().is_some() {
+        nana_diagnostics::stall::watch_current_thread();
+    }
     let (message_tx, message_rx) = mpsc::channel();
     let startup_failure = Arc::new(Mutex::new(None));
     let runner = SceneRunner::<Program>::Loading(Box::new(startup::LoadingStartup {
@@ -544,11 +549,14 @@ impl<Program: RuntimeProgram> SceneRunner<Program> {
     }
 }
 
+use nana_diagnostics::stall::Callback;
+
 impl<Program: RuntimeProgram> ApplicationHandler for SceneRunner<Program> {
     fn can_create_surfaces(&mut self, event_loop: &dyn ActiveEventLoop) {
         if !matches!(self, Self::Loading(_)) {
             return;
         }
+        let _busy = nana_diagnostics::stall::busy(Callback::Resumed);
         let started = Some(Instant::now());
         let Self::Loading(loading) = std::mem::replace(
             self,
@@ -572,6 +580,7 @@ impl<Program: RuntimeProgram> ApplicationHandler for SceneRunner<Program> {
     }
 
     fn proxy_wake_up(&mut self, event_loop: &dyn ActiveEventLoop) {
+        let _busy = nana_diagnostics::stall::busy(Callback::WakeUp);
         let started = self.block_started();
         match self {
             Self::Starting(_) => self.poll_startup(event_loop),
@@ -587,6 +596,7 @@ impl<Program: RuntimeProgram> ApplicationHandler for SceneRunner<Program> {
         window_id: winit::window::WindowId,
         event: WinitWindowEvent,
     ) {
+        let _busy = nana_diagnostics::stall::busy(Callback::WindowEvent);
         let started = self.block_started();
         match self {
             Self::Starting(pending) => {
@@ -622,6 +632,7 @@ impl<Program: RuntimeProgram> ApplicationHandler for SceneRunner<Program> {
     }
 
     fn about_to_wait(&mut self, event_loop: &dyn ActiveEventLoop) {
+        let _busy = nana_diagnostics::stall::busy(Callback::AboutToWait);
         let started = self.block_started();
         let Self::Ready(ready) = self else {
             return;
