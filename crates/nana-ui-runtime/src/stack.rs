@@ -10,9 +10,11 @@
 //!
 //! A recursion reads how much stack it has left at each level: below
 //! [`RED_ZONE`] it carries on in a fresh [`SEGMENT`] (`stacker::grow`).
-//! `stacker` reads the limit on desktop targets; on iOS and Android, where it
-//! cannot, [`remaining`] asks the thread itself. Only where neither can tell
-//! (wasm) does a level run where it is.
+//! `stacker` reads the limit on desktop targets and OpenHarmony (a Linux
+//! target); on iOS and Android, where it cannot, [`remaining`] asks the
+//! thread itself. So the guard holds on every platform the framework
+//! supports; a target where neither can tell would run each level where it
+//! is.
 
 /// Stack left below which a level moves to a new segment: room for one level
 /// and the non-recursive work it calls before the next level checks again.

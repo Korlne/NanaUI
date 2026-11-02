@@ -727,7 +727,7 @@ CSS 路径只产出数据，不量容器（见下文「`@container`」）。
 
 测量（`measure_node`）按树的深度递归：尺寸要从约束传下去的子项里算上来。每一层都先经过 `layout_engine::recursion::level`：
 
-- 读取当前线程剩下的栈（`crate::stack::remaining`：桌面平台由 `stacker` 读，iOS 和 Android 读线程自己的栈边界）；不足 256 KiB 时，这一层改到新分配的 4 MiB 栈段上继续（`stacker::grow`）。所以不论 debug 还是 release、线程栈多大，任何深度的树都不会让测量把栈用完。只有 wasm 读不到剩余栈，那里这一层照常在原来的栈上运行。
+- 读取当前线程剩下的栈（`crate::stack::remaining`：桌面平台和 OpenHarmony 由 `stacker` 读，iOS 和 Android 读线程自己的栈边界）；不足 256 KiB 时，这一层改到新分配的 4 MiB 栈段上继续（`stacker::grow`）。所以在框架支持的每个平台上，不论 debug 还是 release、线程栈多大，任何深度的树都不会让测量把栈用完。
 - 同一次读数也给这一层定价：入口处的剩余栈比父层入口少了多少，就是这一层用掉的栈。每趟取最大值，发布为 `WorkCounters::layout_measure_stack_per_level` 和 `layout_placement_stack_per_level`（字节，一帧内取最大；平台报告不了时为 0）。
 - `layout_engine::stack_budget` 的测试给每层定了预算（block、flex 列、grid 三条路线分别量），并在 1 MiB 的线程上布局 400 层的树。兜底防崩溃，预算防止每层的帧再长回去。
 
