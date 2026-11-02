@@ -2415,6 +2415,7 @@ impl AppContext {
 
     /// Let `component` share its layouts with equal ones already written.
     pub(crate) fn share_layouts<C: ComponentView>(&mut self, component: &mut C) {
+        component.fit_framework_limits();
         component.share_layouts(&mut |layout| self.world.share_layout(layout));
     }
 
@@ -3826,6 +3827,7 @@ impl AppContext {
                 reassemble: false,
             },
         );
+        staged.fit_framework_limits();
         staged.keep_framework_state(component);
         self.inherit_segmented_option_surface(entity.id, &mut staged);
         staged.announce_change(

@@ -442,6 +442,50 @@ impl PaneTreeNode {
         deepest
     }
 
+    /// Replaces each split [`crate::MAX_SPLIT_DEPTH`] deep with its first
+    /// leaf: no walk the framework makes goes deeper. The panes under the
+    /// rest of that split are dropped. Whether anything was folded. Walked
+    /// and taken apart without recursing, so a tree of any depth folds on
+    /// any stack.
+    pub fn fold_past_split_depth(&mut self) -> bool {
+        if self.split_depth() <= crate::MAX_SPLIT_DEPTH {
+            return false;
+        }
+        let mut open = vec![(self, 0)];
+        while let Some((node, depth)) = open.pop() {
+            match node {
+                Self::Split { .. } if depth == crate::MAX_SPLIT_DEPTH => {
+                    let deep = std::mem::replace(node, Self::leaf(""));
+                    *node = Self::first_leaf(deep);
+                }
+                Self::Split { first, second, .. } => {
+                    open.push((first.as_mut(), depth + 1));
+                    open.push((second.as_mut(), depth + 1));
+                }
+                Self::Leaf { .. } => {}
+            }
+        }
+        true
+    }
+
+    /// The first leaf of `node`, the rest taken apart by value so none
+    /// drops into another.
+    fn first_leaf(node: Self) -> Self {
+        let mut first = None;
+        let mut pending = vec![node];
+        while let Some(node) = pending.pop() {
+            match node {
+                Self::Leaf { .. } if first.is_none() => first = Some(node),
+                Self::Leaf { .. } => {}
+                Self::Split { first, second, .. } => {
+                    pending.push(*second);
+                    pending.push(*first);
+                }
+            }
+        }
+        first.expect("a split holds a leaf")
+    }
+
     fn visit_leaves_with(&self, visitor: &mut impl FnMut(&Arc<str>)) {
         match self {
             Self::Leaf { pane_id, .. } => visitor(pane_id),
@@ -634,7 +678,8 @@ pub struct PaneTree {
 }
 
 impl PaneTree {
-    pub fn new(root: PaneTreeNode) -> Self {
+    pub fn new(mut root: PaneTreeNode) -> Self {
+        root.fold_past_split_depth();
         Self {
             root,
             style: NodeStyle::default(),
@@ -669,6 +714,10 @@ impl PaneTree {
 }
 
 impl ComponentView for PaneTree {
+    fn fit_framework_limits(&mut self) {
+        self.root.fold_past_split_depth();
+    }
+
     const BEHAVIOR: crate::TypeBehavior<Self> = crate::TypeBehavior {
         lifecycle: Some(crate::framework::lifecycle_hooks::pane_tree),
         ..crate::TypeBehavior::NONE

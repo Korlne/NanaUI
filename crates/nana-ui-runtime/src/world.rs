@@ -210,8 +210,12 @@ pub const MAX_TREE_DEPTH: usize = 512;
 /// a layout this deep still saves and restores through `serde_json`, which
 /// reads at most 128 levels, so no layout the framework reads back is deeper
 /// than about twice this. The walks over a layout recurse by its depth and
-/// are tested at it on a 512 KiB stack; an application building a tree
-/// itself keeps to it.
+/// are tested at it on a 512 KiB stack. A deeper tree an application builds
+/// itself is folded to this depth as the framework takes it in (the
+/// components' constructors, and every create and update of a `Dock`,
+/// `PaneTree` or `AreaLayout`): a dock keeps every item, in one tab group;
+/// a pane tree or area layout keeps the first pane or area of each folded
+/// split.
 pub const MAX_SPLIT_DEPTH: usize = 64;
 
 /// Retired node IDs, stored as coalesced inclusive runs.

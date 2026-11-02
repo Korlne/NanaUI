@@ -54,10 +54,10 @@
 | 模型 | 深度 | 怎么不溢出 |
 | --- | --- | --- |
 | `TreeNode`（`TreeView` 的数据：文件树、JSON 文档） | 无上限 | 遍历走 `nana_ui_core::tree_preorder`（堆上开栈的先序迭代器，顺序与递归相同）或堆上显式栈；`TreeNode` 的 `Clone`、`PartialEq` 与 `Drop` 手写为不递归（析构前先把后代摘出来）。只有派生的 `Debug` 仍按层嵌套 |
-| `DockNode`、`PaneTreeNode`、`AreaNode`（面板切分树） | `MAX_SPLIT_DEPTH` 64 | 框架自己的切分（Dock 拖放到边上、`AreaLayoutModel::split`）到上限时拒绝；上限深度的布局能经 `serde_json` 保存并读回。手改的布局文件最深只能到 `serde_json` 读得出的约 125 层，也已测过安全。应用自己构造的切分树须遵守上限 |
+| `DockNode`、`PaneTreeNode`、`AreaNode`（面板切分树） | `MAX_SPLIT_DEPTH` 64 | 框架自己的切分（Dock 拖放到边上、`AreaLayoutModel::split`）到上限时拒绝；上限深度的布局能经 `serde_json` 保存并读回。应用自己构造的更深的树（含手改的布局文件，最深约 125 层），在进入框架时折叠到上限：经构造函数（`Dock::new`、`DockWorkspace::new`、`PaneTree::new`、`AreaLayout::new`、持久化恢复），以及这三种组件每一次创建和更新（`ComponentView::fit_framework_limits`，所以直接写公开字段也逃不掉）。Dock 把越界子树里的所有项收进一个标签组，一项不丢；PaneTree 和区域布局保留越界切分的第一个面板或区域，其余丢弃（区域布局同时从 `areas` 和 `maximized` 里移除它们）。折叠本身不递归。框架内部的遍历因此只在不超过上限的树上递归；应用自己持有、自己遍历的超深值不在框架管辖内 |
 | 内置组件的 JSON 规格（`tree_node_from_json`、`dock_node_from_json`） | `serde_json` 的 128 层 | 遍历的是解析好的 `serde_json::Value`，深度已被解析器封顶 |
 
-测试：`tree_view::tests::data_deeper_than_the_stack_walks_clones_compares_and_drops`（两万层数据在 512 KiB 线程上列行、选中、导航、展开折叠、克隆、比较、析构；去掉迭代析构时栈溢出），`nana-ui-runtime/tests/deep_models.rs`（上限深度的 Dock、区域布局、PaneTree 在 512 KiB 线程上克隆、比较、放置、保存、读回、析构，外加手写的最深 Dock JSON），以及 `dock::tests::a_drop_past_the_split_depth_is_refused`、`area_layout::model::tests::a_split_past_the_split_depth_is_refused`。
+测试：`tree_view::tests::data_deeper_than_the_stack_walks_clones_compares_and_drops`（两万层数据在 512 KiB 线程上列行、选中、导航、展开折叠、克隆、比较、析构；去掉迭代析构时栈溢出），`nana-ui-runtime/tests/deep_models.rs`（上限深度的 Dock、区域布局、PaneTree 在 512 KiB 线程上克隆、比较、放置、保存、读回、析构，外加手写的最深 Dock JSON），`dock::tests::a_drop_past_the_split_depth_is_refused`、`area_layout::model::tests::a_split_past_the_split_depth_is_refused`，以及 `deep_models.rs` 里五千层的应用自建树：经构造函数、直接写公开字段后创建并布局、在更新里写入，三条路都在 512 KiB 线程上通过；去掉组件钩子即栈溢出（已做变异实验）。
 
 ### 门禁
 

@@ -155,6 +155,70 @@ impl DockNode {
         deepest
     }
 
+    /// Folds each split [`crate::MAX_SPLIT_DEPTH`] deep into one tab group
+    /// holding every item under it, in order: no item is lost, and no walk
+    /// the framework makes goes deeper. Whether anything was folded. The
+    /// tree is walked and the folded splits taken apart without recursing,
+    /// so an application's tree of any depth folds on any stack.
+    pub fn fold_past_split_depth(&mut self) -> bool {
+        if self.split_depth() <= crate::MAX_SPLIT_DEPTH {
+            return false;
+        }
+        let mut open = vec![(self, 0)];
+        while let Some((node, depth)) = open.pop() {
+            match node {
+                Self::Split { .. } if depth == crate::MAX_SPLIT_DEPTH => {
+                    let deep = std::mem::replace(node, Self::item("", None));
+                    *node = Self::into_tabs(deep);
+                }
+                Self::Split { first, second, .. } => {
+                    open.push((first.as_mut(), depth + 1));
+                    open.push((second.as_mut(), depth + 1));
+                }
+                Self::Item { .. } | Self::Tabs { .. } => {}
+            }
+        }
+        true
+    }
+
+    /// Every item of `node`, in order, as one tab group (or the one item),
+    /// taking each split apart by value so none drops into another.
+    fn into_tabs(node: Self) -> Self {
+        let mut tabs = Vec::new();
+        let mut contents = Vec::new();
+        let mut pending = vec![node];
+        while let Some(node) = pending.pop() {
+            match node {
+                Self::Item { id, content } => {
+                    tabs.push(Arc::clone(&id));
+                    contents.push((id, content));
+                }
+                Self::Tabs {
+                    tabs: group,
+                    contents: held,
+                    ..
+                } => {
+                    tabs.extend(group);
+                    contents.extend(held);
+                }
+                Self::Split { first, second, .. } => {
+                    pending.push(*second);
+                    pending.push(*first);
+                }
+            }
+        }
+        match (tabs.len(), contents.len()) {
+            (1, 1) => {
+                let (id, content) = contents.pop().expect("one item");
+                Self::Item { id, content }
+            }
+            _ => {
+                let active = tabs.first().cloned().unwrap_or_else(|| Arc::from(""));
+                Self::tabs(tabs, active, contents)
+            }
+        }
+    }
+
     pub fn contains(&self, id: &str) -> bool {
         match self {
             Self::Item { id: item, .. } => item.as_ref() == id,
@@ -323,6 +387,7 @@ pub struct DockWorkspace {
 
 impl DockWorkspace {
     pub fn new(mut main: DockNode) -> Self {
+        main.fold_past_split_depth();
         main.clamp_ratios();
         Self {
             main,
@@ -668,6 +733,7 @@ impl From<DockWorkspacePersist> for DockWorkspace {
             .map(|item| {
                 next_surface = next_surface.max(item.surface.saturating_add(1));
                 let mut root = DockNode::from(item.root);
+                root.fold_past_split_depth();
                 root.clamp_ratios();
                 DockFloatingSurface {
                     id: Arc::from(item.surface.to_string()),
@@ -1341,6 +1407,7 @@ pub struct Dock {
 
 impl Dock {
     pub fn new(mut root: DockNode) -> Self {
+        root.fold_past_split_depth();
         root.clamp_ratios();
         Self {
             root,
@@ -1548,6 +1615,10 @@ impl ComponentView for Dock {
         slot_assembler: Some(crate::AppContext::assemble_dock_panels),
         ..crate::TypeBehavior::NONE
     };
+
+    fn fit_framework_limits(&mut self) {
+        self.root.fold_past_split_depth();
+    }
 
     fn share_layouts(
         &mut self,

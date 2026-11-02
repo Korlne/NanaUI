@@ -216,7 +216,8 @@ impl AreaEditorSelect {
 }
 
 impl AreaLayout {
-    pub fn new(model: AreaLayoutModel) -> Self {
+    pub fn new(mut model: AreaLayoutModel) -> Self {
+        model.fold_past_split_depth();
         Self {
             model,
             gap: nana_ui_core::space::XXS,
@@ -276,6 +277,10 @@ impl AreaLayout {
 }
 
 impl ComponentView for AreaLayout {
+    fn fit_framework_limits(&mut self) {
+        self.model.fold_past_split_depth();
+    }
+
     const BEHAVIOR: crate::TypeBehavior<Self> = crate::TypeBehavior {
         assembler: Some(AppContext::assemble_area_layout),
         slot_assembler: Some(AppContext::assemble_area_layout),

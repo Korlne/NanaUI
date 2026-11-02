@@ -253,6 +253,13 @@ pub trait ComponentView: Clone + PartialEq + Send + 'static {
     ) {
     }
 
+    /// Bring what an application wrote inside the limits the framework's
+    /// walks rely on, such as [`crate::MAX_SPLIT_DEPTH`]. Called whenever a
+    /// value enters the framework: when the component is created and after
+    /// every update. Defaults to nothing.
+    #[doc(hidden)]
+    fn fit_framework_limits(&mut self) {}
+
     /// Apply declarative properties to a retained component. Stateful controls
     /// override this to preserve interaction state; explicit `update_component`
     /// remains available when the caller intends to replace that state.

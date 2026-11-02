@@ -397,6 +397,76 @@ fn find_leaf<'a>(node: &'a mut AreaNode, id: &str) -> Option<&'a mut AreaNode> {
     }
 }
 
+impl AreaLayoutModel {
+    /// Splits on the deepest path from the root to an area, counted without
+    /// recursing; see [`crate::MAX_SPLIT_DEPTH`].
+    pub fn split_depth(&self) -> usize {
+        let mut deepest = 0;
+        let mut open = vec![(&self.root, 0)];
+        while let Some((node, depth)) = open.pop() {
+            deepest = deepest.max(depth);
+            if let AreaNode::Split { first, second, .. } = node {
+                open.push((first, depth + 1));
+                open.push((second, depth + 1));
+            }
+        }
+        deepest
+    }
+
+    /// Replaces each split [`crate::MAX_SPLIT_DEPTH`] deep with its first
+    /// area, and drops the areas under the rest of it (and the maximized one,
+    /// if it was among them): no walk the framework makes goes deeper.
+    /// Whether anything was folded. Walked and taken apart without recursing,
+    /// so a tree of any depth folds on any stack.
+    pub fn fold_past_split_depth(&mut self) -> bool {
+        if self.split_depth() <= crate::MAX_SPLIT_DEPTH {
+            return false;
+        }
+        let mut dropped = Vec::new();
+        let mut open = vec![(&mut self.root, 0)];
+        while let Some((node, depth)) = open.pop() {
+            match node {
+                AreaNode::Split { .. } if depth == crate::MAX_SPLIT_DEPTH => {
+                    let deep = std::mem::replace(node, AreaNode::Area { id: String::new() });
+                    *node = first_area(deep, &mut dropped);
+                }
+                AreaNode::Split { first, second, .. } => {
+                    open.push((first.as_mut(), depth + 1));
+                    open.push((second.as_mut(), depth + 1));
+                }
+                AreaNode::Area { .. } => {}
+            }
+        }
+        self.areas.retain(|area| !dropped.contains(&area.id));
+        if self
+            .maximized
+            .as_ref()
+            .is_some_and(|id| dropped.contains(id))
+        {
+            self.maximized = None;
+        }
+        true
+    }
+}
+
+/// The first area of `node`, the ids of the others pushed onto `dropped`;
+/// taken apart by value so no split drops into another.
+fn first_area(node: AreaNode, dropped: &mut Vec<String>) -> AreaNode {
+    let mut first = None;
+    let mut pending = vec![node];
+    while let Some(node) = pending.pop() {
+        match node {
+            AreaNode::Area { id } if first.is_none() => first = Some(AreaNode::Area { id }),
+            AreaNode::Area { id } => dropped.push(id),
+            AreaNode::Split { first, second, .. } => {
+                pending.push(*second);
+                pending.push(*first);
+            }
+        }
+    }
+    first.expect("a split holds an area")
+}
+
 /// Splits above the area `id`, counted without recursing.
 fn leaf_depth(root: &AreaNode, id: &str) -> Option<usize> {
     let mut open = vec![(root, 0)];
