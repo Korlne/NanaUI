@@ -264,7 +264,42 @@ impl SettingsRow {
             })
     }
 
-    fn effective_style(&self, stacked: bool) -> NodeStyle {
+    /// Whether the row puts its control on the name's line rather than in
+    /// the middle of its copy: an inline settings row (no label column)
+    /// whose copy has a second line under the name, a hint or an error.
+    /// Centred on both lines, the control would sit below the name it
+    /// belongs to.
+    pub(crate) fn aligns_to_name_line(&self) -> bool {
+        self.label_column.is_none()
+            && !self.label.is_empty()
+            && (self.hint.is_some() || self.error.is_some())
+    }
+
+    /// The height of the name's line box in a row that
+    /// [aligns to it](Self::aligns_to_name_line): the control's last
+    /// laid-out height, so the name centred in its line and the control
+    /// share their top and their centre. `None` while the row is stacked,
+    /// has nothing to align, or has not been laid out yet; the row then
+    /// centres its control as any other row does. The control is never
+    /// stretched, so its height does not follow from this one.
+    fn name_line(&self, world: &UiWorld, stacked: bool) -> Option<f32> {
+        if stacked || !self.aligns_to_name_line() {
+            return None;
+        }
+        let control = self.control_slot.or(self.control)?;
+        world
+            .component_layout_box(control)
+            .map(|bounds| bounds.height)
+            .filter(|height| height.is_finite() && *height > 0.0)
+    }
+
+    /// The node that stands on the name's line: the line holding the label
+    /// and its accessory, or the label itself.
+    fn name_line_node(&self) -> Option<StableNodeId> {
+        self.label_line_slot.or(self.label_slot)
+    }
+
+    fn effective_style(&self, stacked: bool, name_line: bool) -> NodeStyle {
         let mut style = self.style.clone();
         style.foreground = Some(SemanticColorRole::Text);
         style.background = None;
@@ -286,8 +321,12 @@ impl SettingsRow {
         } else {
             FlexDirection::Row
         });
+        // A name line as tall as the control: the two share their top, and
+        // with it their centre.
         layout.align_items = if stacked {
             AlignSpec::Stretch
+        } else if name_line {
+            AlignSpec::Start
         } else {
             AlignSpec::Center
         };
@@ -410,11 +449,13 @@ impl ComponentView for SettingsRow {
         if world.standard_visual(id).is_some() {
             mutations.set_standard_visual(id, None);
         }
+        let stacked = self.effective_stacked(id, world);
+        let name_line = self.name_line(world, stacked);
         project_common(
             id,
             world,
             mutations,
-            &self.effective_style(self.effective_stacked(id, world)),
+            &self.effective_style(stacked, name_line.is_some()),
             InteractionState {
                 pointer_events: false,
                 focusable: false,
@@ -427,12 +468,18 @@ impl ComponentView for SettingsRow {
                 ..AccessibilityState::default()
             },
         );
-        self.project_slots(world, mutations, self.effective_stacked(id, world));
+        self.project_slots(world, mutations, stacked, name_line);
     }
 }
 
 impl SettingsRow {
-    fn project_slots(&self, world: &UiWorld, mutations: &mut MutationQueue, stacked: bool) {
+    fn project_slots(
+        &self,
+        world: &UiWorld,
+        mutations: &mut MutationQueue,
+        stacked: bool,
+        name_line: Option<f32>,
+    ) {
         if let Some(copy) = self.copy_slot {
             SettingsRowCopy {
                 stacked,
@@ -441,7 +488,7 @@ impl SettingsRow {
             .project(copy, world, mutations);
         }
         if let Some(line) = self.label_line_slot {
-            SettingsRowLabelLine.project(line, world, mutations);
+            SettingsRowLabelLine { height: name_line }.project(line, world, mutations);
         }
         if let Some(label) = self.label_slot {
             let mut text = Text::new(self.label.as_ref());
@@ -450,6 +497,12 @@ impl SettingsRow {
                 self.label_line_slot.is_some(),
                 self.label_column.is_some(),
             );
+            if self.label_line_slot.is_none()
+                && let Some(height) = name_line
+            {
+                // the label is the name's line; its text centres in it
+                Arc::make_mut(&mut text.style.layout).min_height = Some(LengthSpec::Px(height));
+            }
             text.project(label, world, mutations);
         }
         if let Some(control) = self.control_slot {
@@ -772,12 +825,17 @@ impl ComponentView for SettingsRowCopy {
 /// The label's line when the row has a label accessory: the label, then the
 /// accessory, centred on each other.
 #[derive(Debug, Clone, PartialEq)]
-struct SettingsRowLabelLine;
+struct SettingsRowLabelLine {
+    /// At least this tall while the row puts its control on this line; see
+    /// [`SettingsRow::name_line`].
+    height: Option<f32>,
+}
 
 impl SettingsRowLabelLine {
-    fn style() -> NodeStyle {
+    fn style(&self) -> NodeStyle {
         let mut style = NodeStyle::default();
         let layout = Arc::make_mut(&mut style.layout);
+        layout.min_height = self.height.map(LengthSpec::Px);
         layout.direction = Some(FlexDirection::Row);
         layout.align_items = AlignSpec::Center;
         layout.justify_content = JustifySpec::Start;
@@ -803,7 +861,7 @@ impl ComponentView for SettingsRowLabelLine {
             id,
             world,
             mutations,
-            &Self::style(),
+            &self.style(),
             InteractionState {
                 pointer_events: false,
                 focusable: false,
@@ -2736,14 +2794,24 @@ impl AppContext {
         let row = Entity::<SettingsRow>::from_stable_id(id);
         let needs_projection = self
             .read(row, |row| {
-                let direction = if row.effective_stacked(id, self.world()) {
+                let world = self.world();
+                let stacked = row.effective_stacked(id, world);
+                let direction = if stacked {
                     FlexDirection::Column
                 } else {
                     FlexDirection::Row
                 };
-                self.world()
-                    .node_style(id)
-                    .is_some_and(|style| style.layout.direction != Some(direction))
+                // The name's line follows the control's height, which only
+                // this pass has measured.
+                let name_line = row.name_line(world, stacked).map(LengthSpec::Px);
+                let line_moved = row
+                    .name_line_node()
+                    .and_then(|line| world.node_style(line))
+                    .is_some_and(|style| style.layout.min_height != name_line);
+                line_moved
+                    || world
+                        .node_style(id)
+                        .is_some_and(|style| style.layout.direction != Some(direction))
             })
             .unwrap_or(false);
         if needs_projection {
@@ -2908,7 +2976,7 @@ impl AppContext {
         let line = match (accessory, live_line) {
             (Some(_), Some(line)) => Some(line),
             (Some(_), None) => Some(
-                self.create_detached_component(document, SettingsRowLabelLine)?
+                self.create_detached_component(document, SettingsRowLabelLine { height: None })?
                     .stable_id(),
             ),
             (None, _) => None,
@@ -3990,6 +4058,166 @@ mod tests {
                 .layout
                 .direction,
             Some(FlexDirection::Column)
+        );
+    }
+
+    /// A row in a 360-wide column holding `control`, laid out as a frame
+    /// driver settles it: the row, its label and the control.
+    fn laid_out_row(
+        context: &mut AppContext,
+        control: StableNodeId,
+        hint: Option<&str>,
+        edit: impl FnOnce(&mut SettingsRow),
+    ) -> (Entity<SettingsRow>, StableNodeId) {
+        let parent = context
+            .create_component(
+                document(),
+                crate::Stack::column(0.0).width(LengthSpec::Px(360.0)),
+            )
+            .unwrap();
+        let row = context
+            .mount_settings_leaf_row(document(), "Preference", hint, control)
+            .unwrap();
+        context
+            .update_component(row, |row, _| {
+                row.stack_below = Some(ASSEMBLED_ROW_STACK_BELOW);
+                edit(row);
+            })
+            .unwrap();
+        context.assemble_settings_row(row).unwrap();
+        context.append_child(parent, row).unwrap();
+        let viewport = crate::LayoutViewport::new(1200.0, 800.0);
+        context.layout_document(document(), viewport).unwrap();
+        context.layout_document(document(), viewport).unwrap();
+        let label = context.read(row, |row| row.label_slot.unwrap()).unwrap();
+        (row, label)
+    }
+
+    fn middle(context: &AppContext, id: StableNodeId) -> f32 {
+        let bounds = context.world().canonical_layout_box(id).unwrap();
+        bounds.y + bounds.height / 2.0
+    }
+
+    fn row_controls(context: &mut AppContext) -> Vec<(&'static str, StableNodeId)> {
+        let switch = context
+            .create_detached_component(document(), crate::Switch::new("", true))
+            .unwrap()
+            .stable_id();
+        let select = context
+            .create_detached_component(
+                document(),
+                crate::Select::new(Some("a")).options([
+                    crate::SelectOption::new("a", "Alpha"),
+                    crate::SelectOption::new("b", "Beta"),
+                ]),
+            )
+            .unwrap()
+            .stable_id();
+        let field = context
+            .create_detached_component(document(), crate::TextInput::new("value"))
+            .unwrap()
+            .stable_id();
+        vec![("switch", switch), ("select", select), ("field", field)]
+    }
+
+    /// A hint under the name would centre the control on both lines, below
+    /// the name it belongs to: the control stays on the name's line.
+    #[test]
+    fn an_inline_row_with_a_hint_aligns_its_control_to_the_name_line() {
+        let mut context = AppContext::new();
+        for (kind, control) in row_controls(&mut context) {
+            let (row, label) = laid_out_row(
+                &mut context,
+                control,
+                Some("What this preference changes"),
+                |_| {},
+            );
+            let offset = middle(&context, control) - middle(&context, label);
+            assert!(offset.abs() <= 1.0, "{kind}: {offset}");
+            // the hint stays under the name
+            let hint = hint_slot_of(&context, row.stable_id()).unwrap();
+            let hint_box = context.world().canonical_layout_box(hint).unwrap();
+            let label_box = context.world().canonical_layout_box(label).unwrap();
+            assert!(hint_box.y >= label_box.y + label_box.height, "{kind}");
+        }
+        // an error in the hint's place keeps the control there too
+        let control = row_controls(&mut context)[2].1;
+        let (_, label) = laid_out_row(&mut context, control, None, |row| {
+            row.error = Some(Arc::from("Required"));
+        });
+        assert!((middle(&context, control) - middle(&context, label)).abs() <= 1.0);
+        // and so does a name with an accessory beside it
+        let control = row_controls(&mut context)[1].1;
+        let badge = context
+            .create_detached_component(document(), Text::new("New"))
+            .unwrap()
+            .stable_id();
+        let (row, label) = laid_out_row(&mut context, control, Some("Hint"), |row| {
+            row.label_accessory = Some(badge);
+        });
+        let line = context.read(row, |row| row.label_line_slot).unwrap();
+        assert!(line.is_some());
+        assert!((middle(&context, control) - middle(&context, label)).abs() <= 1.0);
+    }
+
+    /// Rows with one line of copy, stacked rows and label-column rows lay
+    /// out as they did: centred, stretched, centred, with no name line.
+    #[test]
+    fn rows_without_a_second_line_or_inline_copy_keep_their_alignment() {
+        let mut context = AppContext::new();
+        let cases: [(&str, Option<&str>, fn(&mut SettingsRow), AlignSpec); 3] = [
+            ("no hint", None, |_| {}, AlignSpec::Center),
+            (
+                "stacked",
+                Some("Hint"),
+                |row| row.stacked = true,
+                AlignSpec::Stretch,
+            ),
+            (
+                "label column",
+                Some("Hint"),
+                |row| row.label_column = Some(96.0),
+                AlignSpec::Center,
+            ),
+        ];
+        for (case, hint, edit, align) in cases {
+            for (kind, control) in row_controls(&mut context) {
+                let (row, label) = laid_out_row(&mut context, control, hint, edit);
+                let style = context.world().node_style(row.stable_id()).unwrap();
+                assert_eq!(style.layout.align_items, align, "{case}, {kind}");
+                let label_style = context.world().node_style(label).unwrap();
+                assert_eq!(label_style.layout.min_height, None, "{case}, {kind}");
+            }
+        }
+        // a one-line row centres its control on the name, as it always has
+        let control = row_controls(&mut context)[0].1;
+        let (_, label) = laid_out_row(&mut context, control, None, |_| {});
+        assert!((middle(&context, control) - middle(&context, label)).abs() <= 1.0);
+    }
+
+    /// The name line follows the copy: a hint that clears takes it away.
+    #[test]
+    fn a_row_whose_hint_clears_centres_its_control_again() {
+        let mut context = AppContext::new();
+        let control = row_controls(&mut context)[1].1;
+        let (row, label) = laid_out_row(&mut context, control, Some("Hint"), |_| {});
+        assert!(
+            context
+                .world()
+                .node_style(label)
+                .unwrap()
+                .layout
+                .min_height
+                .is_some()
+        );
+        context
+            .update_component(row, |row, _| row.hint = None)
+            .unwrap();
+        let style = context.world().node_style(row.stable_id()).unwrap();
+        assert_eq!(style.layout.align_items, AlignSpec::Center);
+        assert_eq!(
+            context.world().node_style(label).unwrap().layout.min_height,
+            None
         );
     }
 
