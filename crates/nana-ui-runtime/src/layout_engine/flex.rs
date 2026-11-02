@@ -23,7 +23,7 @@ pub(super) fn pack_equal_wrap_lines(
     let mut widest = 0.0_f32;
     let mut margins = 0.0;
     for (index, child) in children.iter().enumerate() {
-        let margin = nodes.style(*child).map_or(0.0, |style| {
+        let margin = nodes.style_ref(*child).map_or(0.0, |style| {
             let margin = style
                 .resolved_margin_against_fonts(Some(edge_base), fonts_of(&style, parent_font_px));
             main_start_margin(margin, direction) + main_end_margin(margin, direction)
@@ -61,7 +61,7 @@ pub(super) fn equal_wrap_share(
     let margins: f32 = children
         .iter()
         .map(|child| {
-            nodes.style(*child).map_or(0.0, |style| {
+            nodes.style_ref(*child).map_or(0.0, |style| {
                 let margin = style.resolved_margin_against_fonts(
                     Some(edge_base),
                     fonts_of(&style, parent_font_px),
@@ -125,7 +125,7 @@ pub(super) fn measure_equal_wrap(
                 cache,
                 scope,
             )?;
-            let margin = nodes.style(*child).map_or_default(|style| {
+            let margin = nodes.style_ref(*child).map_or_default(|style| {
                 style.resolved_margin_against_fonts(
                     Some(edge_base),
                     fonts_of(&style, parent_font_px),
@@ -248,7 +248,7 @@ pub(super) fn distribute_flex_main(
         mains,
     } = &mut columns;
     for (index, child) in children.iter().enumerate() {
-        let Some(style) = nodes.style(*child) else {
+        let Some(style) = nodes.style_ref(*child) else {
             margin_mains.push(0.0);
             mins.push(0.0);
             maxs.push(None);
@@ -594,7 +594,7 @@ pub(super) fn main_occupied(
 ) -> f32 {
     let mut occupied = 0.0;
     for (id, size) in children.iter().zip(sizes) {
-        let margin = match nodes.style(*id) {
+        let margin = match nodes.style_ref(*id) {
             Some(style) => style.resolved_margin_against_fonts(
                 Some(edge_base),
                 fonts_of(style.as_ref(), parent_font_px),
@@ -649,7 +649,7 @@ pub(super) fn count_auto_main_margins(
 ) -> usize {
     line.iter()
         .map(|id| {
-            let Some(style) = nodes.style(*id) else {
+            let Some(style) = nodes.style_ref(*id) else {
                 return 0;
             };
             match direction {

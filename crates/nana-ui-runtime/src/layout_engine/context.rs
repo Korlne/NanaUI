@@ -42,7 +42,7 @@ pub(super) fn establish_context(
         Some(display) if display.is_flex_container() => FormattingContextKind::Flex,
         _ if flow
             .iter()
-            .any(|id| nodes.style(*id).is_some_and(|s| s.is_inline_level())) =>
+            .any(|id| nodes.style_ref(*id).is_some_and(|s| s.is_inline_level())) =>
         {
             FormattingContextKind::Inline
         }

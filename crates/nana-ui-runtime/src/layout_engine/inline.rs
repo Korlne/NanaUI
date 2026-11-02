@@ -166,7 +166,7 @@ pub(super) fn pack_wrap_lines(
     let mut current = Vec::new();
     let mut line_main = 0.0f32;
     for (index, child) in children.iter().enumerate() {
-        let Some(style) = nodes.style(*child) else {
+        let Some(style) = nodes.style_ref(*child) else {
             continue;
         };
         let block_break = break_on_blocks
@@ -441,7 +441,7 @@ fn derive_baselines(
         let direction = used_flow_direction(&style, writing, false);
         let mut sizes = Vec::with_capacity(flow.len());
         for &child in &flow {
-            let available = nodes.style(child).map_or(content, |child_style| {
+            let available = nodes.style_ref(child).map_or(content, |child_style| {
                 grid_item_measure_available(&child_style, content)
             });
             sizes.push(intrinsic_size_scoped(
@@ -795,7 +795,7 @@ pub(super) fn ifc_line_metrics(
 ) -> (f32, f32) {
     let (mut ascent, mut descent, mut from_top) = (0.0f32, 0.0f32, 0.0f32);
     for (child, size) in items {
-        let Some(style) = nodes.style(child) else {
+        let Some(style) = nodes.style_ref(child) else {
             continue;
         };
         match ifc_atom_metrics(child, &style, size, content_width, parent_font_px, nodes) {
@@ -871,7 +871,7 @@ pub(super) fn pack_ifc_line_boxes(
         refresh(*line_y, left_inset, available);
     };
     for (index, child) in children.iter().enumerate() {
-        let Some(style) = nodes.style(*child) else {
+        let Some(style) = nodes.style_ref(*child) else {
             continue;
         };
         let style_ref = style.as_ref();
@@ -1025,7 +1025,7 @@ pub(super) fn wrap_intrinsic_size(
         let mut line_main = 0.0f32;
         let mut line_cross = 0.0f32;
         for (item_index, &index) in line.iter().enumerate() {
-            let Some(style) = nodes.style(children[index]) else {
+            let Some(style) = nodes.style_ref(children[index]) else {
                 continue;
             };
             let margin = style.resolved_margin_against_fonts(
@@ -1087,7 +1087,7 @@ pub(super) fn ifc_local_measure(
         return Ok(false);
     }
     for &child in flow {
-        let Some(child_style) = nodes.style(child) else {
+        let Some(child_style) = nodes.style_ref(child) else {
             return Ok(false);
         };
         if !ifc_local_child(child_style.as_ref()) {
@@ -1330,7 +1330,7 @@ fn affected_edits_are_direct(
         let Some(direct) = direct else {
             continue;
         };
-        let Some(style) = nodes.style(direct) else {
+        let Some(style) = nodes.style_ref(direct) else {
             return false;
         };
         if !fixed_inline_block(nodes.world, direct, style.as_ref(), plan.style.as_ref()) {

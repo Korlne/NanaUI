@@ -740,7 +740,7 @@ fn replay_child_list_edit(
     let mut arrivals = Vec::new();
     let mut reads_cross = false;
     for &child in edit.arrivals(children) {
-        let Some(style) = nodes.style(child) else {
+        let Some(style) = nodes.style_ref(child) else {
             continue;
         };
         if style.omits_box() {
@@ -1100,7 +1100,7 @@ fn replay_grid(
     let mut sizes = Vec::new();
     let content_changed = plan.content != content;
     for child in plan.children.iter().copied() {
-        let Some(child_style) = nodes.style(child) else {
+        let Some(child_style) = nodes.style_ref(child) else {
             continue;
         };
         if !grid_child_in_flow(child_style.as_ref()) {
@@ -1831,7 +1831,7 @@ fn place_node_body(
         );
     }
     for packed in &packed_floats.items {
-        let Some(child_style) = nodes.style(packed.id) else {
+        let Some(child_style) = nodes.style_ref(packed.id) else {
             continue;
         };
         let child_style = child_style.as_ref();
@@ -2467,7 +2467,7 @@ fn lay_out_children(
                 && plan.child_font_px == child_font_px
                 && cross_extent(plan.child_available, direction) == cross_extent(content, direction)
                 && !flow.iter().any(|child| {
-                    nodes.style(*child).is_some_and(|child| {
+                    nodes.style_ref(*child).is_some_and(|child| {
                         child.resolved_align_self(style.align_items) == AlignSpec::Baseline
                     })
                 })
@@ -2980,7 +2980,7 @@ pub(super) fn arrange_flow(
         // with is as tall (wide, in a column) as its content at that size.
         for (slot_index, child) in line_flow.iter().enumerate() {
             let measured = child_sizes[slot.indices[slot_index]];
-            let Some(child_style) = nodes.style(*child) else {
+            let Some(child_style) = nodes.style_ref(*child) else {
                 continue;
             };
             // An item that gave up only its own chrome keeps its content
@@ -3165,7 +3165,7 @@ pub(super) fn arrange_flow(
         };
         let needs_baseline = style.align_items == AlignSpec::Baseline
             || line_flow.iter().any(|id| {
-                nodes.style(*id).is_some_and(|child| {
+                nodes.style_ref(*id).is_some_and(|child| {
                     child.resolved_align_self(style.align_items) == AlignSpec::Baseline
                 })
             });
@@ -3185,7 +3185,7 @@ pub(super) fn arrange_flow(
                 .iter()
                 .zip(line_sizes.iter())
                 .filter_map(|(id, size)| {
-                    nodes.style(*id).map(|style| {
+                    nodes.style_ref(*id).map(|style| {
                         let font_px = fonts_of(&style, child_font_px).element_px;
                         intrinsic
                             .baseline(*id, crate::Baseline::First)
@@ -3436,7 +3436,9 @@ fn retire_omitted_children(
     scope: &ScopeContext<'_>,
 ) {
     for &child in children {
-        if nodes.style(child).is_some_and(|style| style.omits_box())
+        if nodes
+            .style_ref(child)
+            .is_some_and(|style| style.omits_box())
             && scope
                 .retained
                 .boxes
@@ -3683,7 +3685,7 @@ fn padding_box(
         .get(&block)
         .or_else(|| scope.and_then(|scope| scope.retained.boxes.get(&block)))
         .copied()?;
-    let border = nodes.style(block)?.resolved_border_edges();
+    let border = nodes.style_ref(block)?.resolved_border_edges();
     Some((
         Point {
             x: border_box.x + border.left,
@@ -4169,7 +4171,7 @@ fn place_triggered_menu_items(
     let mut cursor_y = origin_y + overlay.padding;
     let item_x = origin_x + overlay.padding;
     for (child, child_size) in items.iter().copied().zip(item_sizes) {
-        let Some(child_style) = nodes.style(child) else {
+        let Some(child_style) = nodes.style_ref(child) else {
             continue;
         };
         let child_style = child_style.as_ref();

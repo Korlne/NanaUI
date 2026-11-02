@@ -547,7 +547,7 @@ pub(super) fn layout_grid_2d(
         .or(style.grid_row_line_names.as_deref());
     let mut pending = Vec::with_capacity(flow.len());
     for (id, intrinsic) in flow.iter().copied().zip(child_sizes.iter().copied()) {
-        let child_style = nodes.style(id);
+        let child_style = nodes.style_ref(id);
         let placement = child_style
             .as_ref()
             .map(|child| &*child.grid_placement)
@@ -798,7 +798,7 @@ fn item_block_at_columns(
 ) -> Result<f32, UiWorldError> {
     let (inline, block) = writing.logical_size(item.intrinsic.width, item.intrinsic.height);
     let area = grid_span_extent(col_sizes, item.col, item.col_span, col_gap);
-    let Some(style) = nodes.style(item.id) else {
+    let Some(style) = nodes.style_ref(item.id) else {
         return Ok(block);
     };
     let block_spec = if writing.is_vertical() {
@@ -1280,7 +1280,7 @@ pub(super) fn auto_track_contributions(
             continue;
         }
         let child = children[index];
-        let Some(style) = nodes.style(child) else {
+        let Some(style) = nodes.style_ref(child) else {
             continue;
         };
         let axis_spec = if column_main {

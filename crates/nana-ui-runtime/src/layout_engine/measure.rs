@@ -331,7 +331,7 @@ pub(super) fn intrinsic_size_at_main(
     cache: &mut PassIntrinsicCache,
     scope: Option<&ScopeContext<'_>>,
 ) -> Result<Size, UiWorldError> {
-    let Some(style) = nodes.style(id) else {
+    let Some(style) = nodes.style_ref(id) else {
         return Ok(Size::default());
     };
     let mut forced = (*style).clone();
@@ -376,7 +376,7 @@ pub(super) fn intrinsic_size_out_of_flow(
     cache: &mut PassIntrinsicCache,
     scope: Option<&ScopeContext<'_>>,
 ) -> Result<Size, UiWorldError> {
-    let Some(style) = nodes.style(id) else {
+    let Some(style) = nodes.style_ref(id) else {
         return Ok(Size::default());
     };
     let (min_reads_block, max_reads_block) = (
@@ -1294,7 +1294,7 @@ fn measure_node_level(
             if nodes.world.inline_parent(child) != Some(id) {
                 continue;
             }
-            if let Some(child_style) = nodes.style(child)
+            if let Some(child_style) = nodes.style_ref(child)
                 && style.height.is_none_or(LengthSpec::is_content_sized)
                 && reads_offered_block_extent(&child_style)
             {
@@ -1537,7 +1537,7 @@ fn measure_node_level(
                 line,
             );
             for (index, child) in flow_children.iter().enumerate() {
-                let Some(child_style) = nodes.style(*child) else {
+                let Some(child_style) = nodes.style_ref(*child) else {
                     continue;
                 };
                 // An item that gave up only its own chrome keeps its content
@@ -1762,7 +1762,7 @@ fn measure_node_level(
             && text_metrics.is_none()
             && nodes.world.standard_visual_ref(id).is_none()
             && flow_children.iter().all(|child| {
-                nodes.style(*child).is_some_and(|child_style| {
+                nodes.style_ref(*child).is_some_and(|child_style| {
                     child_style.flex_grow.unwrap_or(0.0) <= 0.0
                         && child_style.flex_shrink.unwrap_or(0.0) <= 0.0
                 })
@@ -1983,7 +1983,7 @@ fn measure_plan_children_unchanged(
                     cache,
                     Some(scope),
                 )?;
-                let now = nodes.style(entry.child).and_then(|style| {
+                let now = nodes.style_ref(entry.child).and_then(|style| {
                     ifc_atom_metrics(
                         entry.child,
                         &style,
@@ -2104,7 +2104,7 @@ fn sequential_measure_delta(
     if !flex_or_grid
         && scope.affected.iter().any(|&child| {
             nodes.world.parent_id(child) == Some(id)
-                && nodes.style(child).is_some_and(|style| {
+                && nodes.style_ref(child).is_some_and(|style| {
                     style.is_inline_level()
                         && !style.is_floated()
                         && !style.position.is_out_of_flow()
@@ -2657,7 +2657,7 @@ fn grid_measure_delta(
     let mut sizes = Vec::new();
     let mut patched = false;
     for child in plan.children.iter().copied() {
-        let Some(child_style) = nodes.style(child) else {
+        let Some(child_style) = nodes.style_ref(child) else {
             continue;
         };
         if !grid_child_in_flow(child_style.as_ref()) {

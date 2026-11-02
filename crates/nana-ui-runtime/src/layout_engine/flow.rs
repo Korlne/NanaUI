@@ -46,7 +46,7 @@ pub(super) fn collect_flow_children_into(
     descendant_dependent: &mut bool,
 ) -> Result<(), UiWorldError> {
     for child in children.iter().copied() {
-        let Some(style) = nodes.style(child) else {
+        let Some(style) = nodes.style_ref(child) else {
             continue;
         };
         let participation = nodes.participation(child, &style, Context::from_display(parent_style));
@@ -104,7 +104,7 @@ pub(super) fn inline_contains_block(
     };
     let children = (*node.children).clone();
     for grandchild in children {
-        let Some(style) = nodes.style(grandchild) else {
+        let Some(style) = nodes.style_ref(grandchild) else {
             continue;
         };
         let participation = nodes.participation(grandchild, &style, Context::Inline);
@@ -148,7 +148,7 @@ pub(super) fn collect_positioned_children_into(
     out: &mut Vec<StableNodeId>,
 ) -> Result<(), UiWorldError> {
     for child in children.iter().copied() {
-        let Some(style) = nodes.style(child) else {
+        let Some(style) = nodes.style_ref(child) else {
             continue;
         };
         let participation = nodes.participation(child, &style, Context::Flow);
@@ -188,7 +188,7 @@ pub(super) fn collect_floated_children_into(
     out: &mut Vec<StableNodeId>,
 ) -> Result<(), UiWorldError> {
     for child in children.iter().copied() {
-        let Some(style) = nodes.style(child) else {
+        let Some(style) = nodes.style_ref(child) else {
             continue;
         };
         let participation = nodes.participation(child, &style, Context::Flow);

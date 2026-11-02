@@ -192,7 +192,7 @@ impl DynamicPass {
         nodes: &LayoutInputMap<'_>,
         retained: Option<&DocumentLayoutCache>,
     ) -> EnvelopeShape {
-        let Some(style) = nodes.style(id) else {
+        let Some(style) = nodes.style_ref(id) else {
             return EnvelopeShape::RIGID;
         };
         if style.adaptation.is_none() {

@@ -1534,7 +1534,7 @@ fn sort_ids_with_sizes(ids: &mut [StableNodeId], sizes: &mut [Size], nodes: &Lay
     if ids.len() != sizes.len() {
         return;
     }
-    let order_of = |id: StableNodeId| nodes.style(id).map(|style| style.order).unwrap_or(0);
+    let order_of = |id: StableNodeId| nodes.style_ref(id).map(|style| style.order).unwrap_or(0);
     if ids.iter().copied().all(|id| order_of(id) == 0) {
         return;
     }
@@ -1944,7 +1944,7 @@ impl ContainerPlan {
             {
                 return true;
             }
-            let Some(style) = nodes.style(child) else {
+            let Some(style) = nodes.style_ref(child) else {
                 return false;
             };
             // Only a container that lays no lines out records a plan: an
@@ -2340,6 +2340,42 @@ impl MeasurePlan {
     }
 }
 
+/// A node's layout style as [`LayoutInputMap::style`] hands it out: borrowed
+/// from the pass's input, or an owned handle when it came from the memo of
+/// styles the pass never materialized.
+#[derive(Debug)]
+enum StyleRef<'a> {
+    Borrowed(&'a Arc<nana_ui_core::LayoutStyle>),
+    Owned(Arc<nana_ui_core::LayoutStyle>),
+}
+
+impl StyleRef<'_> {
+    /// An owned handle, for a caller that keeps the style past the map.
+    fn to_arc(&self) -> Arc<nana_ui_core::LayoutStyle> {
+        match self {
+            Self::Borrowed(style) => Arc::clone(style),
+            Self::Owned(style) => Arc::clone(style),
+        }
+    }
+}
+
+impl std::ops::Deref for StyleRef<'_> {
+    type Target = nana_ui_core::LayoutStyle;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Borrowed(style) => style,
+            Self::Owned(style) => style,
+        }
+    }
+}
+
+impl AsRef<nana_ui_core::LayoutStyle> for StyleRef<'_> {
+    fn as_ref(&self) -> &nana_ui_core::LayoutStyle {
+        self
+    }
+}
+
 /// What a pass reads of a node: [`LayoutInput`] with its rare modal part on
 /// the heap. Every pass walks these once per node, so they are kept to
 /// about one cache line (264 B inline before) rather than carrying a modal
@@ -2524,16 +2560,26 @@ impl<'a> LayoutInputMap<'a> {
     }
 
     /// Style for classifying / measuring siblings without assembling `LayoutInput`.
-    fn style(&self, id: StableNodeId) -> Option<Arc<nana_ui_core::LayoutStyle>> {
+    ///
+    /// Borrowed from the node's input when the pass holds one (every node of
+    /// a full pass): a pass asks about twenty times a box, and an `Arc` clone
+    /// and drop each time cost more than the question.
+    fn style_ref(&self, id: StableNodeId) -> Option<StyleRef<'_>> {
         if let Some(node) = self.nodes.get(&id) {
-            return Some(Arc::clone(&node.style));
+            return Some(StyleRef::Borrowed(&node.style));
         }
         if let Some(cached) = self.styles.borrow().get(&id) {
-            return cached.clone();
+            return cached.clone().map(StyleRef::Owned);
         }
         let resolved = self.world.layout_style(id);
         self.styles.borrow_mut().insert(id, resolved.clone());
-        resolved
+        resolved.map(StyleRef::Owned)
+    }
+
+    /// [`Self::style_ref`] as an owned handle, for a caller that keeps it
+    /// while it uses the map again.
+    fn style(&self, id: StableNodeId) -> Option<Arc<nana_ui_core::LayoutStyle>> {
+        self.style_ref(id).map(|style| style.to_arc())
     }
 
     /// Whether `id` holds an in-flow line box: [`UiWorld::holds_line_box_in`]
@@ -2860,7 +2906,7 @@ fn collapse_omitted_boxes(
     for &id in affected {
         // A container may write the omitted box itself, as a zero box, and
         // stop there: its descendants still keep the boxes they had.
-        if !nodes.style(id).is_some_and(|style| style.omits_box()) {
+        if !nodes.style_ref(id).is_some_and(|style| style.omits_box()) {
             continue;
         }
         let mut stack = vec![id];
@@ -2979,7 +3025,7 @@ fn subtree_unchanged(
 }
 
 fn sort_by_order(ids: &mut [StableNodeId], nodes: &LayoutInputMap<'_>) {
-    let order_of = |id: StableNodeId| nodes.style(id).map(|style| style.order).unwrap_or(0);
+    let order_of = |id: StableNodeId| nodes.style_ref(id).map(|style| style.order).unwrap_or(0);
     // Every key costs a map lookup plus an `Arc` clone, so resolve each one at
     // most once. Siblings almost always keep the default order, and a stable
     // sort on all-equal keys is a no-op, so scan for that case and skip.
