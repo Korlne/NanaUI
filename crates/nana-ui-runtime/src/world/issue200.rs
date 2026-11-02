@@ -1587,3 +1587,68 @@ fn issue200_an_edit_pending_in_one_window_waits_for_that_windows_frame() {
     assert_eq!(windows.rect(1, CORNER), (0.0, 680.0, 70.0, 20.0));
     assert!(windows.context.take_system_work().is_empty());
 }
+
+/// A chain of absolute boxes that fill the viewport, then a static box whose
+/// absolute children hang from the box above it: the plan of the static box
+/// holds them as remote overlays.
+fn remote_chain(with_children: bool) -> Tree {
+    let fill = |inset: f32| LayoutStyle {
+        position: PositionSpec::Absolute,
+        offset_left: Some(LengthSpec::Px(inset)),
+        offset_top: Some(LengthSpec::Px(inset)),
+        offset_right: Some(LengthSpec::Px(inset)),
+        offset_bottom: Some(LengthSpec::Px(inset)),
+        direction: Some(FlexDirection::Column),
+        ..LayoutStyle::default()
+    };
+    let mut spec = vec![
+        (None, fill(0.0)),
+        (Some(0), fill(8.0)),
+        (Some(1), fill(0.0)),
+        (
+            Some(2),
+            LayoutStyle {
+                direction: Some(FlexDirection::Column),
+                ..LayoutStyle::default()
+            },
+        ),
+    ];
+    if with_children {
+        spec.push((Some(3), badge()));
+        spec.push((
+            Some(3),
+            LayoutStyle {
+                position: PositionSpec::Absolute,
+                offset_left: Some(LengthSpec::Px(0.0)),
+                offset_bottom: Some(LengthSpec::Px(0.0)),
+                width: Some(LengthSpec::Percent(100.0)),
+                height: Some(LengthSpec::Px(20.0)),
+                ..LayoutStyle::default()
+            },
+        ));
+    }
+    Tree::new(spec)
+}
+
+#[test]
+fn issue200_removed_remote_children_leave_the_walk() {
+    // Removing the children while the window resizes left them in the static
+    // box's plan; every round of the remote walk found them moved and placed
+    // nothing, so layout never returned.
+    let mut tree = remote_chain(true);
+    tree.resize(810.0, 600.0);
+    let mut queue = MutationQueue::new();
+    queue.despawn_subtree(tree.ids[4]);
+    queue.despawn_subtree(tree.ids[5]);
+    tree.context.commit_mutations(queue).unwrap();
+    tree.spec.truncate(4);
+    tree.ids.truncate(4);
+    for (width, height) in [(830.0, 610.0), (850.0, 620.0), (800.0, 600.0)] {
+        tree.resize(width, height);
+    }
+    let mut cold = remote_chain(false);
+    cold.resize(800.0, 600.0);
+    for index in 0..4 {
+        assert_eq!(tree.rect(index), cold.rect(index));
+    }
+}

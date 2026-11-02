@@ -1360,6 +1360,21 @@ struct PlannedOverlay {
     size: Size,
 }
 
+impl PlannedOverlay {
+    /// Whether `other` places the child the same way, against the same
+    /// containing block.
+    fn same_placement(&self, other: &Self) -> bool {
+        let same_size = |a: Size, b: Size| {
+            a.width.to_bits() == b.width.to_bits() && a.height.to_bits() == b.height.to_bits()
+        };
+        self.block == other.block
+            && self.base_origin == other.base_origin
+            && same_size(self.base, other.base)
+            && self.origin == other.origin
+            && same_size(self.size, other.size)
+    }
+}
+
 /// One child's contribution to a cached container placement.
 #[derive(Clone)]
 struct PlannedChild {

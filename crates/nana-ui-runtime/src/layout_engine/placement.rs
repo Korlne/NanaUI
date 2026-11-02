@@ -3549,7 +3549,9 @@ fn overlay_depends_on_block(
 /// block, in containers this pass did not place: no replay of their plan
 /// reaches them, so their block moving or resizing (the viewport, for the
 /// initial one) places them here. One placed here can be the containing
-/// block of another such child; the walk repeats until nothing moves.
+/// block of another such child; the walk repeats until nothing moves. A
+/// child the plan still holds but that is gone or back in flow leaves the
+/// plan, and placing a child where the plan already had it moves nothing.
 pub(super) fn place_remote_overlays(
     viewport: LayoutViewport,
     nodes: &mut LayoutInputMap<'_>,
@@ -3597,8 +3599,10 @@ pub(super) fn place_remote_overlays(
                 continue;
             };
             let mut placed = Vec::with_capacity(stale.len());
+            let mut gone = Vec::new();
+            let mut moved = false;
             for child in stale {
-                if let Some(entry) = place_positioned_child(
+                match place_positioned_child(
                     child,
                     plan.content_origin,
                     plan.content,
@@ -3610,7 +3614,20 @@ pub(super) fn place_remote_overlays(
                     output,
                     Some(scope),
                 )? {
-                    placed.push(entry);
+                    Some(entry) => {
+                        // Only a box written or a placement the plan did not
+                        // hold yet moves anything: the same result again
+                        // leaves the next round where this one was.
+                        moved |= output.contains_key(&child)
+                            || plan
+                                .overlay
+                                .iter()
+                                .find(|kept| kept.child == child)
+                                .is_none_or(|kept| !kept.same_placement(&entry));
+                        placed.push(entry);
+                    }
+                    // Removed, or back in flow: the plan no longer hangs it.
+                    None => gone.push(child),
                 }
             }
             publish_overlay_plan(
@@ -3624,7 +3641,15 @@ pub(super) fn place_remote_overlays(
                 false,
                 nodes,
             );
-            placed_any = true;
+            if !gone.is_empty() {
+                if let Some(Some(published)) = nodes.container_plans.get_mut(&id) {
+                    published
+                        .overlay
+                        .retain(|entry| !gone.contains(&entry.child));
+                }
+                moved = true;
+            }
+            placed_any |= moved;
         }
         if !placed_any {
             return Ok(());
