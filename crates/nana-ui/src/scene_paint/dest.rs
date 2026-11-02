@@ -442,6 +442,8 @@ pub(super) struct DestPassCounts {
     pub blit: u32,
     pub group: u32,
     pub backdrop: u32,
+    /// Dest pixels the groups composited over, summed.
+    pub composite_pixels: u64,
     /// Copies of the dest's text-free prefix into its snapshot, and back.
     pub prefix_store: u32,
     pub prefix_restore: u32,

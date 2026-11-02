@@ -2614,6 +2614,7 @@ impl SceneWgpuPainter {
                 gpu_work: &gpu_work,
                 motion: self.motion.bind_group(),
                 group_extents: &group_extents,
+                group_extents_exact: !gpu_motion_live,
             };
             let (load, rest) = match prefix {
                 PrefixUse::Restore(PrefixSplit::Ordered(split)) => {
@@ -3358,6 +3359,9 @@ struct EncodeOrdered<'a> {
     motion: &'a wgpu::BindGroup,
     /// What each group can change, by slot ([`group_extents`]).
     group_extents: &'a [GroupExtent],
+    /// The extents hold for this frame: nothing moves on the GPU past the
+    /// bounds the CPU encoded (a live transform, glyph or chart motion).
+    group_extents_exact: bool,
 }
 
 /// Which dest pixels a group can change when it composites.
@@ -3559,8 +3563,14 @@ fn encode_ordered(
                     index += 1;
                     continue;
                 }
-                // Where the group can change its parent: a blend that reads
-                // the backdrop copies and composites only there.
+                // Where the group can change its parent. Outside it the layer
+                // is still transparent, which no blend composites into a
+                // change: a small group composites only there instead of over
+                // the whole dest. A blend that reads the backdrop also copies
+                // only there. While something moves on the GPU the extents are
+                // the encoded bounds, not where it is now, so only the
+                // backdrop copy — which needs them — is limited.
+                let reads_backdrop = dest.reads_backdrop(frame.slot);
                 let whole = PhysicalRect {
                     x: 0,
                     y: 0,
@@ -3568,7 +3578,7 @@ fn encode_ordered(
                     height: dest_physical[1],
                 };
                 let mut area = None;
-                if dest.reads_backdrop(frame.slot) {
+                if reads_backdrop || pipelines.group_extents_exact {
                     let region = match pipelines.group_extents.get(frame.slot as usize) {
                         Some(GroupExtent::Empty) => {
                             // Nothing drawn: every blend of a transparent
@@ -3584,6 +3594,8 @@ fn encode_ordered(
                         continue;
                     }
                     area = Some(region);
+                }
+                if let Some(region) = area.filter(|_| reads_backdrop) {
                     // The blend reads what it lands on: bring the parent up
                     // to date — a first use still has to clear it — and copy
                     // it before compositing over it.
@@ -3624,9 +3636,9 @@ fn encode_ordered(
                     }
                 };
                 restore_dest_viewport(&mut pass, dest_physical);
-                if let Some(area) = area {
-                    pass.set_scissor_rect(area.x, area.y, area.width, area.height);
-                }
+                let area = area.unwrap_or(whole);
+                pass.set_scissor_rect(area.x, area.y, area.width, area.height);
+                dest_passes.composite_pixels += u64::from(area.width) * u64::from(area.height);
                 dest.composite_group(&mut pass, frame.layer, frame.slot, Some(pipelines.gpu_work));
                 drop(pass);
                 index += 1;
