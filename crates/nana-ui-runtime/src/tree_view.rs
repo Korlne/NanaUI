@@ -25,7 +25,7 @@ use std::sync::Arc;
 
 use nana_ui_core::{
     ControlSize, Icon, LengthSpec, PositionSpec, TreeNavigation, TreeNode, TreeViewEvent,
-    tree_navigation_event,
+    tree_navigation_event, tree_preorder,
 };
 
 use crate::view_components::{TextChanged, TextInput, project_common};
@@ -475,13 +475,18 @@ impl ComponentView for TreeView {
     }
 }
 
+// A tree's depth is its data's (a file system, a JSON document), so none of
+// these walks recurses by it: the read-only ones go through
+// `tree_preorder`, the others keep their open levels on the heap.
+
 fn collect_rows(nodes: &[TreeNode<Arc<str>>], depth: u8, rows: &mut Vec<TreeRowData>) {
-    for node in nodes {
+    for step in tree_preorder(nodes, |node| node.branch && node.expanded) {
+        let node = step.node;
         rows.push(TreeRowData {
             id: Arc::clone(&node.id),
             label: Arc::from(node.label.as_str()),
             icon: node.icon,
-            depth,
+            depth: depth.saturating_add(u8::try_from(step.depth).unwrap_or(u8::MAX)),
             branch: node.branch,
             expanded: node.expanded,
             selected: node.selected,
@@ -489,56 +494,59 @@ fn collect_rows(nodes: &[TreeNode<Arc<str>>], depth: u8, rows: &mut Vec<TreeRowD
             toggles: node.toggles.clone(),
             hidden_toggles: node.hidden_toggles,
         });
-        if node.branch && node.expanded {
-            collect_rows(&node.children, depth.saturating_add(1), rows);
-        }
     }
+}
+
+/// Every node, collapsed ones' children too.
+fn every_node(nodes: &[TreeNode<Arc<str>>]) -> impl Iterator<Item = &TreeNode<Arc<str>>> {
+    tree_preorder(nodes, |_| true).map(|step| step.node)
 }
 
 fn find_selected(nodes: &[TreeNode<Arc<str>>]) -> Option<&Arc<str>> {
-    for node in nodes {
-        if node.selected {
-            return Some(&node.id);
-        }
-        if let Some(id) = find_selected(&node.children) {
-            return Some(id);
-        }
-    }
-    None
+    every_node(nodes)
+        .find(|node| node.selected)
+        .map(|node| &node.id)
 }
 
 fn collect_selected(nodes: &[TreeNode<Arc<str>>], out: &mut Vec<Arc<str>>) {
-    for node in nodes {
-        if node.selected {
-            out.push(Arc::clone(&node.id));
-        }
-        collect_selected(&node.children, out);
-    }
+    out.extend(
+        every_node(nodes)
+            .filter(|node| node.selected)
+            .map(|node| Arc::clone(&node.id)),
+    );
 }
 
 fn find_node<'a>(nodes: &'a [TreeNode<Arc<str>>], id: &Arc<str>) -> Option<&'a TreeNode<Arc<str>>> {
-    for node in nodes {
-        if &node.id == id {
-            return Some(node);
-        }
-        if let Some(found) = find_node(&node.children, id) {
-            return Some(found);
-        }
+    every_node(nodes).find(|node| &node.id == id)
+}
+
+/// Visits every node in document order.
+fn for_each_mut(nodes: &mut [TreeNode<Arc<str>>], mut visit: impl FnMut(&mut TreeNode<Arc<str>>)) {
+    let mut open = vec![nodes.iter_mut()];
+    while let Some(level) = open.last_mut() {
+        let Some(node) = level.next() else {
+            open.pop();
+            continue;
+        };
+        visit(node);
+        open.push(node.children.iter_mut());
     }
-    None
 }
 
 fn find_node_mut<'a>(
     nodes: &'a mut [TreeNode<Arc<str>>],
     id: &Arc<str>,
 ) -> Option<&'a mut TreeNode<Arc<str>>> {
-    for node in nodes {
+    let mut open = vec![nodes.iter_mut()];
+    while let Some(level) = open.last_mut() {
+        let Some(node) = level.next() else {
+            open.pop();
+            continue;
+        };
         if &node.id == id {
             return Some(node);
         }
-        if let Some(found) = find_node_mut(&mut node.children, id) {
-            return Some(found);
-        }
+        open.push(node.children.iter_mut());
     }
     None
 }
@@ -565,43 +573,35 @@ fn set_selected(nodes: &mut [TreeNode<Arc<str>>], id: &Arc<str>, on: bool) -> bo
 
 fn set_selection(nodes: &mut [TreeNode<Arc<str>>], ids: &[Arc<str>]) -> bool {
     let mut changed = false;
-    for node in nodes {
+    for_each_mut(nodes, |node| {
         let selected = !node.disabled && ids.contains(&node.id);
         if node.selected != selected {
             node.selected = selected;
             changed = true;
         }
-        changed |= set_selection(&mut node.children, ids);
-    }
+    });
     changed
 }
 
 fn toggle_node(nodes: &mut [TreeNode<Arc<str>>], id: &Arc<str>) -> bool {
-    for node in nodes {
-        if &node.id == id {
-            if !node.branch {
-                return false;
-            }
+    match find_node_mut(nodes, id) {
+        Some(node) if node.branch => {
             node.expanded = !node.expanded;
-            return true;
+            true
         }
-        if toggle_node(&mut node.children, id) {
-            return true;
-        }
+        _ => false,
     }
-    false
 }
 
 fn select_node(nodes: &mut [TreeNode<Arc<str>>], id: &Arc<str>) -> bool {
     let mut changed = false;
-    for node in nodes {
+    for_each_mut(nodes, |node| {
         let selected = &node.id == id && !node.disabled;
         if node.selected != selected {
             node.selected = selected;
             changed = true;
         }
-        changed |= select_node(&mut node.children, id);
-    }
+    });
     changed
 }
 
@@ -1393,6 +1393,44 @@ mod tests {
         let event = tree.navigate(TreeNavigation::Next).expect("next");
         assert_eq!(event, TreeViewEvent::Select(Arc::from("readme")));
         assert_eq!(tree.selected_id().map(Arc::as_ref), Some("readme"));
+    }
+
+    /// A chain of `depth` expanded branches with a selected leaf at the
+    /// bottom, built without recursion.
+    fn chain(depth: usize) -> TreeNode<Arc<str>> {
+        let mut node = TreeNode::leaf(Arc::from("leaf"), "leaf").selected(true);
+        for level in (0..depth).rev() {
+            node = TreeNode::branch(Arc::from(format!("n{level}")), "branch", true, [node]);
+        }
+        node
+    }
+
+    #[test]
+    fn data_deeper_than_the_stack_walks_clones_compares_and_drops() {
+        // A JSON document or a file system can nest this deep; unguarded,
+        // every walk, the clone, the comparison and the drop took one frame
+        // per level and ran out of this 512 KiB stack.
+        std::thread::Builder::new()
+            .stack_size(512 << 10)
+            .spawn(|| {
+                let depth = 20_000;
+                let mut tree = TreeView::new([chain(depth)]);
+                assert_eq!(tree.visible_rows().len(), depth + 1);
+                assert_eq!(tree.selected_id().map(Arc::as_ref), Some("leaf"));
+                let copy = tree.clone();
+                assert_eq!(copy, tree);
+                assert!(tree.apply_event(TreeViewEvent::Select(Arc::from("n7"))));
+                assert_ne!(copy, tree);
+                assert!(tree.navigate(TreeNavigation::Next).is_some());
+                let last = format!("n{}", depth - 1);
+                assert!(tree.apply_event(TreeViewEvent::Toggle(Arc::from(last.as_str()))));
+                assert_eq!(tree.visible_rows().len(), depth);
+                drop(copy);
+                drop(tree);
+            })
+            .unwrap()
+            .join()
+            .expect("a walk of the tree's data ran out of stack");
     }
 
     /// The tree's height and its rows' boxes and label starts, as laid out.

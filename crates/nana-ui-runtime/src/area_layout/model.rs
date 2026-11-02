@@ -168,6 +168,9 @@ impl AreaLayoutModel {
         if self.area(&new).is_some() {
             return false;
         }
+        if leaf_depth(&self.root, id).is_none_or(|depth| depth >= crate::MAX_SPLIT_DEPTH) {
+            return false;
+        }
         let Some(node) = find_leaf(&mut self.root, id) else {
             return false;
         };
@@ -394,6 +397,22 @@ fn find_leaf<'a>(node: &'a mut AreaNode, id: &str) -> Option<&'a mut AreaNode> {
     }
 }
 
+/// Splits above the area `id`, counted without recursing.
+fn leaf_depth(root: &AreaNode, id: &str) -> Option<usize> {
+    let mut open = vec![(root, 0)];
+    while let Some((node, depth)) = open.pop() {
+        match node {
+            AreaNode::Area { id: leaf } if leaf == id => return Some(depth),
+            AreaNode::Area { .. } => {}
+            AreaNode::Split { first, second, .. } => {
+                open.push((first, depth + 1));
+                open.push((second, depth + 1));
+            }
+        }
+    }
+    None
+}
+
 fn is_leaf(node: &AreaNode, id: &str) -> bool {
     matches!(node, AreaNode::Area { id: leaf } if leaf == id)
 }
@@ -448,6 +467,21 @@ mod tests {
         assert!(model.split("params", AreaAxis::Vertical, 0.5, "props"));
         model.set_editor("props", "properties");
         model
+    }
+
+    #[test]
+    fn a_split_past_the_split_depth_is_refused() {
+        let mut model = AreaLayoutModel::single("a0", "editor");
+        let mut last = String::from("a0");
+        for n in 1..=crate::MAX_SPLIT_DEPTH {
+            let next = format!("a{n}");
+            assert!(model.split(&last, AreaAxis::Horizontal, 0.5, next.as_str()));
+            last = next;
+        }
+        assert!(!model.split(&last, AreaAxis::Horizontal, 0.5, "past"));
+        assert!(model.area("past").is_none());
+        // A shallower area still splits.
+        assert!(model.split("a0", AreaAxis::Vertical, 0.5, "beside"));
     }
 
     #[test]

@@ -203,6 +203,17 @@ fn overflow_contained_axes(
 /// written. Real UIs nest one to two orders of magnitude below this.
 pub const MAX_TREE_DEPTH: usize = 512;
 
+/// Most splits a panel layout nests: a [`crate::DockNode`],
+/// [`crate::PaneTreeNode`] or [`crate::AreaNode`] tree. Each split halves a
+/// pane, so a useful layout stays far inside this. A split the framework
+/// makes (a dock drop, [`crate::AreaLayoutModel::split`]) past it is refused;
+/// a layout this deep still saves and restores through `serde_json`, which
+/// reads at most 128 levels, so no layout the framework reads back is deeper
+/// than about twice this. The walks over a layout recurse by its depth and
+/// are tested at it on a 512 KiB stack; an application building a tree
+/// itself keeps to it.
+pub const MAX_SPLIT_DEPTH: usize = 64;
+
 /// Retired node IDs, stored as coalesced inclusive runs.
 ///
 /// Retirement is permanent: a stale handle must never alias a node created

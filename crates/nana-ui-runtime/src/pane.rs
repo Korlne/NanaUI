@@ -427,6 +427,21 @@ impl PaneTreeNode {
         self.visit_leaves_with(&mut visitor);
     }
 
+    /// Splits on the deepest path from here to a leaf, counted without
+    /// recursing; see [`crate::MAX_SPLIT_DEPTH`].
+    pub fn split_depth(&self) -> usize {
+        let mut deepest = 0;
+        let mut open = vec![(self, 0)];
+        while let Some((node, depth)) = open.pop() {
+            deepest = deepest.max(depth);
+            if let Self::Split { first, second, .. } = node {
+                open.push((first, depth + 1));
+                open.push((second, depth + 1));
+            }
+        }
+        deepest
+    }
+
     fn visit_leaves_with(&self, visitor: &mut impl FnMut(&Arc<str>)) {
         match self {
             Self::Leaf { pane_id, .. } => visitor(pane_id),

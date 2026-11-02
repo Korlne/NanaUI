@@ -1,6 +1,11 @@
 //! Backend-neutral tree navigation. Runtime consumes this walk.
+//!
+//! A tree's depth is its data's, with no bound (a file system, a JSON
+//! document), so nothing here recurses by it: walks keep their open levels
+//! on the heap ([`tree_preorder`]), and a node clones, compares and drops
+//! without one call per level. `Debug` alone is derived and nests.
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct TreeNode<Id> {
     pub id: Id,
     pub label: String,
@@ -102,6 +107,151 @@ pub fn toggle_hidden(mask: u64, column: usize) -> bool {
     column < 64 && mask & (1 << column) != 0
 }
 
+impl<Id> TreeNode<Id> {
+    /// This node without its children.
+    fn shallow_clone(&self) -> Self
+    where
+        Id: Clone,
+    {
+        Self {
+            id: self.id.clone(),
+            label: self.label.clone(),
+            icon: self.icon,
+            branch: self.branch,
+            expanded: self.expanded,
+            selected: self.selected,
+            disabled: self.disabled,
+            toggles: self.toggles.clone(),
+            hidden_toggles: self.hidden_toggles,
+            children: Vec::with_capacity(self.children.len()),
+        }
+    }
+
+    /// Everything but the children is equal.
+    fn shallow_eq(&self, other: &Self) -> bool
+    where
+        Id: PartialEq,
+    {
+        self.id == other.id
+            && self.label == other.label
+            && self.icon == other.icon
+            && self.branch == other.branch
+            && self.expanded == other.expanded
+            && self.selected == other.selected
+            && self.disabled == other.disabled
+            && self.toggles == other.toggles
+            && self.hidden_toggles == other.hidden_toggles
+            && self.children.len() == other.children.len()
+    }
+}
+
+impl<Id: Clone> Clone for TreeNode<Id> {
+    fn clone(&self) -> Self {
+        // Each open level: the node being copied, its copy so far, and the
+        // next child to copy into it.
+        let mut open = vec![(self, self.shallow_clone(), 0)];
+        loop {
+            let (source, _, next) = open.last_mut().expect("the root is open");
+            let source: &Self = source;
+            if let Some(child) = source.children.get(*next) {
+                *next += 1;
+                open.push((child, child.shallow_clone(), 0));
+                continue;
+            }
+            let (_, copy, _) = open.pop().expect("the root is open");
+            match open.last_mut() {
+                Some((_, parent, _)) => parent.children.push(copy),
+                None => return copy,
+            }
+        }
+    }
+}
+
+impl<Id: PartialEq> PartialEq for TreeNode<Id> {
+    fn eq(&self, other: &Self) -> bool {
+        let mut pairs = vec![(self, other)];
+        while let Some((a, b)) = pairs.pop() {
+            if !a.shallow_eq(b) {
+                return false;
+            }
+            pairs.extend(a.children.iter().zip(&b.children));
+        }
+        true
+    }
+}
+
+impl<Id: Eq> Eq for TreeNode<Id> {}
+
+impl<Id> Drop for TreeNode<Id> {
+    fn drop(&mut self) {
+        // Every descendant leaves its parent before it drops, so each node
+        // drops with no children and no drop runs inside another.
+        let mut pending = std::mem::take(&mut self.children);
+        while let Some(mut node) = pending.pop() {
+            pending.append(&mut node.children);
+        }
+    }
+}
+
+/// One node of a [`tree_preorder`] walk.
+pub struct TreeStep<'a, Id> {
+    pub node: &'a TreeNode<Id>,
+    pub parent: Option<&'a TreeNode<Id>>,
+    /// 0 for the nodes of the slice the walk started from.
+    pub depth: usize,
+}
+
+/// The nodes of `nodes` and their descendants in document order: a node,
+/// then its children, then its next sibling. A node's children are entered
+/// only when `descend` says so. The open levels are kept on the heap, so any
+/// depth walks on any stack.
+pub fn tree_preorder<'a, Id, F>(nodes: &'a [TreeNode<Id>], descend: F) -> TreePreorder<'a, Id, F>
+where
+    F: FnMut(&TreeNode<Id>) -> bool,
+{
+    TreePreorder {
+        open: vec![(None, nodes.iter())],
+        descend,
+    }
+}
+
+/// One open level of a [`tree_preorder`] walk: the node whose children it
+/// walks (`None` at the top), and the children left.
+type OpenLevel<'a, Id> = (Option<&'a TreeNode<Id>>, std::slice::Iter<'a, TreeNode<Id>>);
+
+/// See [`tree_preorder`].
+pub struct TreePreorder<'a, Id, F> {
+    open: Vec<OpenLevel<'a, Id>>,
+    descend: F,
+}
+
+impl<'a, Id, F> Iterator for TreePreorder<'a, Id, F>
+where
+    F: FnMut(&TreeNode<Id>) -> bool,
+{
+    type Item = TreeStep<'a, Id>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            let (parent, level) = self.open.last_mut()?;
+            let parent = *parent;
+            let Some(node) = level.next() else {
+                self.open.pop();
+                continue;
+            };
+            let depth = self.open.len() - 1;
+            if !node.children.is_empty() && (self.descend)(node) {
+                self.open.push((Some(node), node.children.iter()));
+            }
+            return Some(TreeStep {
+                node,
+                parent,
+                depth,
+            });
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TreeViewEvent<Id> {
     Toggle(Id),
@@ -128,15 +278,14 @@ struct VisibleTreeNode<'a, Id> {
 
 fn collect_visible_nodes<'a, Id>(
     nodes: &'a [TreeNode<Id>],
-    parent: Option<&'a Id>,
     visible: &mut Vec<VisibleTreeNode<'a, Id>>,
 ) {
-    for node in nodes {
-        visible.push(VisibleTreeNode { node, parent });
-        if node.branch && node.expanded {
-            collect_visible_nodes(&node.children, Some(&node.id), visible);
-        }
-    }
+    visible.extend(
+        tree_preorder(nodes, |node| node.branch && node.expanded).map(|step| VisibleTreeNode {
+            node: step.node,
+            parent: step.parent.map(|parent| &parent.id),
+        }),
+    );
 }
 
 pub fn tree_navigation_event<Id: Clone + Eq>(
@@ -145,7 +294,7 @@ pub fn tree_navigation_event<Id: Clone + Eq>(
     navigation: TreeNavigation,
 ) -> Option<TreeViewEvent<Id>> {
     let mut visible = Vec::new();
-    collect_visible_nodes(nodes, None, &mut visible);
+    collect_visible_nodes(nodes, &mut visible);
     if visible.is_empty() {
         return None;
     }

@@ -199,7 +199,10 @@ pub use theme::{
     TreeMetrics, TypeRole, TypographyTokens, UI_BASE_TEXT_SIZE, UI_METRICS, builtin_theme,
     builtin_theme_arc, linear_scrim_alpha, space, type_scale,
 };
-pub use tree::{TreeNavigation, TreeNode, TreeViewEvent, tree_navigation_event};
+pub use tree::{
+    TreeNavigation, TreeNode, TreePreorder, TreeStep, TreeViewEvent, tree_navigation_event,
+    tree_preorder,
+};
 pub use typography::{
     FontKerningSpec, FontVariationSetting, LineBreakSpec, TextAutospaceSpec, TextEmphasis,
     TextEmphasisColor, TextEmphasisPosition, TextEmphasisShape, TextEmphasisStyle, TextJustifySpec,

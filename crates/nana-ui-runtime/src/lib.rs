@@ -487,8 +487,8 @@ pub use view_components::{
 pub use workspace::{Workspace, WorkspaceRegionSlot, WorkspaceResizeHandle};
 pub use world::{
     BuildIdHasher, CommitReport, DocumentId, IdHasher, InputModality, LocaleGenerations,
-    LocaleScope, MAX_TREE_DEPTH, NodeKind, NodeMap, NodeSet, NodeSnapshot, ReplacedMetadata,
-    ReplacedResource, StableNodeId, UiWorld, UiWorldError,
+    LocaleScope, MAX_SPLIT_DEPTH, MAX_TREE_DEPTH, NodeKind, NodeMap, NodeSet, NodeSnapshot,
+    ReplacedMetadata, ReplacedResource, StableNodeId, UiWorld, UiWorldError,
 };
 pub use xy_pad::{
     XYPad, XYPadAdjustment, XYPadAxisLock, XYPadDragState, XYPadEvent, XYPadSurface, XYPadValue,

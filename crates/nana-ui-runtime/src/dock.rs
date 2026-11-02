@@ -140,6 +140,21 @@ impl DockNode {
         ids
     }
 
+    /// Splits on the deepest path from here to a leaf, counted without
+    /// recursing; see [`crate::MAX_SPLIT_DEPTH`].
+    pub fn split_depth(&self) -> usize {
+        let mut deepest = 0;
+        let mut open = vec![(self, 0)];
+        while let Some((node, depth)) = open.pop() {
+            deepest = deepest.max(depth);
+            if let Self::Split { first, second, .. } = node {
+                open.push((first, depth + 1));
+                open.push((second, depth + 1));
+            }
+        }
+        deepest
+    }
+
     pub fn contains(&self, id: &str) -> bool {
         match self {
             Self::Item { id: item, .. } => item.as_ref() == id,
@@ -898,7 +913,7 @@ fn filter_hidden(node: &DockNode, hidden: &[Arc<str>]) -> Option<DockNode> {
 fn insert_dock_item(root: &mut DockNode, target: &str, item: DockNode, zone: DockDropZone) -> bool {
     match zone {
         DockDropZone::Tab => insert_tab(root, target, item),
-        zone => insert_split(root, target, item, zone),
+        zone => insert_split(root, target, item, zone, 0),
     }
 }
 
@@ -983,8 +998,19 @@ fn reorder_sibling_ids(
     changed
 }
 
-fn insert_split(root: &mut DockNode, target: &str, item: DockNode, zone: DockDropZone) -> bool {
+/// Splits the leaf holding `target`, `depth` splits below the root, to put
+/// `item` beside it. Refused at [`crate::MAX_SPLIT_DEPTH`].
+fn insert_split(
+    root: &mut DockNode,
+    target: &str,
+    item: DockNode,
+    zone: DockDropZone,
+    depth: usize,
+) -> bool {
     if root.contains(target) && matches!(root, DockNode::Item { .. } | DockNode::Tabs { .. }) {
+        if zone != DockDropZone::Tab && depth >= crate::MAX_SPLIT_DEPTH {
+            return false;
+        }
         let previous = root.clone();
         let (axis, first, second) = match zone {
             DockDropZone::Left => (DockAxis::Horizontal, item, previous),
@@ -998,8 +1024,8 @@ fn insert_split(root: &mut DockNode, target: &str, item: DockNode, zone: DockDro
     }
     match root {
         DockNode::Split { first, second, .. } => {
-            insert_split(first, target, item.clone(), zone)
-                || insert_split(second, target, item, zone)
+            insert_split(first, target, item.clone(), zone, depth + 1)
+                || insert_split(second, target, item, zone, depth + 1)
         }
         _ => false,
     }
@@ -3707,7 +3733,7 @@ pub(crate) static DOCK_HOOKS: crate::framework::DockHooks = crate::framework::Do
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{DocumentId, LayoutBox, MutationQueue, Text};
+    use crate::{DocumentId, LayoutBox, MAX_SPLIT_DEPTH, MutationQueue, Text};
 
     #[test]
     fn dock_workspace_layout_json_uses_historical_layout_fields() {
@@ -3897,6 +3923,49 @@ mod tests {
                     .node_style(*id)
                     .is_some_and(|style| !style.layout.hidden)
             })
+    }
+
+    /// `depth` splits down to the item `leaf`, each with an item beside it.
+    fn split_chain(depth: usize) -> DockNode {
+        let mut node = DockNode::item("leaf", None);
+        for n in 0..depth {
+            node = DockNode::split(
+                DockAxis::Horizontal,
+                0.5,
+                DockNode::item(format!("beside-{n}"), None),
+                node,
+            );
+        }
+        node
+    }
+
+    #[test]
+    fn a_drop_past_the_split_depth_is_refused() {
+        let mut full = split_chain(MAX_SPLIT_DEPTH);
+        assert_eq!(full.split_depth(), MAX_SPLIT_DEPTH);
+        let item = DockNode::item("dropped", None);
+        assert!(!insert_dock_item(
+            &mut full,
+            "leaf",
+            item.clone(),
+            DockDropZone::Right
+        ));
+        assert_eq!(full.split_depth(), MAX_SPLIT_DEPTH);
+        // A tab adds no split, and a shallower leaf still splits.
+        assert!(insert_dock_item(
+            &mut full,
+            "leaf",
+            item.clone(),
+            DockDropZone::Tab
+        ));
+        let mut room = split_chain(MAX_SPLIT_DEPTH - 1);
+        assert!(insert_dock_item(
+            &mut room,
+            "leaf",
+            item,
+            DockDropZone::Right
+        ));
+        assert_eq!(room.split_depth(), MAX_SPLIT_DEPTH);
     }
 
     #[test]
