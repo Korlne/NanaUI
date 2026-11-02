@@ -977,18 +977,18 @@ impl RetainedIntrinsic {
 #[derive(Default)]
 struct DocumentLayoutCache {
     inline_objects: HashMap<StableNodeId, Arc<[nana_text::InlineObject]>>,
-    intrinsics: HashMap<StableNodeId, RetainedIntrinsic>,
+    intrinsics: crate::store::DenseNodeMap<RetainedIntrinsic>,
     /// Content-derived intrinsic facts, independent from retained used sizes.
     intrinsic_metrics: RetainedIntrinsicMetrics,
     intrinsic_counters: crate::IntrinsicCacheCounters,
-    boxes: HashMap<StableNodeId, LayoutBox>,
+    boxes: crate::store::DenseNodeMap<LayoutBox>,
     materialized_inputs: usize,
-    placements: HashMap<StableNodeId, (Point, Size, f32)>,
-    pub(crate) used_padding: HashMap<StableNodeId, nana_ui_core::PaddingSpec>,
+    placements: crate::store::DenseNodeMap<(Point, Size, f32)>,
+    pub(crate) used_padding: crate::store::DenseNodeMap<nana_ui_core::PaddingSpec>,
     /// Per container, the page axes placement starts at the far end.
-    far_start: HashMap<StableNodeId, [bool; 2]>,
+    far_start: crate::store::DenseNodeMap<[bool; 2]>,
     /// Per container, the formatting context its last placement ran.
-    contexts: HashMap<StableNodeId, crate::FormattingContextKind>,
+    contexts: crate::store::DenseNodeMap<crate::FormattingContextKind>,
     /// Cached in-flow child placement per container. See [`ContainerPlan`].
     container_plans: HashMap<StableNodeId, ContainerPlan>,
     /// The containers whose plan holds an absolute child hung from an
@@ -997,7 +997,7 @@ struct DocumentLayoutCache {
     remote_overlays: HashSet<StableNodeId>,
     /// Cached intrinsic measurement per content-sized container. See
     /// [`MeasurePlan`].
-    measure_plans: HashMap<StableNodeId, MeasurePlanSlots>,
+    measure_plans: crate::store::DenseNodeMap<MeasurePlanSlots>,
     /// Dynamic Layout envelopes, by box (Issue #213).
     envelopes: HashMap<StableNodeId, dynamic::RetainedEnvelope>,
     /// Where each overflowing line's solve stopped, by container.
@@ -1051,9 +1051,9 @@ struct FullLayoutSnapshot {
     viewport_height: u32,
     epoch: u64,
     emitted: Vec<(StableNodeId, LayoutBox)>,
-    used_padding: HashMap<StableNodeId, nana_ui_core::PaddingSpec>,
-    far_start: HashMap<StableNodeId, [bool; 2]>,
-    contexts: HashMap<StableNodeId, crate::FormattingContextKind>,
+    used_padding: crate::store::DenseNodeMap<nana_ui_core::PaddingSpec>,
+    far_start: crate::store::DenseNodeMap<[bool; 2]>,
+    contexts: crate::store::DenseNodeMap<crate::FormattingContextKind>,
 }
 
 /// Retained intrinsic facts, grouped by the content they describe. A node has
@@ -2343,11 +2343,11 @@ struct LayoutInputMap<'a> {
     /// this map.
     styles: RefCell<crate::store::DenseNodeMap<Option<Arc<nana_ui_core::LayoutStyle>>>>,
     materialized: usize,
-    placements: HashMap<StableNodeId, (Point, Size, f32)>,
-    used_padding: HashMap<StableNodeId, nana_ui_core::PaddingSpec>,
-    far_start: HashMap<StableNodeId, [bool; 2]>,
+    placements: crate::store::DenseNodeMap<(Point, Size, f32)>,
+    used_padding: crate::store::DenseNodeMap<nana_ui_core::PaddingSpec>,
+    far_start: crate::store::DenseNodeMap<[bool; 2]>,
     /// Formatting context each container measured or placed this pass ran.
-    contexts: HashMap<StableNodeId, crate::FormattingContextKind>,
+    contexts: crate::store::DenseNodeMap<crate::FormattingContextKind>,
     /// Container plans rebuilt this pass. Merged into the retained cache at the
     /// end; containers that took the fast path record nothing, so their
     /// existing plan simply stays. `None` retires a plan recorded when the
@@ -2355,7 +2355,7 @@ struct LayoutInputMap<'a> {
     container_plans: HashMap<StableNodeId, Option<ContainerPlan>>,
     /// Measure plans rebuilt this pass, merged the same way. An entry that
     /// ends the pass empty retires the container's retained plans.
-    measure_plans: HashMap<StableNodeId, MeasurePlanSlots>,
+    measure_plans: crate::store::DenseNodeMap<MeasurePlanSlots>,
     /// First and last baselines of boxes whose line boxes are all their
     /// descendants', by node and used border-box size, derived this pass from
     /// where those descendants sit ([`inline::descendant_baselines`]). `None`:
@@ -2418,12 +2418,12 @@ impl<'a> LayoutInputMap<'a> {
             nodes: crate::store::DenseNodeMap::default(),
             styles: RefCell::default(),
             materialized: 0,
-            placements: HashMap::new(),
-            used_padding: HashMap::new(),
-            far_start: HashMap::new(),
-            contexts: HashMap::new(),
+            placements: Default::default(),
+            used_padding: Default::default(),
+            far_start: Default::default(),
+            contexts: Default::default(),
             container_plans: HashMap::new(),
-            measure_plans: HashMap::new(),
+            measure_plans: Default::default(),
             derived_baselines: HashMap::new(),
             line_boxes: RefCell::default(),
         }
@@ -2482,10 +2482,10 @@ impl<'a> LayoutInputMap<'a> {
 
     /// Style for classifying / measuring siblings without assembling `LayoutInput`.
     fn style(&self, id: StableNodeId) -> Option<Arc<nana_ui_core::LayoutStyle>> {
-        if let Some(node) = self.nodes.get(id) {
+        if let Some(node) = self.nodes.get(&id) {
             return Some(Arc::clone(&node.style));
         }
-        if let Some(cached) = self.styles.borrow().get(id) {
+        if let Some(cached) = self.styles.borrow().get(&id) {
             return cached.clone();
         }
         let resolved = self.world.layout_style(id);
@@ -2594,7 +2594,7 @@ impl<'a> LayoutInputMap<'a> {
             let block = used.and_then(|used| {
                 let (_, block) = self
                     .nodes
-                    .get(id)
+                    .get(&id)
                     .map(|node| node.writing.logical_size(used.width, used.height))?;
                 Some(block.max(0.0))
             });
@@ -2700,7 +2700,7 @@ impl<'a> LayoutInputMap<'a> {
             let block = used.map(|used| {
                 let writing = self
                     .nodes
-                    .get(id)
+                    .get(&id)
                     .map_or_else(Default::default, |node| node.writing);
                 writing.logical_size(used.width, used.height).1.max(0.0)
             });
@@ -2717,7 +2717,7 @@ impl<'a> LayoutInputMap<'a> {
         {
             let writing = self
                 .nodes
-                .get(id)
+                .get(&id)
                 .map_or_else(Default::default, |node| node.writing);
             let block = Some(writing.logical_size(used.width, used.height).1.max(0.0));
             return BaselineMetrics {
@@ -2731,7 +2731,7 @@ impl<'a> LayoutInputMap<'a> {
         );
         let ascent = self
             .nodes
-            .get(id)
+            .get(&id)
             .and_then(|node| node.text_metrics)
             .and_then(|metrics| metrics.ascent)
             .filter(|value| value.is_finite() && *value >= 0.0);
@@ -2780,7 +2780,7 @@ impl<'a> LayoutInputMap<'a> {
         );
         let writing = self
             .nodes
-            .get(id)
+            .get(&id)
             .map_or_else(Default::default, |node| node.writing);
         let (_, block_extent) = writing.logical_size(used.width, used.height);
         if self
@@ -3146,7 +3146,7 @@ struct PassIntrinsicCache {
     /// Retained measure plans this pass answered from, by container and the
     /// constraint each holds: they saw what changed under them this pass.
     consulted_plans: Vec<(StableNodeId, Size)>,
-    latest_intrinsic_keys: HashMap<StableNodeId, crate::IntrinsicCacheKey>,
+    latest_intrinsic_keys: crate::store::DenseNodeMap<crate::IntrinsicCacheKey>,
     seeded_intrinsic: hashbrown::HashSet<crate::IntrinsicCacheKey>,
     extra_counters: crate::IntrinsicCacheCounters,
     execution_stats: LayoutExecutionStats,
@@ -3177,7 +3177,7 @@ impl PassIntrinsicCache {
             new_metrics: HashMap::with_capacity(capacity),
             retired_facts: Vec::new(),
             consulted_plans: Vec::new(),
-            latest_intrinsic_keys: HashMap::with_capacity(capacity),
+            latest_intrinsic_keys: Default::default(),
             seeded_intrinsic: hashbrown::HashSet::with_capacity(capacity),
             extra_counters: crate::IntrinsicCacheCounters::default(),
             execution_stats: LayoutExecutionStats::default(),

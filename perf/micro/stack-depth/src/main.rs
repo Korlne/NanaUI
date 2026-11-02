@@ -487,7 +487,12 @@ fn main() {
                 "| engine ({build}) | boxes | fastest layout | per box | build + layout per box | heap per box | allocations per box |"
             );
             println!("| --- | ---: | ---: | ---: | ---: | ---: | ---: |");
-            for (rows, cells) in [(100, 10), (500, 10), (1000, 10)] {
+            // `wide 50,200,800` picks the row counts (10 cells a row).
+            let rows: Vec<usize> = match arg(1) {
+                Some(list) => list.split(',').map(|r| r.parse().unwrap()).collect(),
+                None => vec![100, 500, 1000],
+            };
+            for (rows, cells) in rows.into_iter().map(|rows| (rows, 10)) {
                 let boxes = 1 + rows * (1 + 2 * cells);
                 for (name, run) in [
                     (
@@ -516,8 +521,9 @@ fn main() {
         }
         Some("wide-loop") => {
             // For a profiler: lay the 10 501-box page out over and over.
+            let rows = arg(1).map_or(500, |rows| rows.parse().unwrap());
             loop {
-                nana_wide(500, 10);
+                nana_wide(rows, 10);
             }
         }
         Some("stages") => {

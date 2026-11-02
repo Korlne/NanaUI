@@ -299,9 +299,17 @@ impl EditorRecord {
 /// A map keyed by node, laid out as [`NodeTable`] lays out the records:
 /// ids up to [`DENSE_LIMIT`] index a vector, the rest fall back to a hash
 /// map. A pass looks the same nodes up many times over, and indexing
-/// costs neither a hash nor a probe.
+/// costs neither a hash nor a probe; a walk in id order (the order nodes
+/// are created in) reads the table front to back instead of at random.
+///
+/// The API follows `HashMap<StableNodeId, V>`, so a table holding about one
+/// entry per node can change type without its users changing. Iteration is
+/// in id order, then the overflow's; nothing may depend on either. Keep a
+/// table that holds a few nodes out of many a hash map: iterating or
+/// clearing this one costs the highest id it has held.
+#[derive(Clone)]
 pub(crate) struct DenseNodeMap<V> {
-    dense: Vec<Option<V>>,
+    dense: Vec<Option<(StableNodeId, V)>>,
     overflow: crate::NodeMap<V>,
     len: usize,
 }
@@ -313,6 +321,18 @@ impl<V> Default for DenseNodeMap<V> {
             overflow: crate::NodeMap::default(),
             len: 0,
         }
+    }
+}
+
+impl<V: std::fmt::Debug> std::fmt::Debug for DenseNodeMap<V> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_map().entries(self.iter()).finish()
+    }
+}
+
+impl<V: PartialEq> PartialEq for DenseNodeMap<V> {
+    fn eq(&self, other: &Self) -> bool {
+        self.len == other.len && self.iter().all(|(id, value)| other.get(id) == Some(value))
     }
 }
 
@@ -335,34 +355,118 @@ impl<V> DenseNodeMap<V> {
         self.len == 0
     }
 
-    pub(crate) fn get(&self, id: StableNodeId) -> Option<&V> {
-        if let Some(Some(value)) = self.dense.get(id.get() as usize) {
+    pub(crate) fn get(&self, id: &StableNodeId) -> Option<&V> {
+        if let Some(Some((_, value))) = self.dense.get(id.get() as usize) {
             return Some(value);
         }
         // An id put in the overflow before the vector grew past it.
         if self.overflow.is_empty() {
             return None;
         }
-        self.overflow.get(&id)
+        self.overflow.get(id)
+    }
+
+    pub(crate) fn get_mut(&mut self, id: &StableNodeId) -> Option<&mut V> {
+        if let Some(Some((_, value))) = self.dense.get_mut(id.get() as usize) {
+            return Some(value);
+        }
+        if self.overflow.is_empty() {
+            return None;
+        }
+        self.overflow.get_mut(id)
+    }
+
+    pub(crate) fn contains_key(&self, id: &StableNodeId) -> bool {
+        self.get(id).is_some()
+    }
+
+    /// The vector slot `id` lives in, grown to reach it, or `None` when it
+    /// belongs in the overflow.
+    fn slot(&mut self, id: StableNodeId) -> Option<&mut Option<(StableNodeId, V)>> {
+        let raw = id.get();
+        let index = raw as usize;
+        if !self.overflow.is_empty() && self.overflow.contains_key(&id) {
+            return None;
+        }
+        if index >= self.dense.len() {
+            if raw > DENSE_LIMIT || index > self.dense.len().saturating_add(DENSE_GAP) {
+                return None;
+            }
+            self.dense.resize_with(index + 1, || None);
+        }
+        Some(&mut self.dense[index])
     }
 
     pub(crate) fn insert(&mut self, id: StableNodeId, value: V) -> Option<V> {
-        let raw = id.get();
-        let index = raw as usize;
-        let previous = if !self.overflow.is_empty() && self.overflow.contains_key(&id) {
-            self.overflow.insert(id, value)
-        } else if index < self.dense.len() {
-            self.dense[index].replace(value)
-        } else if raw <= DENSE_LIMIT && index <= self.dense.len().saturating_add(DENSE_GAP) {
-            self.dense.resize_with(index + 1, || None);
-            self.dense[index].replace(value)
-        } else {
-            self.overflow.insert(id, value)
+        let previous = match self.slot(id) {
+            Some(slot) => slot.replace((id, value)).map(|(_, value)| value),
+            None => self.overflow.insert(id, value),
         };
         if previous.is_none() {
             self.len += 1;
         }
         previous
+    }
+
+    pub(crate) fn remove(&mut self, id: &StableNodeId) -> Option<V> {
+        let removed = match self.dense.get_mut(id.get() as usize) {
+            Some(slot @ Some(_)) => slot.take().map(|(_, value)| value),
+            _ if self.overflow.is_empty() => None,
+            _ => self.overflow.remove(id),
+        };
+        if removed.is_some() {
+            self.len -= 1;
+        }
+        removed
+    }
+
+    pub(crate) fn entry(&mut self, id: StableNodeId) -> DenseEntry<'_, V> {
+        DenseEntry { map: self, id }
+    }
+
+    /// The vector grows to the highest id it is given; nothing to reserve.
+    pub(crate) fn reserve(&mut self, _additional: usize) {}
+
+    /// Every entry, leaving the map empty.
+    pub(crate) fn drain(&mut self) -> <Self as IntoIterator>::IntoIter {
+        std::mem::take(self).into_iter()
+    }
+
+    pub(crate) fn clear(&mut self) {
+        self.dense.clear();
+        self.overflow.clear();
+        self.len = 0;
+    }
+
+    pub(crate) fn iter(&self) -> DenseIter<'_, V> {
+        fn entry<V>(slot: &Option<(StableNodeId, V)>) -> Option<(&StableNodeId, &V)> {
+            slot.as_ref().map(|(id, value)| (id, value))
+        }
+        let entry: fn(&Option<(StableNodeId, V)>) -> Option<(&StableNodeId, &V)> = entry::<V>;
+        self.dense
+            .iter()
+            .filter_map(entry)
+            .chain(self.overflow.iter())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn values(&self) -> impl Iterator<Item = &V> + '_ {
+        self.iter().map(|(_, value)| value)
+    }
+
+    pub(crate) fn retain(&mut self, mut keep: impl FnMut(&StableNodeId, &mut V) -> bool) {
+        let mut len = 0;
+        for slot in &mut self.dense {
+            if let Some((id, value)) = slot {
+                if keep(id, value) {
+                    len += 1;
+                } else {
+                    *slot = None;
+                }
+            }
+        }
+        self.overflow.retain(|id, value| keep(id, value));
+        self.len = len + self.overflow.len();
     }
 
     /// The value at `id`, inserting what `make` gives when there is none;
@@ -372,13 +476,89 @@ impl<V> DenseNodeMap<V> {
         id: StableNodeId,
         make: impl FnOnce() -> Result<Option<V>, E>,
     ) -> Result<Option<&V>, E> {
-        if self.get(id).is_none() {
+        if self.get(&id).is_none() {
             let Some(value) = make()? else {
                 return Ok(None);
             };
             self.insert(id, value);
         }
-        Ok(self.get(id))
+        Ok(self.get(&id))
+    }
+}
+
+/// [`DenseNodeMap::entry`]: the subset of `hash_map::Entry` its users need.
+pub(crate) struct DenseEntry<'a, V> {
+    map: &'a mut DenseNodeMap<V>,
+    id: StableNodeId,
+}
+
+impl<'a, V> DenseEntry<'a, V> {
+    pub(crate) fn or_insert_with(self, make: impl FnOnce() -> V) -> &'a mut V {
+        if !self.map.contains_key(&self.id) {
+            self.map.insert(self.id, make());
+        }
+        self.map.get_mut(&self.id).expect("inserted above")
+    }
+
+    pub(crate) fn or_default(self) -> &'a mut V
+    where
+        V: Default,
+    {
+        self.or_insert_with(V::default)
+    }
+}
+
+impl<V> std::ops::Index<&StableNodeId> for DenseNodeMap<V> {
+    type Output = V;
+
+    fn index(&self, id: &StableNodeId) -> &V {
+        self.get(id).expect("no entry for node")
+    }
+}
+
+impl<V> Extend<(StableNodeId, V)> for DenseNodeMap<V> {
+    fn extend<I: IntoIterator<Item = (StableNodeId, V)>>(&mut self, items: I) {
+        for (id, value) in items {
+            self.insert(id, value);
+        }
+    }
+}
+
+impl<V> FromIterator<(StableNodeId, V)> for DenseNodeMap<V> {
+    fn from_iter<I: IntoIterator<Item = (StableNodeId, V)>>(items: I) -> Self {
+        let mut map = Self::default();
+        map.extend(items);
+        map
+    }
+}
+
+impl<V> IntoIterator for DenseNodeMap<V> {
+    type Item = (StableNodeId, V);
+    type IntoIter = std::iter::Chain<
+        std::iter::Flatten<std::vec::IntoIter<Option<(StableNodeId, V)>>>,
+        <crate::NodeMap<V> as IntoIterator>::IntoIter,
+    >;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.dense.into_iter().flatten().chain(self.overflow)
+    }
+}
+
+/// [`DenseNodeMap::iter`].
+pub(crate) type DenseIter<'a, V> = std::iter::Chain<
+    std::iter::FilterMap<
+        std::slice::Iter<'a, Option<(StableNodeId, V)>>,
+        fn(&'a Option<(StableNodeId, V)>) -> Option<(&'a StableNodeId, &'a V)>,
+    >,
+    <&'a crate::NodeMap<V> as IntoIterator>::IntoIter,
+>;
+
+impl<'a, V> IntoIterator for &'a DenseNodeMap<V> {
+    type Item = (&'a StableNodeId, &'a V);
+    type IntoIter = DenseIter<'a, V>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
     }
 }
 

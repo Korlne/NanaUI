@@ -485,12 +485,12 @@ fn full_boxes(
     world: &UiWorld,
     document: DocumentId,
     viewport: LayoutViewport,
-) -> HashMap<StableNodeId, LayoutBox> {
+) -> crate::store::DenseNodeMap<LayoutBox> {
     RuntimeLayoutEngine
         .layout_document(world, document, viewport)
         .unwrap()
         .into_iter()
-        .collect::<HashMap<_, _>>()
+        .collect()
 }
 
 fn write_changed_boxes(
@@ -4505,7 +4505,7 @@ fn grid_auto_slot_overflow_does_not_reuse_origin() {
     assert!(col >= 2, "implicit column past wrap, got {col}");
 }
 
-fn spacing_tree(styles: &[(u64, LayoutStyle)]) -> HashMap<StableNodeId, LayoutBox> {
+fn spacing_tree(styles: &[(u64, LayoutStyle)]) -> crate::store::DenseNodeMap<LayoutBox> {
     let document = DocumentId::new(1).unwrap();
     let mut world = UiWorld::new();
     let mut q = MutationQueue::new();
