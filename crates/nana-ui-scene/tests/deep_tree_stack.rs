@@ -11,14 +11,12 @@ use nana_ui_runtime::{
 };
 use nana_ui_scene::RuntimeDocument;
 
-/// The stack a whole frame gets: half a macOS or iOS secondary thread's
-/// 512 KiB in a release build. Unoptimized code keeps a slot for every local
-/// of a function, so a debug build gets the whole 512 KiB.
-const FRAME_STACK: usize = if cfg!(debug_assertions) {
-    512 << 10
-} else {
-    256 << 10
-};
+/// The stack a whole frame gets, in either build: half a macOS or iOS
+/// secondary thread's 512 KiB. A debug frame needs more than a release one
+/// (unoptimized code keeps a slot for every local); it fits because the
+/// per-frame `match`es run their large arms in frames of their own
+/// (`own_frame`) and placement cuts a boundary every 8 levels there.
+const FRAME_STACK: usize = 256 << 10;
 
 struct TestShaper;
 

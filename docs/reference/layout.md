@@ -731,13 +731,13 @@ CSS 路径只产出数据，不量容器（见下文「`@container`」）。
 - 同一次读数也给这一层定价：入口处的剩余栈比父层入口少了多少，就是这一层用掉的栈。每趟取最大值，发布为 `WorkCounters::layout_measure_stack_per_level` 和 `layout_placement_stack_per_level`（字节，一帧内取最大；平台报告不了时为 0）。
 - `layout_engine::stack_budget` 的测试给每层定了预算（block、flex 列、grid 三条路线分别量），并在 1 MiB 的线程上布局 400 层的树。兜底防崩溃，预算防止每层的帧再长回去。
 
-放置（`place_node_scoped`）不需要兜底。测量之后每个盒子的尺寸都已确定，所以任何节点都可以作为边界：一次调用最多下降 `recursion::SPAN`（24）层，到这一层的节点写下自己的盒子后，把子树的其余部分作为 `Boundary` 排进本趟的队列；最外层的那次调用在返回前按入队顺序把队列放完，放的过程中还可以再入队。所以放置的递归深度不超过 `SPAN`，与树深无关，调用方在调用返回时看到的仍是整棵子树都已放好。`WorkCounters::layout_placement_boundaries` 记本趟从队列里放了几棵子树。测试构建里 `SPAN` 是 2，每一条运行时测试都经过边界。
+放置（`place_node_scoped`）不需要兜底。测量之后每个盒子的尺寸都已确定，所以任何节点都可以作为边界：一次调用最多下降 `recursion::SPAN` 层（release 24 层；debug 每层的帧是 release 的三倍多，切在 8 层，两种构建都约 90 KiB），到这一层的节点写下自己的盒子后，把子树的其余部分作为 `Boundary` 排进本趟的队列；最外层的那次调用在返回前按入队顺序把队列放完，放的过程中还可以再入队。所以放置的递归深度不超过 `SPAN`，与树深无关，调用方在调用返回时看到的仍是整棵子树都已放好。`WorkCounters::layout_placement_boundaries` 记本趟从队列里放了几棵子树。测试构建里 `SPAN` 是 2，每一条运行时测试都经过边界。
 
 能这样切的前提是：一棵子树的放置只读它自己的输入（站在哪、多大、包含块、字体、视口），不读兄弟子树放置时写下的东西，所以晚一点放结果相同。
 
 一层的放置分两步。`lay_out_children` 走一遍容器的子项：测量、打包浮动、分行、对齐、求解 2D grid，给每个流内子项定好盒子，返回待放置的 `Descend` 列表和计划草稿，自己不放置任何子树。`place_node_body` 等这一帧退出后再依次进入这些子树，然后记录计划、放置浮动和定位子项，顺序和以前一样。复用计划的三条快速路径（`place_moved_container`、`place_edited_child_list`、`place_from_plan`）也各是一个函数，只在走到时才占栈。
 
-x86_64 Windows（MSVC）上每层的栈：放置 debug 从 25.8 KiB 降到 9.0 KiB，release 从 4.8 KiB 降到 3.2 KiB；测量 debug 12.2 KiB，release 2.5 KiB。aarch64 macOS 上 release 放置每层原是 2.7 KiB，拆成头部（`place_node_head`，写下自己的盒子）和主体（`place_node_body`，边界从这里续上）之后是 3.5 KiB；debug 放置 10.9 KiB、测量 11.9 KiB。放置不再深于 `SPAN` 层，所以每层的价格乘以 `SPAN` 就是它的全部栈（release 约 86 KiB）。头部在主体运行前返回，三条快速路径和 `lay_out_children` 标了 `#[inline(never)]`，一层只同时占其中之一的帧。
+x86_64 Windows（MSVC）上每层的栈：放置 debug 从 25.8 KiB 降到 9.0 KiB，release 从 4.8 KiB 降到 3.2 KiB；测量 debug 12.2 KiB，release 2.5 KiB。aarch64 macOS 上 release 放置每层原是 2.7 KiB，拆成头部（`place_node_head`，写下自己的盒子）和主体（`place_node_body`，边界从这里续上）之后是 3.5 KiB；debug 放置 10.9 KiB、测量 11.9 KiB。放置不再深于 `SPAN` 层，所以每层的价格乘以 `SPAN` 就是它的全部栈（release 约 86 KiB，debug 约 88 KiB）。头部在主体运行前返回，三条快速路径和 `lay_out_children` 标了 `#[inline(never)]`，一层只同时占其中之一的帧。
 
 视图建成节点（`mount_view*` 经 `ViewBuilder::nest_dyn`，每个元素下降一层）同样按深度递归，每层也经过同一个兜底（`crate::stack::level`，与测量共用 256 KiB 警戒线和 4 MiB 栈段）。`view::tests::a_view_deeper_than_the_stack_still_mounts` 在 1 MiB 的线程上挂载、布局并析构 400 层视图。
 

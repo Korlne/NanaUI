@@ -902,7 +902,7 @@ pub struct UiWorld {
     /// Results hidden after a typed invalidation until publish confirms them.
     /// The `Arc` stays so a bit-equivalent recompute can keep the same object
     /// and generation; [`Self::layout_result`] reports these as absent.
-    layout_results_suppressed: HashSet<StableNodeId>,
+    layout_results_suppressed: NodeSet,
     /// Nodes that started or stopped being a containing block or a clip:
     /// every result under one records it as an anchor, so the next publish
     /// checks them although their boxes may not have moved.
@@ -1170,7 +1170,7 @@ impl UiWorld {
             layout_source_epoch: 1,
             framework_strings: Arc::default(),
             layout_results: crate::NodeMap::default(),
-            layout_results_suppressed: HashSet::new(),
+            layout_results_suppressed: NodeSet::default(),
             layout_anchor_roots: HashSet::new(),
             cursor_style_dirty: false,
             presenters: HashMap::new(),
@@ -1578,6 +1578,10 @@ impl UiWorld {
     /// so the walk stops there. `start_changes_border` continues through
     /// `start` itself when that node's own border box is what changed.
     fn clear_layout_result_chain(&mut self, start: StableNodeId, start_changes_border: bool) {
+        if self.layout_results.is_empty() && self.layout_results_suppressed.is_empty() {
+            // Nothing published yet, so nothing to clear up the chain.
+            return;
+        }
         let mut current = Some(start);
         while let Some(node) = current {
             let boundary = self.is_fixed_metric_boundary(node);
@@ -1641,6 +1645,10 @@ impl UiWorld {
         start: StableNodeId,
         start_changes_border: bool,
     ) {
+        if self.layout_results.is_empty() {
+            // Nothing published yet, so nothing to suppress up the chain.
+            return;
+        }
         let mut current = Some(start);
         while let Some(node) = current {
             let boundary = self.is_fixed_metric_boundary(node);
@@ -5727,6 +5735,39 @@ impl UiWorld {
         }
     }
 
+    /// Gives `root` depth `depth` and its descendants theirs below it; see
+    /// [`crate::store::Hierarchy::depth`]. Walks the subtree on the heap.
+    pub(super) fn set_subtree_depth(&mut self, root: StableNodeId, depth: u16) {
+        let mut open = vec![(root, depth)];
+        while let Some((id, depth)) = open.pop() {
+            let hierarchy = self.hierarchy_mut(id);
+            if hierarchy.depth == depth && id != root {
+                // Moved with the rest of its subtree before: already right.
+                continue;
+            }
+            hierarchy.depth = depth;
+            let below = depth.saturating_add(1);
+            open.extend(hierarchy.children.iter().map(|&child| (child, below)));
+        }
+    }
+
+    /// Levels from the root down to `id`, counting it.
+    pub(super) fn node_depth(&self, id: StableNodeId) -> Option<usize> {
+        let depth = usize::from(self.nodes.get(id)?.hierarchy.depth);
+        #[cfg(test)]
+        {
+            // Every test checks the kept depth against the walk it replaces.
+            let mut walked = 1;
+            let mut cursor = self.nodes.get(id)?.hierarchy.parent;
+            while let Some(ancestor) = cursor {
+                walked += 1;
+                cursor = self.nodes.get(ancestor)?.hierarchy.parent;
+            }
+            assert_eq!(depth, walked, "kept depth of {id:?} is stale");
+        }
+        Some(depth)
+    }
+
     fn unlink_from_parent(&mut self, id: StableNodeId) -> bool {
         let Some(parent) = self.node(id).expect("validated node must exist").parent else {
             return false;
@@ -5738,6 +5779,7 @@ impl UiWorld {
         self.record_child_list_invalidation(parent);
         self.remove_child(parent, id);
         self.hierarchy_mut(id).parent = None;
+        self.set_subtree_depth(id, 1);
         self.mark_ancestors(
             parent,
             DirtyMask::LAYOUT | DirtyMask::RENDER | DirtyMask::ACCESSIBILITY,

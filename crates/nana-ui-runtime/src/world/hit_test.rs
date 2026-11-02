@@ -156,6 +156,18 @@ pub(super) struct HitIndex {
     /// (#201). Ids whose entry has since gone or stopped escaping only cost a
     /// paint-order ranking they did not need.
     escaped: HashSet<StableNodeId>,
+    /// The open levels and pending children of a [`Self::visit_hits`] walk,
+    /// kept between queries so a pointer move allocates nothing once they
+    /// have grown to the tree's depth.
+    visit_scratch: std::cell::RefCell<HitVisitScratch>,
+}
+
+/// See [`HitIndex::visit_scratch`].
+#[derive(Default)]
+struct HitVisitScratch {
+    open: Vec<OpenHit>,
+    /// Every open level's pending children, each level's in a range of it.
+    children: Vec<StableNodeId>,
 }
 
 // Preorder construction data; parents precede their children.
@@ -446,6 +458,7 @@ impl HitIndex {
             root_bounds,
             viewport_roots: HashSet::new(),
             escaped,
+            visit_scratch: Default::default(),
         }
     }
 
@@ -718,6 +731,10 @@ impl HitIndex {
         self.reindex_children(parent);
     }
 
+    /// Emits the hits under `x`, `y` in `id`'s subtree, topmost first, until
+    /// `emit` says to stop; whether it did. The open levels are kept on the
+    /// heap, so a subtree as deep as the tree allows is walked on any stack,
+    /// in buffers reused from one query to the next.
     fn visit_hits(
         &self,
         id: StableNodeId,
@@ -725,11 +742,84 @@ impl HitIndex {
         y: f32,
         emit: &mut impl FnMut(StableNodeId) -> bool,
     ) -> bool {
-        let Some(indexed) = self.entries.get(&id) else {
+        // A query `emit` starts from inside this one walks its own buffers.
+        let mut fresh = HitVisitScratch::default();
+        let mut held = self.visit_scratch.try_borrow_mut().ok();
+        let scratch = held.as_deref_mut().unwrap_or(&mut fresh);
+        scratch.open.clear();
+        scratch.children.clear();
+        let stopped = self.walk_hits(id, x, y, emit, scratch);
+        scratch.open.clear();
+        scratch.children.clear();
+        stopped
+    }
+
+    fn walk_hits(
+        &self,
+        id: StableNodeId,
+        x: f32,
+        y: f32,
+        emit: &mut impl FnMut(StableNodeId) -> bool,
+        scratch: &mut HitVisitScratch,
+    ) -> bool {
+        let HitVisitScratch { open, children } = scratch;
+        let Some(root) = self.open_hit(id, x, y, children) else {
             return false;
         };
+        open.push(root);
+        while let Some(top) = open.last_mut() {
+            if top.next < top.children_end {
+                let child = children[top.next];
+                top.next += 1;
+                if !top.emitted_menu && self.entries[&child].entry.z_index <= top.menu_z {
+                    top.emitted_menu = true;
+                    if emit(top.id) {
+                        return true;
+                    }
+                }
+                let (child_x, child_y) = top.child_point;
+                if let Some(level) = self.open_hit(child, child_x, child_y, children) {
+                    open.push(level);
+                }
+                continue;
+            }
+            let done = open.pop().expect("a level is open");
+            children.truncate(done.children_start);
+            if !done.emitted_menu && emit(done.id) {
+                return true;
+            }
+            let node = &self.entries[&done.id].entry;
+            if node.hittable
+                && transformed_contains(node.layout, node.transform, node.persp, done.x, done.y)
+                && painter_accepts(
+                    node,
+                    node.layout,
+                    node.transform,
+                    node.persp,
+                    done.x,
+                    done.y,
+                )
+                && emit(done.id)
+            {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// `id` as an open level of [`Self::visit_hits`], its reachable children
+    /// pushed onto `children`: `None` when the point misses it or one of its
+    /// own clips, so nothing under it is hit.
+    fn open_hit(
+        &self,
+        id: StableNodeId,
+        x: f32,
+        y: f32,
+        children: &mut Vec<StableNodeId>,
+    ) -> Option<OpenHit> {
+        let indexed = self.entries.get(&id)?;
         if !indexed.bounds.contains(x, y) {
-            return false;
+            return None;
         }
         let node = &indexed.entry;
         if !node
@@ -737,10 +827,10 @@ impl HitIndex {
             .iter()
             .all(|(bounds, transform)| transformed_contains(*bounds, *transform, [0.0, 0.0], x, y))
         {
-            return false;
+            return None;
         }
         if !path_clips_contain(&node.path_clips, node.transform, node.persp, x, y) {
-            return false;
+            return None;
         }
         let menu_hit = node
             .menu
@@ -749,36 +839,47 @@ impl HitIndex {
             .child_clips
             .iter()
             .all(|(bounds, transform)| transformed_contains(*bounds, *transform, [0.0, 0.0], x, y));
-        let menu_z = node.z_index.max(1000);
-        let mut emitted_menu = !menu_hit;
-        if children_ok
-            && indexed
+        let child_point = (x - indexed.shift[0], y - indexed.shift[1]);
+        // The children the point can reach, topmost first, as the bounds
+        // tree yields them.
+        let children_start = children.len();
+        if children_ok {
+            indexed
                 .child_bounds
-                .visit(x - indexed.shift[0], y - indexed.shift[1], &mut |slot| {
-                    let child = indexed.children[slot].expect("live child bounds");
-                    if !emitted_menu && self.entries[&child].entry.z_index <= menu_z {
-                        emitted_menu = true;
-                        if emit(id) {
-                            return true;
-                        }
-                    }
-                    self.visit_hits(child, x - indexed.shift[0], y - indexed.shift[1], emit)
-                })
-        {
-            return true;
+                .visit(child_point.0, child_point.1, &mut |slot| {
+                    children.push(indexed.children[slot].expect("live child bounds"));
+                    false
+                });
         }
-
-        if !emitted_menu && emit(id) {
-            return true;
-        }
-        if node.hittable
-            && transformed_contains(node.layout, node.transform, node.persp, x, y)
-            && painter_accepts(node, node.layout, node.transform, node.persp, x, y)
-        {
-            return emit(id);
-        }
-        false
+        Some(OpenHit {
+            id,
+            x,
+            y,
+            child_point,
+            children_start,
+            children_end: children.len(),
+            next: children_start,
+            emitted_menu: !menu_hit,
+            menu_z: node.z_index.max(1000),
+        })
     }
+}
+
+/// A node [`HitIndex::visit_hits`] has entered and not yet finished.
+struct OpenHit {
+    id: StableNodeId,
+    /// The point in this node's space, and in its children's.
+    x: f32,
+    y: f32,
+    child_point: (f32, f32),
+    /// Its pending children: this range of the walk's shared list.
+    children_start: usize,
+    children_end: usize,
+    /// The next of them to visit.
+    next: usize,
+    /// Whether the node's menu, when the point is on it, is emitted yet.
+    emitted_menu: bool,
+    menu_z: i32,
 }
 
 pub(super) fn find_hit_transform(index: &HitIndex, id: StableNodeId) -> Option<[f32; 6]> {
@@ -789,8 +890,16 @@ pub(super) fn find_hit_transform(index: &HitIndex, id: StableNodeId) -> Option<[
     Some(transform)
 }
 
+/// Entries in `entry`'s tree, counted on a heap stack: the tree is as deep
+/// as the world's.
 pub(super) fn count_hit_entries(entry: &HitEntry) -> usize {
-    1 + entry.children.iter().map(count_hit_entries).sum::<usize>()
+    let mut count = 0;
+    let mut open = vec![entry];
+    while let Some(entry) = open.pop() {
+        count += 1;
+        open.extend(&entry.children);
+    }
+    count
 }
 
 pub(super) fn retain_hit_tree(index: &mut HitIndex, id: StableNodeId) {

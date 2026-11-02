@@ -40,6 +40,18 @@ pub(crate) fn level<T>(run: impl FnOnce() -> T) -> T {
     }
 }
 
+/// Runs `run` in a frame of its own.
+///
+/// Unoptimized code keeps a stack slot for every local of a function, so a
+/// `match` whose arms each build something large holds all of their locals
+/// at once, whichever arm runs: a debug frame of 100 KiB on the per-frame
+/// path. An arm moved in here takes its locals only when it runs. An
+/// optimized build inlines it, so it costs nothing there.
+#[inline(always)]
+pub(crate) fn own_frame<T>(run: impl FnOnce() -> T) -> T {
+    run()
+}
+
 #[cfg(any(
     target_os = "android",
     all(target_vendor = "apple", not(target_os = "macos"))

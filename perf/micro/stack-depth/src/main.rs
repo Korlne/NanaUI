@@ -280,6 +280,7 @@ fn nana_frame_stages(depth: usize, runs: usize) -> Vec<(String, f64)> {
     for _ in 0..runs {
         let document = DocumentId::new(1).unwrap();
         let mut runtime = RuntimeDocument::new(document);
+        let mount = Instant::now();
         runtime
             .context_mut()
             .mount_view_root(document, move || {
@@ -292,13 +293,19 @@ fn nana_frame_stages(depth: usize, runs: usize) -> Vec<(String, f64)> {
                 view
             })
             .unwrap();
+        let mounted = ("Mount".to_owned(), mount.elapsed());
         runtime
             .flush(LayoutViewport::new(800.0, 600.0), &mut FixedShaper)
             .unwrap();
         let profile = runtime.context().last_frame_profile().clone();
-        for timing in profile.stages {
-            let name = format!("{:?}", timing.stage);
-            let us = timing.duration.as_secs_f64() * 1e6;
+        let stages = std::iter::once(mounted).chain(
+            profile
+                .stages
+                .into_iter()
+                .map(|timing| (format!("{:?}", timing.stage), timing.duration)),
+        );
+        for (name, duration) in stages {
+            let us = duration.as_secs_f64() * 1e6;
             match least.iter_mut().find(|(n, _)| *n == name) {
                 Some((_, held)) => *held = held.min(us),
                 None => least.push((name, us)),

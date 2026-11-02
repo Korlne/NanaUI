@@ -2544,12 +2544,24 @@ fn lay_out_children(
     let mut main_dependent = style
         .adaptation
         .is_some_and(|profile| super::dynamic::solves(&profile));
-    let plan_intrinsics: Option<HashMap<StableNodeId, Size>> = cacheable.then(|| {
-        flow.iter()
-            .copied()
-            .zip(child_sizes.iter().copied())
-            .collect()
-    });
+    // Each child's measured size by id, for the plan: a container with few
+    // children finds it in `flow` itself; only a long flow is worth a table.
+    let plan_intrinsics: Option<HashMap<StableNodeId, Size>> =
+        (cacheable && flow.len() > 16).then(|| {
+            flow.iter()
+                .copied()
+                .zip(child_sizes.iter().copied())
+                .collect()
+        });
+    let planned_intrinsic = |child: StableNodeId| -> Option<Size> {
+        match plan_intrinsics.as_ref() {
+            Some(table) => table.get(&child).copied(),
+            None => flow
+                .iter()
+                .position(|id| *id == child)
+                .map(|index| child_sizes[index]),
+        }
+    };
     if !cacheable {
         intrinsic.note_container_uncacheable();
         // Retire a plan recorded while this container was still cacheable.
@@ -2629,8 +2641,7 @@ fn lay_out_children(
                 y: content_origin.y + item.offset.y,
             };
             if let Some(entries) = plan_entries.as_mut()
-                && let Some(intrinsics) = plan_intrinsics.as_ref()
-                && let Some(child_intrinsic) = intrinsics.get(&child).copied()
+                && let Some(child_intrinsic) = planned_intrinsic(child)
             {
                 // Anything that couples this child's position to a sibling
                 // other than through the running cursor takes the container

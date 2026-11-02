@@ -21,6 +21,18 @@ mod overlays;
 mod rich_text;
 mod text;
 
+/// Runs `run` in a frame of its own.
+///
+/// Unoptimized code keeps a stack slot for every local of a function, so a
+/// `match` whose arms each build something large holds all of their locals
+/// at once, whichever arm runs: a debug frame of 70 KiB on the per-frame
+/// path. An arm moved in here takes its locals only when it runs. An
+/// optimized build inlines it, so it costs nothing there.
+#[inline(always)]
+fn own_frame<T>(run: impl FnOnce() -> T) -> T {
+    run()
+}
+
 struct GeometryPaintContext<'a> {
     node: &'a ExtractedNode,
     bounds: SceneRect,
@@ -869,7 +881,7 @@ impl UiScene {
                 document_order: node_order,
             };
             match &node.standard_visual {
-                Some(StandardVisual::Button { loading_phase, .. }) => {
+                Some(StandardVisual::Button { loading_phase, .. }) => own_frame(|| {
                     if let Some(ComponentGeometry::Button {
                         spinner,
                         focus_ring,
@@ -932,8 +944,8 @@ impl UiScene {
                             ));
                         }
                     }
-                }
-                Some(StandardVisual::TextInput { .. }) => {
+                }),
+                Some(StandardVisual::TextInput { .. }) => own_frame(|| {
                     if let Some(ComponentGeometry::TextInput {
                         scroll,
                         caret,
@@ -1608,12 +1620,12 @@ impl UiScene {
                             }
                         }
                     }
-                }
+                }),
                 Some(StandardVisual::Checkbox {
                     checked,
                     indeterminate,
                     ..
-                }) => 'checkbox: {
+                }) => own_frame(|| 'checkbox: {
                     // The indicator is the `Indicator` part layout
                     // published (#205). A node without component geometry was
                     // never laid out as a checkbox and has no indicator to
@@ -1711,8 +1723,8 @@ impl UiScene {
                             },
                         });
                     }
-                }
-                Some(StandardVisual::Icon { icon, size, .. }) => {
+                }),
+                Some(StandardVisual::Icon { icon, size, .. }) => own_frame(|| {
                     let extent = size.max(0.0).min(bounds.width).min(bounds.height);
                     let x = bounds.x + (bounds.width - extent) / 2.0;
                     let y = self.icon_y_aligned_to_adjacent_text(&node, bounds, extent);
@@ -1747,13 +1759,13 @@ impl UiScene {
                             ),
                         },
                     });
-                }
+                }),
                 Some(StandardVisual::Switch {
                     thumb_progress,
                     loading,
                     loading_phase,
                     ..
-                }) => 'switch: {
+                }) => own_frame(|| 'switch: {
                     // The track is the part layout published (#205). A node
                     // without component geometry was never laid out as a
                     // switch and has no track to draw; the scene does not
@@ -1879,14 +1891,14 @@ impl UiScene {
                             ),
                         ));
                     }
-                }
+                }),
                 Some(StandardVisual::Range {
                     ratio,
                     markers,
                     rail: rail_girth,
                     track_gradient,
                     ..
-                }) => {
+                }) => own_frame(|| {
                     let ratio = ratio.clamp(0.0, 1.0);
                     let (track_band, thumb_ring, girth, border_width) =
                         match node.component_geometry.as_deref() {
@@ -2068,8 +2080,8 @@ impl UiScene {
                             ),
                         ));
                     }
-                }
-                Some(StandardVisual::Scrollbar { .. }) => {
+                }),
+                Some(StandardVisual::Scrollbar { .. }) => own_frame(|| {
                     if let Some(ComponentGeometry::Scrollbar {
                         horizontal,
                         vertical,
@@ -2107,12 +2119,12 @@ impl UiScene {
                             ));
                         }
                     }
-                }
+                }),
                 Some(StandardVisual::Card {
                     loading,
                     loading_phase,
                     ..
-                }) => {
+                }) => own_frame(|| {
                     if *loading {
                         let spinner_bounds = match node.component_geometry.as_deref() {
                             Some(ComponentGeometry::Card {
@@ -2149,8 +2161,8 @@ impl UiScene {
                             },
                         });
                     }
-                }
-                Some(StandardVisual::Spinner { size, phase, label }) => {
+                }),
+                Some(StandardVisual::Spinner { size, phase, label }) => own_frame(|| {
                     let extent = size.max(0.0).min(bounds.width).min(bounds.height);
                     // Unlabeled spinners (Thumbnail loading) sit in the box
                     // center. A labeled Spinner keeps the glyph in the leading
@@ -2184,7 +2196,7 @@ impl UiScene {
                             ),
                         },
                     });
-                }
+                }),
                 Some(
                     StandardVisual::ListItem { .. }
                     | StandardVisual::StatusBadge { .. }
@@ -2207,7 +2219,7 @@ impl UiScene {
                     | StandardVisual::CommandPalette { .. }
                     | StandardVisual::KeyCaptureLayer { .. }
                     | StandardVisual::KeymapLayer,
-                ) => {
+                ) => own_frame(|| {
                     // The row surface and fallback label are emitted above;
                     // typed slots remain ordinary retained child nodes.
                     //
@@ -2256,7 +2268,7 @@ impl UiScene {
                             },
                         ));
                     }
-                }
+                }),
                 #[cfg(feature = "calendar")]
                 Some(StandardVisual::CalendarHeatmap { .. }) => {}
                 #[cfg(feature = "charts")]

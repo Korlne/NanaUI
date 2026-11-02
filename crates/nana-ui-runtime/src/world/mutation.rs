@@ -43,6 +43,14 @@ pub(super) struct ValidationPlan<'a> {
     /// Child-list entries `leaving` filtered, for cost tests.
     #[cfg(test)]
     pub(super) child_list_steps: u64,
+    /// Whether this batch has staged a change to any node's parent or
+    /// children (through [`Self::node_mut`]) or removed one. Until it has,
+    /// every depth is the one `source` keeps.
+    restructured: bool,
+    /// Depths this batch has settled, as it leaves the tree. Placing a node
+    /// with no children moves only it, so its entry is rewritten; moving one
+    /// with children moves a whole subtree, so the memo is cleared.
+    depths: NodeMap<usize>,
 }
 
 /// An editor's text and selections as a batch leaves them, for validating
@@ -80,6 +88,8 @@ impl<'a> ValidationPlan<'a> {
             scanned: 0,
             #[cfg(test)]
             child_list_steps: 0,
+            restructured: false,
+            depths: NodeMap::default(),
         }
     }
 
@@ -700,7 +710,10 @@ impl<'a> ValidationPlan<'a> {
         if child_node.document != parent_document {
             return Err(UiWorldError::CrossDocument { parent, child });
         }
-        if parent == child || self.has_ancestor(parent, child)? {
+        // A child with no children cannot hold `parent`: only `parent == child`
+        // makes a cycle then.
+        let childless = child_node.children.is_empty();
+        if parent == child || (!childless && self.has_ancestor(parent, child)?) {
             return Err(UiWorldError::Cycle { parent, child });
         }
         if before == Some(child) && child_node.parent == Some(parent) {
@@ -711,9 +724,13 @@ impl<'a> ValidationPlan<'a> {
         {
             return Err(UiWorldError::InvalidBefore { parent, before });
         }
-        let depth = self
-            .ancestor_depth(parent)?
-            .saturating_add(self.subtree_height(child)?);
+        let parent_depth = self.ancestor_depth(parent)?;
+        let height = if childless {
+            1
+        } else {
+            self.subtree_height(child)?
+        };
+        let depth = parent_depth.saturating_add(height);
         if depth > MAX_TREE_DEPTH {
             return Err(UiWorldError::TreeTooDeep {
                 parent,
@@ -728,24 +745,79 @@ impl<'a> ValidationPlan<'a> {
             .unwrap_or(siblings.len());
         siblings.insert(index, child);
         self.node_mut(child)?.parent = Some(parent);
+        if childless {
+            self.depths.insert(child, parent_depth + 1);
+        } else {
+            self.depths.clear();
+        }
         self.detached.insert(child, false);
         let parked = self.is_parked(parent);
         self.set_parked_subtree(child, parked)?;
         Ok(())
     }
 
+    /// `id`'s parent as this batch leaves it, read without staging `id`: the
+    /// walks up and down that validate an insert only read, and staging
+    /// clones a node's snapshot out of the world for every node they pass.
+    fn parent_of(&self, id: StableNodeId) -> Result<Option<StableNodeId>, UiWorldError> {
+        if self.removed.contains(&id) {
+            return Err(UiWorldError::MissingNode(id));
+        }
+        match self.nodes.get(&id) {
+            Some(node) => Ok(node.parent),
+            None => self
+                .source
+                .nodes
+                .get(id)
+                .map(|node| node.hierarchy.parent)
+                .ok_or(UiWorldError::MissingNode(id)),
+        }
+    }
+
     /// Levels from `id` up to its root, counting `id` itself.
     pub(super) fn ancestor_depth(&mut self, id: StableNodeId) -> Result<usize, UiWorldError> {
-        let mut depth = 1;
-        let mut cursor = self.node(id)?.parent;
-        while let Some(ancestor) = cursor {
-            depth += 1;
-            if depth > MAX_TREE_DEPTH {
+        if self.removed.contains(&id) {
+            return Err(UiWorldError::MissingNode(id));
+        }
+        if let Some(&depth) = self.depths.get(&id) {
+            return Ok(depth);
+        }
+        if !self.restructured
+            && self.removed.is_empty()
+            && !self.nodes.contains_key(&id)
+            && let Some(depth) = self.source.node_depth(id)
+        {
+            return Ok(depth);
+        }
+        // Up to the first ancestor whose depth is settled, or the root.
+        let mut steps = 0;
+        let mut cursor = Some(id);
+        let mut above = 0;
+        while let Some(node) = cursor {
+            if let Some(&depth) = self.depths.get(&node) {
+                above = depth;
+                break;
+            }
+            steps += 1;
+            if steps > MAX_TREE_DEPTH {
                 // `has_ancestor` already rejected cycles, so this is genuine
                 // depth rather than a loop.
-                return Ok(depth);
+                return Ok(steps);
             }
-            cursor = self.node(ancestor)?.parent;
+            cursor = self.parent_of(node)?;
+        }
+        let depth = above + steps;
+        self.depths.insert(id, depth);
+        #[cfg(test)]
+        {
+            // The memo stands in for this walk; every test checks it.
+            let mut walked = 1;
+            let mut cursor = self.parent_of(id)?;
+            while let Some(ancestor) = cursor {
+                walked += 1;
+                cursor = self.parent_of(ancestor)?;
+            }
+            assert_eq!(depth, walked, "settled depth of {id:?} is stale");
         }
         Ok(depth)
     }
@@ -754,17 +826,38 @@ impl<'a> ValidationPlan<'a> {
     /// Stops climbing once past the limit; the caller only needs to know that.
     pub(super) fn subtree_height(&mut self, root: StableNodeId) -> Result<usize, UiWorldError> {
         let mut frontier = vec![root];
+        let mut next = Vec::new();
         let mut height = 0;
         while !frontier.is_empty() {
             height += 1;
             if height > MAX_TREE_DEPTH {
                 return Ok(height);
             }
-            let mut next = Vec::new();
-            for id in frontier {
-                next.extend(self.node(id)?.children.iter().copied());
+            for &id in &frontier {
+                if self.leaving.contains_key(&id) {
+                    // Its staged list still holds children leaving it.
+                    next.extend(self.node(id)?.children.iter().copied());
+                    continue;
+                }
+                if self.removed.contains(&id) {
+                    return Err(UiWorldError::MissingNode(id));
+                }
+                match self.nodes.get(&id) {
+                    Some(node) => next.extend(node.children.iter().copied()),
+                    None => next.extend(
+                        self.source
+                            .nodes
+                            .get(id)
+                            .ok_or(UiWorldError::MissingNode(id))?
+                            .hierarchy
+                            .children
+                            .iter()
+                            .copied(),
+                    ),
+                }
             }
-            frontier = next;
+            std::mem::swap(&mut frontier, &mut next);
+            next.clear();
         }
         Ok(height)
     }
@@ -829,7 +922,13 @@ impl<'a> ValidationPlan<'a> {
     }
 
     pub(super) fn detach(&mut self, id: StableNodeId) -> Result<(), UiWorldError> {
-        let parent = self.node(id)?.parent;
+        let node = self.node(id)?;
+        let (parent, childless) = (node.parent, node.children.is_empty());
+        if childless {
+            self.depths.remove(&id);
+        } else {
+            self.depths.clear();
+        }
         self.detached.insert(id, true);
         if let Some(parent) = parent {
             self.ensure(parent)?;
@@ -967,19 +1066,18 @@ impl<'a> ValidationPlan<'a> {
         mut id: StableNodeId,
         candidate: StableNodeId,
     ) -> Result<bool, UiWorldError> {
-        let mut visited = HashSet::new();
-        loop {
+        // No chain is longer than the tree is deep; a walk past that is going
+        // round a loop that does not pass `candidate`.
+        for _ in 0..=MAX_TREE_DEPTH + 1 {
             if id == candidate {
                 return Ok(true);
             }
-            if !visited.insert(id) {
-                return Ok(false);
-            }
-            let Some(parent) = self.node(id)?.parent else {
+            let Some(parent) = self.parent_of(id)? else {
                 return Ok(false);
             };
             id = parent;
         }
+        Ok(false)
     }
 
     fn require_exists(&self, id: StableNodeId) -> Result<(), UiWorldError> {
@@ -1178,6 +1276,7 @@ impl<'a> ValidationPlan<'a> {
     }
 
     pub(super) fn node_mut(&mut self, id: StableNodeId) -> Result<&mut PlannedNode, UiWorldError> {
+        self.restructured = true;
         self.ensure(id)?;
         self.drop_leaving(id);
         Ok(self.nodes.get_mut(&id).expect("ensured node must exist"))
@@ -1347,6 +1446,8 @@ impl UiWorld {
                 let _parent_hierarchy = parent_hierarchy;
                 self.renumber_children_from(*parent, index);
                 self.hierarchy_mut(*child).parent = Some(*parent);
+                let below = self.record(*parent).hierarchy.depth.saturating_add(1);
+                self.set_subtree_depth(*child, below);
                 self.link_block_extent_reads(*parent, *child, true);
                 if old_parent != Some(*parent) {
                     self.responsive_reparented(*child);
@@ -3006,18 +3107,36 @@ impl UiWorld {
                 child: *child,
             });
         }
-        let mut ancestor = Some(*parent);
-        let mut depth = 0usize;
-        while let Some(id) = ancestor {
-            if id == *child {
-                return Err(UiWorldError::Cycle {
-                    parent: *parent,
-                    child: *child,
-                });
-            }
-            depth += 1;
-            ancestor = self.identity_and_parent(id)?.1;
+        if parent == child {
+            return Err(UiWorldError::Cycle {
+                parent: *parent,
+                child: *child,
+            });
         }
+        let childless = self
+            .nodes
+            .get(*child)
+            .is_some_and(|node| node.hierarchy.children.is_empty());
+        let depth = match self.node_depth(*parent) {
+            // A child with no children cannot hold `parent`, so no cycle:
+            // the depth `parent` keeps is all there is to check.
+            Some(depth) if childless => depth,
+            _ => {
+                let mut ancestor = Some(*parent);
+                let mut depth = 0usize;
+                while let Some(id) = ancestor {
+                    if id == *child {
+                        return Err(UiWorldError::Cycle {
+                            parent: *parent,
+                            child: *child,
+                        });
+                    }
+                    depth += 1;
+                    ancestor = self.identity_and_parent(id)?.1;
+                }
+                depth
+            }
+        };
         // Near the depth limit the child's own height decides, and measuring it
         // is exactly the walk this fast path exists to avoid. Hand those rare
         // batches to the planner, which already bounds depth.

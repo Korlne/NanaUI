@@ -26,7 +26,7 @@ pub(super) fn build(context: &GeometryPaintContext<'_>, emit: &mut impl FnMut(Sc
             scrim_opacity,
             surface_paint,
             ..
-        }) => {
+        }) => own_frame(|| {
             // The scrim fades by its own opacity, not its node's layer (the
             // card's): see `UiScene::compositor_primitive_opacity`.
             let mut scrim_quad = visual_quad(
@@ -170,7 +170,7 @@ pub(super) fn build(context: &GeometryPaintContext<'_>, emit: &mut impl FnMut(Sc
                     node_order,
                 ));
             }
-        }
+        }),
         Some(ComponentGeometry::Toast {
             indicator,
             glyph,
@@ -178,7 +178,7 @@ pub(super) fn build(context: &GeometryPaintContext<'_>, emit: &mut impl FnMut(Sc
             description,
             dismiss,
             ..
-        }) => {
+        }) => own_frame(|| {
             // The tone mark, in the tone colour: the recipe's glyph, or a dot.
             match (indicator, glyph) {
                 (Some(bounds), Some(icon)) => emit(ScenePrimitive {
@@ -264,10 +264,10 @@ pub(super) fn build(context: &GeometryPaintContext<'_>, emit: &mut impl FnMut(Sc
                     node_order,
                 ));
             }
-        }
+        }),
         Some(ComponentGeometry::ActionMenuItem {
             icon, label, hint, ..
-        }) => {
+        }) => own_frame(|| {
             if let Some((icon, icon_bounds, color)) = icon {
                 emit(ScenePrimitive {
                     id: PrimitiveId { node: id, slot: 3 },
@@ -313,7 +313,7 @@ pub(super) fn build(context: &GeometryPaintContext<'_>, emit: &mut impl FnMut(Sc
                     node_order,
                 ));
             }
-        }
+        }),
         Some(ComponentGeometry::MenuSurface {
             trigger,
             trigger_icon,
@@ -327,7 +327,7 @@ pub(super) fn build(context: &GeometryPaintContext<'_>, emit: &mut impl FnMut(Sc
             background,
             border,
             ..
-        }) => {
+        }) => own_frame(|| {
             if let Some(chrome) = trigger_surface
                 && (chrome.background.is_some() || chrome.border.is_some())
             {
@@ -554,7 +554,7 @@ pub(super) fn build(context: &GeometryPaintContext<'_>, emit: &mut impl FnMut(Sc
                     ));
                 }
             }
-        }
+        }),
         _ => {}
     }
 }

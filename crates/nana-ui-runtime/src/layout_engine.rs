@@ -2328,7 +2328,7 @@ impl MeasurePlan {
 struct LayoutInputMap<'a> {
     inline_objects: HashMap<StableNodeId, Arc<[nana_text::InlineObject]>>,
     world: &'a UiWorld,
-    nodes: HashMap<StableNodeId, LayoutInput>,
+    nodes: crate::store::DenseNodeMap<LayoutInput>,
     /// Effective styles for nodes this pass never materialized into `nodes`.
     ///
     /// A scoped pass prefetches nothing, so an unchanged sibling is reached
@@ -2341,7 +2341,7 @@ struct LayoutInputMap<'a> {
     /// not an approximation: `layout_document_with_frontier` borrows the world
     /// immutably for the entire pass, so no resolution can change underneath
     /// this map.
-    styles: RefCell<HashMap<StableNodeId, Option<Arc<nana_ui_core::LayoutStyle>>>>,
+    styles: RefCell<crate::store::DenseNodeMap<Option<Arc<nana_ui_core::LayoutStyle>>>>,
     materialized: usize,
     placements: HashMap<StableNodeId, (Point, Size, f32)>,
     used_padding: HashMap<StableNodeId, nana_ui_core::PaddingSpec>,
@@ -2415,8 +2415,8 @@ impl<'a> LayoutInputMap<'a> {
         Self {
             inline_objects: HashMap::new(),
             world,
-            nodes: HashMap::new(),
-            styles: RefCell::new(HashMap::new()),
+            nodes: crate::store::DenseNodeMap::default(),
+            styles: RefCell::default(),
             materialized: 0,
             placements: HashMap::new(),
             used_padding: HashMap::new(),
@@ -2445,7 +2445,9 @@ impl<'a> LayoutInputMap<'a> {
                 ids.len().saturating_mul(std::mem::size_of::<LayoutInput>()),
             );
         }
-        let mut nodes = HashMap::with_capacity(ids.len());
+        let mut nodes = ids.iter().max().map_or_else(Default::default, |&highest| {
+            crate::store::DenseNodeMap::with_highest(highest)
+        });
         let mut containers = 0;
         for &id in ids {
             let input = self.world.layout_input(id)?;
@@ -2465,26 +2467,25 @@ impl<'a> LayoutInputMap<'a> {
     }
 
     fn get(&mut self, id: StableNodeId) -> Result<Option<&LayoutInput>, UiWorldError> {
-        match self.nodes.entry(id) {
-            hashbrown::hash_map::Entry::Occupied(entry) => Ok(Some(entry.into_mut())),
-            hashbrown::hash_map::Entry::Vacant(entry) => {
-                let input = match self.world.layout_input(id) {
-                    Ok(input) => input,
-                    Err(UiWorldError::MissingNode(_)) => return Ok(None),
-                    Err(error) => return Err(error),
-                };
-                self.materialized = self.materialized.saturating_add(1);
-                Ok(Some(entry.insert(input)))
-            }
-        }
+        let world = self.world;
+        let materialized = &mut self.materialized;
+        self.nodes
+            .get_or_try_insert(id, || match world.layout_input(id) {
+                Ok(input) => {
+                    *materialized = materialized.saturating_add(1);
+                    Ok(Some(input))
+                }
+                Err(UiWorldError::MissingNode(_)) => Ok(None),
+                Err(error) => Err(error),
+            })
     }
 
     /// Style for classifying / measuring siblings without assembling `LayoutInput`.
     fn style(&self, id: StableNodeId) -> Option<Arc<nana_ui_core::LayoutStyle>> {
-        if let Some(node) = self.nodes.get(&id) {
+        if let Some(node) = self.nodes.get(id) {
             return Some(Arc::clone(&node.style));
         }
-        if let Some(cached) = self.styles.borrow().get(&id) {
+        if let Some(cached) = self.styles.borrow().get(id) {
             return cached.clone();
         }
         let resolved = self.world.layout_style(id);
@@ -2593,7 +2594,7 @@ impl<'a> LayoutInputMap<'a> {
             let block = used.and_then(|used| {
                 let (_, block) = self
                     .nodes
-                    .get(&id)
+                    .get(id)
                     .map(|node| node.writing.logical_size(used.width, used.height))?;
                 Some(block.max(0.0))
             });
@@ -2699,7 +2700,7 @@ impl<'a> LayoutInputMap<'a> {
             let block = used.map(|used| {
                 let writing = self
                     .nodes
-                    .get(&id)
+                    .get(id)
                     .map_or_else(Default::default, |node| node.writing);
                 writing.logical_size(used.width, used.height).1.max(0.0)
             });
@@ -2716,7 +2717,7 @@ impl<'a> LayoutInputMap<'a> {
         {
             let writing = self
                 .nodes
-                .get(&id)
+                .get(id)
                 .map_or_else(Default::default, |node| node.writing);
             let block = Some(writing.logical_size(used.width, used.height).1.max(0.0));
             return BaselineMetrics {
@@ -2730,7 +2731,7 @@ impl<'a> LayoutInputMap<'a> {
         );
         let ascent = self
             .nodes
-            .get(&id)
+            .get(id)
             .and_then(|node| node.text_metrics)
             .and_then(|metrics| metrics.ascent)
             .filter(|value| value.is_finite() && *value >= 0.0);
@@ -2779,7 +2780,7 @@ impl<'a> LayoutInputMap<'a> {
         );
         let writing = self
             .nodes
-            .get(&id)
+            .get(id)
             .map_or_else(Default::default, |node| node.writing);
         let (_, block_extent) = writing.logical_size(used.width, used.height);
         if self

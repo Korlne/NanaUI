@@ -21,7 +21,7 @@ pub(super) fn build(context: &GeometryPaintContext<'_>, emit: &mut impl FnMut(Sc
             icon,
             trailing_icon,
             ..
-        }) => {
+        }) => own_frame(|| {
             // Slot 4 leads, slot 5 trails; both take the label's colour.
             for (slot, (icon, bounds)) in [(4, icon), (5, trailing_icon)]
                 .into_iter()
@@ -60,8 +60,8 @@ pub(super) fn build(context: &GeometryPaintContext<'_>, emit: &mut impl FnMut(Sc
                 opacity,
                 node_order,
             ));
-        }
-        Some(ComponentGeometry::Switch { label, hint, .. }) => {
+        }),
+        Some(ComponentGeometry::Switch { label, hint, .. }) => own_frame(|| {
             emit(component_text_primitive(
                 id,
                 2,
@@ -88,10 +88,10 @@ pub(super) fn build(context: &GeometryPaintContext<'_>, emit: &mut impl FnMut(Sc
                     node_order,
                 ));
             }
-        }
+        }),
         Some(ComponentGeometry::Range {
             label, value, unit, ..
-        }) => {
+        }) => own_frame(|| {
             if let Some(label) = label {
                 emit(component_text_primitive(
                     id,
@@ -134,10 +134,10 @@ pub(super) fn build(context: &GeometryPaintContext<'_>, emit: &mut impl FnMut(Sc
                     node_order,
                 ));
             }
-        }
+        }),
         Some(ComponentGeometry::Card {
             title: Some(title), ..
-        }) => {
+        }) => own_frame(|| {
             emit(component_text_primitive(
                 id,
                 2,
@@ -150,8 +150,8 @@ pub(super) fn build(context: &GeometryPaintContext<'_>, emit: &mut impl FnMut(Sc
                 opacity,
                 node_order,
             ));
-        }
-        Some(ComponentGeometry::ListItem { note, detail, .. }) => {
+        }),
+        Some(ComponentGeometry::ListItem { note, detail, .. }) => own_frame(|| {
             if let Some(region) = note {
                 emit(component_text_primitive(
                     id,
@@ -180,13 +180,13 @@ pub(super) fn build(context: &GeometryPaintContext<'_>, emit: &mut impl FnMut(Sc
                     node_order,
                 ));
             }
-        }
+        }),
         Some(ComponentGeometry::SelectionOption {
             icon,
             label,
             focus_ring,
             indicator,
-        }) => {
+        }) => own_frame(|| {
             emit(component_text_primitive(
                 id,
                 2,
@@ -304,14 +304,14 @@ pub(super) fn build(context: &GeometryPaintContext<'_>, emit: &mut impl FnMut(Sc
                     ),
                 ));
             }
-        }
+        }),
         Some(ComponentGeometry::Progress {
             track,
             fill,
             label,
             cancel,
             corner_radius,
-        }) => {
+        }) => own_frame(|| {
             if let Some(label) = label {
                 emit(component_text_primitive(
                     id,
@@ -395,13 +395,13 @@ pub(super) fn build(context: &GeometryPaintContext<'_>, emit: &mut impl FnMut(Sc
                     node_order,
                 ));
             }
-        }
+        }),
         Some(ComponentGeometry::FormField {
             label,
             support,
             indicator,
             ..
-        }) => {
+        }) => own_frame(|| {
             emit(component_text_primitive(
                 id,
                 2,
@@ -452,7 +452,7 @@ pub(super) fn build(context: &GeometryPaintContext<'_>, emit: &mut impl FnMut(Sc
                     ),
                 ));
             }
-        }
+        }),
         Some(ComponentGeometry::XYPad {
             pad,
             thumb,
@@ -464,7 +464,7 @@ pub(super) fn build(context: &GeometryPaintContext<'_>, emit: &mut impl FnMut(Sc
             thumb_color,
             axis_color,
             ..
-        }) => {
+        }) => own_frame(|| {
             let visual_context = VisualPrimitiveContext {
                 node: id,
                 transform,
@@ -531,8 +531,8 @@ pub(super) fn build(context: &GeometryPaintContext<'_>, emit: &mut impl FnMut(Sc
                     None,
                 )),
             }
-        }
-        Some(ComponentGeometry::QrCode { field, dark, .. }) => {
+        }),
+        Some(ComponentGeometry::QrCode { field, dark, .. }) => own_frame(|| {
             emit(visual_quad_with_paint(
                 &VisualPrimitiveContext {
                     node: id,
@@ -568,7 +568,7 @@ pub(super) fn build(context: &GeometryPaintContext<'_>, emit: &mut impl FnMut(Sc
                     VisualQuadStyle::solid([0.0, 0.0, 0.0, 1.0]),
                 ));
             }
-        }
+        }),
         Some(ComponentGeometry::Select {
             label,
             hint,
@@ -576,7 +576,7 @@ pub(super) fn build(context: &GeometryPaintContext<'_>, emit: &mut impl FnMut(Sc
             handle_color,
             menu,
             ..
-        }) => {
+        }) => own_frame(|| {
             emit(component_text_primitive(
                 id,
                 2,
@@ -794,8 +794,8 @@ pub(super) fn build(context: &GeometryPaintContext<'_>, emit: &mut impl FnMut(Sc
                     ));
                 }
             }
-        }
-        Some(ComponentGeometry::TreeView { rows, drop }) => {
+        }),
+        Some(ComponentGeometry::TreeView { rows, drop }) => own_frame(|| {
             for (index, row) in rows.iter().enumerate() {
                 let index = u64::try_from(index).unwrap_or(u64::MAX);
                 // toggle columns: a slot range of their own, eight per row
@@ -933,7 +933,7 @@ pub(super) fn build(context: &GeometryPaintContext<'_>, emit: &mut impl FnMut(Sc
                     None,
                 ));
             }
-        }
+        }),
         Some(ComponentGeometry::CommandPalette {
             scrim,
             surface,
@@ -945,7 +945,7 @@ pub(super) fn build(context: &GeometryPaintContext<'_>, emit: &mut impl FnMut(Sc
             input_background,
             input_border,
             elevation,
-        }) => {
+        }) => own_frame(|| {
             let overlay_z = node.z_index.max(1_000);
             emit(visual_quad(
                 &VisualPrimitiveContext {
@@ -1116,8 +1116,8 @@ pub(super) fn build(context: &GeometryPaintContext<'_>, emit: &mut impl FnMut(Sc
                     emit(shortcut);
                 }
             }
-        }
-        Some(ComponentGeometry::KeyCaptureLayer { badge, background }) => {
+        }),
+        Some(ComponentGeometry::KeyCaptureLayer { badge, background }) => own_frame(|| {
             if let Some(background) = background {
                 emit(visual_quad_with_paint(
                     &VisualPrimitiveContext {
@@ -1152,8 +1152,8 @@ pub(super) fn build(context: &GeometryPaintContext<'_>, emit: &mut impl FnMut(Sc
                 opacity,
                 node_order,
             ));
-        }
-        Some(ComponentGeometry::KeymapLayer { badge }) => {
+        }),
+        Some(ComponentGeometry::KeymapLayer { badge }) => own_frame(|| {
             emit(visual_quad(
                 &VisualPrimitiveContext {
                     node: id,
@@ -1186,7 +1186,7 @@ pub(super) fn build(context: &GeometryPaintContext<'_>, emit: &mut impl FnMut(Sc
                 opacity,
                 node_order,
             ));
-        }
+        }),
         _ => {}
     }
 }

@@ -15,7 +15,7 @@
 | Rust `std::thread::spawn` 默认 | 2 MiB |
 | Linux、Android 主线程 | 8 MiB（`ulimit -s`） |
 
-所以预算按最紧的两档定：release 的一整帧必须在 **256 KiB** 内跑完（512 KiB 线程留一半余量），debug 在 **512 KiB** 内。
+所以预算按最紧的一档定：一整帧，release 和 debug 都必须在 **256 KiB** 内跑完（512 KiB 线程留一半余量）。
 
 ### 树深上限
 
@@ -24,8 +24,8 @@
 ### 规则：哪些遍历可以递归
 
 1. **测量**和**视图建树**是仅有的两处按树深递归的地方。测量里尺寸要从约束传下去的子项里算上来，建树时一个元素要在自己的作用域里建子元素，二者都没有不改变语义的迭代写法。每一层都必须经过兜底：测量走 `layout_engine::recursion::level`，建树走 `crate::stack::level`。剩余栈不足 256 KiB 时这一层换到新分配的 4 MiB 栈段上继续（`stacker::grow`）。剩余栈在桌面平台和 OpenHarmony（Linux 目标）由 `stacker` 读取，在 iOS 和 Android 上读线程自己的栈边界（`pthread_get_stackaddr_np` / `pthread_getattr_np`）——`stacker` 读不到这两个平台，此前兜底在那里不生效。所以兜底在框架支持的每个平台上都生效。
-2. **放置**是有界递归：一次调用最多下降 `recursion::SPAN`（24）层，再往下的节点只写下自己的盒子，子树作为边界排进本趟队列，由最外层调用按顺序放完再返回。递归深度与树深无关，放置不需要兜底。见 [布局 · 布局递归与栈](layout.md#布局递归与栈)。
-3. **其余所有树遍历**都必须用循环或堆上的显式栈，不得按深度递归。这次改掉的：命中索引建树（`HitIndex::insert_tree`）、样式解析沿祖先链（`resolve_style`）、行盒查询（`holds_line_box_in`）、原子基线沿祖先上溯（`atom_baseline_reads_content`）。新增遍历时用 `scripts/audit-stack-frames.py` 和下面的门禁验证。
+2. **放置**是有界递归：一次调用最多下降 `recursion::SPAN` 层（release 24 层、debug 8 层，两种构建都约 90 KiB），再往下的节点只写下自己的盒子，子树作为边界排进本趟队列，由最外层调用按顺序放完再返回。递归深度与树深无关，放置不需要兜底。见 [布局 · 布局递归与栈](layout.md#布局递归与栈)。
+3. **其余所有树遍历**都必须用循环或堆上的显式栈，不得按深度递归。这次改掉的：命中索引建树（`HitIndex::insert_tree`）、命中查询（`HitIndex::visit_hits`）与命中树计数（`count_hit_entries`）、样式解析沿祖先链（`resolve_style`）、行盒查询（`holds_line_box_in`）、原子基线沿祖先上溯（`atom_baseline_reads_content`）。新增遍历时用 `scripts/audit-stack-frames.py` 和下面的门禁验证。
 4. **应用自己的嵌套模型**分两类，见下「应用模型的嵌套」：深度没有上限的（树视图的数据）一律不按深度递归；面板切分树（Dock、PaneTree、区域布局）有结构上限 `MAX_SPLIT_DEPTH`，在上限之内递归。
 5. **解析运行时内容**（Markdown、Mermaid 图、CSS、ICU 消息、绘制脚本）的递归跟着输入的嵌套深度走，所以每一处都有深度上限或改成了循环，见下「运行时内容的嵌套」。超出上限时返回解析错误、跳过那一段或按纯文本降级，不会 panic。
 
@@ -63,7 +63,7 @@
 
 | 门禁 | 守的是什么 | 命令 |
 | --- | --- | --- |
-| `nana-ui-scene/tests/deep_tree_stack.rs` | 508 层（上限减 4）的树在 256 KiB（release）/ 512 KiB（debug）的线程上走完整帧：挂载、布局、提取、命中、无障碍、改最深处的文本再走一帧、析构 | `cargo test -p nana-ui-scene --test deep_tree_stack`，再加 `--release` |
+| `nana-ui-scene/tests/deep_tree_stack.rs` | 508 层（上限减 4）的树在 256 KiB 的线程上（release 与 debug 都是）走完整帧：挂载、布局、提取、命中、无障碍、改最深处的文本再走一帧、析构 | `cargo test -p nana-ui-scene --test deep_tree_stack`，再加 `--release` |
 | `layout_engine::stack_budget` | 测量和放置的每层栈不超预算（debug 16 / 12 KiB，release 4 / 4 KiB），400 层的树在 1 MiB 线程上布局 | `cargo test -p nana-ui-runtime --lib stack_budget` |
 | `view::tests::a_view_deeper_than_the_stack_still_mounts` | 400 层视图在 1 MiB 线程上挂载、布局、析构 | `cargo test -p nana-ui-runtime --lib a_view_deeper` |
 | `scripts/audit-stack-frames.py` | 单个函数的栈帧 | 见下 |
@@ -87,7 +87,9 @@ python3 scripts/audit-stack-frames.py target/release/deps/deep_tree_stack-<hash>
 | `RuntimeDocument::with_context` / `new` | 21 / 18 KiB | 19 / 18 KiB |
 | `AppContext::default` | 14 KiB | — |
 
-它们大，是因为 `AppContext`（18 KiB）和 `UiWorld`（14 KiB）按值内联在栈上、构造时搬了几次。debug 下帧路径上有三个函数远超预算：`UiWorld::derive_component_geometry` 111 KiB、`UiScene::build_node_primitives` 74 KiB、`controls_base::build` 72 KiB（release 分别是 9、5、6 KiB）。它们都是按 `StandardVisual` 分支的大 `match`，未优化的代码给每个分支的局部变量都留了槽。不在递归里，但每帧都在调用链上，是 debug 下整帧栈预算要 512 KiB 而不是 256 KiB 的主要原因。
+它们大，是因为 `AppContext`（18 KiB）和 `UiWorld`（14 KiB）按值内联在栈上、构造时搬了几次。
+
+debug 下帧路径上曾有几个函数远超预算：`UiWorld::derive_component_geometry` 111 KiB、`UiScene::build_node_primitives` 74 KiB、`controls_base::build` 72 KiB、`overlays::build` 28 KiB、`text::build` 19 KiB（release 分别是 9、5、6 KiB 以下）。它们都是按 `StandardVisual` 分支的大 `match`，未优化的代码给每个分支的局部变量都留了槽，走哪个分支都要全占。现在每个 12 行以上的分支都在 `own_frame(|| ...)` 里运行（runtime 的 `crate::stack::own_frame` 和 scene 的 `primitives::own_frame`，`#[inline(always)]` 的一层调用）：debug 下闭包是独立的帧，分支的局部变量只在走到它时才占栈；release 下闭包被内联，代码不变。debug 下这几个函数现在是 16、24、16 KiB 以下，最大的分支闭包 20 与 29 KiB。新加的大 `match` 分支照此办理。
 
 ### 与同类实现的对照
 
@@ -144,15 +146,22 @@ cd perf/micro/stack-depth && cargo run --release -- report
 
 NanaUI 的计时含布局写回的提交与结果发布（Taffy 没有对应步骤）。10 501 盒时一次布局约 39% 在放置、26% 在测量、18% 在两次发布、其余是写回与收尾。深链（`report`，同样交替读最小值）：布局 64 / 256 / 500 层 0.16 / 0.90 / 2.49 ms，整帧 0.84 / 7.4 / 24.7 ms；修掉提取与锚点记忆的平方项后（见「待办」）布局 0.14 / 0.52 / 1.06 ms，整帧 0.66 / 4.1 / 11.6 ms。`cargo run --release -- stages 125,250,500` 按 `FrameStage` 列一帧各阶段的最小耗时。
 
-本机负载常年在 5–15 之间，单次墙钟可以差一倍；比例比绝对值可信，对比要交替多跑几轮读最小值。剖析用 `cargo run --release -- wide-loop` 配 `sample`（宽树栈浅，归因可信）。
+深链的挂载（`stages` 的 `Mount`，`mount_view_root` 一次）原本也是平方的：125 / 250 / 500 层 0.74 / 2.4 / 8.7 ms，现在 0.28 / 0.55 / 1.11 ms，每翻倍 ×2。原因是每次插入都要沿父链走三遍：查环（`has_ancestor`，还往 SipHash 集合里插）、算深度（`ancestor_depth`）、量子树高（`subtree_height`），每走一步都经 `ValidationPlan::node` 把节点快照从世界里克隆出来暂存；提交后又沿父链两遍清理布局结果。现在：
+
+- 节点在 `Hierarchy::depth` 里存自己的深度，插入与脱离时对移动的子树广度更新，校验在批次还没改结构时直接读它；批次里再按节点记忆已结算的深度（`ValidationPlan::depths`，放下一个没有子节点的节点只改它自己的条目，移动带子树的节点清空）。测试构建里每次读取都与实走比对。
+- 只读的父链与子树遍历改用不暂存、不克隆的读取（`parent_of`）；子节点没有子节点时不可能成环，查环直接跳过；查环的上界用步数代替哈希集合。
+- 世界里还没有任何布局结果时，两条清理链直接返回（`layout_results_suppressed` 也从 SipHash 换成按 id 哈希的 `NodeSet`）。
+
+比例比绝对值可信，对比要交替多跑几轮读最小值。剖析用 `cargo run --release -- wide-loop` 配 `sample`（宽树栈浅，归因可信）。
+
+之后又做的（2026-11-02）：`LayoutInputMap` 的输入表与样式记忆表从哈希表换成按节点下标的 `DenseNodeMap`（与 `NodeTable` 同一布局：6.5 万以内的 id 直接下标），宽树三档与改动前交替三轮都快 7–8%（2 101 盒 1.79 → 1.66 µs，21 001 盒 2.74 → 2.55 µs）；`holds_line_box_in` 记忆表命中时不再先分配；容器计划按 id 找子项测量尺寸的表只在子项超过 16 个时才建。布局分配每盒 25.3 → 24.3 次。
 
 已做的（2026-11-02）：发布阶段每个结果的四个切片在复用的暂存表里建好、按最终长度一次分配，空切片不分配（`Arc::<[T]>::default()`），按父分组的子集改为一张排序表，不再每个父节点一个 `Vec`；意图缓存键的环境哈希从 SipHash 换成固定种子的 foldhash，`seeded_intrinsic` 换成 hashbrown；`ConstraintClass` 的相等与哈希一趟读出归一化后的标签与值，不再各自归一化两遍；`RetainedIntrinsicMetrics` 每个内容的变体表按一增长（首个 push 原本预留 4 个，320 B 只用 80 B）；`MeasurePlanSlots` 的两个槽装箱（原本每个容器 528 B 内联在表里，通常只用一个槽）；整页 pass 按节点数和容器数预先给各表留好容量；锚点记忆表在父节点已结算时不再分配。
 
 ## 待办
 
 - **冷布局吞吐与每盒内存**：上面两张表 NanaUI 仍落后 Taffy 约 3 倍（时间）与 2 倍（内存）。剩下的成本是摊开的，没有单点：每盒约 25 次分配（每个容器的 `descend`、`flow`、`child_sizes`、计划条目等 `Vec`）、十几张按 `StableNodeId` 的哈希表（`LayoutInputMap` 的输入表每条 264 B，一万盒时 2.8 MB，查一次就是一次缓存未命中；`style()` 每盒被调约 18 次，分散在 14 处）、以及冷布局把整批结果发布两次（提交写回时一次 `CompatibilityWrite`，帧里再按 `RuntimeLayout` 校验一次，第二次全部判定未变）。再往下要换存储：按节点下标的稠密数组代替这些表、`LayoutResult` 不再给每个子节点存三份几何，这是结构改动，需要先对 `WorkCounters` 合同和消费者（Scene、命中、无障碍、`issue205` 等测试）逐个确认。
-- **深链上的整帧**：提取与文本两处平方项已修（2026-11-02），剩下的在挂载。`stages` 下 250 → 500 层 Extract 2.4 → 10.1 ms 降到 0.15 → 0.30 ms，TextShape 0.49 → 1.65 ms 降到 0.11 → 0.22 ms，布局 1.0 → 2.1 ms，每翻倍都约 ×2。提取：重建图元期间按父节点记住交给子节点的折叠状态（`UiScene::handed_down`，`F(P) = step(F(parent(P)), P)`，`fixed` 处重置几何、透明度照乘；裁剪链不跟父链或祖先里有 `ModalFrame` 时退回逐节点上溯），绘制序前缀（`group_prefix_memo`，`sort_primitives` 也用）和「在栅格化 SVG / 图标之内」（`ancestor_answer`）同样按节点记忆，沿父链结算都是循环。TextShape 与布局的平方项其实就在发布：`anchor_pair_memo` 末尾的 `unwrap_or(...)` 急切求值，每次调用都沿祖先走两遍 `overflow_clip_of` / `containing_block_of`，记忆表里的计数看不到这两遍——`sample` 归到 `layout_anchors` 并不是误归因。改成 `unwrap_or_else` 后发布线性。剩下的：分段计时下挂载（`mount_view_root`）250 → 500 层 2.9 → 9.7 ms（×3.3），flush 是 ×1.9，整帧的超线性现在全在挂载，尚未拆。`filter_groups_from` 仍逐节点上溯，但只在宿主侧（`nana-ui`）按需调用，不在提取路径上。
-- **debug 的大 `match` 帧**：把 `derive_component_geometry`、`build_node_primitives`、`controls_base::build` 的大分支拆成各自的函数，debug 整帧就能降到 256 KiB。
+- **往已布局的界面里挂深子树**：挂载本身已是线性（见下），但插入时沿祖先清理布局结果的两条链（`suppress_layout_result_chain`、`clear_layout_result_chain`）在世界里已有布局结果时仍走到最近的固定尺寸边界，代价是「插入的节点数 × 深度」。首次挂载时表是空的，直接跳过。要在已处理过的祖先处提前停，得先确认边界节点的样式在两次插入之间不会变，否则会读到过期结果。
 - **`AppContext` / `UiWorld` 内联大小**：把大块字段装箱，构造路径的帧就能回到预算内。
 - **railroad 解析的 debug 帧**：`alt → seq → term → primary` 每层五个帧、合计 5 KiB 以上，48 层在 debug 下余量不到一倍。把 `Result<Expr, Fail>` 的大小压下来，或把上限降到 32。
 - **移动端实机**：`stack` 的 iOS 与 Android 分支只做过交叉 `cargo check`（`aarch64-apple-ios`、`aarch64-linux-android`，后者先 `source scripts/android-env.sh`），没有在设备上跑过深树门禁。

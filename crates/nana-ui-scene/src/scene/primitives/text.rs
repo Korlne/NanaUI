@@ -20,7 +20,7 @@ pub(super) fn build(context: &GeometryPaintContext<'_>, emit: &mut impl FnMut(Sc
             suffix,
             resize_grip,
             ..
-        }) => {
+        }) => own_frame(|| {
             let scroll = EditorScroll(*scroll);
             if let Some(suffix) = suffix {
                 let mut suffix_clips = clips.to_vec();
@@ -164,13 +164,13 @@ pub(super) fn build(context: &GeometryPaintContext<'_>, emit: &mut impl FnMut(Sc
                 opacity,
                 node_order,
             )));
-        }
+        }),
         Some(ComponentGeometry::StatusBadge {
             indicator,
             label,
             foreground,
             ..
-        }) => {
+        }) => own_frame(|| {
             emit(component_text_primitive(
                 id,
                 2,
@@ -201,12 +201,12 @@ pub(super) fn build(context: &GeometryPaintContext<'_>, emit: &mut impl FnMut(Sc
                     corner_radius: corner_radii(999.0),
                 },
             ));
-        }
+        }),
         Some(ComponentGeometry::ValidationMessage {
             indicator,
             label,
             foreground,
-        }) => {
+        }) => own_frame(|| {
             emit(component_text_primitive(
                 id,
                 2,
@@ -237,13 +237,13 @@ pub(super) fn build(context: &GeometryPaintContext<'_>, emit: &mut impl FnMut(Sc
                     corner_radius: corner_radii(999.0),
                 },
             ));
-        }
+        }),
         Some(ComponentGeometry::EmptyState {
             icon,
             title,
             message,
             ..
-        }) => {
+        }) => own_frame(|| {
             emit(component_text_primitive(
                 id,
                 2,
@@ -289,8 +289,8 @@ pub(super) fn build(context: &GeometryPaintContext<'_>, emit: &mut impl FnMut(Sc
                     node_order,
                 ));
             }
-        }
-        Some(ComponentGeometry::PathText { text }) => {
+        }),
+        Some(ComponentGeometry::PathText { text }) => own_frame(|| {
             emit(component_text_primitive(
                 id,
                 2,
@@ -303,8 +303,8 @@ pub(super) fn build(context: &GeometryPaintContext<'_>, emit: &mut impl FnMut(Sc
                 opacity,
                 node_order,
             ));
-        }
-        Some(ComponentGeometry::LabeledValue { label, value, .. }) => {
+        }),
+        Some(ComponentGeometry::LabeledValue { label, value, .. }) => own_frame(|| {
             emit(component_text_primitive(
                 id,
                 2,
@@ -329,7 +329,7 @@ pub(super) fn build(context: &GeometryPaintContext<'_>, emit: &mut impl FnMut(Sc
                 opacity,
                 node_order,
             ));
-        }
+        }),
         _ => {}
     }
 }

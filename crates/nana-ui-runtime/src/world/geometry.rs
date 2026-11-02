@@ -1,5 +1,7 @@
 //! Component geometry derived from committed Runtime data.
 
+use crate::stack::own_frame;
+
 #[cfg(feature = "calendar")]
 mod calendar;
 #[cfg(feature = "calendar")]
@@ -142,7 +144,7 @@ impl UiWorld {
             }
         };
         match visual {
-            StandardVisual::PathText { value } => {
+            StandardVisual::PathText { value } => own_frame(|| {
                 let value = crate::path_text::shorten_path(value, content.width, |text| {
                     self.chrome_text_measure(id)
                         .width(text, style.font_size, style.font_weight)
@@ -156,7 +158,7 @@ impl UiWorld {
                         style.font_weight,
                     ),
                 })
-            }
+            }),
             StandardVisual::ModalFrame {
                 title,
                 description,
@@ -165,7 +167,7 @@ impl UiWorld {
                 danger,
                 surface_painter,
                 ..
-            } => {
+            } => own_frame(|| {
                 // The card and its chrome are the measure the parts were
                 // solved with; the title, description and body copy are the
                 // parts layout published (#384).
@@ -343,14 +345,14 @@ impl UiWorld {
                     surface_paint,
                     scrim_opacity: self.scrim_presence(id),
                 })
-            }
+            }),
             StandardVisual::Button {
                 label,
                 loading,
                 icon,
                 trailing_icon,
                 ..
-            } => {
+            } => own_frame(|| {
                 use crate::LayoutPartKind;
                 let leading = self.content_part_box(id, LayoutPartKind::LeadingContent);
                 let trailing = self.content_part_box(id, LayoutPartKind::TrailingContent);
@@ -389,13 +391,13 @@ impl UiWorld {
                     },
                     focus_ring: None,
                 })
-            }
+            }),
             StandardVisual::TextInput {
                 size,
                 invalid,
                 steppers,
                 ..
-            } => {
+            } => own_frame(|| {
                 let presentation = self.nodes.text_input_presentation(id)?;
                 // Fold gutters and sticky headers share the displayed logical-line
                 // index. Counting every prefix separately makes many folds quadratic.
@@ -1221,8 +1223,8 @@ impl UiWorld {
                 } else {
                     geometry
                 })
-            }
-            StandardVisual::Checkbox { .. } => {
+            }),
+            StandardVisual::Checkbox { .. } => own_frame(|| {
                 // Both boxes are the parts layout published (#205); the label
                 // of an empty checkbox has none and keeps the content box.
                 use crate::LayoutPartKind;
@@ -1246,7 +1248,7 @@ impl UiWorld {
                         style.font_weight,
                     ),
                 })
-            }
+            }),
             StandardVisual::Switch {
                 thumb_progress,
                 label,
@@ -1256,7 +1258,7 @@ impl UiWorld {
                 size,
                 invalid,
                 ..
-            } => {
+            } => own_frame(|| {
                 // The track, label and hint are the parts layout published
                 // (#205); a switch with nothing beside its track has no label
                 // part and draws an empty label at the content box's start.
@@ -1377,7 +1379,7 @@ impl UiWorld {
                     track_border: fade(track_border),
                     thumb_background: fade(thumb_background),
                 })
-            }
+            }),
             StandardVisual::Scrollbar {
                 axes,
                 visibility,
@@ -1385,7 +1387,7 @@ impl UiWorld {
                 presence,
                 expand,
                 ..
-            } => {
+            } => own_frame(|| {
                 let presence = match visibility {
                     nana_ui_core::ScrollbarVisibility::AutoHide => *presence,
                     nana_ui_core::ScrollbarVisibility::Always => 1.0,
@@ -1498,45 +1500,47 @@ impl UiWorld {
                         vertical,
                     },
                 )
-            }
+            }),
             StandardVisual::Range {
                 rail: Some(girth),
                 value,
                 size,
                 ..
-            } => Some(crate::ComponentGeometry::Range {
-                border_width: self.theme.border().hairline,
-                label: None,
-                value: text_region(
-                    // A rail draws no readout: an empty region at its end.
-                    LayoutBox {
-                        x: content.x + content.width,
-                        y: content.y,
-                        height: content.height,
-                        ..LayoutBox::default()
+            } => own_frame(|| {
+                Some(crate::ComponentGeometry::Range {
+                    border_width: self.theme.border().hairline,
+                    label: None,
+                    value: text_region(
+                        // A rail draws no readout: an empty region at its end.
+                        LayoutBox {
+                            x: content.x + content.width,
+                            y: content.y,
+                            height: content.height,
+                            ..LayoutBox::default()
+                        },
+                        Arc::clone(value),
+                        false,
+                        size.text_size_in(self.theme.typography()),
+                        Some(self.theme.typography().medium),
+                    ),
+                    unit: None,
+                    // Keep the full horizontal pointer range while the thumb
+                    // band follows the same live type extent as an ordinary range.
+                    track: LayoutBox {
+                        y: content.y
+                            + (content.height
+                                - size
+                                    .text_size_in(self.theme.typography())
+                                    .min(content.height))
+                                / 2.0,
+                        height: size
+                            .text_size_in(self.theme.typography())
+                            .min(content.height),
+                        ..content
                     },
-                    Arc::clone(value),
-                    false,
-                    size.text_size_in(self.theme.typography()),
-                    Some(self.theme.typography().medium),
-                ),
-                unit: None,
-                // Keep the full horizontal pointer range while the thumb
-                // band follows the same live type extent as an ordinary range.
-                track: LayoutBox {
-                    y: content.y
-                        + (content.height
-                            - size
-                                .text_size_in(self.theme.typography())
-                                .min(content.height))
-                            / 2.0,
-                    height: size
-                        .text_size_in(self.theme.typography())
-                        .min(content.height),
-                    ..content
-                },
-                track_girth: girth.min(content.height),
-                thumb_ring: None,
+                    track_girth: girth.min(content.height),
+                    thumb_ring: None,
+                })
             }),
             StandardVisual::Range {
                 label,
@@ -1545,7 +1549,7 @@ impl UiWorld {
                 size,
                 track_gradient,
                 ..
-            } => {
+            } => own_frame(|| {
                 // The label, the value's slot and the unit are the parts
                 // layout published (#384); the track runs in the lane they
                 // leave. An empty value region (no readout) sits at the
@@ -1620,8 +1624,8 @@ impl UiWorld {
                         .is_some()
                         .then(|| crate::ContrastRing::from_effects(self.theme.effects())),
                 })
-            }
-            StandardVisual::Card { title, kind, .. } => {
+            }),
+            StandardVisual::Card { title, kind, .. } => own_frame(|| {
                 let parts = self.component_content_parts(id);
                 let header =
                     crate::layout_engine::parts::part_bounds(&parts, crate::LayoutPartKind::Header);
@@ -1647,14 +1651,14 @@ impl UiWorld {
                         crate::LayoutPartKind::Spinner,
                     ),
                 })
-            }
+            }),
             StandardVisual::ListItem {
                 leading,
                 content: content_slot,
                 trailing,
                 note,
                 detail,
-            } => {
+            } => own_frame(|| {
                 let slot_box = |id: StableNodeId| -> Option<LayoutBox> {
                     if self
                         .node_style(id)
@@ -1698,12 +1702,12 @@ impl UiWorld {
                     note: secondary_region(note, crate::LayoutPartKind::Note),
                     detail: secondary_region(detail, crate::LayoutPartKind::Detail),
                 })
-            }
+            }),
             StandardVisual::StatusBadge {
                 label,
                 tone,
                 compact,
-            } => {
+            } => own_frame(|| {
                 // The dot and the label are the parts layout published (#205).
                 // The label's single centred line is painted across the
                 // pill's whole height, as it always was; across the content
@@ -1746,10 +1750,10 @@ impl UiWorld {
                     background,
                     foreground,
                 })
-            }
+            }),
             StandardVisual::ValidationMessage {
                 message, intent, ..
-            } => {
+            } => own_frame(|| {
                 // The dot and the message are the parts layout published (#205).
                 use crate::LayoutPartKind;
                 let indicator = self
@@ -1780,14 +1784,14 @@ impl UiWorld {
                     },
                     foreground,
                 })
-            }
+            }),
             StandardVisual::EmptyState {
                 title,
                 message,
                 icon,
                 compact,
                 action,
-            } => {
+            } => own_frame(|| {
                 // The icon, title and message are the parts layout published
                 // (#205); the chrome clip is the content box they and the
                 // action share.
@@ -1842,7 +1846,7 @@ impl UiWorld {
                     message,
                     action: action.and_then(|action| self.component_layout_box(action)),
                 })
-            }
+            }),
             StandardVisual::LabeledValue {
                 label,
                 value,
@@ -1851,7 +1855,7 @@ impl UiWorld {
                 value_weight,
                 action,
                 ..
-            } => {
+            } => own_frame(|| {
                 let parts = self.component_content_parts(id);
                 let label_bounds =
                     crate::layout_engine::parts::part_bounds(&parts, crate::LayoutPartKind::Label)?;
@@ -1892,7 +1896,7 @@ impl UiWorld {
                         })
                         .and_then(|action| self.component_layout_box(action)),
                 })
-            }
+            }),
             StandardVisual::SelectionOption {
                 label,
                 icon,
@@ -1900,7 +1904,7 @@ impl UiWorld {
                 selected,
                 disabled,
                 ..
-            } => {
+            } => own_frame(|| {
                 // The ring, the icon and the label are the parts layout
                 // published (#205).
                 use crate::LayoutPartKind;
@@ -1978,13 +1982,13 @@ impl UiWorld {
                     }),
                     indicator: ring,
                 })
-            }
+            }),
             StandardVisual::Progress {
                 value_ratio,
                 label,
                 mode,
                 ..
-            } => {
+            } => own_frame(|| {
                 // The label and the cancel target are the parts layout
                 // published (#384); the track runs below them.
                 use crate::LayoutPartKind;
@@ -2014,10 +2018,10 @@ impl UiWorld {
                         }),
                     part(LayoutPartKind::TrailingContent),
                 )
-            }
+            }),
             StandardVisual::LevelMeter {
                 value_ratio, girth, ..
-            } => {
+            } => own_frame(|| {
                 let girth = if girth.is_finite() && *girth > 0.0 {
                     *girth
                 } else {
@@ -2036,14 +2040,14 @@ impl UiWorld {
                     None,
                     None,
                 )
-            }
+            }),
             StandardVisual::FormField {
                 label,
                 hint,
                 error,
                 size,
                 control,
-            } => {
+            } => own_frame(|| {
                 let parts = self.component_content_parts(id);
                 form_field_geometry(
                     bounds,
@@ -2056,14 +2060,14 @@ impl UiWorld {
                     &|id| self.component_layout_box(id),
                     self.style_model,
                 )
-            }
+            }),
             StandardVisual::Toast {
                 title,
                 description,
                 tone,
                 icon,
                 ..
-            } => {
+            } => own_frame(|| {
                 // Every box is a part layout published from the recipe
                 // (`UiWorld::toast_inputs`); this adds what paints in it.
                 let recipe = self.theme.recipes().toast();
@@ -2110,10 +2114,10 @@ impl UiWorld {
                     dismiss: part(LayoutPartKind::TrailingContent),
                     elevation,
                 })
-            }
+            }),
             StandardVisual::XYPad {
                 nx, ny, picture, ..
-            } => {
+            } => own_frame(|| {
                 let pad = bounds;
                 // A ring has to be wide enough to stay open around the colour
                 // it marks; a dot only has to be seen.
@@ -2162,7 +2166,7 @@ impl UiWorld {
                         .color(SemanticColorRole::Border)
                         .as_rgba_array(),
                 })
-            }
+            }),
             StandardVisual::Select {
                 label,
                 hint,
@@ -2176,7 +2180,7 @@ impl UiWorld {
                 checkable,
                 fit_options,
                 ..
-            } => {
+            } => own_frame(|| {
                 let parts = self.component_content_parts(id);
                 Some(crate::select::select_geometry(
                     bounds,
@@ -2206,14 +2210,14 @@ impl UiWorld {
                         })
                         .flatten(),
                 ))
-            }
+            }),
             StandardVisual::MenuSurface {
                 kind: crate::MenuSurfaceKind::ContextMenu,
                 query,
                 rows,
                 highlighted,
                 ..
-            } if query.is_some() || !rows.is_empty() => {
+            } if query.is_some() || !rows.is_empty() => own_frame(|| {
                 Some(crate::menus::context_menu_geometry_in(
                     bounds,
                     query.as_ref(),
@@ -2225,14 +2229,14 @@ impl UiWorld {
                     self.chrome_text_measure(id),
                     &self.theme,
                 ))
-            }
+            }),
             StandardVisual::MenuSurface {
                 trigger,
                 trigger_icon,
                 trigger_image,
                 overlay,
                 ..
-            } => {
+            } => own_frame(|| {
                 let trigger_content = overlay.and_then(|overlay| overlay.trigger_content);
                 let has_trigger = trigger.is_some()
                     || trigger_icon.is_some()
@@ -2254,7 +2258,7 @@ impl UiWorld {
                     surface,
                     &self.component_content_parts(id),
                 ))
-            }
+            }),
             StandardVisual::ActionMenuItem {
                 label,
                 hint,
@@ -2263,7 +2267,7 @@ impl UiWorld {
                 disabled,
                 size,
                 ..
-            } => {
+            } => own_frame(|| {
                 let parts = self.component_content_parts(id);
                 Some(crate::menus::action_menu_item_geometry_from_parts(
                     label,
@@ -2277,7 +2281,7 @@ impl UiWorld {
                     &self.theme,
                     &parts,
                 ))
-            }
+            }),
             StandardVisual::TreeView {
                 rows,
                 size,
@@ -2310,7 +2314,7 @@ impl UiWorld {
                 self.style_model.metrics,
                 self.chrome_text_measure(id),
             )),
-            StandardVisual::QrCode { modules, width } => {
+            StandardVisual::QrCode { modules, width } => own_frame(|| {
                 let (module_size, (ox, oy)) = crate::qr_code::module_geometry(bounds, *width);
                 let quiet = crate::qr_code::QUIET_ZONE_MODULES as f32;
                 let dark = modules
@@ -2338,7 +2342,7 @@ impl UiWorld {
                     module_size,
                     dark,
                 })
-            }
+            }),
             #[cfg(feature = "calendar")]
             StandardVisual::CalendarHeatmap {
                 cells,
@@ -2349,18 +2353,20 @@ impl UiWorld {
                 active,
                 active_title,
                 ..
-            } => Some(calendar_heatmap_geometry(
-                bounds,
-                cells,
-                month_labels,
-                day_labels,
-                *cell_size,
-                *max_level,
-                *active,
-                active_title.as_deref(),
-                &self.style_model.palette,
-                self.chrome_text_measure(id),
-            )),
+            } => own_frame(|| {
+                Some(calendar_heatmap_geometry(
+                    bounds,
+                    cells,
+                    month_labels,
+                    day_labels,
+                    *cell_size,
+                    *max_level,
+                    *active,
+                    active_title.as_deref(),
+                    &self.style_model.palette,
+                    self.chrome_text_measure(id),
+                ))
+            }),
             #[cfg(feature = "charts")]
             StandardVisual::Chart { spec, hover } => {
                 Some(self.chart_geometry(id, bounds, spec, hover))
@@ -2375,7 +2381,7 @@ impl UiWorld {
                 size,
                 spacing,
                 drag,
-            } => {
+            } => own_frame(|| {
                 // Live row children own their label painting; a stale retained
                 // `rows` (projected before the children were attached) must not
                 // paint a second copy underneath them. They also own the row
@@ -2425,13 +2431,13 @@ impl UiWorld {
                     &self.style_model.palette,
                     self.style_model.metrics,
                 ))
-            }
+            }),
             #[cfg(feature = "rich-text")]
             StandardVisual::NativeMarkdown {
                 text,
                 blocks,
                 selection,
-            } => {
+            } => own_frame(|| {
                 let selection_range = selection;
                 let (text, selection_color) =
                     selectable_text_regions(content, text, style, &self.style_model.palette);
@@ -2457,7 +2463,7 @@ impl UiWorld {
                     },
                     selection_color,
                 })
-            }
+            }),
             #[cfg(feature = "rich-text")]
             StandardVisual::SelectableRichText { text, selection } => {
                 let selection = self.selectable_rich_text_highlights(id, content, text, *selection);
@@ -2479,18 +2485,20 @@ impl UiWorld {
                 viewport_offset_x,
                 viewport_offset_y,
                 viewport_zoom,
-            } => Some(graph_canvas_geometry(
-                bounds,
-                nodes,
-                ports,
-                edges,
-                connecting.as_ref(),
-                *grid_spacing,
-                *viewport_offset_x,
-                *viewport_offset_y,
-                *viewport_zoom,
-                &self.style_model.palette,
-            )),
+            } => own_frame(|| {
+                Some(graph_canvas_geometry(
+                    bounds,
+                    nodes,
+                    ports,
+                    edges,
+                    connecting.as_ref(),
+                    *grid_spacing,
+                    *viewport_offset_x,
+                    *viewport_offset_y,
+                    *viewport_zoom,
+                    &self.style_model.palette,
+                ))
+            }),
             #[cfg(feature = "graph-canvas")]
             StandardVisual::GraphMinimap {
                 bounds: model_bounds,
@@ -2514,18 +2522,20 @@ impl UiWorld {
                 zoom,
                 offset_x,
                 offset_y,
-            } => Some(image_viewer_geometry(
-                bounds,
-                *intrinsic_size,
-                name.as_ref(),
-                metadata.as_ref(),
-                *zoom,
-                *offset_x,
-                *offset_y,
-                &self.style_model.palette,
-                self.theme.effects().media_scrim,
-                self.style_model.metrics,
-            )),
+            } => own_frame(|| {
+                Some(image_viewer_geometry(
+                    bounds,
+                    *intrinsic_size,
+                    name.as_ref(),
+                    metadata.as_ref(),
+                    *zoom,
+                    *offset_x,
+                    *offset_y,
+                    &self.style_model.palette,
+                    self.theme.effects().media_scrim,
+                    self.style_model.metrics,
+                ))
+            }),
             StandardVisual::KeyCaptureLayer { recording } => Some(key_capture_geometry(
                 content,
                 *recording,

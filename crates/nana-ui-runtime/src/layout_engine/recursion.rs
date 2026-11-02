@@ -29,9 +29,16 @@ use crate::StableNodeId;
 use crate::stack::{RED_ZONE, SEGMENT};
 
 /// Placement levels one call descends before the rest of a subtree waits in
-/// the pass's queue. Tests run with the smallest span, so every one of them
-/// places through boundaries.
-pub(super) const SPAN: usize = if cfg!(test) { 2 } else { 24 };
+/// the pass's queue: about 90 KiB of placement stack in either build, an
+/// unoptimized level costing three times an optimized one. Tests run with
+/// the smallest span, so every one of them places through boundaries.
+pub(super) const SPAN: usize = if cfg!(test) {
+    2
+} else if cfg!(debug_assertions) {
+    8
+} else {
+    24
+};
 
 /// A subtree whose root has its box and whose children wait to be placed:
 /// where `place_node_body` resumes.

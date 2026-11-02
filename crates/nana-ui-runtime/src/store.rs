@@ -51,6 +51,11 @@ pub(crate) struct Hierarchy {
     /// list renumbers the children it shifted, which that edit already moves,
     /// so finding a sibling never scans the list.
     pub index_in_parent: u32,
+    /// Levels from the root down to this node, counting it: 1 for a root.
+    /// Moving a subtree renumbers it (`UiWorld::set_subtree_depth`), so
+    /// checking an insert against `MAX_TREE_DEPTH` reads its parent's depth
+    /// instead of walking to the root.
+    pub depth: u16,
 }
 
 impl Default for Hierarchy {
@@ -59,6 +64,7 @@ impl Default for Hierarchy {
             parent: None,
             children: Arc::clone(&EMPTY_CHILDREN),
             index_in_parent: 0,
+            depth: 1,
         }
     }
 }
@@ -287,6 +293,92 @@ impl EditorRecord {
             text: "",
             selection,
         })
+    }
+}
+
+/// A map keyed by node, laid out as [`NodeTable`] lays out the records:
+/// ids up to [`DENSE_LIMIT`] index a vector, the rest fall back to a hash
+/// map. A pass looks the same nodes up many times over, and indexing
+/// costs neither a hash nor a probe.
+pub(crate) struct DenseNodeMap<V> {
+    dense: Vec<Option<V>>,
+    overflow: crate::NodeMap<V>,
+    len: usize,
+}
+
+impl<V> Default for DenseNodeMap<V> {
+    fn default() -> Self {
+        Self {
+            dense: Vec::new(),
+            overflow: crate::NodeMap::default(),
+            len: 0,
+        }
+    }
+}
+
+impl<V> DenseNodeMap<V> {
+    /// Room for ids up to `highest` without growing.
+    pub(crate) fn with_highest(highest: StableNodeId) -> Self {
+        let mut map = Self::default();
+        let index = highest.get() as usize;
+        if highest.get() <= DENSE_LIMIT {
+            map.dense.resize_with(index + 1, || None);
+        }
+        map
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.len
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    pub(crate) fn get(&self, id: StableNodeId) -> Option<&V> {
+        if let Some(Some(value)) = self.dense.get(id.get() as usize) {
+            return Some(value);
+        }
+        // An id put in the overflow before the vector grew past it.
+        if self.overflow.is_empty() {
+            return None;
+        }
+        self.overflow.get(&id)
+    }
+
+    pub(crate) fn insert(&mut self, id: StableNodeId, value: V) -> Option<V> {
+        let raw = id.get();
+        let index = raw as usize;
+        let previous = if !self.overflow.is_empty() && self.overflow.contains_key(&id) {
+            self.overflow.insert(id, value)
+        } else if index < self.dense.len() {
+            self.dense[index].replace(value)
+        } else if raw <= DENSE_LIMIT && index <= self.dense.len().saturating_add(DENSE_GAP) {
+            self.dense.resize_with(index + 1, || None);
+            self.dense[index].replace(value)
+        } else {
+            self.overflow.insert(id, value)
+        };
+        if previous.is_none() {
+            self.len += 1;
+        }
+        previous
+    }
+
+    /// The value at `id`, inserting what `make` gives when there is none;
+    /// `None` when `make` gives nothing.
+    pub(crate) fn get_or_try_insert<E>(
+        &mut self,
+        id: StableNodeId,
+        make: impl FnOnce() -> Result<Option<V>, E>,
+    ) -> Result<Option<&V>, E> {
+        if self.get(id).is_none() {
+            let Some(value) = make()? else {
+                return Ok(None);
+            };
+            self.insert(id, value);
+        }
+        Ok(self.get(id))
     }
 }
 

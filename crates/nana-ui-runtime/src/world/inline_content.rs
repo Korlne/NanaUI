@@ -321,6 +321,13 @@ impl UiWorld {
                 Bears::IfItHolds
             }
         };
+        if let Some(&known) = memo.get(&id) {
+            return known;
+        }
+        if self.lays_out_own_line(id) {
+            memo.insert(id, true);
+            return true;
+        }
         // Post-order: a box is settled once every child it depends on is.
         let mut open = vec![(id, false)];
         while let Some((node, expanded)) = open.pop() {
