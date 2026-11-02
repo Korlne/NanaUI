@@ -3154,7 +3154,7 @@ struct PassIntrinsicCache {
     /// Intrinsic facts are kept separately from used sizes.  A percentage,
     /// fill, or stretch result is a resolution against one containing block;
     /// it must never become the preferred value in the shared authority.
-    cache: crate::IntrinsicCache,
+    cache: crate::intrinsic_cache::PassIntrinsicFacts,
     /// Used-size memo for this pass. Its key contains the concrete available
     /// size because that is exactly what the placement algorithm resolves.
     used: HashMap<MeasurementKey, Size>,
@@ -3189,16 +3189,11 @@ struct PassIntrinsicCache {
 
 impl PassIntrinsicCache {
     fn with_capacity(capacity: usize) -> Self {
-        let mut cache = crate::IntrinsicCache::new(crate::IntrinsicCacheBudget {
-            // A node may be measured at its parent width and again at a
-            // flex/grid used width. Keep a few constraint classes alive
-            // for baseline and cross-context consumers in this pass.
-            max_entries: capacity.saturating_mul(4).max(1),
-            max_bytes: usize::MAX,
-        });
-        cache.reserve(capacity);
         Self {
-            cache,
+            // A node may be measured at its parent width and again at a
+            // flex/grid used width; the pass keeps every variant for
+            // baseline and cross-context consumers.
+            cache: crate::intrinsic_cache::PassIntrinsicFacts::with_capacity(capacity),
             used: HashMap::with_capacity(capacity),
             used_order: Vec::with_capacity(capacity),
             new_metrics: HashMap::with_capacity(capacity),

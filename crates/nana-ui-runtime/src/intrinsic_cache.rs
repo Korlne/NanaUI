@@ -638,12 +638,6 @@ impl IntrinsicCache {
         }
     }
 
-    /// Room for `additional` more entries without growing the table.
-    pub(crate) fn reserve(&mut self, additional: usize) {
-        self.entries
-            .reserve(additional.min(self.budget.max_entries));
-    }
-
     #[must_use]
     pub fn generation(&self) -> IntrinsicGeneration {
         self.generation
@@ -973,6 +967,176 @@ impl IntrinsicCache {
 pub enum Baseline {
     First,
     Last,
+}
+
+/// One layout pass's intrinsic facts: what [`IntrinsicCache`] answers for a
+/// pass, laid out as an arena. A fact's key names its node (`content` is the
+/// node id), so the facts of one node chain from that node's slot in a
+/// table indexed by id, newest first, and the facts themselves sit one
+/// after another in the order they were measured. A lookup reads one slot
+/// and walks a node's few variants; nothing is hashed and no recency list
+/// is kept up, where the cache touched an entry across the table on every
+/// insert and hit.
+///
+/// Counts as the cache counts: a lookup is a measure request that hits or
+/// misses (cross-context when the caller names a context and the fact was
+/// measured in another), a baseline query is not; entries and bytes are the
+/// cache's per entry. A pass holds every fact it measures: the cache's pass
+/// budget was four variants a node, which no pass came near, so nothing is
+/// evicted.
+#[derive(Default)]
+pub(crate) struct PassIntrinsicFacts {
+    facts: Vec<PassFact>,
+    /// Index into `facts` of each node's newest fact.
+    newest: crate::store::DenseNodeMap<u32>,
+    /// Facts whose key names no node (`content` 0); none in practice.
+    unnamed: Vec<u32>,
+    counters: IntrinsicCacheCounters,
+}
+
+struct PassFact {
+    key: IntrinsicCacheKey,
+    metrics: IntrinsicMetrics,
+    context: Option<FormattingContextId>,
+    /// The node's next older fact, or `u32::MAX`.
+    older: u32,
+}
+
+const NO_FACT: u32 = u32::MAX;
+
+impl PassIntrinsicFacts {
+    pub(crate) fn with_capacity(capacity: usize) -> Self {
+        Self {
+            facts: Vec::with_capacity(capacity),
+            ..Self::default()
+        }
+    }
+
+    fn find(&self, key: &IntrinsicCacheKey) -> Option<usize> {
+        let mut index = match crate::StableNodeId::new(key.content) {
+            Some(id) => self.newest.get(&id).copied().unwrap_or(NO_FACT),
+            None => {
+                return self
+                    .unnamed
+                    .iter()
+                    .map(|&index| index as usize)
+                    .find(|&index| self.facts[index].key == *key);
+            }
+        };
+        while index != NO_FACT {
+            let fact = &self.facts[index as usize];
+            if fact.key == *key {
+                return Some(index as usize);
+            }
+            index = fact.older;
+        }
+        None
+    }
+
+    pub(crate) fn insert(
+        &mut self,
+        key: IntrinsicCacheKey,
+        mut metrics: IntrinsicMetrics,
+        context: Option<FormattingContextId>,
+    ) {
+        let key = IntrinsicCacheKey {
+            constraints: key.constraints.normalized(),
+            ..key
+        };
+        metrics = metrics.normalized();
+        metrics.generation = IntrinsicGeneration::default().get();
+        // A fact measured again replaces the one it held, as the cache does.
+        if let Some(index) = self.find(&key) {
+            let fact = &mut self.facts[index];
+            fact.metrics = metrics;
+            fact.context = context;
+            return;
+        }
+        let index = u32::try_from(self.facts.len()).expect("a pass holds under 4G facts");
+        let older = match crate::StableNodeId::new(key.content) {
+            Some(id) => self.newest.insert(id, index).unwrap_or(NO_FACT),
+            None => {
+                self.unnamed.push(index);
+                NO_FACT
+            }
+        };
+        self.facts.push(PassFact {
+            key,
+            metrics,
+            context,
+            older,
+        });
+    }
+
+    fn lookup(
+        &mut self,
+        key: &IntrinsicCacheKey,
+        context: Option<FormattingContextId>,
+        account_measure: bool,
+    ) -> Option<IntrinsicMetrics> {
+        let key = IntrinsicCacheKey {
+            constraints: key.constraints.normalized(),
+            ..*key
+        };
+        let found = self.find(&key).map(|index| &self.facts[index]);
+        if account_measure {
+            let counters = &mut self.counters;
+            counters.intrinsic_measure_requests =
+                counters.intrinsic_measure_requests.saturating_add(1);
+            match found {
+                Some(fact) => {
+                    counters.cache_hits = counters.cache_hits.saturating_add(1);
+                    counters.intrinsic_measure_cache_hits =
+                        counters.intrinsic_measure_cache_hits.saturating_add(1);
+                    if context.is_some() && fact.context.is_some() && context != fact.context {
+                        counters.cross_context_hits = counters.cross_context_hits.saturating_add(1);
+                    }
+                }
+                None => {
+                    counters.cache_misses = counters.cache_misses.saturating_add(1);
+                    counters.intrinsic_measure_cache_misses =
+                        counters.intrinsic_measure_cache_misses.saturating_add(1);
+                    if context.is_some() {
+                        counters.cross_context_misses =
+                            counters.cross_context_misses.saturating_add(1);
+                    }
+                }
+            }
+        }
+        found.map(|fact| fact.metrics)
+    }
+
+    /// [`IntrinsicCache::get`].
+    pub(crate) fn get(
+        &mut self,
+        key: &IntrinsicCacheKey,
+        context: Option<FormattingContextId>,
+    ) -> Option<IntrinsicMetrics> {
+        self.lookup(key, context, true)
+    }
+
+    /// [`IntrinsicCache::baseline`].
+    pub(crate) fn baseline(
+        &mut self,
+        key: &IntrinsicCacheKey,
+        context: Option<FormattingContextId>,
+        which: Baseline,
+    ) -> Option<f32> {
+        self.counters.baseline_queries = self.counters.baseline_queries.saturating_add(1);
+        self.lookup(key, context, false)
+            .and_then(|metrics| match which {
+                Baseline::First => metrics.first_baseline,
+                Baseline::Last => metrics.last_baseline,
+            })
+    }
+
+    /// [`IntrinsicCache::counters`].
+    pub(crate) fn counters(&self) -> IntrinsicCacheCounters {
+        let mut counters = self.counters;
+        counters.entries = self.facts.len();
+        counters.bytes = self.facts.len().saturating_mul(entry_bytes());
+        counters
+    }
 }
 
 const fn entry_bytes() -> usize {
