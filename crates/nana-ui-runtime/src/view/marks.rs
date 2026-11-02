@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use nana_ui_core::{
     AlignSpec, Icon, JustifySpec, LengthSpec, RadiusTier, SemanticColorMix, SemanticColorRole,
-    SpacingRole, SpacingStep, SquareSize, StatusTone, TextWeight, TypeRole,
+    ShapeRole, SpacingRole, SpacingStep, SquareSize, StatusTone, TextWeight, TypeRole,
 };
 
 use super::node::{AnyView, IntoView, widget};
@@ -182,7 +182,8 @@ pub fn chord(keys: &str) -> AnyView {
 }
 
 /// A quiet, non-interactive tag: a subtle fill with a soft hairline at the
-/// control radius, its text small and muted. A label, not a control (for
+/// step the theme's shape recipe gives tags ([`ShapeRole::Tag`], the control
+/// radius by default), its text small and muted. A label, not a control (for
 /// one that can be chosen or dismissed, use [`crate::Chip`]).
 pub fn tag_frame() -> Stack {
     Stack::row(0.0)
@@ -191,7 +192,7 @@ pub fn tag_frame() -> Stack {
         .align(AlignSpec::Center)
         .surface(SemanticColorRole::Subtle)
         .outline(SemanticColorRole::BorderSoft, 1.0)
-        .radius(RadiusTier::Sm)
+        .shape(ShapeRole::Tag)
         .with_layout(|l| l.flex_shrink = Some(0.0))
 }
 

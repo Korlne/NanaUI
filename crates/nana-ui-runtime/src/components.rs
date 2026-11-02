@@ -2116,6 +2116,18 @@ pub struct NodeStyle {
     /// When set it wins over [`Self::radius`], as `border_radii` already wins
     /// over `border_radius` when the box is painted.
     pub corner_radii: Option<[Option<nana_ui_core::RadiusTier>; 4]>,
+    /// Which component's corner this is, so the installed theme's
+    /// [`nana_ui_core::ShapeRecipe`] picks the radius step and its
+    /// [`nana_ui_core::ThemeMetrics`] the pixels — both at style resolution,
+    /// so a theme installed later reaches a node already on screen.
+    ///
+    /// Built-in buttons, icon buttons and tags name their role here instead
+    /// of a step in [`Self::radius`]. It answers only for corners nobody
+    /// else decided: a step in [`Self::radius`] or [`Self::corner_radii`]
+    /// wins over it, and a number a caller's style writes over a component's
+    /// drops it ([`Self::overlaid`]). Clearing [`Self::radius`] does not
+    /// clear this; set it to `None` too for a square corner.
+    pub shape: Option<nana_ui_core::ShapeRole>,
     /// Control-size step for this node's own box, resolved against the
     /// installed [`nana_ui_core::ThemeMetrics`]. Sibling of [`Self::radius`].
     ///
@@ -2182,6 +2194,7 @@ impl PartialEq for NodeStyle {
             border,
             radius,
             corner_radii,
+            shape,
             control_height,
             control_padding_x,
             control_padding_y,
@@ -2201,6 +2214,7 @@ impl PartialEq for NodeStyle {
             && border == &other.border
             && radius == &other.radius
             && corner_radii == &other.corner_radii
+            && shape == &other.shape
             && control_height == &other.control_height
             && control_padding_x == &other.control_padding_x
             && control_padding_y == &other.control_padding_y
@@ -2242,7 +2256,8 @@ impl NodeStyle {
     ///
     /// A step yields to a number `over` writes for what it decides: a
     /// corner radius (`layout.border_radius`, `layout.paint.border_radii`)
-    /// drops this style's [`Self::radius`] and [`Self::corner_radii`], a
+    /// drops this style's [`Self::radius`], [`Self::corner_radii`] and
+    /// [`Self::shape`], a
     /// `layout.height` its [`Self::control_height`], and a horizontal or
     /// vertical padding its [`Self::control_padding_x`] or
     /// [`Self::control_padding_y`]; a step resolves over the number
@@ -2256,12 +2271,13 @@ impl NodeStyle {
         let writes_padding_y = layout.padding.is_some()
             || layout.padding_top.is_some()
             || layout.padding_bottom.is_some();
-        let (radius, corner_radii) = if writes_radius {
-            (over.radius, over.corner_radii)
+        let (radius, corner_radii, shape) = if writes_radius {
+            (over.radius, over.corner_radii, over.shape)
         } else {
             (
                 over.radius.or(self.radius),
                 over.corner_radii.or(self.corner_radii),
+                over.shape.or(self.shape),
             )
         };
         fn unless<T>(written: bool, base: Option<T>) -> Option<T> {
@@ -2295,6 +2311,7 @@ impl NodeStyle {
             border: over.border.or(self.border),
             radius,
             corner_radii,
+            shape,
             control_height: over
                 .control_height
                 .or(unless(layout.height.is_some(), self.control_height)),
@@ -2337,6 +2354,7 @@ impl NodeStyle {
             border: None,
             radius: None,
             corner_radii: None,
+            shape: None,
             control_height: None,
             control_padding_x: None,
             control_padding_y: None,
@@ -2410,6 +2428,13 @@ impl NodeStyle {
     /// Name the radius step instead of spending it. See [`Self::radius`].
     pub fn radius(mut self, tier: nana_ui_core::RadiusTier) -> Self {
         self.radius = Some(tier);
+        self
+    }
+
+    /// Name the component whose corner this is, so the installed theme's
+    /// [`nana_ui_core::ShapeRecipe`] picks the step. See [`Self::shape`].
+    pub fn shape(mut self, role: nana_ui_core::ShapeRole) -> Self {
+        self.shape = Some(role);
         self
     }
 

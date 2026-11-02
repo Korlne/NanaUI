@@ -26,6 +26,7 @@
 
 use super::dialog::DialogRecipe;
 use super::scrollbar::ScrollbarRecipe;
+use super::shape::ShapeRecipe;
 use super::toast::ToastRecipe;
 use crate::semantics::{ButtonKind, StatusTone};
 use crate::style_model::SemanticColorRole;
@@ -340,6 +341,9 @@ pub struct ComponentThemeRegistry {
     pub scrollbar: Option<ScrollbarRecipe>,
     /// The Overlay family's toast. See [`ToastRecipe`].
     pub toast: Option<ToastRecipe>,
+    /// Which radius step buttons, icon buttons and tags take. See
+    /// [`ShapeRecipe`].
+    pub shape: Option<ShapeRecipe>,
 }
 
 impl ComponentThemeRegistry {
@@ -356,6 +360,7 @@ impl ComponentThemeRegistry {
             dialog: None,
             scrollbar: None,
             toast: None,
+            shape: None,
         }
     }
 
@@ -379,6 +384,7 @@ pub struct CompiledRecipes {
     dialog: DialogRecipe,
     scrollbar: ScrollbarRecipe,
     toast: ToastRecipe,
+    shape: ShapeRecipe,
 }
 
 impl CompiledRecipes {
@@ -389,6 +395,7 @@ impl CompiledRecipes {
         dialog: DialogRecipe,
         scrollbar: ScrollbarRecipe,
         toast: ToastRecipe,
+        shape: ShapeRecipe,
     ) -> Self {
         Self {
             families,
@@ -397,6 +404,7 @@ impl CompiledRecipes {
             dialog,
             scrollbar,
             toast,
+            shape,
         }
     }
 
@@ -435,5 +443,10 @@ impl CompiledRecipes {
 
     pub const fn toast(&self) -> &ToastRecipe {
         &self.toast
+    }
+
+    /// Which radius step each shaped component takes.
+    pub const fn shape(&self) -> ShapeRecipe {
+        self.shape
     }
 }

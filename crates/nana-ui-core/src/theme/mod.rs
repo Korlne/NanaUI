@@ -8,6 +8,7 @@ pub use layout::{ThemeExpr, ThemeLayout, ThemeProperty, ThemeToken};
 pub mod recipe;
 pub mod registry;
 pub mod scrollbar;
+pub mod shape;
 pub mod toast;
 pub mod tokens;
 
@@ -28,6 +29,7 @@ pub use registry::{ThemeChoice, ThemeRegistry, ThemeRegistryError, ThemeResoluti
 pub use scrollbar::{
     ScrollbarMotion, ScrollbarPaint, ScrollbarPaintState, ScrollbarRecipe, ScrollbarTransition,
 };
+pub use shape::{ShapeRecipe, ShapeRole};
 pub use toast::{ToastGlyphs, ToastIndicator, ToastMotion, ToastProgressRecipe, ToastRecipe};
 pub use tokens::{
     AccentRamp, BorderTokens, BorderWidth, EasingRole, EffectTokens, ElevationRole, LineRole,

@@ -708,8 +708,9 @@ impl Button {
                 foreground: Some(nana_ui_core::SemanticColorRole::Text),
                 background: None,
                 border: None,
-                radius: Some(nana_ui_core::RadiusTier::Sm),
+                radius: None,
                 corner_radii: None,
+                shape: Some(nana_ui_core::ShapeRole::Button),
                 control_height: Some(nana_ui_core::ControlHeight::Min(
                     nana_ui_core::ControlSize::Medium,
                 )),
@@ -786,7 +787,7 @@ impl Button {
     /// paint. Apply [`Self::size`] afterwards when the size contract owns
     /// padding, height and typography.
     /// Supply the whole box. Design intent that writes into the box
-    /// (`control_height`, `control_padding_x`, `radius`) is dropped: replacing
+    /// (`control_height`, `control_padding_x`, `radius`, `shape`) is dropped: replacing
     /// the layout used to wipe those defaults when they were baked into it, and
     /// a caller who hands over a complete box owns its height, inset and corners.
     pub fn layout(mut self, layout: Arc<nana_ui_core::LayoutStyle>) -> Self {
@@ -795,6 +796,7 @@ impl Button {
         self.style.control_padding_x = None;
         self.style.radius = None;
         self.style.corner_radii = None;
+        self.style.shape = None;
         self
     }
 
@@ -1128,7 +1130,7 @@ impl IconButton {
                 },
                 ..crate::InteractionStyle::default()
             },
-            radius: Some(nana_ui_core::RadiusTier::Sm),
+            shape: Some(nana_ui_core::ShapeRole::IconButton),
             control_padding_x: Some(nana_ui_core::ControlPadding::Compact),
             square: Some(nana_ui_core::SquareSize::IconButton),
             text_horizontal_alignment: TextHorizontalAlignment::Center,
@@ -6509,6 +6511,12 @@ impl Stack {
     /// 圆角档位，跟随安装的 `ThemeMetrics`。
     pub fn radius(mut self, tier: nana_ui_core::RadiusTier) -> Self {
         self.style = self.style.radius(tier);
+        self
+    }
+
+    /// 圆角取哪一档由安装主题的 `ShapeRecipe` 按组件角色决定，见 [`NodeStyle::shape`]。
+    pub fn shape(mut self, role: nana_ui_core::ShapeRole) -> Self {
+        self.style = self.style.shape(role);
         self
     }
 

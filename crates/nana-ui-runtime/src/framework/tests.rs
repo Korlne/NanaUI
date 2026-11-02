@@ -7671,6 +7671,204 @@ fn an_installed_radius_reaches_a_control_that_named_the_tier() {
     );
 }
 
+/// The theme's shape recipe decides which radius step buttons, icon buttons
+/// and tags sit on. The built-in recipe is the step each named before, so a
+/// theme that leaves it alone changes no corner.
+#[test]
+fn a_shape_recipe_left_alone_keeps_every_shaped_corner_where_it_was() {
+    let mut context = AppContext::new();
+    let document = DocumentId::new(1).unwrap();
+    let mut ids = Vec::new();
+    for kind in [
+        nana_ui_core::ButtonKind::Ghost,
+        nana_ui_core::ButtonKind::Subtle,
+        nana_ui_core::ButtonKind::Selected,
+        nana_ui_core::ButtonKind::Primary,
+        nana_ui_core::ButtonKind::Warning,
+        nana_ui_core::ButtonKind::Danger,
+        nana_ui_core::ButtonKind::Text,
+        nana_ui_core::ButtonKind::Menu,
+    ] {
+        let button = context
+            .create_component(document, crate::Button::new("Go").kind(kind))
+            .unwrap();
+        ids.push(button.stable_id());
+    }
+    let icon = context
+        .create_component(
+            document,
+            crate::IconButton::new(nana_ui_core::Icon::Close, "Close"),
+        )
+        .unwrap();
+    let tool = context
+        .create_component(
+            document,
+            crate::IconButton::tool(nana_ui_core::Icon::Close, "Close"),
+        )
+        .unwrap();
+    let tag = context
+        .create_component(document, crate::view::tag_frame())
+        .unwrap();
+    ids.extend([icon.stable_id(), tool.stable_id(), tag.stable_id()]);
+    for definition in [
+        nana_ui_core::ThemeDefinition::NANA_DARK,
+        nana_ui_core::ThemeDefinition::NANA_LIGHT,
+    ] {
+        context.set_theme_definition(&definition).unwrap();
+        for node in context.world().extract_nodes(&ids) {
+            assert_eq!(
+                node.source_style.layout.border_radius,
+                Some(nana_ui_core::UI_METRICS.radius_sm)
+            );
+        }
+    }
+}
+
+/// A theme that makes buttons, icon buttons and tags pills reaches the ones
+/// already on screen — the tag through style resolution alone, since a
+/// `Stack` is never reprojected for a theme — and a swap back restores them.
+/// The radius is read from the installed theme, never kept from the one the
+/// node was built under.
+#[test]
+fn an_installed_shape_recipe_reaches_shaped_controls_already_on_screen() {
+    use nana_ui_core::{FULL_RADIUS, RadiusTier, ShapeRecipe, ThemeDefinition, UI_METRICS};
+    let mut context = AppContext::new();
+    let document = DocumentId::new(1).unwrap();
+    let button = context
+        .create_component(
+            document,
+            crate::Button::new("Ship it").kind(nana_ui_core::ButtonKind::Primary),
+        )
+        .unwrap();
+    let icon = context
+        .create_component(
+            document,
+            crate::IconButton::new(nana_ui_core::Icon::Close, "Close"),
+        )
+        .unwrap();
+    let tool = context
+        .create_component(
+            document,
+            crate::IconButton::tool(nana_ui_core::Icon::Close, "Close"),
+        )
+        .unwrap();
+    let tag = context
+        .create_component(document, crate::view::tag_frame())
+        .unwrap();
+    let radius = |context: &AppContext, id: StableNodeId| {
+        context.world().extract_nodes(&[id])[0]
+            .source_style
+            .layout
+            .border_radius
+    };
+
+    let pills = ThemeDefinition::NANA_DARK.with_shape(ShapeRecipe {
+        button: RadiusTier::Full,
+        icon_button: RadiusTier::Full,
+        tag: RadiusTier::Lg,
+    });
+    assert!(context.set_theme_definition(&pills).unwrap());
+    assert_eq!(radius(&context, button.stable_id()), Some(FULL_RADIUS));
+    assert_eq!(radius(&context, icon.stable_id()), Some(FULL_RADIUS));
+    assert_eq!(radius(&context, tool.stable_id()), Some(FULL_RADIUS));
+    assert_eq!(
+        radius(&context, tag.stable_id()),
+        Some(UI_METRICS.radius_lg)
+    );
+
+    // A control created under the installed theme takes it too.
+    let late = context
+        .create_component(document, crate::Button::new("Later"))
+        .unwrap();
+    assert_eq!(radius(&context, late.stable_id()), Some(FULL_RADIUS));
+
+    // The steps' pixels still come from the metrics.
+    let mut metrics = UI_METRICS;
+    metrics.radius_lg = 3.0;
+    let mut roomy = pills.clone();
+    roomy.tokens.metrics = metrics;
+    assert!(context.set_theme_definition(&roomy.bump()).unwrap());
+    assert_eq!(radius(&context, tag.stable_id()), Some(3.0));
+
+    // Swapping back to a theme that keeps the built-in shape takes every
+    // corner back to the step it had.
+    assert!(
+        context
+            .set_theme_definition(&ThemeDefinition::NANA_LIGHT)
+            .unwrap()
+    );
+    for id in [
+        button.stable_id(),
+        icon.stable_id(),
+        tool.stable_id(),
+        tag.stable_id(),
+        late.stable_id(),
+    ] {
+        assert_eq!(radius(&context, id), Some(UI_METRICS.radius_sm));
+    }
+}
+
+/// The recipe only answers for corners nobody else decided: a step a caller
+/// names on the node, or a number a caller's style writes, wins over the
+/// shape role, under any installed recipe.
+#[test]
+fn a_radius_the_caller_names_wins_over_the_shape_recipe() {
+    use nana_ui_core::{RadiusTier, ShapeRecipe, ThemeDefinition, UI_METRICS};
+    let mut context = AppContext::new();
+    let document = DocumentId::new(1).unwrap();
+    let mut stepped = crate::Button::new("Stepped");
+    stepped.style.radius = Some(RadiusTier::Md);
+    let stepped = context.create_component(document, stepped).unwrap();
+    let mut icon = crate::IconButton::new(nana_ui_core::Icon::Close, "Close");
+    icon.style.radius = Some(RadiusTier::Xs);
+    let icon = context.create_component(document, icon).unwrap();
+    let pinned = context
+        .create_component(
+            document,
+            crate::Button::new("Pinned").style(crate::NodeStyle::default().radius_px(11.0)),
+        )
+        .unwrap();
+    let tag = context
+        .create_component(document, crate::view::tag_frame().radius(RadiusTier::Xs))
+        .unwrap();
+    let mut square = crate::Button::new("Square");
+    square.style.shape = None;
+    let square = context.create_component(document, square).unwrap();
+    // A caller's number written over the component's style drops the role.
+    let mut over = crate::NodeStyle::default();
+    over.layout_mut().border_radius = Some(5.0);
+    let overlaid = crate::Button::new("Overlaid").style.overlaid(&over);
+    assert_eq!(overlaid.shape, None);
+    assert_eq!(overlaid.layout.border_radius, Some(5.0));
+
+    let radius = |context: &AppContext, id: StableNodeId| {
+        context.world().extract_nodes(&[id])[0]
+            .source_style
+            .layout
+            .border_radius
+    };
+    for definition in [
+        ThemeDefinition::NANA_DARK,
+        ThemeDefinition::NANA_DARK.with_shape(ShapeRecipe::uniform(RadiusTier::Full)),
+    ] {
+        context.set_theme_definition(&definition).unwrap();
+        assert_eq!(
+            radius(&context, stepped.stable_id()),
+            Some(UI_METRICS.radius_md)
+        );
+        assert_eq!(
+            radius(&context, icon.stable_id()),
+            Some(UI_METRICS.radius_xs)
+        );
+        assert_eq!(radius(&context, pinned.stable_id()), Some(11.0));
+        assert_eq!(
+            radius(&context, tag.stable_id()),
+            Some(UI_METRICS.radius_xs)
+        );
+        assert_eq!(radius(&context, square.stable_id()), None);
+    }
+}
+
 /// The 2xl step is a tier like the others: a node that names it follows the
 /// A node that names a type step and spacing steps follows the installed
 /// theme's scales, as a radius step follows its metrics.

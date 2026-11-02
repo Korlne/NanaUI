@@ -565,6 +565,15 @@ impl ThemeDefinition {
         self.bump()
     }
 
+    /// Choose which radius step buttons, icon buttons and tags take, e.g.
+    /// `with_shape(ShapeRecipe::uniform(RadiusTier::Full))` for pills. The
+    /// pixels stay in [`ThemeMetrics`](super::ThemeMetrics). See
+    /// [`ShapeRecipe`](super::ShapeRecipe).
+    pub const fn with_shape(mut self, shape: super::ShapeRecipe) -> Self {
+        self.components.shape = Some(shape);
+        self.bump()
+    }
+
     /// Re-derive the whole accent family from one ramp.
     ///
     /// This is the foundation layer earning its place: setting
@@ -892,6 +901,14 @@ impl ThemeDefinition {
         if let Some(error) = error {
             return Err(error);
         }
+        let shape = self
+            .components
+            .shape
+            .ok_or(ThemeCompileError::MissingRecipe {
+                theme: self.id.clone(),
+                component: ComponentRecipeId::Button,
+                slot: "shape",
+            })?;
 
         Ok(CompiledRecipes::new(
             families,
@@ -900,6 +917,7 @@ impl ThemeDefinition {
             dialog,
             scrollbar,
             toast,
+            shape,
         ))
     }
 }
@@ -1091,6 +1109,7 @@ const fn builtin_registry() -> ComponentThemeRegistry {
         dialog: Some(super::DialogRecipe::DEFAULT),
         scrollbar: Some(super::ScrollbarRecipe::DEFAULT),
         toast: Some(super::ToastRecipe::DEFAULT),
+        shape: Some(super::ShapeRecipe::DEFAULT),
     }
 }
 
@@ -1796,6 +1815,17 @@ mod tests {
             })
         ));
 
+        let mut forgot_shape = dark();
+        forgot_shape.components.shape = None;
+        assert!(matches!(
+            forgot_shape.compile(),
+            Err(ThemeCompileError::MissingRecipe {
+                component: ComponentRecipeId::Button,
+                slot: "shape",
+                ..
+            })
+        ));
+
         // An empty registry is rejected on its first family, not accepted with
         // defaults filled in behind the author's back.
         let mut empty = dark();
@@ -1916,6 +1946,29 @@ mod tests {
             ..ScrollbarRecipe::DEFAULT
         });
         assert!(instant.compile().is_ok(), "a bar may hide at once");
+    }
+
+    /// The built-ins keep every shaped component on the step it named before
+    /// the recipe existed; a theme that picks another step compiles to it.
+    #[test]
+    fn a_shape_recipe_reaches_the_compiled_theme() {
+        use super::super::{RadiusTier, ShapeRecipe};
+        for theme in [dark(), ThemeDefinition::NANA_LIGHT] {
+            assert_eq!(
+                theme.compile().expect("compiles").recipes().shape(),
+                ShapeRecipe::DEFAULT
+            );
+        }
+        let pills = ShapeRecipe {
+            button: RadiusTier::Full,
+            icon_button: RadiusTier::Full,
+            ..ShapeRecipe::DEFAULT
+        };
+        let themed = dark().with_shape(pills);
+        assert_eq!(themed.generation, dark().generation.next());
+        let compiled = themed.compile().expect("compiles");
+        assert_eq!(compiled.recipes().shape(), pills);
+        assert_ne!(compiled, dark().compile().expect("compiles"));
     }
 
     /// A theme dresses the toast; the built-ins keep the toast as it was,

@@ -367,6 +367,7 @@ impl UiWorld {
             metrics,
             typography,
             spacing,
+            shape,
         } = tokens;
         let font_size = style.type_role.map(|role| typography.size(role));
         let font_weight = style.type_weight.map(|weight| typography.weight(weight));
@@ -379,7 +380,12 @@ impl UiWorld {
                 nana_ui_core::LengthSpec::Px(spacing.resolve(y)),
             )
         });
-        let radius = style.radius.map(|tier| tier.resolve(metrics));
+        // A step the node names wins over the one its component's shape
+        // role takes from the installed recipe.
+        let radius = style
+            .radius
+            .or_else(|| style.shape.map(|role| shape.tier(role)))
+            .map(|tier| tier.resolve(metrics));
         let corners = style.corner_radii.map(|tiers| {
             tiers.map(|tier| {
                 nana_ui_core::LengthSpec::Px(tier.map_or(0.0, |tier| tier.resolve(metrics)))
@@ -1037,6 +1043,9 @@ impl UiWorld {
         // A toast's mark, copy column and dismiss target are parts read from
         // its recipe (#205, #385), not from any style it projects.
         let toast_changed = self.theme.recipes().toast() != next.recipes().toast();
+        // A shape role resolves to a step through the recipe, so a recipe
+        // that moves a role moves the corners of the nodes naming it.
+        let shape_changed = self.theme.recipes().shape() != next.recipes().shape();
         self.style_model = next.style_model();
         self.theme = next;
         self.palette_epoch = self.palette_epoch.wrapping_add(1).max(1);
@@ -1102,7 +1111,7 @@ impl UiWorld {
             work.record_allocation(1, ids.len().saturating_mul(size_of::<StableNodeId>()));
         }
         let mut dependents = 0;
-        if metrics_changed || token_layout_changed {
+        if metrics_changed || token_layout_changed || shape_changed {
             // Design intent resolves against the metrics, so a metrics install
             // is the one event that has to re-run it. Doing it here, once, is
             // what keeps it off every frame's read path.
@@ -1182,7 +1191,7 @@ impl UiWorld {
         }
         let seeds = (self.layout_seeds_created - seeds_before) as usize;
         let counts = &mut self.pending_drain_counts;
-        if metrics_changed || token_layout_changed {
+        if metrics_changed || token_layout_changed || shape_changed {
             counts.theme_to_layout_seeds += seeds;
             counts.theme_metric_dependents_invalidated += dependents;
         } else {
@@ -1581,13 +1590,14 @@ fn scaled_line_height(
 
 /// Whether `style` declares design intent the installed metrics resolve: a
 /// radius tier, a control height or padding step, a surface inset, a square.
-/// What design intent resolves against: the installed metrics, type scale
-/// and spacing scale.
+/// What design intent resolves against: the installed metrics, type scale,
+/// spacing scale and shape recipe.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct IntentTokens {
     pub(crate) metrics: nana_ui_core::ThemeMetrics,
     pub(crate) typography: nana_ui_core::TypographyTokens,
     pub(crate) spacing: nana_ui_core::SpacingTokens,
+    pub(crate) shape: nana_ui_core::ShapeRecipe,
 }
 
 impl UiWorld {
@@ -1596,6 +1606,7 @@ impl UiWorld {
             metrics: self.style_model.metrics,
             typography: self.theme.typography(),
             spacing: self.theme.spacing(),
+            shape: self.theme.recipes().shape(),
         }
     }
 }
@@ -1608,6 +1619,7 @@ fn style_declares_intent(style: &NodeStyle) -> bool {
         || style.padding_step.is_some()
         || style.radius.is_some()
         || style.corner_radii.is_some()
+        || style.shape.is_some()
         || style.control_height.is_some()
         || style.control_padding_x.is_some()
         || style.control_padding_y.is_some()

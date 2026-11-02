@@ -144,7 +144,8 @@ INTERACTION_STATES = (
 # `RadiusTier::Sm` defers a radius. They belong here for the same reason —
 # without them, moving a component off `motion::HOVER_COLOR` onto the role
 # would read as the denominator shrinking while the numerator held, which is
-# the opposite of what happened.
+# the opposite of what happened. `ShapeRole::Button` goes one step further
+# and defers the step itself to the installed `ShapeRecipe`.
 TOKEN_READ = re.compile(
     r"\bUI_METRICS\b|\bmetrics\.\w|\bspace::|\btype_scale::|\bControlSize::"
     r"|\bUI_BASE_TEXT_SIZE\b|\bTooltipConfig::|\bstyle_model\b|\bRadiusTier::"
@@ -152,6 +153,7 @@ TOKEN_READ = re.compile(
     r"|\bMotionRole::|\bEasingRole::|\bElevationRole::|\bSpacingStep::|\bTypeRole::"
     r"|\bLineRole::|\bTextWeight::|\bBorderWidth::|\bStateLayer::|\bSurfaceRole::"
     r"|\bComponentRecipeId::|\brecipes\(\)|\bStatusRecipe::|\bOpacityTokens::"
+    r"|\bShapeRole::|\bShapeRecipe::"
 )
 
 COLOR_ROLE = re.compile(r"\bSemanticColorRole::(\w+)")
