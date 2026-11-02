@@ -998,6 +998,9 @@ pub(crate) struct PassIntrinsicFacts {
     newest: crate::store::DenseNodeMap<u32>,
     /// Facts whose key names no node (`content` 0); none in practice.
     unnamed: Vec<u32>,
+    /// Index into `facts` of the fact each node last measured or was
+    /// seeded with: what its baseline is read from.
+    latest: crate::store::DenseNodeMap<u32>,
     counters: IntrinsicCacheCounters,
 }
 
@@ -1019,9 +1022,12 @@ impl PassIntrinsicFacts {
     pub(crate) fn with_capacity(capacity: usize) -> Self {
         let mut newest = crate::store::DenseNodeMap::default();
         newest.reserve(capacity);
+        let mut latest = crate::store::DenseNodeMap::default();
+        latest.reserve(capacity);
         Self {
             facts: Vec::with_capacity(capacity),
             newest,
+            latest,
             ..Self::default()
         }
     }
@@ -1091,6 +1097,24 @@ impl PassIntrinsicFacts {
         fact.context = context;
         fact.visible = true;
         self.visible += usize::from(newly);
+    }
+
+    /// Make the fact for `key` the one `id`'s baseline is read from.
+    pub(crate) fn note_latest(&mut self, id: crate::StableNodeId, key: &IntrinsicCacheKey) {
+        let key = IntrinsicCacheKey {
+            constraints: key.constraints.normalized(),
+            ..*key
+        };
+        if let Some(index) = self.find(&key) {
+            self.latest.insert(id, index as u32);
+        }
+    }
+
+    /// The key [`Self::note_latest`] last named for `id`.
+    pub(crate) fn latest_key(&self, id: crate::StableNodeId) -> Option<IntrinsicCacheKey> {
+        self.latest
+            .get(&id)
+            .map(|&index| self.facts[index as usize].key)
     }
 
     /// Whether lookups of `key` find a fact.

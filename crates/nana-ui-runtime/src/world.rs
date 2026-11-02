@@ -4390,7 +4390,9 @@ impl UiWorld {
     }
 
     pub(crate) fn presence_live(&self, id: StableNodeId) -> bool {
-        self.presence_live_memo(id, &mut AncestorMemo::default())
+        // One query: a memo made for it would remember nothing past it, so
+        // walk without one rather than fill and drop a table per call.
+        self.is_mounted(id) && (self.detached_mounted.is_empty() || self.presence_live_walk(id))
     }
 
     fn presence_live_memo(&self, id: StableNodeId, memo: &mut AncestorMemo) -> bool {
@@ -4427,8 +4429,7 @@ impl UiWorld {
         live
     }
 
-    /// `presence_live` by the ancestor walk alone, to check the shortcut.
-    #[cfg_attr(not(debug_assertions), allow(dead_code))]
+    /// `presence_live` by the ancestor walk alone.
     fn presence_live_walk(&self, id: StableNodeId) -> bool {
         let mut current = Some(id);
         while let Some(node) = current {

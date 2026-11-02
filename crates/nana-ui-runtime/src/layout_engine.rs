@@ -3171,15 +3171,18 @@ struct PassIntrinsicCache {
     /// fill, or stretch result is a resolution against one containing block;
     /// it must never become the preferred value in the shared authority.
     cache: crate::intrinsic_cache::PassIntrinsicFacts,
-    /// Used-size memo for this pass. Its key contains the concrete available
-    /// size because that is exactly what the placement algorithm resolves.
-    used: HashMap<MeasurementKey, Size>,
-    /// Every entry of `used`, in the order this pass measured it: the
-    /// writeback merged into the retained cache at the end. A node keeps two
-    /// retained variants; writing them back in measuring order keeps the two
-    /// it measured last, where the table's own order would keep whichever two
-    /// its hashing visits last, a different pair on every run.
+    /// Every used size this pass measured, in the order it measured them:
+    /// the pass's used-size memo, and the writeback merged into the retained
+    /// cache at the end. A node keeps two retained variants; writing them back
+    /// in measuring order keeps the two it measured last. A key's key contains
+    /// the concrete available size because that is exactly what the
+    /// placement algorithm resolves.
     used_order: Vec<(MeasurementKey, Size)>,
+    /// The memo's index: each node's newest entry of `used_order`, and from
+    /// each entry the node's next older one (`u32::MAX` for none). A lookup
+    /// compares a node's few keys instead of hashing the whole key.
+    used_newest: crate::store::DenseNodeMap<u32>,
+    used_older: Vec<u32>,
     /// Containers a measure plan answered by patching what it recorded: the
     /// intrinsic facts retained for them were measured from content the
     /// patch changed, and no longer describe it under any constraint. They
@@ -3188,7 +3191,6 @@ struct PassIntrinsicCache {
     /// Retained measure plans this pass answered from, by container and the
     /// constraint each holds: they saw what changed under them this pass.
     consulted_plans: Vec<(StableNodeId, Size)>,
-    latest_intrinsic_keys: crate::store::DenseNodeMap<crate::IntrinsicCacheKey>,
     extra_counters: crate::IntrinsicCacheCounters,
     execution_stats: LayoutExecutionStats,
     /// Whether containers record the measure plans later scoped passes
@@ -3211,15 +3213,15 @@ impl PassIntrinsicCache {
             // flex/grid used width; the pass keeps every variant for
             // baseline and cross-context consumers.
             cache: crate::intrinsic_cache::PassIntrinsicFacts::with_capacity(capacity),
-            used: HashMap::with_capacity(capacity),
             used_order: Vec::with_capacity(capacity),
+            used_newest: {
+                let mut newest = crate::store::DenseNodeMap::default();
+                newest.reserve(capacity);
+                newest
+            },
+            used_older: Vec::with_capacity(capacity),
             retired_facts: Vec::new(),
             consulted_plans: Vec::new(),
-            latest_intrinsic_keys: {
-                let mut keys = crate::store::DenseNodeMap::default();
-                keys.reserve(capacity);
-                keys
-            },
             extra_counters: crate::IntrinsicCacheCounters::default(),
             execution_stats: LayoutExecutionStats::default(),
             records_measure_plans: false,
@@ -3319,12 +3321,23 @@ impl PassIntrinsicCache {
     fn get(&mut self, key: &MeasurementKey) -> Option<Size> {
         // A hit answers the query. Intrinsic accounting stays on the miss
         // path; this memo must not increment those counters.
-        self.used.get(key).copied()
+        let mut index = self.used_newest.get(&key.id).copied().unwrap_or(u32::MAX);
+        while index != u32::MAX {
+            let (held, size) = &self.used_order[index as usize];
+            if held == key {
+                return Some(*size);
+            }
+            index = self.used_older[index as usize];
+        }
+        None
     }
 
     fn insert(&mut self, key: MeasurementKey, size: Size) {
-        self.used.insert(key, size);
+        // The newest entry for a key answers it, as a map's last write would.
+        let index = u32::try_from(self.used_order.len()).expect("a pass measures under 4G sizes");
         self.used_order.push((key, size));
+        self.used_older
+            .push(self.used_newest.insert(key.id, index).unwrap_or(u32::MAX));
     }
 
     /// Publish content-derived facts. `preferred` is the natural border-box
@@ -3359,7 +3372,7 @@ impl PassIntrinsicCache {
         };
         self.cache.insert(cache_key, metrics, context);
         self.cache.record(cache_key, metrics);
-        self.latest_intrinsic_keys.insert(key.id, cache_key);
+        self.cache.note_latest(key.id, &cache_key);
     }
 
     /// Record facts for the retained cache without making them visible to
@@ -3400,15 +3413,11 @@ impl PassIntrinsicCache {
         metrics: crate::IntrinsicMetrics,
         context: Option<crate::FormattingContextId>,
     ) {
-        if self.cache.contains(&key) {
-            if let Some(id) = StableNodeId::new(key.content) {
-                self.latest_intrinsic_keys.insert(id, key);
-            }
-            return;
+        if !self.cache.contains(&key) {
+            self.cache.insert(key, metrics, context);
         }
-        self.cache.insert(key, metrics, context);
         if let Some(id) = StableNodeId::new(key.content) {
-            self.latest_intrinsic_keys.insert(id, key);
+            self.cache.note_latest(id, &key);
         }
     }
 
@@ -3430,7 +3439,7 @@ impl PassIntrinsicCache {
     }
 
     fn baseline(&mut self, id: StableNodeId, which: crate::Baseline) -> Option<f32> {
-        let Some(key) = self.latest_intrinsic_keys.get(&id).copied() else {
+        let Some(key) = self.cache.latest_key(id) else {
             self.extra_counters.baseline_queries =
                 self.extra_counters.baseline_queries.saturating_add(1);
             return None;
