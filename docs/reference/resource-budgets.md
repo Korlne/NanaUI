@@ -131,7 +131,7 @@ cd perf/micro/stack-depth && cargo run --release -- report
 | 10 501 | 2.22 µs / 盒 | 2.56 µs / 盒 | 0.71 µs / 盒 |
 | 21 001 | 2.64 µs / 盒 | 2.93 µs / 盒 | 0.73 µs / 盒 |
 
-NanaUI 的计时含布局写回的提交与结果发布（Taffy 没有对应步骤）。10 501 盒时一次布局约 39% 在放置、26% 在测量、18% 在两次发布、其余是写回与收尾。深链（`report`，同样交替读最小值）：布局 64 / 256 / 500 层 0.16 / 0.90 / 2.49 ms，整帧 0.84 / 7.4 / 24.7 ms。
+NanaUI 的计时含布局写回的提交与结果发布（Taffy 没有对应步骤）。10 501 盒时一次布局约 39% 在放置、26% 在测量、18% 在两次发布、其余是写回与收尾。深链（`report`，同样交替读最小值）：布局 64 / 256 / 500 层 0.16 / 0.90 / 2.49 ms，整帧 0.84 / 7.4 / 24.7 ms；修掉提取与锚点记忆的平方项后（见「待办」）布局 0.14 / 0.52 / 1.06 ms，整帧 0.66 / 4.1 / 11.6 ms。`cargo run --release -- stages 125,250,500` 按 `FrameStage` 列一帧各阶段的最小耗时。
 
 本机负载常年在 5–15 之间，单次墙钟可以差一倍；比例比绝对值可信，对比要交替多跑几轮读最小值。剖析用 `cargo run --release -- wide-loop` 配 `sample`（宽树栈浅，归因可信）。
 
@@ -140,7 +140,7 @@ NanaUI 的计时含布局写回的提交与结果发布（Taffy 没有对应步�
 ## 待办
 
 - **冷布局吞吐与每盒内存**：上面两张表 NanaUI 仍落后 Taffy 约 3 倍（时间）与 2 倍（内存）。剩下的成本是摊开的，没有单点：每盒约 25 次分配（每个容器的 `descend`、`flow`、`child_sizes`、计划条目等 `Vec`）、十几张按 `StableNodeId` 的哈希表（`LayoutInputMap` 的输入表每条 264 B，一万盒时 2.8 MB，查一次就是一次缓存未命中；`style()` 每盒被调约 18 次，分散在 14 处）、以及冷布局把整批结果发布两次（提交写回时一次 `CompatibilityWrite`，帧里再按 `RuntimeLayout` 校验一次，第二次全部判定未变）。再往下要换存储：按节点下标的稠密数组代替这些表、`LayoutResult` 不再给每个子节点存三份几何，这是结构改动，需要先对 `WorkCounters` 合同和消费者（Scene、命中、无障碍、`issue205` 等测试）逐个确认。
-- **深链上的整帧**：已定位。500 层 24.7 ms、256 层 7.4 ms 的平方项不在发布（计数确认发布是线性的：每次 501 次锚点查询、501 步上溯，`sample` 把时间归到 `layout_anchors` 是深栈截断造成的误归因），而在场景提取：250 → 500 层时 Extract 2.7 → 10.9 ms（×4），TextShape 0.56 → 1.7 ms（×3），布局与挂载都是 ×2。提取里每个节点都从根走一遍祖先：`compute_ancestor_state`（同父兄弟只有单槽缓存，链上每个节点都是独子，全部未命中）、`is_descendant_of_icon_visual`、`is_descendant_of_rasterized_svg`、`filter_groups_from`、`group_prefix`。要线性就得在重建期间按父节点记忆「给子节点的折叠状态」：子节点不逃逸裁剪链、本身不是 `fixed`、不是工作区调整手柄、祖先里没有 `ModalFrame` 时，`F(P) = step(F(parent(P)), P)`，遇到 `fixed` 祖先在它那里重置几何、透明度照乘；其余情况退回现有算法。TextShape 的 ×3 还没拆。
+- **深链上的整帧**：提取与文本两处平方项已修（2026-11-02），剩下的在挂载。`stages` 下 250 → 500 层 Extract 2.4 → 10.1 ms 降到 0.15 → 0.30 ms，TextShape 0.49 → 1.65 ms 降到 0.11 → 0.22 ms，布局 1.0 → 2.1 ms，每翻倍都约 ×2。提取：重建图元期间按父节点记住交给子节点的折叠状态（`UiScene::handed_down`，`F(P) = step(F(parent(P)), P)`，`fixed` 处重置几何、透明度照乘；裁剪链不跟父链或祖先里有 `ModalFrame` 时退回逐节点上溯），绘制序前缀（`group_prefix_memo`，`sort_primitives` 也用）和「在栅格化 SVG / 图标之内」（`ancestor_answer`）同样按节点记忆，沿父链结算都是循环。TextShape 与布局的平方项其实就在发布：`anchor_pair_memo` 末尾的 `unwrap_or(...)` 急切求值，每次调用都沿祖先走两遍 `overflow_clip_of` / `containing_block_of`，记忆表里的计数看不到这两遍——`sample` 归到 `layout_anchors` 并不是误归因。改成 `unwrap_or_else` 后发布线性。剩下的：分段计时下挂载（`mount_view_root`）250 → 500 层 2.9 → 9.7 ms（×3.3），flush 是 ×1.9，整帧的超线性现在全在挂载，尚未拆。`filter_groups_from` 仍逐节点上溯，但只在宿主侧（`nana-ui`）按需调用，不在提取路径上。
 - **debug 的大 `match` 帧**：把 `derive_component_geometry`、`build_node_primitives`、`controls_base::build` 的大分支拆成各自的函数，debug 整帧就能降到 256 KiB。
 - **`AppContext` / `UiWorld` 内联大小**：把大块字段装箱，构造路径的帧就能回到预算内。
 - **railroad 解析的 debug 帧**：`alt → seq → term → primary` 每层五个帧、合计 5 KiB 以上，48 层在 debug 下余量不到一倍。把 `Result<Expr, Fail>` 的大小压下来，或把上限降到 32。

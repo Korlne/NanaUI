@@ -5,6 +5,7 @@
 //! cargo run --release -- report            # every engine at depths 64..500
 //! cargo run --release -- wide              # a wide page: time, heap, allocations per box
 //! cargo run --release -- wide-loop         # that page over and over, for a profiler
+//! cargo run --release -- stages 250,500    # a deep frame's least time per stage
 //! ```
 //!
 //! A probe runs the work once on a thread of the stack it is given; a stack
@@ -272,6 +273,42 @@ fn nana_frame(depth: usize) -> f64 {
     took
 }
 
+/// One frame through `depth` nested columns, per stage: the least each named
+/// stage took over `runs` frames, in microseconds.
+fn nana_frame_stages(depth: usize, runs: usize) -> Vec<(String, f64)> {
+    let mut least: Vec<(String, f64)> = Vec::new();
+    for _ in 0..runs {
+        let document = DocumentId::new(1).unwrap();
+        let mut runtime = RuntimeDocument::new(document);
+        runtime
+            .context_mut()
+            .mount_view_root(document, move || {
+                let mut view = text("leaf").into_any();
+                for _ in 0..depth {
+                    view = widget(Stack::column(0.0).with_layout(|l| *l = padded()))
+                        .children((view,))
+                        .into_any();
+                }
+                view
+            })
+            .unwrap();
+        runtime
+            .flush(LayoutViewport::new(800.0, 600.0), &mut FixedShaper)
+            .unwrap();
+        let profile = runtime.context().last_frame_profile().clone();
+        for timing in profile.stages {
+            let name = format!("{:?}", timing.stage);
+            let us = timing.duration.as_secs_f64() * 1e6;
+            match least.iter_mut().find(|(n, _)| *n == name) {
+                Some((_, held)) => *held = held.min(us),
+                None => least.push((name, us)),
+            }
+        }
+    }
+    least.retain(|(_, us)| *us > 0.0);
+    least
+}
+
 /// The same nested columns laid out once by Taffy; returns the microseconds
 /// the layout took, without building the tree.
 fn taffy(depth: usize) -> f64 {
@@ -467,6 +504,22 @@ fn main() {
             // For a profiler: lay the 10 501-box page out over and over.
             loop {
                 nana_wide(500, 10);
+            }
+        }
+        Some("stages") => {
+            // Where a deep frame's time goes: the least per stage over runs.
+            // The runtime refuses a tree deeper than 512.
+            let depths: Vec<usize> = match arg(1) {
+                Some(list) => list.split(',').map(|d| d.parse().unwrap()).collect(),
+                None => vec![125, 250, 500],
+            };
+            for depth in depths {
+                let stages = nana_frame_stages(depth, 15);
+                let line: Vec<String> = stages
+                    .iter()
+                    .map(|(name, us)| format!("{name} {us:.0}"))
+                    .collect();
+                println!("depth {depth}: {} (µs)", line.join(", "));
             }
         }
         Some("loop") => {

@@ -9831,10 +9831,10 @@ fn a_rebuilt_subtree_lands_in_the_order_a_full_sort_would_give_it() {
 
 #[test]
 fn the_rebuild_scratch_does_not_hand_one_parents_prefix_to_another() {
-    // The scratch holds one inherited prefix at a time, on the bet that the
-    // next node has the same parent. When it does not, the bet has to be
-    // dropped: two containers that open stacking groups at different z put
-    // their children in different places.
+    // The scratch remembers prefixes while the rebuild pass runs. Two
+    // containers that open stacking groups at different z put their children
+    // in different places, so one's answer must never stand in for the
+    // other's.
     let stacked = |z: i32| {
         Arc::new(nana_ui_core::LayoutStyle {
             position: nana_ui_core::PositionSpec::Relative,
@@ -9864,6 +9864,67 @@ fn the_rebuild_scratch_does_not_hand_one_parents_prefix_to_another() {
     assert_eq!(under_two.len(), 1);
     assert_eq!(under_two[0].0, 5, "the z of the container above it");
     assert_eq!(under_three[0].0, 1);
+}
+
+#[test]
+fn what_a_parent_hands_down_is_what_walking_the_chain_gives() {
+    // The rebuild pass remembers per parent what it hands a plain child, and
+    // folds each parent's answer from its own parent's. Down a chain that
+    // clips, fades, moves, scrolls and breaks out at a fixed box, that fold
+    // has to land on what walking the whole chain from the root gives.
+    const DEPTH: u64 = 12;
+    let mut nodes = Vec::new();
+    for value in 1..=DEPTH {
+        let parent = (value > 1).then(|| value - 1);
+        let children: &[u64] = if value < DEPTH { &[value + 1] } else { &[] };
+        let mut node = node(value, parent, children);
+        node.layout.x = value as f32;
+        node.layout.y = 2.0 * value as f32;
+        let mut layout = nana_ui_core::LayoutStyle {
+            background: Some([1.0, 0.0, 0.0, 1.0]),
+            ..Default::default()
+        };
+        if value % 3 == 0 {
+            layout.overflow_x = nana_ui_core::OverflowSpec::Hidden;
+            layout.overflow_y = nana_ui_core::OverflowSpec::Hidden;
+            node.scroll_offset = nana_ui_runtime::ScrollOffset { x: 1.0, y: 3.0 };
+        }
+        if value % 4 == 0 {
+            layout.opacity = Some(0.75);
+        }
+        if value % 5 == 0 {
+            layout.transform = Some(nana_ui_core::PaintTransform {
+                e: 4.0,
+                f: -2.0,
+                ..Default::default()
+            });
+        }
+        if value == 7 {
+            layout.position = nana_ui_core::PositionSpec::Fixed;
+        }
+        node.source_style.layout = Arc::new(layout);
+        nodes.push(node);
+    }
+    let mut scene = UiScene::new();
+    scene.apply_delta(nodes, []);
+    scene.rebuild_scratch.lock().unwrap().begin();
+    // Innermost first, so the answers above are settled on the way down
+    // rather than asked for one at a time.
+    for value in (2..=DEPTH).rev() {
+        let held = Arc::clone(scene.nodes.get(&id(value)).unwrap());
+        if held.source_style.layout.position == nana_ui_core::PositionSpec::Fixed {
+            continue;
+        }
+        for visual in [false, true] {
+            let handed = scene
+                .handed_down(held.parent.unwrap(), visual)
+                .expect("a chain without a modal frame is the parent's alone");
+            let (walked, dependent) = scene.compute_ancestor_state(&held, visual, false);
+            assert!(!dependent);
+            assert_eq!(handed, walked, "node {value}, visual {visual}");
+        }
+    }
+    scene.rebuild_scratch.lock().unwrap().end();
 }
 
 #[test]

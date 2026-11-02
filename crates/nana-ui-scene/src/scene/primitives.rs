@@ -58,9 +58,7 @@ impl UiScene {
         let Some(node) = self.nodes.get(&id).cloned() else {
             return;
         };
-        if is_descendant_of_rasterized_svg(&self.nodes, &node)
-            || is_descendant_of_icon_visual(&self.nodes, &node)
-        {
+        if self.inside_ancestor_glyph(&node) {
             if node.custom_paint.is_none() && !self.custom_paint.is_empty() {
                 self.custom_paint.remove(&id);
             }

@@ -2416,7 +2416,9 @@ impl UiWorld {
                 },
             );
         }
-        memo.get(&id).copied().unwrap_or(AnchorPair {
+        // Lazily: evaluated eagerly, this fallback walked the whole chain
+        // above `id` twice on every call, memo or not.
+        memo.get(&id).copied().unwrap_or_else(|| AnchorPair {
             clip: self.overflow_clip_of(id),
             containing_block: self.containing_block_of(id),
         })

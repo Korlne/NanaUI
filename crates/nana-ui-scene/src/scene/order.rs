@@ -4,14 +4,14 @@ use super::*;
 
 impl UiScene {
     pub(super) fn sort_primitives(&mut self) {
-        // The stack is a per-node parent walk and every primitive of a node
-        // sits under the same one, so walk once per node and hand out that
-        // `Arc`.
+        // Every primitive of a node sits under the same stack, so build it
+        // once per node and hand out that `Arc`.
         let mut stacks: NodeMap<GroupPrefix> = NodeMap::default();
         // A painted node's primitives split around its children, and a scroll
-        // view's bars sit over them, so each takes its own stack; the walk to
-        // its prefix is still once a node.
-        let mut painted_prefixes: NodeMap<GroupPrefix> = NodeMap::default();
+        // view's bars sit over them, so each takes its own stack from the
+        // node's prefix. Prefixes are remembered per node, a node's being its
+        // parent's plus its own entry, so no node walks the chain above it.
+        let mut prefixes: NodeMap<GroupPrefix> = NodeMap::default();
         let keys: Vec<SceneOrderKey> = self
             .primitives
             .values()
@@ -21,17 +21,24 @@ impl UiScene {
                     return key;
                 }
                 if self.splits_paint(primitive.node) {
-                    let prefix = painted_prefixes.entry(primitive.node).or_insert_with(|| {
-                        group_prefix(&self.nodes, &self.node_order, primitive.node).into()
-                    });
+                    let prefix = group_prefix_memo(
+                        &self.nodes,
+                        &self.node_order,
+                        &mut prefixes,
+                        primitive.node,
+                    );
                     return SceneOrderKey::at(
-                        order_stack(&self.nodes, prefix, primitive),
+                        order_stack(&self.nodes, &prefix, primitive),
                         primitive,
                     );
                 }
                 let stack = stacks.entry(primitive.node).or_insert_with(|| {
-                    let prefix: GroupPrefix =
-                        group_prefix(&self.nodes, &self.node_order, primitive.node).into();
+                    let prefix = group_prefix_memo(
+                        &self.nodes,
+                        &self.node_order,
+                        &mut prefixes,
+                        primitive.node,
+                    );
                     order_stack(&self.nodes, &prefix, primitive)
                 });
                 SceneOrderKey::at(Arc::clone(stack), primitive)

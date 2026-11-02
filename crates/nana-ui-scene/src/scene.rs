@@ -2618,6 +2618,18 @@ impl UiScene {
         // node breaks out of it, and whether the caller wants the presented
         // values or the logical ones.
         let fixed = node.source_style.layout.position == nana_ui_core::PositionSpec::Fixed;
+        // A plain child takes exactly what its parent hands down, and the
+        // rebuild pass remembers that per parent: a deep chain of only
+        // children would miss the one-entry cache below on every node.
+        if let Some(parent) = node.parent
+            && !fixed
+            && clip_link(node) == Some(parent)
+            && !is_workspace_resize_handle(node)
+            && self.rebuild_scratch.lock().is_ok_and(|cache| cache.active)
+            && let Some(state) = self.handed_down(parent, visual)
+        {
+            return state;
+        }
         let key = node
             .parent
             .map(|parent| (parent, fixed, clip_link(node), visual));
@@ -2670,8 +2682,7 @@ impl UiScene {
         visual: bool,
         fixed: bool,
     ) -> (AncestorState, bool) {
-        let mut node_dependent = is_workspace_resize_handle(node);
-        let mut ancestors = node
+        let ancestors = node
             .parent
             .map(|parent| {
                 ancestor_nodes(&self.nodes, parent)
@@ -2679,6 +2690,23 @@ impl UiScene {
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
+        let hung = clip_chain_parents(&self.nodes, node);
+        self.fold_ancestor_chain(ancestors, &hung, Some(node), fixed, visual)
+    }
+
+    /// [`Self::compute_ancestor_state`] over an explicit chain: `ancestors`
+    /// innermost first, `hung` the clip chain's links nearest first. Without a
+    /// `node` the answer is the one a plain child of the innermost ancestor
+    /// gets — in flow, hanging from it, neither fixed nor a resize handle.
+    fn fold_ancestor_chain(
+        &self,
+        mut ancestors: Vec<&ExtractedNode>,
+        hung: &[StableNodeId],
+        node: Option<&ExtractedNode>,
+        fixed: bool,
+        visual: bool,
+    ) -> (AncestorState, bool) {
+        let mut node_dependent = node.is_some_and(is_workspace_resize_handle);
         ancestors.reverse();
         // Layout resolves fixed boxes against the viewport even below a
         // transformed ancestor. Keep structural opacity, but begin geometry at
@@ -2697,145 +2725,284 @@ impl UiScene {
         // The items a triggered menu places hang with its surface: their
         // branch starts from the menu's presentation, not the bare viewport.
         let fixed_root = if fixed {
-            Some(node)
+            node
         } else {
             ancestors.get(geometry_start).copied().filter(|ancestor| {
                 ancestor.source_style.layout.position == nana_ui_core::PositionSpec::Fixed
             })
         };
-        let mut transform = match fixed_root {
+        let transform = match fixed_root {
             Some(root) if visual => {
                 // Whether a fixed node starts its menu's branch depends on
                 // whether it is the menu's trigger content, which its
                 // siblings do not share.
                 node_dependent |= fixed
                     && node
-                        .parent
+                        .and_then(|node| node.parent)
                         .and_then(|parent| self.nodes.get(&parent))
                         .is_some_and(|parent| is_triggered_menu(parent));
                 self.hanging_branch_transform(root)
             }
             _ => AffineTransform::IDENTITY,
         };
-        let mut opacity = 1.0;
-        let mut clips = Vec::new();
-        let mut blocks_3d = false;
+        let mut fold = AncestorFold {
+            transform,
+            opacity: 1.0,
+            clips: Vec::new(),
+            blocks_3d: false,
+        };
         // The ancestors the clip chain hangs this node from, outermost
         // first: a subsequence of `ancestors`. The others are passed over by
         // an absolute box escaping overflow containers (#201); they lend it
         // their transforms and opacity, but none of their clips or scroll.
-        let hung = clip_chain_parents(&self.nodes, node);
         let mut hung = hung.iter().rev().peekable();
         for (index, ancestor) in ancestors.into_iter().enumerate() {
-            if !is_opacity_group(&self.nodes, ancestor) {
-                opacity *= if visual {
-                    self.resolved_local_opacity(ancestor)
-                } else {
-                    local_opacity(ancestor)
-                };
-            }
             let reaches = hung.next_if(|id| **id == ancestor.id).is_some();
-            if index < geometry_start {
-                continue;
-            }
-            let layout = ancestor.layout;
-            // `blocks_3d` is what the ancestors *above* this one closed, the
-            // same question asked of the queried node below — an ancestor's
-            // own `perspective` opens a context for its children, not against
-            // itself, so it folds in afterwards. Reading it keeps a refusal
-            // whole: a node whose `matrix3d` this rule takes away must not go
-            // on handing it down, or it paints flat with a rotated inside.
-            let local = if visual {
-                self.resolved_local_transform(ancestor, blocks_3d)
+            node_dependent |= self.fold_ancestor(
+                &mut fold,
+                ancestor,
+                node,
+                visual,
+                index >= geometry_start,
+                reaches,
+            );
+        }
+        (fold.finish(), node_dependent)
+    }
+
+    /// Folds one ancestor, outermost first, into what the chain hands down.
+    /// `geometry` is false above the nearest fixed boundary, and `reaches`
+    /// whether the clip chain hangs from this ancestor. Returns whether the
+    /// answer read anything about `node` its siblings do not share.
+    fn fold_ancestor(
+        &self,
+        fold: &mut AncestorFold,
+        ancestor: &ExtractedNode,
+        node: Option<&ExtractedNode>,
+        visual: bool,
+        geometry: bool,
+        reaches: bool,
+    ) -> bool {
+        if !is_opacity_group(&self.nodes, ancestor) {
+            fold.opacity *= if visual {
+                self.resolved_local_opacity(ancestor)
             } else {
-                self.logical_local_transform(ancestor, blocks_3d)
+                local_opacity(ancestor)
             };
-            transform = transform.then(local);
-            if ancestor.source_style.layout.fails_closed_3d_context() {
-                blocks_3d = true;
-            }
-            if !reaches {
-                continue;
-            }
-            if let Some(region) = overflow_clip_region(
-                ancestor.source_style.layout.as_ref(),
-                SceneRect {
-                    x: layout.x,
-                    y: layout.y,
-                    width: layout.width,
-                    height: layout.height,
-                },
-                transform,
-            ) && !(is_workspace_resize_handle(node) && Some(ancestor.id) == node.parent)
-            {
-                clips.push(region);
-            }
-            if let Some(ComponentGeometry::EmptyState { root_clip, .. }) =
-                ancestor.component_geometry.as_deref()
-            {
-                clips.push(ClipRegion {
-                    bounds: scene_rect(*root_clip),
-                    transform,
-                    corner_radius: 0.0,
-                    polygon_clip: None,
-                });
-            }
-            if let Some(ComponentGeometry::ModalFrame { surface, body, .. }) =
-                ancestor.component_geometry.as_deref()
-            {
-                node_dependent = true;
-                let focus_inset = if node.focused { 3.0 } else { 0.0 };
-                clips.push(ClipRegion {
-                    bounds: SceneRect {
-                        x: surface.x - focus_inset,
-                        y: surface.y - focus_inset,
-                        width: surface.width + focus_inset * 2.0,
-                        height: surface.height + focus_inset * 2.0,
-                    },
-                    transform,
-                    corner_radius: 0.0,
-                    polygon_clip: None,
-                });
-                if let Some(StandardVisual::ModalFrame { slots, .. }) =
-                    ancestor.standard_visual.as_ref()
-                    && slots
-                        .body
-                        .is_some_and(|body_root| self.node_descends_from(node.id, body_root))
-                {
-                    clips.push(ClipRegion {
-                        bounds: scene_rect(*body),
-                        transform,
-                        corner_radius: 0.0,
-                        polygon_clip: None,
-                    });
-                }
-            }
-            let ancestor_bounds = SceneRect {
+        }
+        if !geometry {
+            return false;
+        }
+        let layout = ancestor.layout;
+        // `blocks_3d` is what the ancestors *above* this one closed, the
+        // same question asked of the queried node below — an ancestor's
+        // own `perspective` opens a context for its children, not against
+        // itself, so it folds in afterwards. Reading it keeps a refusal
+        // whole: a node whose `matrix3d` this rule takes away must not go
+        // on handing it down, or it paints flat with a rotated inside.
+        let local = if visual {
+            self.resolved_local_transform(ancestor, fold.blocks_3d)
+        } else {
+            self.logical_local_transform(ancestor, fold.blocks_3d)
+        };
+        let transform = fold.transform.then(local);
+        fold.transform = transform;
+        if ancestor.source_style.layout.fails_closed_3d_context() {
+            fold.blocks_3d = true;
+        }
+        if !reaches {
+            return false;
+        }
+        let mut node_dependent = false;
+        let clips = &mut fold.clips;
+        if let Some(region) = overflow_clip_region(
+            ancestor.source_style.layout.as_ref(),
+            SceneRect {
                 x: layout.x,
                 y: layout.y,
                 width: layout.width,
                 height: layout.height,
-            };
-            if let Some(region) = clip_path_region(
-                ancestor.source_style.layout.as_ref(),
-                ancestor_bounds,
-                transform,
-            ) {
-                clips.push(region);
-            }
-            transform = transform.then(AffineTransform::from_matrix([
-                1.0,
-                0.0,
-                0.0,
-                1.0,
-                -ancestor.scroll_offset.x,
-                -ancestor.scroll_offset.y,
-            ]));
+            },
+            transform,
+        ) && !node.is_some_and(|node| {
+            is_workspace_resize_handle(node) && Some(ancestor.id) == node.parent
+        }) {
+            clips.push(region);
         }
-        (
-            (transform, opacity, clips.into(), blocks_3d),
-            node_dependent,
-        )
+        if let Some(ComponentGeometry::EmptyState { root_clip, .. }) =
+            ancestor.component_geometry.as_deref()
+        {
+            clips.push(ClipRegion {
+                bounds: scene_rect(*root_clip),
+                transform,
+                corner_radius: 0.0,
+                polygon_clip: None,
+            });
+        }
+        if let Some(ComponentGeometry::ModalFrame { surface, body, .. }) =
+            ancestor.component_geometry.as_deref()
+        {
+            node_dependent = true;
+            let focus_inset = if node.is_some_and(|node| node.focused) {
+                3.0
+            } else {
+                0.0
+            };
+            clips.push(ClipRegion {
+                bounds: SceneRect {
+                    x: surface.x - focus_inset,
+                    y: surface.y - focus_inset,
+                    width: surface.width + focus_inset * 2.0,
+                    height: surface.height + focus_inset * 2.0,
+                },
+                transform,
+                corner_radius: 0.0,
+                polygon_clip: None,
+            });
+            if let Some(StandardVisual::ModalFrame { slots, .. }) =
+                ancestor.standard_visual.as_ref()
+                && let Some(node) = node
+                && slots
+                    .body
+                    .is_some_and(|body_root| self.node_descends_from(node.id, body_root))
+            {
+                clips.push(ClipRegion {
+                    bounds: scene_rect(*body),
+                    transform,
+                    corner_radius: 0.0,
+                    polygon_clip: None,
+                });
+            }
+        }
+        let ancestor_bounds = SceneRect {
+            x: layout.x,
+            y: layout.y,
+            width: layout.width,
+            height: layout.height,
+        };
+        if let Some(region) = clip_path_region(
+            ancestor.source_style.layout.as_ref(),
+            ancestor_bounds,
+            transform,
+        ) {
+            clips.push(region);
+        }
+        fold.transform = transform.then(AffineTransform::from_matrix([
+            1.0,
+            0.0,
+            0.0,
+            1.0,
+            -ancestor.scroll_offset.x,
+            -ancestor.scroll_offset.y,
+        ]));
+        node_dependent
+    }
+
+    /// What `parent` hands a plain child — see [`Self::fold_ancestor_chain`]
+    /// — while the rebuild pass runs, remembered per parent so a chain of
+    /// only children costs one fold a node rather than one walk a node.
+    /// `None` when the answer is not the parent's alone (a modal frame above
+    /// reads the child's focus), or the chain leaves the scene.
+    ///
+    /// Each parent's answer is its own parent's answer folded once more:
+    /// a fixed parent starts geometry again, keeping the opacity. A parent
+    /// whose clip chain does not simply follow its parent is folded from
+    /// scratch. The walk up to the nearest remembered answer is a loop, not
+    /// recursion, so it does not grow with the tree's depth.
+    fn handed_down(&self, parent: StableNodeId, visual: bool) -> Option<AncestorState> {
+        let mut memo = {
+            let mut scratch = self.rebuild_scratch.lock().ok()?;
+            std::mem::take(&mut scratch.handed_down[usize::from(visual)])
+        };
+        let answer = self.resolve_handed_down(&mut memo, parent, visual);
+        if let Ok(mut scratch) = self.rebuild_scratch.lock()
+            && scratch.active
+        {
+            scratch.handed_down[usize::from(visual)] = memo;
+        }
+        answer
+    }
+
+    fn resolve_handed_down(
+        &self,
+        memo: &mut NodeMap<Option<AncestorState>>,
+        parent: StableNodeId,
+        visual: bool,
+    ) -> Option<AncestorState> {
+        // The ancestors still to fold, innermost first.
+        let mut chain = Vec::new();
+        let mut cursor = parent;
+        let mut handed: Option<AncestorState> = loop {
+            if let Some(held) = memo.get(&cursor) {
+                break held.clone();
+            }
+            let node = self.nodes.get(&cursor)?;
+            let fixed = node.source_style.layout.position == nana_ui_core::PositionSpec::Fixed;
+            let follows = if fixed {
+                clip_link(node).is_none()
+            } else {
+                clip_link(node) == node.parent
+            };
+            if !follows {
+                let ancestors = ancestor_nodes(&self.nodes, cursor)
+                    .map(|(_, node)| node)
+                    .collect::<Vec<_>>();
+                let mut hung = vec![cursor];
+                hung.extend(clip_chain_parents(&self.nodes, node));
+                let (state, node_dependent) =
+                    self.fold_ancestor_chain(ancestors, &hung, None, false, visual);
+                let state = (!node_dependent).then_some(state);
+                memo.insert(cursor, state.clone());
+                break state;
+            }
+            chain.push(node.as_ref());
+            match node.parent {
+                Some(next) => cursor = next,
+                None => {
+                    break Some((AffineTransform::IDENTITY, 1.0, Arc::from(Vec::new()), false));
+                }
+            }
+        };
+        for ancestor in chain.into_iter().rev() {
+            handed = handed.and_then(|state| self.fold_handed_down(state, ancestor, visual));
+            memo.insert(ancestor.id, handed.clone());
+        }
+        handed
+    }
+
+    /// `state`, what `ancestor`'s parent hands it, folded through `ancestor`.
+    fn fold_handed_down(
+        &self,
+        state: AncestorState,
+        ancestor: &ExtractedNode,
+        visual: bool,
+    ) -> Option<AncestorState> {
+        let (transform, opacity, inherited, blocks_3d) = state;
+        let mut fold = AncestorFold {
+            transform,
+            opacity,
+            clips: Vec::new(),
+            blocks_3d,
+        };
+        let mut inherited = Some(inherited);
+        if ancestor.source_style.layout.position == nana_ui_core::PositionSpec::Fixed {
+            fold.transform = if visual {
+                self.hanging_branch_transform(ancestor)
+            } else {
+                AffineTransform::IDENTITY
+            };
+            fold.blocks_3d = false;
+            inherited = None;
+        }
+        if self.fold_ancestor(&mut fold, ancestor, None, visual, true, true) {
+            return None;
+        }
+        let clips = match inherited {
+            Some(inherited) if fold.clips.is_empty() => inherited,
+            Some(inherited) => inherited.iter().cloned().chain(fold.clips).collect(),
+            None => fold.clips.into(),
+        };
+        Some((fold.transform, fold.opacity, clips, fold.blocks_3d))
     }
 
     fn remove_node_primitives(&mut self, id: StableNodeId) {
@@ -3067,40 +3234,40 @@ impl UiScene {
     /// remembering. A node that opens no group of its own **shares** that
     /// `Arc` rather than copying it.
     fn group_prefix_of(&self, scratch: &mut RebuildScratch, node: StableNodeId) -> GroupPrefix {
-        let Some(candidate) = self.nodes.get(&node) else {
-            return Arc::from(Vec::new());
+        group_prefix_memo(
+            &self.nodes,
+            &self.node_order,
+            &mut scratch.group_prefixes,
+            node,
+        )
+    }
+
+    /// Whether a rasterized SVG or an icon glyph above `node` already paints
+    /// it. While the rebuild pass runs, the walks behind both answers are
+    /// remembered per ancestor.
+    pub(super) fn inside_ancestor_glyph(&self, node: &ExtractedNode) -> bool {
+        let Some(parent) = node.parent else {
+            return false;
         };
-        // A viewport-fixed node starts its own chain: a triggered menu must not
-        // stay inside the isolation group of whatever opened it.
-        let inherited =
-            if candidate.source_style.layout.position == nana_ui_core::PositionSpec::Fixed {
-                Arc::from(Vec::new())
-            } else {
-                match candidate.parent {
-                    Some(parent) => {
-                        if let Some((held, prefix)) = scratch.inherited_prefix.as_ref()
-                            && *held == parent
-                        {
-                            Arc::clone(prefix)
-                        } else {
-                            let prefix: Arc<[(i32, usize)]> =
-                                group_prefix(&self.nodes, &self.node_order, parent).into();
-                            scratch.inherited_prefix = Some((parent, Arc::clone(&prefix)));
-                            prefix
-                        }
-                    }
-                    None => Arc::from(Vec::new()),
-                }
-            };
-        if !is_stacking_group(&self.nodes, candidate) {
-            return inherited;
+        if let Ok(mut scratch) = self.rebuild_scratch.lock()
+            && scratch.active
+        {
+            let scratch = &mut *scratch;
+            return ancestor_answer(
+                &self.nodes,
+                &mut scratch.in_rasterized_svg,
+                parent,
+                rasterized_svg_decides,
+            ) || (!node.source_style.layout.is_out_of_flow()
+                && ancestor_answer(
+                    &self.nodes,
+                    &mut scratch.in_icon_visual,
+                    parent,
+                    icon_visual_decides,
+                ));
         }
-        let mut prefix = inherited.to_vec();
-        prefix.push((
-            candidate.z_index,
-            self.node_order.get(&node).copied().unwrap_or(0),
-        ));
-        Arc::from(prefix)
+        is_descendant_of_rasterized_svg(&self.nodes, node)
+            || is_descendant_of_icon_visual(&self.nodes, node)
     }
 
     fn node_descends_from(&self, id: StableNodeId, ancestor: StableNodeId) -> bool {
@@ -3267,23 +3434,10 @@ fn is_workspace_resize_handle(node: &ExtractedNode) -> bool {
 }
 
 fn is_descendant_of_rasterized_svg(nodes: &SceneNodes, node: &ExtractedNode) -> bool {
-    let Some(parent) = node.parent else {
-        return false;
-    };
-    for (_, parent) in ancestor_nodes(nodes, parent) {
-        if parent
-            .custom_render
-            .as_ref()
-            .is_some_and(|custom| custom.renderer.as_ref() == "nana.host-texture")
-            && matches!(
-                parent.kind.as_ref(),
-                NodeKind::Element { tag } if tag.eq_ignore_ascii_case("svg")
-            )
-        {
-            return true;
-        }
-    }
-    false
+    node.parent.is_some_and(|parent| {
+        ancestor_nodes(nodes, parent)
+            .any(|(_, ancestor)| rasterized_svg_decides(ancestor).is_some())
+    })
 }
 
 /// Whether `node` is part of a glyph an ancestor already paints.
@@ -3305,15 +3459,70 @@ fn is_descendant_of_icon_visual(nodes: &SceneNodes, node: &ExtractedNode) -> boo
     let Some(parent) = node.parent else {
         return false;
     };
-    for (_, ancestor) in ancestor_nodes(nodes, parent) {
-        if matches!(ancestor.standard_visual, Some(StandardVisual::Icon { .. })) {
-            return true;
-        }
-        if ancestor.source_style.layout.is_out_of_flow() {
-            return false;
-        }
+    ancestor_nodes(nodes, parent)
+        .find_map(|(_, ancestor)| icon_visual_decides(ancestor))
+        .unwrap_or(false)
+}
+
+/// Whether a rasterized SVG at or above `ancestor` paints over its subtree;
+/// see [`is_descendant_of_rasterized_svg`].
+fn rasterized_svg_decides(ancestor: &ExtractedNode) -> Option<bool> {
+    (ancestor
+        .custom_render
+        .as_ref()
+        .is_some_and(|custom| custom.renderer.as_ref() == "nana.host-texture")
+        && matches!(
+            ancestor.kind.as_ref(),
+            NodeKind::Element { tag } if tag.eq_ignore_ascii_case("svg")
+        ))
+    .then_some(true)
+}
+
+/// Whether the walk for [`is_descendant_of_icon_visual`] ends at `ancestor`,
+/// and with which answer.
+fn icon_visual_decides(ancestor: &ExtractedNode) -> Option<bool> {
+    if matches!(ancestor.standard_visual, Some(StandardVisual::Icon { .. })) {
+        Some(true)
+    } else if ancestor.source_style.layout.is_out_of_flow() {
+        Some(false)
+    } else {
+        None
     }
-    false
+}
+
+/// The answer of a walk from `start` up its ancestors that ends at the first
+/// one `decides` has an answer for (false past the root or a node the scene
+/// no longer holds), remembered in `memo` for every node it passed.
+///
+/// Every node the walk passes over defers to its parent, so they all share
+/// the one answer: a chain of only children pays one step a node, not one
+/// walk a node.
+fn ancestor_answer(
+    nodes: &SceneNodes,
+    memo: &mut NodeMap<bool>,
+    start: StableNodeId,
+    decides: fn(&ExtractedNode) -> Option<bool>,
+) -> bool {
+    let mut passed = Vec::new();
+    let mut cursor = Some(start);
+    let answer = loop {
+        let Some(id) = cursor else {
+            break false;
+        };
+        if let Some(held) = memo.get(&id) {
+            break *held;
+        }
+        let Some(node) = nodes.get(&id) else {
+            break false;
+        };
+        passed.push(id);
+        if let Some(answer) = decides(node) {
+            break answer;
+        }
+        cursor = node.parent;
+    };
+    memo.extend(passed.into_iter().map(|id| (id, answer)));
+    answer
 }
 
 fn has_extracted_child(nodes: &SceneNodes, node: &ExtractedNode) -> bool {
@@ -3714,6 +3923,25 @@ type DrawStamp = (u64, u64);
 /// What a node inherits from the chain above it.
 type AncestorState = (AffineTransform, f32, Arc<[ClipRegion]>, bool);
 
+/// [`AncestorState`] while it is being folded, its clips still growing.
+struct AncestorFold {
+    transform: AffineTransform,
+    opacity: f32,
+    clips: Vec<ClipRegion>,
+    blocks_3d: bool,
+}
+
+impl AncestorFold {
+    fn finish(self) -> AncestorState {
+        (
+            self.transform,
+            self.opacity,
+            self.clips.into(),
+            self.blocks_3d,
+        )
+    }
+}
+
 /// One `(z-index, document order)` per stacking group above a node, outermost
 /// first.
 type GroupPrefix = Arc<[(i32, usize)]>;
@@ -3723,9 +3951,12 @@ type GroupPrefix = Arc<[(i32, usize)]>;
 /// order. A container style change rebuilds every descendant, and a node owns
 /// several primitives, so both are asked many times for the same parent.
 ///
-/// One entry each, not maps: the pass walks the subtree in order, so the next
-/// question almost always has the same answer as the last, and comparing two
-/// words beats hashing. A miss costs exactly what this used to cost every time.
+/// The answers about one node are single entries: the pass walks the subtree
+/// in order, so the next question almost always has the same answer as the
+/// last, and comparing two words beats hashing. The answers about the chain
+/// above a node are kept per ancestor instead, because a chain of only
+/// children asks a different parent every time and a one-entry cache would
+/// walk the whole chain again for each of them.
 ///
 /// Deliberately not stamped and not always on. It is filled only while
 /// `apply_delta` rebuilds primitives — where `self.nodes` and `self.node_order`
@@ -3742,9 +3973,17 @@ struct RebuildScratch {
     /// The paint-order stack of the node being rebuilt, shared by all of its
     /// primitives.
     order_stack: Option<(StableNodeId, GroupPrefix)>,
-    /// The same, for the chain *above* a node: siblings share it, so the pass
-    /// pays the walk once per container instead of once per node.
-    inherited_prefix: Option<(StableNodeId, GroupPrefix)>,
+    /// Every node's paint-order prefix the pass has asked for: siblings share
+    /// their parent's, and a node's is its parent's plus its own entry. See
+    /// [`group_prefix_memo`].
+    group_prefixes: NodeMap<GroupPrefix>,
+    /// Whether a node is inside a rasterized SVG, or in flow inside an icon,
+    /// for every node the pass has walked through. See [`ancestor_answer`].
+    in_rasterized_svg: NodeMap<bool>,
+    in_icon_visual: NodeMap<bool>,
+    /// What each parent hands a plain child, logical then presented. See
+    /// [`UiScene::handed_down`].
+    handed_down: [NodeMap<Option<AncestorState>>; 2],
 }
 
 impl RebuildScratch {
@@ -3752,14 +3991,20 @@ impl RebuildScratch {
         self.active = true;
         self.ancestor_state = None;
         self.order_stack = None;
-        self.inherited_prefix = None;
+        self.group_prefixes.clear();
+        self.in_rasterized_svg.clear();
+        self.in_icon_visual.clear();
+        self.handed_down.iter_mut().for_each(NodeMap::clear);
     }
 
     fn end(&mut self) {
         self.active = false;
         self.ancestor_state = None;
         self.order_stack = None;
-        self.inherited_prefix = None;
+        self.group_prefixes = NodeMap::default();
+        self.in_rasterized_svg = NodeMap::default();
+        self.in_icon_visual = NodeMap::default();
+        self.handed_down = Default::default();
     }
 }
 
@@ -3943,6 +4188,48 @@ fn group_prefix(
     }
     stack.reverse();
     stack
+}
+
+/// [`group_prefix`], remembered per node in `memo`: a node's prefix is its
+/// parent's plus its own entry, so a chain of only children pays one step a
+/// node rather than one walk a node. The walk up to the nearest remembered
+/// prefix is a loop, not recursion.
+fn group_prefix_memo(
+    nodes: &SceneNodes,
+    node_order: &NodeMap<usize>,
+    memo: &mut NodeMap<GroupPrefix>,
+    node: StableNodeId,
+) -> GroupPrefix {
+    // The nodes still to answer, innermost first.
+    let mut chain = Vec::new();
+    let mut cursor = Some(node);
+    let mut prefix: GroupPrefix = loop {
+        let Some(id) = cursor else {
+            break Arc::from(Vec::new());
+        };
+        if let Some(held) = memo.get(&id) {
+            break Arc::clone(held);
+        }
+        let Some(candidate) = nodes.get(&id) else {
+            break Arc::from(Vec::new());
+        };
+        chain.push((id, candidate.as_ref()));
+        // Triggered menus and overlay surfaces are viewport-fixed and start
+        // their own chain; see `group_prefix`.
+        if candidate.source_style.layout.position == nana_ui_core::PositionSpec::Fixed {
+            break Arc::from(Vec::new());
+        }
+        cursor = candidate.parent;
+    };
+    for (id, candidate) in chain.into_iter().rev() {
+        if is_stacking_group(nodes, candidate) {
+            let mut own = prefix.to_vec();
+            own.push((candidate.z_index, node_order.get(&id).copied().unwrap_or(0)));
+            prefix = Arc::from(own);
+        }
+        memo.insert(id, Arc::clone(&prefix));
+    }
+    prefix
 }
 
 /// Whether a node's Markdown drawing holds a native diagram.
