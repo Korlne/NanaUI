@@ -521,7 +521,7 @@ impl RuntimeLayoutEngine {
         let plan_key = |id: StableNodeId, available: Size| {
             (id, available.width.to_bits(), available.height.to_bits())
         };
-        let mut consulted: HashSet<(StableNodeId, u32, u32)> =
+        let mut consulted: hashbrown::HashSet<(StableNodeId, u32, u32)> =
             std::mem::take(&mut intrinsic.consulted_plans)
                 .into_iter()
                 .map(|(id, available)| plan_key(id, available))

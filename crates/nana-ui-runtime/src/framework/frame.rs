@@ -640,8 +640,9 @@ impl AppContext {
         &self,
         document: DocumentId,
     ) -> Vec<StableNodeId> {
-        let mut visited = HashSet::new();
-        let mut targets = HashSet::new();
+        // A first layout's scope is the whole document: sets hashed by id.
+        let mut visited = crate::NodeSet::default();
+        let mut targets = crate::NodeSet::default();
         for &id in &self.last_layout_scope {
             if self.world.document_of(id) != Some(document) {
                 continue;
@@ -661,8 +662,8 @@ impl AppContext {
             return targets.into_iter().collect();
         }
         // Preserve document order without descending into unrelated subtrees.
-        let mut branches = HashSet::new();
-        let mut branch_parents = HashSet::new();
+        let mut branches = crate::NodeSet::default();
+        let mut branch_parents = crate::NodeSet::default();
         for &id in &targets {
             let mut cursor = Some(id);
             while let Some(id) = cursor {

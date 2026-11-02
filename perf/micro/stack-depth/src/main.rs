@@ -10,6 +10,7 @@
 //!                                          # SKIP_LAYOUT=1 builds the page only
 //! FRAME_PATH=1 cargo run --release -- wide  # the product frame's first layout
 //!                                          # (`layout_document_for_viewport`), not a full pass
+//! CONTROLS=1 cargo run --release -- wide    # a page of labels and buttons instead of bare boxes
 //! cargo run --release -- stages 250,500    # a deep frame's least time per stage
 //! ```
 //!
@@ -28,8 +29,8 @@ use std::time::Instant;
 use nana_ui_core::{LayoutStyle, LengthSpec};
 use nana_ui_runtime::view::{IntoView, text, widget};
 use nana_ui_runtime::{
-    AppContext, ComputedStyle, DocumentId, LayoutViewport, StableNodeId, Stack, TextContent,
-    TextMetrics, TextShapeConstraints, TextShaper,
+    AppContext, Button, ComputedStyle, DocumentId, LayoutViewport, StableNodeId, Stack, Text,
+    TextContent, TextMetrics, TextShapeConstraints, TextShaper,
 };
 use nana_ui_scene::RuntimeDocument;
 
@@ -87,12 +88,30 @@ fn nana_wide(rows: usize, cells: usize) -> (f64, f64, isize, isize) {
     let root = cx
         .create_component(document, Stack::column(0.0).width(LengthSpec::Px(1280.0)))
         .unwrap();
+    // `CONTROLS=1`: a page of controls, not bare boxes -- every cell holds a
+    // label and a button, so the passes meet visuals, text and their tables.
+    let controls = std::env::var_os("CONTROLS").is_some();
     for _ in 0..rows {
         let row = cx
             .create_detached_component(document, Stack::row(4.0))
             .unwrap();
         cx.append_child(root, row).unwrap();
         for _ in 0..cells {
+            if controls {
+                let cell = cx
+                    .create_detached_component(document, Stack::column(2.0))
+                    .unwrap();
+                cx.append_child(row, cell).unwrap();
+                let label = cx
+                    .create_detached_component(document, Text::new("Label"))
+                    .unwrap();
+                cx.append_child(cell, label).unwrap();
+                let button = cx
+                    .create_detached_component(document, Button::new("Go"))
+                    .unwrap();
+                cx.append_child(cell, button).unwrap();
+                continue;
+            }
             let cell = cx
                 .create_detached_component(
                     document,
@@ -508,7 +527,13 @@ fn main() {
                 None => vec![100, 500, 1000],
             };
             for (rows, cells) in rows.into_iter().map(|rows| (rows, 10)) {
-                let boxes = 1 + rows * (1 + 2 * cells);
+                // A controls page's cell holds a label and a button.
+                let per_cell = if std::env::var_os("CONTROLS").is_some() {
+                    3
+                } else {
+                    2
+                };
+                let boxes = 1 + rows * (1 + per_cell * cells);
                 for (name, run) in [
                     (
                         "nana-layout",
@@ -516,6 +541,10 @@ fn main() {
                     ),
                     ("taffy", taffy_wide),
                 ] {
+                    // Taffy lays out the bare-box page only.
+                    if name == "taffy" && std::env::var_os("CONTROLS").is_some() {
+                        continue;
+                    }
                     let (mut fastest, mut whole) = (f64::INFINITY, f64::INFINITY);
                     let (mut held, mut calls) = (0, 0);
                     for _ in 0..15 {
