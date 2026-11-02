@@ -518,7 +518,7 @@ fit 只有一份数学：`ContentFit::fitted_size`（`nana-ui-core`）。fit 是
 `vertical-align: baseline`（CSS 2.1 §10.8.1）对齐，两者读同一个函数
 `LayoutInputMap::atom_line_metrics`：
 - inline-block 以末个流内行盒的基线落在行的基线上，基线值取 `baseline_metrics` 的末行基线。
-  行盒都在后代里的 inline-block（`UiWorld::line_boxes_are_descendants`：没有自己的文字、控件或
+  行盒都在后代里的 inline-block（`UiWorld::line_boxes_are_descendants_in`：没有自己的文字、控件或
   段落，只在流里有）取持有末个行盒的后代所在的位置（CSS 2.1 §10.8.1）：
   `inline::descendant_baselines` 从子项在它内容盒里量出的尺寸，读 placement 会把它们放在哪里：
   placement 排行、分配主轴空余、交叉轴对齐并转到页面上的那一段是 `placement::arrange_flow`，
@@ -557,7 +557,7 @@ fit 只有一份数学：`ContentFit::fitted_size`（`nana-ui-core`）。fit 是
 
 `align-items: baseline` 的 flex 行按项目的首个基线对齐，替换内容取边框盒底边（CSS Align 在 flex / grid
 里从边框盒合成基线）。行盒都在后代里的项目（`UiWorld::aligns_by_first_baseline` 且
-`line_boxes_are_descendants`）取首个流内行盒所在的位置，和 inline-block 的末行基线是同一份推导
+`line_boxes_are_descendants_in`）取首个流内行盒所在的位置，和 inline-block 的末行基线是同一份推导
 （`inline::descendant_baselines`）：测量发布 intrinsic facts 前、placement 读行的基线前、flex 计划比对
 基线前都先 `prime_first_baselines`，`baseline_metrics` 的首个基线再读它；测试与 `layout-verify` 构建里
 没预备就读会直接报错。这样的项目也读内容（`atom_baseline_reads_content`），固定尺寸不再是度量边界，
@@ -723,26 +723,34 @@ CSS 路径只产出数据，不量容器（见下文「`@container`」）。
 
 ## 布局递归与栈
 
-测量（`measure_node`）和放置（`place_node_scoped`）都按树的深度递归。每一层都先经过 `layout_engine::recursion::level`：
+栈的总合同（运行环境、树深上限、哪些遍历可以递归、门禁与同类对照）见 [资源预算](resource-budgets.md)。这里只讲布局的两条递归。
 
-- 读取当前线程剩下的栈；不足 256 KiB 时，这一层改到新分配的 4 MiB 栈段上继续（`stacker::grow`）。所以不论 debug 还是 release、线程栈多大，任何深度的树都不会让布局把栈用完。平台报告不了剩余栈时（Android、iOS、wasm，`stacker::remaining_stack` 为 `None`），这一层照常在原来的栈上运行。
+测量（`measure_node`）按树的深度递归：尺寸要从约束传下去的子项里算上来。每一层都先经过 `layout_engine::recursion::level`：
+
+- 读取当前线程剩下的栈（`crate::stack::remaining`：桌面平台由 `stacker` 读，iOS 和 Android 读线程自己的栈边界）；不足 256 KiB 时，这一层改到新分配的 4 MiB 栈段上继续（`stacker::grow`）。所以不论 debug 还是 release、线程栈多大，任何深度的树都不会让测量把栈用完。只有 wasm 读不到剩余栈，那里这一层照常在原来的栈上运行。
 - 同一次读数也给这一层定价：入口处的剩余栈比父层入口少了多少，就是这一层用掉的栈。每趟取最大值，发布为 `WorkCounters::layout_measure_stack_per_level` 和 `layout_placement_stack_per_level`（字节，一帧内取最大；平台报告不了时为 0）。
 - `layout_engine::stack_budget` 的测试给每层定了预算（block、flex 列、grid 三条路线分别量），并在 1 MiB 的线程上布局 400 层的树。兜底防崩溃，预算防止每层的帧再长回去。
 
-放置分两步。`lay_out_children` 走一遍容器的子项：测量、打包浮动、分行、对齐、求解 2D grid，给每个流内子项定好盒子，返回待放置的 `Descend` 列表和计划草稿，自己不放置任何子树。`place_node_level` 等这一帧退出后再依次进入这些子树，然后记录计划、放置浮动和定位子项，顺序和以前一样。复用计划的三条快速路径（`place_moved_container`、`place_edited_child_list`、`place_from_plan`）也各是一个函数，只在走到时才占栈。两步能分开的前提是：一个子项的盒子只取决于容器自己的游标、子项的样式和测量结果，不读兄弟子树放置时写下的东西。
+放置（`place_node_scoped`）不需要兜底。测量之后每个盒子的尺寸都已确定，所以任何节点都可以作为边界：一次调用最多下降 `recursion::SPAN`（24）层，到这一层的节点写下自己的盒子后，把子树的其余部分作为 `Boundary` 排进本趟的队列；最外层的那次调用在返回前按入队顺序把队列放完，放的过程中还可以再入队。所以放置的递归深度不超过 `SPAN`，与树深无关，调用方在调用返回时看到的仍是整棵子树都已放好。`WorkCounters::layout_placement_boundaries` 记本趟从队列里放了几棵子树。测试构建里 `SPAN` 是 2，每一条运行时测试都经过边界。
 
-x86_64 Windows（MSVC）上每层的栈：放置 debug 从 25.8 KiB 降到 9.0 KiB，release 从 4.8 KiB 降到 3.2 KiB；测量 debug 12.2 KiB，release 2.5 KiB。
+能这样切的前提是：一棵子树的放置只读它自己的输入（站在哪、多大、包含块、字体、视口），不读兄弟子树放置时写下的东西，所以晚一点放结果相同。
 
-视图建成节点（`mount_view*` 经 `ViewBuilder::nest_dyn`，每个元素下降一层）同样按深度递归，每层也经过同一个兜底（`crate::stack::level`，与布局共用 256 KiB 警戒线和 4 MiB 栈段）。应用在小栈线程上挂载很深的视图树时，栈不再被建树耗尽；`view::tests::a_view_deeper_than_the_stack_still_mounts` 在 1 MiB 的线程上挂载、布局并析构 400 层视图。
+一层的放置分两步。`lay_out_children` 走一遍容器的子项：测量、打包浮动、分行、对齐、求解 2D grid，给每个流内子项定好盒子，返回待放置的 `Descend` 列表和计划草稿，自己不放置任何子树。`place_node_body` 等这一帧退出后再依次进入这些子树，然后记录计划、放置浮动和定位子项，顺序和以前一样。复用计划的三条快速路径（`place_moved_container`、`place_edited_child_list`、`place_from_plan`）也各是一个函数，只在走到时才占栈。
+
+x86_64 Windows（MSVC）上每层的栈：放置 debug 从 25.8 KiB 降到 9.0 KiB，release 从 4.8 KiB 降到 3.2 KiB；测量 debug 12.2 KiB，release 2.5 KiB。aarch64 macOS 上 release 放置每层原是 2.7 KiB，拆成头部（`place_node_head`，写下自己的盒子）和主体（`place_node_body`，边界从这里续上）之后是 3.5 KiB；debug 放置 10.9 KiB、测量 11.9 KiB。放置不再深于 `SPAN` 层，所以每层的价格乘以 `SPAN` 就是它的全部栈（release 约 86 KiB）。头部在主体运行前返回，三条快速路径和 `lay_out_children` 标了 `#[inline(never)]`，一层只同时占其中之一的帧。
+
+视图建成节点（`mount_view*` 经 `ViewBuilder::nest_dyn`，每个元素下降一层）同样按深度递归，每层也经过同一个兜底（`crate::stack::level`，与测量共用 256 KiB 警戒线和 4 MiB 栈段）。`view::tests::a_view_deeper_than_the_stack_still_mounts` 在 1 MiB 的线程上挂载、布局并析构 400 层视图。
+
+布局读到的几条按树走的查询也不再按深度递归：行盒查询（`UiWorld::holds_line_box_in`）用堆上的显式栈，并在一趟布局里按节点记忆（`LayoutInputMap::line_boxes`），一串逐层询问的盒子各只结算一次，不再每层把自己的子树走一遍；原子的基线沿祖先上溯（`atom_baseline_reads_content`）是循环；发布布局结果时每个盒子的裁剪与包含块（`layout_anchors`）在一次发布里按节点记忆，从祖先的结果推出来，不再每个盒子走到根。
 
 ### 路线：子树级调度，子树内递归
 
-目标是混合架构。测量自下而上，继续用递归加缓存；放置由调度器以子树为单位管理，子树内部递归。测量之后每个节点的尺寸都已确定，所以放置阶段任何节点都可以作为边界。按顺序：
+目标是混合架构。测量自下而上，继续用递归加缓存；放置由调度器以子树为单位管理，子树内部递归。按顺序：
 
 1. 已完成：递归兜底和每层栈预算；放置分成“定盒子”和“进入子树”两步。
-2. 测量层：把 `measure_node_level` 里不递归的部分移出这一帧。
-3. 放置边界：`Descend` 成为调度器的任务单元。在固定深度（每 K 层）、滚动容器和 `layout_isolation` 节点处自动切分，子树内的递归深度不超过 K。边界的结果只取决于它的输入（位置、尺寸、视口），因此可以单独调度和缓存。
-4. 调度：按帧预算分片，没做完的子树整体沿用上一帧的结果（结果双缓冲）；按离视口的距离排序；新的变更让没做完的子树失效时取消它。队列长度和分片次数计入 `WorkCounters`。
+2. 已完成：放置边界。到达 `SPAN` 层的节点成为调度器的任务单元（`Boundary`），子树内的递归深度不超过 `SPAN`；边界的结果只取决于它的输入。
+3. 测量层：把 `measure_node_level` 里不递归的部分移出这一帧。
+4. 调度：按帧预算分片，没做完的子树整体沿用上一帧的结果（结果双缓冲）；按离视口的距离排序；新的变更让没做完的子树失效时取消它。队列长度和分片次数计入 `WorkCounters`。边界目前只在固定深度切；滚动容器和 `layout_isolation` 节点是下一批切点。
 5. 互相独立的边界子树并行放置：每棵子树写自己的输出，最后合并。
 
 测量阶段的分片粒度受内容依赖限制：尺寸由内容决定的容器会把依赖一直传给祖先，这样的一串只能作为一个单元。超大的扁平列表靠虚拟化，不靠调度。

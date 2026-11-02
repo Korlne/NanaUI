@@ -326,6 +326,7 @@ export default defineConfig({
             { text: "窗口外输出（ExternalSurface）", link: "/reference/output" },
             { text: "Runtime 与 Scene", link: "/reference/runtime-scene" },
             { text: "架构合同", link: "/reference/architecture" },
+            { text: "资源预算", link: "/reference/resource-budgets" },
             { text: "Markdown 绘制", link: "/reference/markdown-rendering" },
             { text: "诊断与应用路径", link: "/reference/diagnostics" },
             { text: "打包与分发", link: "/reference/packaging" },

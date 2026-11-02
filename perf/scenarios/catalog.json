@@ -304,6 +304,12 @@
         "layout_measure_nodes",
         "layout_placement_nodes"
       ]
+    },
+    {
+      "id": "frame-stack",
+      "source": "crates/nana-ui-scene/tests/deep_tree_stack.rs",
+      "filter": "a_tree_as_deep_as_allowed_runs_every_frame_pass_on_a_small_stack",
+      "counters": []
     }
   ]
 }

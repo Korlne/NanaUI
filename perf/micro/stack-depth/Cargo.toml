@@ -1,0 +1,17 @@
+[package]
+name = "nana-stack-depth"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "Least thread stack a layout (or a whole frame) needs at a tree depth; NanaUI and Taffy side by side. An observation, not a gate."
+
+[dependencies]
+nana-ui-core = { path = "../../../crates/nana-ui-core" }
+nana-ui-runtime = { path = "../../../crates/nana-ui-runtime" }
+nana-ui-scene = { path = "../../../crates/nana-ui-scene" }
+taffy = { version = "0.11.0", default-features = false, features = ["std", "taffy_tree", "flexbox", "block_layout"] }
+
+[profile.release]
+debug = false
+
+[workspace]
