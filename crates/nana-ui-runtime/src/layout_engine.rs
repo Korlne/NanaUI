@@ -604,7 +604,7 @@ impl RuntimeLayoutEngine {
         for id in std::mem::take(&mut intrinsic.retired_facts) {
             retained.intrinsic_metrics.remove_content(id.get());
         }
-        retained.retain_intrinsic_metrics(intrinsic.new_metrics, retained_metric_budget);
+        retained.retain_intrinsic_metrics(intrinsic.cache.recorded(), retained_metric_budget);
         retained.materialized_inputs = nodes.materialized;
         retained.record_intrinsic_counters(intrinsic_counters);
         // Despawned ids linger in the retained maps; keep them bounded.
@@ -1159,7 +1159,7 @@ impl DocumentLayoutCache {
 
     fn retain_intrinsic_metrics(
         &mut self,
-        metrics: HashMap<crate::IntrinsicCacheKey, crate::IntrinsicMetrics>,
+        metrics: Vec<(crate::IntrinsicCacheKey, crate::IntrinsicMetrics)>,
         max_entries: usize,
     ) {
         // A changed content drops every variant it held; the facts this pass
@@ -3164,7 +3164,6 @@ struct PassIntrinsicCache {
     /// it measured last, where the table's own order would keep whichever two
     /// its hashing visits last, a different pair on every run.
     used_order: Vec<(MeasurementKey, Size)>,
-    new_metrics: HashMap<crate::IntrinsicCacheKey, crate::IntrinsicMetrics>,
     /// Containers a measure plan answered by patching what it recorded: the
     /// intrinsic facts retained for them were measured from content the
     /// patch changed, and no longer describe it under any constraint. They
@@ -3174,7 +3173,6 @@ struct PassIntrinsicCache {
     /// constraint each holds: they saw what changed under them this pass.
     consulted_plans: Vec<(StableNodeId, Size)>,
     latest_intrinsic_keys: crate::store::DenseNodeMap<crate::IntrinsicCacheKey>,
-    seeded_intrinsic: hashbrown::HashSet<crate::IntrinsicCacheKey>,
     extra_counters: crate::IntrinsicCacheCounters,
     execution_stats: LayoutExecutionStats,
     /// Dynamic Layout state for the pass.
@@ -3196,11 +3194,9 @@ impl PassIntrinsicCache {
             cache: crate::intrinsic_cache::PassIntrinsicFacts::with_capacity(capacity),
             used: HashMap::with_capacity(capacity),
             used_order: Vec::with_capacity(capacity),
-            new_metrics: HashMap::with_capacity(capacity),
             retired_facts: Vec::new(),
             consulted_plans: Vec::new(),
             latest_intrinsic_keys: Default::default(),
-            seeded_intrinsic: hashbrown::HashSet::with_capacity(capacity),
             extra_counters: crate::IntrinsicCacheCounters::default(),
             execution_stats: LayoutExecutionStats::default(),
             dynamic: dynamic::DynamicPass::default(),
@@ -3337,18 +3333,18 @@ impl PassIntrinsicCache {
             2 => Some(crate::FormattingContextId::new(2)),
             _ => None,
         };
-        self.seeded_intrinsic.insert(cache_key);
         self.cache.insert(cache_key, metrics, context);
-        self.new_metrics.insert(cache_key, metrics);
+        self.cache.record(cache_key, metrics);
         self.latest_intrinsic_keys.insert(key.id, cache_key);
     }
 
-    /// Record facts for the retained cache without the in-pass LRU.
+    /// Record facts for the retained cache without making them visible to
+    /// this pass's lookups.
     ///
-    /// Placement reads a baseline from that LRU only for `align-items:
+    /// Placement reads a baseline from those lookups only for `align-items:
     /// baseline`; every other alignment recomputes from the node. A plain
-    /// leaf still publishes the same metrics the general insert would have
-    /// written to `new_metrics`.
+    /// leaf still hands the retained cache the same metrics the general
+    /// insert would have recorded.
     fn remember_intrinsic_bounds(
         &mut self,
         key: MeasurementKey,
@@ -3371,7 +3367,7 @@ impl PassIntrinsicCache {
         )
         .with_baselines(first_baseline, last_baseline)
         .with_aspect_ratio(aspect_ratio);
-        self.new_metrics.insert(cache_key, metrics);
+        self.cache.record(cache_key, metrics);
     }
 
     fn seed_intrinsic(
@@ -3380,7 +3376,7 @@ impl PassIntrinsicCache {
         metrics: crate::IntrinsicMetrics,
         context: Option<crate::FormattingContextId>,
     ) {
-        if !self.seeded_intrinsic.insert(key) {
+        if self.cache.contains(&key) {
             if let Some(id) = StableNodeId::new(key.content) {
                 self.latest_intrinsic_keys.insert(id, key);
             }

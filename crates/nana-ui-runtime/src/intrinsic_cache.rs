@@ -984,9 +984,16 @@ pub enum Baseline {
 /// cache's per entry. A pass holds every fact it measures: the cache's pass
 /// budget was four variants a node, which no pass came near, so nothing is
 /// evicted.
+///
+/// A fact is also what the pass hands the retained cache: the latest
+/// metrics recorded for its key ([`Self::record`]), in measuring order. A
+/// plain leaf records its facts without making them visible to lookups,
+/// as it did when they bypassed the cache.
 #[derive(Default)]
 pub(crate) struct PassIntrinsicFacts {
     facts: Vec<PassFact>,
+    /// Facts lookups see: the cache's entries.
+    visible: usize,
     /// Index into `facts` of each node's newest fact.
     newest: crate::store::DenseNodeMap<u32>,
     /// Facts whose key names no node (`content` 0); none in practice.
@@ -996,8 +1003,12 @@ pub(crate) struct PassIntrinsicFacts {
 
 struct PassFact {
     key: IntrinsicCacheKey,
+    /// What lookups answer, when `visible`.
     metrics: IntrinsicMetrics,
     context: Option<FormattingContextId>,
+    visible: bool,
+    /// The latest metrics recorded for the retained cache.
+    recorded: Option<IntrinsicMetrics>,
     /// The node's next older fact, or `u32::MAX`.
     older: u32,
 }
@@ -1033,6 +1044,32 @@ impl PassIntrinsicFacts {
         None
     }
 
+    /// The fact for `key`, appended (unseen, unrecorded) when there is none.
+    fn slot(&mut self, key: IntrinsicCacheKey) -> &mut PassFact {
+        if let Some(index) = self.find(&key) {
+            return &mut self.facts[index];
+        }
+        let index = u32::try_from(self.facts.len()).expect("a pass holds under 4G facts");
+        let older = match crate::StableNodeId::new(key.content) {
+            Some(id) => self.newest.insert(id, index).unwrap_or(NO_FACT),
+            None => {
+                self.unnamed.push(index);
+                NO_FACT
+            }
+        };
+        self.facts.push(PassFact {
+            key,
+            metrics: IntrinsicMetrics::new(0.0, 0.0, 0.0, None, UsedSize::new(0.0, 0.0)),
+            context: None,
+            visible: false,
+            recorded: None,
+            older,
+        });
+        self.facts.last_mut().expect("pushed above")
+    }
+
+    /// Make `metrics` what lookups of `key` answer ([`IntrinsicCache::insert`]):
+    /// a fact measured again replaces the one it held.
     pub(crate) fn insert(
         &mut self,
         key: IntrinsicCacheKey,
@@ -1045,27 +1082,32 @@ impl PassIntrinsicFacts {
         };
         metrics = metrics.normalized();
         metrics.generation = IntrinsicGeneration::default().get();
-        // A fact measured again replaces the one it held, as the cache does.
-        if let Some(index) = self.find(&key) {
-            let fact = &mut self.facts[index];
-            fact.metrics = metrics;
-            fact.context = context;
-            return;
-        }
-        let index = u32::try_from(self.facts.len()).expect("a pass holds under 4G facts");
-        let older = match crate::StableNodeId::new(key.content) {
-            Some(id) => self.newest.insert(id, index).unwrap_or(NO_FACT),
-            None => {
-                self.unnamed.push(index);
-                NO_FACT
-            }
-        };
-        self.facts.push(PassFact {
-            key,
-            metrics,
-            context,
-            older,
-        });
+        let fact = self.slot(key);
+        let newly = !fact.visible;
+        fact.metrics = metrics;
+        fact.context = context;
+        fact.visible = true;
+        self.visible += usize::from(newly);
+    }
+
+    /// Whether lookups of `key` find a fact.
+    pub(crate) fn contains(&self, key: &IntrinsicCacheKey) -> bool {
+        self.find(key)
+            .is_some_and(|index| self.facts[index].visible)
+    }
+
+    /// Record `metrics` for `key` for the retained cache; the latest
+    /// recording of a key wins.
+    pub(crate) fn record(&mut self, key: IntrinsicCacheKey, metrics: IntrinsicMetrics) {
+        self.slot(key).recorded = Some(metrics);
+    }
+
+    /// Every key's latest recording, in measuring order.
+    pub(crate) fn recorded(&self) -> Vec<(IntrinsicCacheKey, IntrinsicMetrics)> {
+        self.facts
+            .iter()
+            .filter_map(|fact| Some((fact.key, fact.recorded?)))
+            .collect()
     }
 
     fn lookup(
@@ -1078,7 +1120,10 @@ impl PassIntrinsicFacts {
             constraints: key.constraints.normalized(),
             ..*key
         };
-        let found = self.find(&key).map(|index| &self.facts[index]);
+        let found = self
+            .find(&key)
+            .map(|index| &self.facts[index])
+            .filter(|fact| fact.visible);
         if account_measure {
             let counters = &mut self.counters;
             counters.intrinsic_measure_requests =
@@ -1133,8 +1178,8 @@ impl PassIntrinsicFacts {
     /// [`IntrinsicCache::counters`].
     pub(crate) fn counters(&self) -> IntrinsicCacheCounters {
         let mut counters = self.counters;
-        counters.entries = self.facts.len();
-        counters.bytes = self.facts.len().saturating_mul(entry_bytes());
+        counters.entries = self.visible;
+        counters.bytes = self.visible.saturating_mul(entry_bytes());
         counters
     }
 }
