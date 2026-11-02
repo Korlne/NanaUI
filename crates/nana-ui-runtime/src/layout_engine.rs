@@ -195,6 +195,14 @@ impl RuntimeLayoutEngine {
             return Ok(Vec::new());
         }
         let retained = retained.documents.entry(document).or_default();
+        // A document with nothing retained -- its first layout, or one whose
+        // cache was let go -- has nothing a scoped pass could reuse: every box
+        // is computed either way. The full pass computes them without
+        // expanding a frontier over the whole tree or materializing inputs one
+        // miss at a time, and leaves the same retained cache behind. Only a
+        // caller's full pass records or replays a full-page snapshot.
+        let requested_full = force_full;
+        let force_full = force_full || (retained.viewport.is_none() && retained.boxes.is_empty());
         // Reset before the full-layout reuse return, which runs no measure or placement.
         retained.execution_stats = LayoutExecutionStats::default();
         retained.inline_objects.clear();
@@ -215,7 +223,7 @@ impl RuntimeLayoutEngine {
             }
             _ => typed_seeds,
         };
-        if force_full && world.layout_source_reusable() {
+        if requested_full && world.layout_source_reusable() {
             let viewport_width = viewport.width.to_bits();
             let viewport_height = viewport.height.to_bits();
             let epoch = world.layout_source_epoch();
@@ -320,6 +328,11 @@ impl RuntimeLayoutEngine {
         }
         let mut output = HashMap::with_capacity(nodes.len());
         let mut intrinsic = PassIntrinsicCache::with_capacity(nodes.len());
+        // A full pass a caller asked for leaves its plans to nobody (the
+        // retained cache was just cleared, or the map is thrown away). The
+        // first layout of a document is the base of the scoped passes after
+        // it, and records them as a scoped pass would.
+        intrinsic.records_measure_plans = !requested_full;
         let available = Size::new(viewport.width, viewport.height);
         let islands = if force_full {
             Vec::new()
@@ -637,7 +650,7 @@ impl RuntimeLayoutEngine {
         }
         #[cfg(feature = "benchmark")]
         phase.lap(3);
-        if force_full && world.layout_source_reusable() {
+        if requested_full && world.layout_source_reusable() {
             let snapshot = FullLayoutSnapshot {
                 viewport_width: viewport.width.to_bits(),
                 viewport_height: viewport.height.to_bits(),
@@ -3175,6 +3188,9 @@ struct PassIntrinsicCache {
     latest_intrinsic_keys: crate::store::DenseNodeMap<crate::IntrinsicCacheKey>,
     extra_counters: crate::IntrinsicCacheCounters,
     execution_stats: LayoutExecutionStats,
+    /// Whether containers record the measure plans later scoped passes
+    /// answer from: every pass but a full one a caller asked for.
+    records_measure_plans: bool,
     /// Dynamic Layout state for the pass.
     dynamic: dynamic::DynamicPass,
     /// The open levels of the measure and placement recursions.
@@ -3199,6 +3215,7 @@ impl PassIntrinsicCache {
             latest_intrinsic_keys: Default::default(),
             extra_counters: crate::IntrinsicCacheCounters::default(),
             execution_stats: LayoutExecutionStats::default(),
+            records_measure_plans: false,
             dynamic: dynamic::DynamicPass::default(),
             measure_levels: recursion::LevelStack::default(),
             placement_levels: recursion::LevelStack::default(),

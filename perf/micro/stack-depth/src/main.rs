@@ -8,6 +8,8 @@
 //! /usr/bin/time -l target/release/nana-stack-depth reps 3200 10 nana
 //!                                          # a fixed run: instructions and cycles per box;
 //!                                          # SKIP_LAYOUT=1 builds the page only
+//! FRAME_PATH=1 cargo run --release -- wide  # the product frame's first layout
+//!                                          # (`layout_document_for_viewport`), not a full pass
 //! cargo run --release -- stages 250,500    # a deep frame's least time per stage
 //! ```
 //!
@@ -113,7 +115,13 @@ fn nana_wide(rows: usize, cells: usize) -> (f64, f64, isize, isize) {
     let start = Instant::now();
     // `SKIP_LAYOUT` leaves the build alone in a `reps` run: subtracting it
     // gives the layout's own instructions and cycles.
-    if std::env::var_os("SKIP_LAYOUT").is_none() {
+    if std::env::var_os("SKIP_LAYOUT").is_some() {
+    } else if std::env::var_os("FRAME_PATH").is_some() {
+        // The product frame's first layout: a viewport pass over a document
+        // laid out for the first time.
+        cx.layout_document_for_viewport(document, LayoutViewport::new(1280.0, 800.0), &[])
+            .unwrap();
+    } else {
         cx.layout_document(document, LayoutViewport::new(1280.0, 800.0))
             .unwrap();
     }

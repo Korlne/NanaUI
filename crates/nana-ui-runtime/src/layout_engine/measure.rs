@@ -955,6 +955,7 @@ fn measure_node_level(
     // measure plan this shortcut does not.
     if unforced
         && scope.is_none()
+        && !cache.records_measure_plans
         && child_ids.is_empty()
         && plain_childless_content(style_arc.as_ref())
         && nodes.world.standard_visual_ref(id).is_none()
@@ -1723,7 +1724,7 @@ fn measure_node_level(
     // (css-parity, `layout_style_tree`) throws the map
     // away entirely, and `force_full` has just cleared the retained cache, so
     // in both cases the plans would be built for nobody.
-    if unforced && scope.is_some() {
+    if unforced && cache.records_measure_plans {
         // The plain in-flow path and a 2D grid are cacheable. One-axis grid
         // tracks stay out: `auto_track_contributions` measures children
         // against constraints other than `content_available`. A subgrid is
