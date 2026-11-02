@@ -1017,8 +1017,11 @@ const NO_FACT: u32 = u32::MAX;
 
 impl PassIntrinsicFacts {
     pub(crate) fn with_capacity(capacity: usize) -> Self {
+        let mut newest = crate::store::DenseNodeMap::default();
+        newest.reserve(capacity);
         Self {
             facts: Vec::with_capacity(capacity),
+            newest,
             ..Self::default()
         }
     }

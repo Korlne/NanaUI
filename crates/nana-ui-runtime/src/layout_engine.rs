@@ -484,14 +484,17 @@ impl RuntimeLayoutEngine {
         // Publish recomputed boxes from the placed set; no document_order walk.
         let mut emitted = output.into_iter().collect::<Vec<_>>();
         emitted.sort_unstable_by_key(|(id, _)| *id);
+        retained.boxes.reserve(emitted.len());
         for (id, box_) in &emitted {
             retained.boxes.insert(*id, *box_);
         }
-        retained.used_padding.extend(nodes.used_padding.drain());
-        retained.far_start.extend(nodes.far_start.drain());
-        retained.contexts.extend(nodes.contexts.drain());
+        // A first layout's retained tables are empty: they take the pass's
+        // tables whole instead of copying them entry by entry.
+        retained.used_padding.absorb(&mut nodes.used_padding);
+        retained.far_start.absorb(&mut nodes.far_start);
+        retained.contexts.absorb(&mut nodes.contexts);
         retained.inline_objects.extend(nodes.inline_objects.drain());
-        retained.placements.extend(nodes.placements.drain());
+        retained.placements.absorb(&mut nodes.placements);
         for (id, plan) in nodes.container_plans.drain() {
             match plan {
                 Some(mut plan) => {
@@ -1007,7 +1010,7 @@ struct DocumentLayoutCache {
     /// The containers whose plan holds an absolute child hung from an
     /// ancestor or from the initial containing block: a pass that does not
     /// place the container checks those children against their block.
-    remote_overlays: HashSet<StableNodeId>,
+    remote_overlays: crate::NodeSet,
     /// Cached intrinsic measurement per content-sized container. See
     /// [`MeasurePlan`].
     measure_plans: crate::store::DenseNodeMap<MeasurePlanSlots>,
@@ -3212,7 +3215,11 @@ impl PassIntrinsicCache {
             used_order: Vec::with_capacity(capacity),
             retired_facts: Vec::new(),
             consulted_plans: Vec::new(),
-            latest_intrinsic_keys: Default::default(),
+            latest_intrinsic_keys: {
+                let mut keys = crate::store::DenseNodeMap::default();
+                keys.reserve(capacity);
+                keys
+            },
             extra_counters: crate::IntrinsicCacheCounters::default(),
             execution_stats: LayoutExecutionStats::default(),
             records_measure_plans: false,

@@ -424,8 +424,23 @@ impl<V> DenseNodeMap<V> {
         DenseEntry { map: self, id }
     }
 
-    /// The vector grows to the highest id it is given; nothing to reserve.
-    pub(crate) fn reserve(&mut self, _additional: usize) {}
+    /// Room for `additional` more ids above those held without moving the
+    /// vector: ids are handed out in order, so that many more slots.
+    pub(crate) fn reserve(&mut self, additional: usize) {
+        self.dense.reserve(additional);
+    }
+
+    /// Move every entry of `from` into this map: the whole table when this
+    /// one is empty (a first layout's retained cache), entry by entry
+    /// otherwise.
+    pub(crate) fn absorb(&mut self, from: &mut Self) {
+        if self.is_empty() {
+            std::mem::swap(self, from);
+            from.clear();
+            return;
+        }
+        self.extend(from.drain());
+    }
 
     /// Every entry, leaving the map empty.
     pub(crate) fn drain(&mut self) -> <Self as IntoIterator>::IntoIter {
