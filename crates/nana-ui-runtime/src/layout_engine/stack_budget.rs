@@ -15,6 +15,12 @@ use crate::{AppContext, DocumentId, LayoutViewport, Stack, WorkCounters};
 /// in one frame; with the walk and the plan paths in their own frames it is
 /// 9.0 KiB of placement. Release: 4.8 KiB, then 3.2 KiB, and 2.5 KiB of
 /// measure. Each budget leaves about a quarter of headroom over that.
+///
+/// On aarch64 macOS a release placement level was 2.7 KiB, and is 3.5 KiB
+/// since a level splits into the head that writes its box and the body that
+/// places its children (a boundary resumes at the body); debug placement is
+/// 10.9 KiB and measure 11.9 KiB. Placement no longer runs deeper than
+/// `recursion::SPAN` levels, so its level price bounds its whole stack.
 struct Budget {
     measure: usize,
     placement: usize,

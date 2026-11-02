@@ -2353,6 +2353,10 @@ struct LayoutInputMap<'a> {
     /// a context the derivation does not lay out, which keeps the
     /// approximation of [`Self::baseline_metrics`].
     derived_baselines: HashMap<(StableNodeId, u32, u32), BaselineMetrics>,
+    /// Which boxes hold an in-flow line box, settled once per box per pass
+    /// ([`UiWorld::holds_line_box_in`]); exact for the same reason as
+    /// [`Self::styles`].
+    line_boxes: RefCell<crate::NodeMap<bool>>,
 }
 
 fn derived_baseline_key(id: StableNodeId, used: Size) -> (StableNodeId, u32, u32) {
@@ -2412,6 +2416,7 @@ impl<'a> LayoutInputMap<'a> {
             container_plans: HashMap::new(),
             measure_plans: HashMap::new(),
             derived_baselines: HashMap::new(),
+            line_boxes: RefCell::default(),
         }
     }
 
@@ -2469,6 +2474,25 @@ impl<'a> LayoutInputMap<'a> {
         resolved
     }
 
+    /// Whether `id` holds an in-flow line box: [`UiWorld::holds_line_box_in`]
+    /// on this pass's memo.
+    fn holds_line_box(&self, id: StableNodeId) -> bool {
+        self.world
+            .holds_line_box_in(id, &mut self.line_boxes.borrow_mut())
+    }
+
+    /// [`UiWorld::line_boxes_are_descendants_in`] on this pass's memo.
+    fn line_boxes_are_descendants(&self, id: StableNodeId) -> bool {
+        self.world
+            .line_boxes_are_descendants_in(id, &mut self.line_boxes.borrow_mut())
+    }
+
+    /// [`UiWorld::atom_sits_on_line_box`] on this pass's memo.
+    fn atom_sits_on_line_box(&self, id: StableNodeId) -> bool {
+        self.world
+            .atom_sits_on_line_box_in(id, &mut self.line_boxes.borrow_mut())
+    }
+
     /// Whether `id` aligns by its border-box bottom rather than a text
     /// baseline: [`UiWorld::aligns_by_bottom_edge`].
     fn aligns_by_bottom_edge(&self, id: StableNodeId, style: &nana_ui_core::LayoutStyle) -> bool {
@@ -2495,14 +2519,14 @@ impl<'a> LayoutInputMap<'a> {
         inline_base: f32,
     ) -> nana_text::InlineObjectMetrics {
         let block = writing.logical_size(used.width, used.height).1.max(0.0);
-        let on_line_box = !writing.is_vertical() && self.world.atom_sits_on_line_box(id);
+        let on_line_box = !writing.is_vertical() && self.atom_sits_on_line_box(id);
         // Every line reads one derived value: a caller that did not prime
         // this atom ([`inline::prime_atom_baselines`]) would place it by the
         // approximation instead.
         #[cfg(any(test, feature = "layout-verify"))]
         assert!(
             !on_line_box
-                || !self.world.line_boxes_are_descendants(id)
+                || !self.line_boxes_are_descendants(id)
                 || self
                     .derived_baselines
                     .contains_key(&derived_baseline_key(id, used)),
@@ -2669,7 +2693,7 @@ impl<'a> LayoutInputMap<'a> {
         // A box with no line box in it, of its own or a descendant's, has
         // no baseline: one is synthesized from its border-box bottom (CSS
         // Align 3 §9.1), as a flex container takes from such an item (#394).
-        if !self.world.holds_line_box(id)
+        if !self.holds_line_box(id)
             && let Some(used) = used
         {
             let writing = self
@@ -2729,7 +2753,7 @@ impl<'a> LayoutInputMap<'a> {
         #[cfg(any(test, feature = "layout-verify"))]
         assert!(
             !self.world.aligns_by_first_baseline(id)
-                || !self.world.line_boxes_are_descendants(id)
+                || !self.line_boxes_are_descendants(id)
                 || self
                     .derived_baselines
                     .contains_key(&derived_baseline_key(id, used)),
@@ -3070,6 +3094,8 @@ pub(crate) struct LayoutExecutionStats {
     pub measure_stack_per_level: usize,
     /// The same for the placement recursion.
     pub placement_stack_per_level: usize,
+    /// Subtrees placed from the boundary queue. See `recursion`.
+    pub placement_boundaries: usize,
 }
 
 /// Per-pass used-size memo.  The public [`crate::IntrinsicCache`] owns the
@@ -3110,6 +3136,9 @@ struct PassIntrinsicCache {
     /// The open levels of the measure and placement recursions.
     measure_levels: recursion::LevelStack,
     placement_levels: recursion::LevelStack,
+    /// Subtrees placement queued at its span, placed before the outermost
+    /// placement call returns. See `recursion`.
+    boundaries: std::collections::VecDeque<recursion::Boundary>,
 }
 
 impl PassIntrinsicCache {
@@ -3134,6 +3163,7 @@ impl PassIntrinsicCache {
             dynamic: dynamic::DynamicPass::default(),
             measure_levels: recursion::LevelStack::default(),
             placement_levels: recursion::LevelStack::default(),
+            boundaries: std::collections::VecDeque::new(),
         }
     }
 

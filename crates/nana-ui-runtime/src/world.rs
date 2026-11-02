@@ -769,6 +769,12 @@ pub struct UiWorld {
     /// so an unchanged node is never re-recorded. Only painted nodes have an
     /// entry; despawn drops it.
     paint_recordings: RefCell<crate::NodeMap<PaintCacheEntry>>,
+    /// Each box's overflow clip and containing block, kept while one batch
+    /// of layout results publishes and `None` otherwise: nothing they are
+    /// computed from changes during a publish, and a box's pair follows from
+    /// its ancestors', so a batch finds each box's pair once instead of
+    /// walking up to the root for every box. See [`Self::layout_anchors`].
+    anchor_memo: RefCell<Option<crate::NodeMap<AnchorPair>>>,
     /// Markdown diagrams recorded against the theme, by laid-out scene and
     /// palette epoch. Cleared when the epoch moves; bounded.
     #[cfg(feature = "rich-text")]
@@ -1085,6 +1091,7 @@ impl UiWorld {
             scroll_reclamped: HashSet::default(),
             scroll_resized: HashSet::default(),
             paint_recordings: RefCell::new(crate::NodeMap::default()),
+            anchor_memo: RefCell::new(None),
             #[cfg(feature = "rich-text")]
             diagram_recordings: RefCell::new(Vec::new()),
             modal_surface_recordings: RefCell::new(crate::NodeMap::default()),
@@ -1614,6 +1621,16 @@ impl UiWorld {
     /// pass have committed. The batch gets one shared generation so callers
     /// can correlate render, input and accessibility projections.
     pub(crate) fn publish_layout_results(
+        &mut self,
+        ids: &[StableNodeId],
+        source: crate::LayoutResultSource,
+    ) {
+        *self.anchor_memo.get_mut() = Some(crate::NodeMap::default());
+        self.publish_layout_results_anchored(ids, source);
+        *self.anchor_memo.get_mut() = None;
+    }
+
+    fn publish_layout_results_anchored(
         &mut self,
         ids: &[StableNodeId],
         source: crate::LayoutResultSource,
@@ -2270,27 +2287,96 @@ impl UiWorld {
     /// What `id`'s result records about the boxes around it: the nearest
     /// positioned ancestor, and its clip chain (#201).
     fn layout_anchors(&self, id: StableNodeId) -> LayoutAnchors {
+        let AnchorPair {
+            clip,
+            containing_block,
+        } = match self.anchor_memo.borrow_mut().as_mut() {
+            Some(memo) => self.anchor_pair_memo(id, memo),
+            None => AnchorPair {
+                clip: self.overflow_clip_of(id),
+                containing_block: self.containing_block_of(id),
+            },
+        };
+        LayoutAnchors {
+            clip,
+            clip_parent: self.clip_parent_of(id),
+            containing_block,
+        }
+    }
+
+    /// The nearest ancestor that establishes a containing block for `id`.
+    fn containing_block_of(&self, id: StableNodeId) -> Option<StableNodeId> {
         let mut ancestor = self.parent_id(id);
-        let mut containing_block = None;
         while let Some(candidate) = ancestor {
-            let Some(record) = self.nodes.get(candidate) else {
-                break;
-            };
+            let record = self.nodes.get(candidate)?;
             if record
                 .resolved_layout
                 .position
                 .establishes_containing_block()
             {
-                containing_block = Some(candidate);
-                break;
+                return Some(candidate);
             }
             ancestor = record.hierarchy.parent;
         }
-        LayoutAnchors {
-            clip: self.overflow_clip_of(id),
-            clip_parent: self.clip_parent_of(id),
-            containing_block,
+        None
+    }
+
+    /// `id`'s [`AnchorPair`], from `memo` where its ancestors' pairs are.
+    ///
+    /// Every box in `memo` has its ancestors there too, so the walk up stops
+    /// at the first box it finds and settles the rest on the way down, each
+    /// from its parent (the containing block) and its clip parent, an
+    /// ancestor (the clip).
+    fn anchor_pair_memo(
+        &self,
+        id: StableNodeId,
+        memo: &mut crate::NodeMap<AnchorPair>,
+    ) -> AnchorPair {
+        let mut unsettled = Vec::new();
+        let mut cursor = Some(id);
+        while let Some(node) = cursor {
+            if memo.contains_key(&node) || !self.contains(node) {
+                break;
+            }
+            unsettled.push(node);
+            cursor = self.parent_id(node);
         }
+        for node in unsettled.into_iter().rev() {
+            let containing_block = self.parent_id(node).and_then(|parent| {
+                let establishes = self
+                    .nodes
+                    .get(parent)?
+                    .resolved_layout
+                    .position
+                    .establishes_containing_block();
+                if establishes {
+                    Some(parent)
+                } else {
+                    memo.get(&parent).and_then(|pair| pair.containing_block)
+                }
+            });
+            let clip = self.clip_parent_of(node).and_then(|parent| {
+                if self.clips_overflow(parent) {
+                    Some(parent)
+                } else {
+                    match memo.get(&parent) {
+                        Some(pair) => pair.clip,
+                        None => self.overflow_clip_of(parent),
+                    }
+                }
+            });
+            memo.insert(
+                node,
+                AnchorPair {
+                    clip,
+                    containing_block,
+                },
+            );
+        }
+        memo.get(&id).copied().unwrap_or(AnchorPair {
+            clip: self.overflow_clip_of(id),
+            containing_block: self.containing_block_of(id),
+        })
     }
 
     /// Child placements and the one-fragment-per-child list, when both still
@@ -2636,6 +2722,7 @@ impl UiWorld {
                 stats.measure_stack_per_level,
                 stats.placement_stack_per_level,
             );
+            counters.record_layout_placement_boundaries(stats.placement_boundaries);
             counters.record_layout_plans(
                 stats.placement_plans_reused,
                 stats.measure_plans_reused,
@@ -6019,6 +6106,14 @@ fn intersect_layout_boxes(left: LayoutBox, right: LayoutBox) -> Option<LayoutBox
         width: right_edge - x,
         height: bottom_edge - y,
     })
+}
+
+/// A box's overflow clip and containing block: the two anchors that follow
+/// from its ancestors' (see [`UiWorld::anchor_pair_memo`]).
+#[derive(Clone, Copy)]
+struct AnchorPair {
+    clip: Option<StableNodeId>,
+    containing_block: Option<StableNodeId>,
 }
 
 /// The boxes a result names around its node; see [`UiWorld::layout_anchors`].

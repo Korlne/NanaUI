@@ -84,22 +84,40 @@ impl UiWorld {
         Ok(true)
     }
 
+    /// Resolves `id` and every ancestor not resolved yet, outermost first: a
+    /// node inherits from its parent's resolved style. The ancestors wait on
+    /// the heap, so any depth resolves on any stack.
     fn resolve_style<const SHARE: bool>(
         &mut self,
         id: StableNodeId,
         resolved: &mut HashSet<StableNodeId>,
         work: &mut ThemeWorkCounters,
     ) -> Result<(), UiWorldError> {
-        if !self.contains(id) {
-            return Err(UiWorldError::MissingNode(id));
+        let mut chain = Vec::new();
+        let mut cursor = Some(id);
+        while let Some(node) = cursor {
+            if !self.contains(node) {
+                return Err(UiWorldError::MissingNode(node));
+            }
+            if !resolved.insert(node) {
+                break;
+            }
+            chain.push(node);
+            cursor = self.record(node).hierarchy.parent;
         }
-        if !resolved.insert(id) {
-            return Ok(());
+        for node in chain.into_iter().rev() {
+            self.resolve_one_style::<SHARE>(node, work)?;
         }
+        Ok(())
+    }
+
+    /// Resolves `id` against its parent's resolved style.
+    fn resolve_one_style<const SHARE: bool>(
+        &mut self,
+        id: StableNodeId,
+        work: &mut ThemeWorkCounters,
+    ) -> Result<(), UiWorldError> {
         let parent = self.record(id).hierarchy.parent;
-        if let Some(parent) = parent {
-            self.resolve_style::<SHARE>(parent, resolved, work)?;
-        }
         if SHARE && self.publish_inherited_computed_style(id, parent, work)? {
             return Ok(());
         }

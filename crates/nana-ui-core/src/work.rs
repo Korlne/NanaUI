@@ -136,6 +136,9 @@ pub struct WorkCounters {
     pub layout_measure_stack_per_level: usize,
     /// The same for the placement recursion.
     pub layout_placement_stack_per_level: usize,
+    /// Subtrees placement queued at its span and placed from the queue: one
+    /// per `SPAN` levels of depth below the outermost placement call.
+    pub layout_placement_boundaries: usize,
     /// Publish batches that wrote at least one changed layout result.
     pub layout_delta_commits: usize,
     /// Children result publication looked at: the covered children a held
@@ -649,6 +652,7 @@ accumulate_counters! {
             layout_measure_cache_hits, layout_measure_cache_misses, layout_placement_nodes,
             layout_result_reused, layout_result_changed, layout_origin_only_updates,
             layout_delta_commits, layout_result_children_visited, layout_context_transitions,
+            layout_placement_boundaries,
             layout_invalidations_created,
             layout_invalidations_zero_delta, layout_equivalent_mutations_skipped,
             layout_placement_plans_reused, layout_measure_plans_reused, layout_suffixes_replayed,
@@ -944,6 +948,12 @@ impl WorkCounters {
         self.layout_measure_stack_per_level = self.layout_measure_stack_per_level.max(measure);
         self.layout_placement_stack_per_level =
             self.layout_placement_stack_per_level.max(placement);
+    }
+
+    /// Count the subtrees a layout pass placed from its boundary queue.
+    pub fn record_layout_placement_boundaries(&mut self, boundaries: usize) {
+        self.layout_placement_boundaries =
+            self.layout_placement_boundaries.saturating_add(boundaries);
     }
 
     /// `delta_commits` is 1 only when at least one result object was replaced.

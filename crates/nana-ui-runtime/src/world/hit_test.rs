@@ -449,49 +449,82 @@ impl HitIndex {
         }
     }
 
+    /// Indexes `entry` and its subtree. The walk keeps its open levels on the
+    /// heap, so a subtree as deep as the tree allows indexes on any stack.
     fn insert_tree(
         &mut self,
-        mut entry: HitEntry,
+        entry: HitEntry,
         parent: Option<StableNodeId>,
         offset: [f32; 2],
         sibling_slot: usize,
     ) {
-        let id = entry.id;
-        if entry.escaped {
-            self.escaped.insert(id);
+        struct Open {
+            entry: HitEntry,
+            parent: Option<StableNodeId>,
+            sibling_slot: usize,
+            bounds: Bounds,
+            child_ids: Vec<Option<StableNodeId>>,
+            children: std::iter::Enumerate<std::vec::IntoIter<HitEntry>>,
         }
-        let children = std::mem::take(&mut entry.children);
-        entry.transform[4] -= offset[0];
-        entry.transform[5] -= offset[1];
-        for (_, transform) in entry
-            .self_clips
-            .iter_mut()
-            .chain(entry.child_clips.iter_mut())
-        {
-            transform[4] -= offset[0];
-            transform[5] -= offset[1];
-        }
-        let mut bounds = hit_bounds(&entry);
-        let child_ids: Vec<_> = children.iter().map(|child| Some(child.id)).collect();
-        for (slot, child) in children.into_iter().enumerate() {
-            let child_id = child.id;
-            self.insert_tree(child, Some(id), offset, slot);
-            bounds = bounds.merge(self.entries[&child_id].bounds);
-        }
-        let child_bounds =
-            BoundsTree::new(child_ids.iter().map(|id| self.entries[&id.unwrap()].bounds));
-        self.entries.insert(
-            id,
-            IndexedHit {
+        let open = |index: &mut Self,
+                    mut entry: HitEntry,
+                    parent: Option<StableNodeId>,
+                    sibling_slot: usize| {
+            if entry.escaped {
+                index.escaped.insert(entry.id);
+            }
+            let children = std::mem::take(&mut entry.children);
+            entry.transform[4] -= offset[0];
+            entry.transform[5] -= offset[1];
+            for (_, transform) in entry
+                .self_clips
+                .iter_mut()
+                .chain(entry.child_clips.iter_mut())
+            {
+                transform[4] -= offset[0];
+                transform[5] -= offset[1];
+            }
+            Open {
+                bounds: hit_bounds(&entry),
+                child_ids: children.iter().map(|child| Some(child.id)).collect(),
+                children: children.into_iter().enumerate(),
                 entry,
                 parent,
-                children: child_ids,
-                shift: [0.0, 0.0],
-                bounds,
-                child_bounds,
                 sibling_slot,
-            },
-        );
+            }
+        };
+        let mut levels = vec![open(self, entry, parent, sibling_slot)];
+        while let Some(level) = levels.last_mut() {
+            if let Some((slot, child)) = level.children.next() {
+                let parent = Some(level.entry.id);
+                let child = open(self, child, parent, slot);
+                levels.push(child);
+                continue;
+            }
+            let level = levels.pop().unwrap();
+            let id = level.entry.id;
+            let child_bounds = BoundsTree::new(
+                level
+                    .child_ids
+                    .iter()
+                    .map(|id| self.entries[&id.unwrap()].bounds),
+            );
+            if let Some(parent) = levels.last_mut() {
+                parent.bounds = parent.bounds.merge(level.bounds);
+            }
+            self.entries.insert(
+                id,
+                IndexedHit {
+                    entry: level.entry,
+                    parent: level.parent,
+                    children: level.child_ids,
+                    shift: [0.0, 0.0],
+                    bounds: level.bounds,
+                    child_bounds,
+                    sibling_slot: level.sibling_slot,
+                },
+            );
+        }
     }
 
     fn inherited_shift(&self, id: StableNodeId) -> [f32; 2] {

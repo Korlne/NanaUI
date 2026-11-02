@@ -25,7 +25,7 @@ impl UiWorld {
         })
     }
 
-    fn clips_overflow(&self, id: StableNodeId) -> bool {
+    pub(super) fn clips_overflow(&self, id: StableNodeId) -> bool {
         self.nodes
             .get(id)
             .is_some_and(|record| record.resolved_layout.clips_overflow())

@@ -176,11 +176,21 @@ impl UiWorld {
     /// baseline: replaced content, an inline-block whose overflow is not
     /// visible, and one with no in-flow line box (CSS 2.1 §10.8.1).
     pub(crate) fn atom_sits_on_line_box(&self, id: StableNodeId) -> bool {
+        self.atom_sits_on_line_box_in(id, &mut NodeMap::default())
+    }
+
+    /// [`Self::atom_sits_on_line_box`], reading and filling `memo` (see
+    /// [`Self::holds_line_box_in`]).
+    pub(crate) fn atom_sits_on_line_box_in(
+        &self,
+        id: StableNodeId,
+        memo: &mut NodeMap<bool>,
+    ) -> bool {
         self.layout_style(id).is_some_and(|style| {
             !self.aligns_by_bottom_edge(id, &style)
                 && !style.overflow_x.clips()
                 && !style.overflow_y.clips()
-                && self.holds_line_box(id)
+                && self.holds_line_box_in(id, memo)
         })
     }
 
@@ -194,37 +204,42 @@ impl UiWorld {
     /// bottom margin edge, whatever they hold. Native paragraph atoms are
     /// not counted: the paragraph reads their metrics after layout.
     pub(crate) fn atom_baseline_reads_content(&self, id: StableNodeId) -> bool {
-        let Some(style) = self.layout_style(id) else {
-            return false;
-        };
-        if self.inline_parent(id).is_some() || self.aligns_by_bottom_edge(id, &style) {
-            return false;
+        // Up the ancestors, one at a time: each step either answers or asks
+        // the same of the parent.
+        let mut id = id;
+        loop {
+            let Some(style) = self.layout_style(id) else {
+                return false;
+            };
+            if self.inline_parent(id).is_some() || self.aligns_by_bottom_edge(id, &style) {
+                return false;
+            }
+            if self.aligns_by_first_baseline(id) {
+                return true;
+            }
+            let Some(parent) = self.parent_id(id) else {
+                return false;
+            };
+            let Some(parent_style) = self.layout_style(parent) else {
+                return false;
+            };
+            // Any in-flow item of a flex or grid container can be the one it
+            // takes its baseline from (#394).
+            let reads_parent = if parent_style
+                .display
+                .is_some_and(|display| display.is_flex_container() || display.is_grid_container())
+            {
+                !style.position.is_out_of_flow() && !style.omits_box()
+            } else if style.is_inline_level() {
+                return !style.overflow_x.clips() && !style.overflow_y.clips();
+            } else {
+                !style.position.is_out_of_flow() && !style.is_floated()
+            };
+            if !reads_parent {
+                return false;
+            }
+            id = parent;
         }
-        if self.aligns_by_first_baseline(id) {
-            return true;
-        }
-        let Some(parent) = self.parent_id(id) else {
-            return false;
-        };
-        let Some(parent_style) = self.layout_style(parent) else {
-            return false;
-        };
-        // Any in-flow item of a flex or grid container can be the one it
-        // takes its baseline from (#394).
-        if parent_style
-            .display
-            .is_some_and(|display| display.is_flex_container() || display.is_grid_container())
-        {
-            return !style.position.is_out_of_flow()
-                && !style.omits_box()
-                && self.atom_baseline_reads_content(parent);
-        }
-        if style.is_inline_level() {
-            return !style.overflow_x.clips() && !style.overflow_y.clips();
-        }
-        !style.position.is_out_of_flow()
-            && !style.is_floated()
-            && self.atom_baseline_reads_content(parent)
     }
 
     /// Whether `id` is an in-flow item of a flex or grid container that
@@ -263,31 +278,79 @@ impl UiWorld {
     /// of its own, is not replaced, and holds one in its flow. Its last
     /// baseline is then that of the descendant holding its last line box
     /// (CSS 2.1 §10.8.1), at that descendant's offset inside it.
-    pub(crate) fn line_boxes_are_descendants(&self, id: StableNodeId) -> bool {
+    pub(crate) fn line_boxes_are_descendants_in(
+        &self,
+        id: StableNodeId,
+        memo: &mut NodeMap<bool>,
+    ) -> bool {
         !self.lays_out_own_line(id)
             && self
                 .layout_style(id)
                 .is_some_and(|style| !self.aligns_by_bottom_edge(id, &style))
-            && self.holds_line_box(id)
+            && self.holds_line_box_in(id, memo)
     }
 
     /// Whether `id` holds an in-flow line box: text of its own, a control
     /// or paragraph that lays text out, an inline-level box in its flow, or
     /// a block in its flow that holds one.
-    pub(crate) fn holds_line_box(&self, id: StableNodeId) -> bool {
-        if self.lays_out_own_line(id) {
-            return true;
+    ///
+    /// Answers from `memo` and records there every box it settles. A layout
+    /// pass keeps one memo for the pass (the world cannot change under it),
+    /// so a chain of boxes asking level by level settles each box once
+    /// instead of walking its subtree again at every level. The walk keeps
+    /// its open boxes on the heap.
+    pub(crate) fn holds_line_box_in(&self, id: StableNodeId, memo: &mut NodeMap<bool>) -> bool {
+        /// How an in-flow child bears on whether its parent holds a line
+        /// box: not at all, certainly, or by holding one itself.
+        enum Bears {
+            No,
+            Holds,
+            IfItHolds,
         }
-        self.child_ids(id).iter().any(|&child| {
+        let bears = |child: StableNodeId| {
             let Some(style) = self.layout_style(child) else {
-                return false;
+                return Bears::No;
             };
             if style.omits_box() || style.position.is_out_of_flow() || style.is_floated() {
-                return false;
+                Bears::No
+            } else if style.is_inline_level() {
+                Bears::Holds
+            } else if self.aligns_by_bottom_edge(child, &style) {
+                Bears::No
+            } else {
+                Bears::IfItHolds
             }
-            style.is_inline_level()
-                || (!self.aligns_by_bottom_edge(child, &style) && self.holds_line_box(child))
-        })
+        };
+        // Post-order: a box is settled once every child it depends on is.
+        let mut open = vec![(id, false)];
+        while let Some((node, expanded)) = open.pop() {
+            if memo.contains_key(&node) {
+                continue;
+            }
+            let children = self.child_ids(node);
+            if !expanded {
+                if self.lays_out_own_line(node)
+                    || children
+                        .iter()
+                        .any(|&child| matches!(bears(child), Bears::Holds))
+                {
+                    memo.insert(node, true);
+                    continue;
+                }
+                open.push((node, true));
+                for &child in children.iter() {
+                    if matches!(bears(child), Bears::IfItHolds) && !memo.contains_key(&child) {
+                        open.push((child, false));
+                    }
+                }
+                continue;
+            }
+            let holds = children.iter().any(|&child| {
+                matches!(bears(child), Bears::IfItHolds) && memo.get(&child) == Some(&true)
+            });
+            memo.insert(node, holds);
+        }
+        memo[&id]
     }
 
     pub(super) fn inline_box_omitted(&self, id: StableNodeId) -> bool {

@@ -1238,8 +1238,13 @@ fn replay_grid(
     Ok(true)
 }
 
-/// Places `id` and its subtree: one level of the placement recursion, on a
-/// stack that cannot run out (see `recursion`).
+/// Places `id` and its subtree: one level of the placement recursion.
+///
+/// A level [`super::recursion::SPAN`] below the outermost writes its own box
+/// and hands the rest of its subtree to the pass's queue as a boundary; the
+/// outermost call places what it queued before it returns. So the recursion
+/// never runs deeper than the span, whatever the tree, and a caller finds the
+/// whole subtree placed when this returns (see `recursion`).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn place_node_scoped(
     id: StableNodeId,
@@ -1254,29 +1259,42 @@ pub(super) fn place_node_scoped(
     scope: Option<&ScopeContext<'_>>,
     inherited_grid: Option<&InheritedGridTracks>,
 ) -> Result<(), UiWorldError> {
-    super::recursion::level(
+    if intrinsic.placement_levels.depth() == 0 {
+        return place_subtree(
+            id,
+            origin,
+            size,
+            containing,
+            viewport,
+            parent_font_px,
+            nodes,
+            intrinsic,
+            output,
+            scope,
+            inherited_grid,
+        );
+    }
+    place_level(
+        id,
+        origin,
+        size,
+        containing,
+        viewport,
+        parent_font_px,
+        nodes,
         intrinsic,
-        super::recursion::Recursion::Placement,
-        |intrinsic| {
-            place_node_level(
-                id,
-                origin,
-                size,
-                containing,
-                viewport,
-                parent_font_px,
-                nodes,
-                intrinsic,
-                output,
-                scope,
-                inherited_grid,
-            )
-        },
+        output,
+        scope,
+        inherited_grid,
     )
 }
 
+/// The outermost placement call: `id`'s levels, then the queue they left.
+/// Its own function, so the levels below do not keep its arguments for the
+/// queue.
 #[allow(clippy::too_many_arguments)]
-fn place_node_level(
+#[inline(never)]
+fn place_subtree(
     id: StableNodeId,
     origin: Point,
     size: Size,
@@ -1289,6 +1307,163 @@ fn place_node_level(
     scope: Option<&ScopeContext<'_>>,
     inherited_grid: Option<&InheritedGridTracks>,
 ) -> Result<(), UiWorldError> {
+    place_level(
+        id,
+        origin,
+        size,
+        containing,
+        viewport,
+        parent_font_px,
+        nodes,
+        intrinsic,
+        output,
+        scope,
+        inherited_grid,
+    )?;
+    place_boundaries(viewport, nodes, intrinsic, output, scope)
+}
+
+/// One level below the outermost: its head, then its body or, at the span,
+/// a boundary.
+#[allow(clippy::too_many_arguments)]
+#[inline(always)]
+fn place_level(
+    id: StableNodeId,
+    origin: Point,
+    size: Size,
+    containing: Size,
+    viewport: LayoutViewport,
+    parent_font_px: f32,
+    nodes: &mut LayoutInputMap<'_>,
+    intrinsic: &mut PassIntrinsicCache,
+    output: &mut HashMap<StableNodeId, LayoutBox>,
+    scope: Option<&ScopeContext<'_>>,
+    inherited_grid: Option<&InheritedGridTracks>,
+) -> Result<(), UiWorldError> {
+    let depth = intrinsic.placement_levels.depth();
+    super::recursion::level(
+        intrinsic,
+        super::recursion::Recursion::Placement,
+        |intrinsic| {
+            // The head's frame is gone before the body runs: a level holds
+            // one of the two, not both.
+            let Some(head) = place_node_head(
+                id,
+                origin,
+                size,
+                containing,
+                parent_font_px,
+                nodes,
+                intrinsic,
+                output,
+                scope,
+            )?
+            else {
+                return Ok(());
+            };
+            // A leaf has no subtree to wait: placing it here descends no
+            // further.
+            let leaf = head.facts.children.is_empty() && head.facts.modal.is_none();
+            if depth >= super::recursion::SPAN && !leaf {
+                queue_boundary(
+                    intrinsic,
+                    super::recursion::Boundary {
+                        id,
+                        origin: head.origin,
+                        size,
+                        containing,
+                        parent_font_px,
+                        placed_before: head.placed_before,
+                        inherited: inherited_grid.cloned(),
+                    },
+                );
+                return Ok(());
+            }
+            place_node_body(
+                id,
+                Some(head.facts),
+                head.origin,
+                size,
+                containing,
+                viewport,
+                parent_font_px,
+                head.placed_before,
+                nodes,
+                intrinsic,
+                output,
+                scope,
+                inherited_grid,
+            )
+        },
+    )
+}
+
+/// Queues a subtree for the outermost call: taken once per span, so out of
+/// the level's frame.
+#[cold]
+#[inline(never)]
+fn queue_boundary(intrinsic: &mut PassIntrinsicCache, boundary: super::recursion::Boundary) {
+    intrinsic.boundaries.push_back(boundary);
+}
+
+/// Places every subtree the pass queued, in the order they were queued; one
+/// placed here can queue more.
+fn place_boundaries(
+    viewport: LayoutViewport,
+    nodes: &mut LayoutInputMap<'_>,
+    intrinsic: &mut PassIntrinsicCache,
+    output: &mut HashMap<StableNodeId, LayoutBox>,
+    scope: Option<&ScopeContext<'_>>,
+) -> Result<(), UiWorldError> {
+    while let Some(boundary) = intrinsic.boundaries.pop_front() {
+        intrinsic.execution_stats.placement_boundaries += 1;
+        super::recursion::level(
+            intrinsic,
+            super::recursion::Recursion::Placement,
+            |intrinsic| {
+                place_node_body(
+                    boundary.id,
+                    None,
+                    boundary.origin,
+                    boundary.size,
+                    boundary.containing,
+                    viewport,
+                    boundary.parent_font_px,
+                    boundary.placed_before,
+                    nodes,
+                    intrinsic,
+                    output,
+                    scope,
+                    boundary.inherited.as_ref(),
+                )
+            },
+        )?;
+    }
+    Ok(())
+}
+
+/// A level's head once it has written its node's box: what the body needs.
+struct PlacedHead {
+    facts: NodeFacts,
+    /// Where the box stands, its relative offset applied.
+    origin: Point,
+    placed_before: bool,
+}
+
+/// The first half of a level: write `id`'s own box. `None` when that is all
+/// there is to do (no node, or one that generates no box).
+#[allow(clippy::too_many_arguments)]
+fn place_node_head(
+    id: StableNodeId,
+    origin: Point,
+    size: Size,
+    containing: Size,
+    parent_font_px: f32,
+    nodes: &mut LayoutInputMap<'_>,
+    intrinsic: &mut PassIntrinsicCache,
+    output: &mut HashMap<StableNodeId, LayoutBox>,
+    scope: Option<&ScopeContext<'_>>,
+) -> Result<Option<PlacedHead>, UiWorldError> {
     let Some(node) = nodes.get(id)? else {
         output.insert(
             id,
@@ -1299,14 +1474,16 @@ fn place_node_level(
                 height: 0.0,
             },
         );
-        return Ok(());
+        return Ok(None);
     };
-    let style_arc = node.style.clone();
-    let child_ids = node.children.clone();
-    // The writing mode and direction this node lays out in, inherited from
-    // its ancestors when it declares none of its own, and its parent's.
-    let (writing, containing_writing) = (node.writing, node.containing_writing);
-    let modal = node.modal.clone();
+    let facts = NodeFacts {
+        style: node.style.clone(),
+        children: node.children.clone(),
+        writing: node.writing,
+        containing_writing: node.containing_writing,
+        modal: node.modal.clone(),
+    };
+    let style_arc = Arc::clone(&facts.style);
     // Explicit boundaries and native atomic entries need a saved placement for independent reflow.
     // Ordinary nodes must not allocate another per-node cache on full layout.
     if style_arc.layout_isolation || nodes.world.inline_parent(id).is_some() {
@@ -1325,10 +1502,9 @@ fn place_node_level(
                 height: 0.0,
             },
         );
-        return Ok(());
+        return Ok(None);
     }
     let fonts = fonts_of(style, parent_font_px);
-    let child_font_px = fonts.element_px;
     let (relative_x, relative_y) =
         style.relative_offset_against_fonts(Some(containing.width), Some(containing.height), fonts);
     let origin = Point {
@@ -1358,6 +1534,67 @@ fn place_node_level(
             },
         )
         .is_some();
+    Ok(Some(PlacedHead {
+        facts,
+        origin,
+        placed_before,
+    }))
+}
+
+/// What a level reads off its node, read once for both of its halves.
+struct NodeFacts {
+    style: Arc<LayoutStyle>,
+    children: Arc<Vec<StableNodeId>>,
+    /// The writing mode and direction this node lays out in, inherited from
+    /// its ancestors when it declares none of its own, and its parent's.
+    writing: nana_ui_core::WritingContext,
+    containing_writing: nana_ui_core::WritingContext,
+    modal: Option<crate::ModalLayoutInput>,
+}
+
+/// Everything a level does once its own box is written: lay out and place
+/// its children. A boundary resumes here, without `facts`.
+#[allow(clippy::too_many_arguments)]
+fn place_node_body(
+    id: StableNodeId,
+    facts: Option<NodeFacts>,
+    origin: Point,
+    size: Size,
+    containing: Size,
+    viewport: LayoutViewport,
+    parent_font_px: f32,
+    placed_before: bool,
+    nodes: &mut LayoutInputMap<'_>,
+    intrinsic: &mut PassIntrinsicCache,
+    output: &mut HashMap<StableNodeId, LayoutBox>,
+    scope: Option<&ScopeContext<'_>>,
+    inherited_grid: Option<&InheritedGridTracks>,
+) -> Result<(), UiWorldError> {
+    let facts = match facts {
+        Some(facts) => facts,
+        None => {
+            let Some(node) = nodes.get(id)? else {
+                return Ok(());
+            };
+            NodeFacts {
+                style: node.style.clone(),
+                children: node.children.clone(),
+                writing: node.writing,
+                containing_writing: node.containing_writing,
+                modal: node.modal.clone(),
+            }
+        }
+    };
+    let NodeFacts {
+        style: style_arc,
+        children: child_ids,
+        writing,
+        containing_writing,
+        modal,
+    } = facts;
+    let style = style_arc.as_ref();
+    let fonts = fonts_of(style, parent_font_px);
+    let child_font_px = fonts.element_px;
 
     let containing_inline = containing_writing.inline_size(containing.width, containing.height);
     let padding = style.resolved_padding_against_fonts(Some(containing_inline), fonts);
@@ -1670,6 +1907,8 @@ fn place_node_level(
 /// A container that only moved, placed from its plan. False when the plan
 /// cannot answer.
 #[allow(clippy::too_many_arguments)]
+// Its own frame, taken only on the path that calls it (see `recursion`).
+#[inline(never)]
 fn place_moved_container(
     id: StableNodeId,
     origin: Point,
@@ -1774,6 +2013,8 @@ fn place_moved_container(
 /// A sequential container with a new child list, placed by replaying its
 /// plan from the edit. False when the plan cannot answer.
 #[allow(clippy::too_many_arguments)]
+// Its own frame, taken only on the path that calls it (see `recursion`).
+#[inline(never)]
 fn place_edited_child_list(
     id: StableNodeId,
     origin: Point,
@@ -1870,6 +2111,8 @@ fn place_edited_child_list(
 /// only what changed under it placed again. False when the plan cannot
 /// answer and the container walks its children.
 #[allow(clippy::too_many_arguments)]
+// Its own frame, taken only on the path that calls it (see `recursion`).
+#[inline(never)]
 fn place_from_plan(
     id: StableNodeId,
     origin: Point,
@@ -2119,6 +2362,8 @@ struct ChildrenLayout {
 /// once this frame is gone, so a level of the placement recursion does not
 /// carry the walk's locals (see `recursion`).
 #[allow(clippy::too_many_arguments)]
+// Its own frame, taken only on the path that calls it (see `recursion`).
+#[inline(never)]
 fn lay_out_children(
     id: StableNodeId,
     style_arc: &Arc<LayoutStyle>,

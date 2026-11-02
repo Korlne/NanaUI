@@ -293,8 +293,7 @@ pub(super) fn prime_atom_baselines(
     scope: Option<&ScopeContext<'_>>,
 ) -> Result<(), UiWorldError> {
     for (child, size) in items {
-        if nodes.world.atom_sits_on_line_box(child) && nodes.world.line_boxes_are_descendants(child)
-        {
+        if nodes.atom_sits_on_line_box(child) && nodes.line_boxes_are_descendants(child) {
             descendant_baselines(
                 child,
                 size,
@@ -327,9 +326,7 @@ pub(super) fn prime_first_baselines(
     scope: Option<&ScopeContext<'_>>,
 ) -> Result<(), UiWorldError> {
     for (item, size) in items {
-        if nodes.world.aligns_by_first_baseline(item)
-            && nodes.world.line_boxes_are_descendants(item)
-        {
+        if nodes.world.aligns_by_first_baseline(item) && nodes.line_boxes_are_descendants(item) {
             descendant_baselines(
                 item,
                 size,
@@ -723,7 +720,7 @@ fn block_baseline(
     cache: &mut PassIntrinsicCache,
     scope: Option<&ScopeContext<'_>>,
 ) -> Result<Option<f32>, UiWorldError> {
-    if nodes.world.line_boxes_are_descendants(child) {
+    if nodes.line_boxes_are_descendants(child) {
         let derived = descendant_baselines(
             child,
             size,

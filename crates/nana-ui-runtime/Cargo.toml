@@ -78,6 +78,10 @@ fixed_decimal = { version = "0.7", features = ["ryu"], optional = true }
 writeable = { version = "0.6", optional = true }
 stacker = "0.1.25"
 
+# The thread's own stack bounds, where `stacker` cannot read them (`stack`).
+[target.'cfg(any(target_os = "android", target_os = "ios", target_os = "tvos", target_os = "watchos", target_os = "visionos"))'.dependencies]
+libc = "0.2.190"
+
 [[bin]]
 name = "nana-runtime-benchmark"
 path = "src/bin/nana-runtime-benchmark.rs"
