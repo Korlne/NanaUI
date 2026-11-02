@@ -510,13 +510,16 @@ impl AppContext {
             }
             #[cfg(feature = "benchmark")]
             phase.lap(11);
-            let report = self.commit_mutations(mutations)?;
+            // Every written box is in `scope`, which is published just below:
+            // the commit leaves their results to that publish.
+            self.world.set_pass_publishes_written_boxes(true);
+            let report = self.commit_mutations(mutations);
+            self.world.set_pass_publishes_written_boxes(false);
+            let report = report?;
             #[cfg(feature = "benchmark")]
             phase.lap(12);
             // Publish one coherent canonical Result snapshot only after every
-            // sibling box in the scope has been committed. Interim LayoutBox
-            // writes published during commit are replaced with the
-            // RuntimeLayout provenance here.
+            // sibling box in the scope has been committed.
             self.world
                 .publish_layout_results(&scope, crate::LayoutResultSource::RuntimeLayout);
             let inline_objects = self.layout_cache.take_inline_objects(document);

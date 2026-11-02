@@ -903,6 +903,11 @@ pub struct UiWorld {
     /// The `Arc` stays so a bit-equivalent recompute can keep the same object
     /// and generation; [`Self::layout_result`] reports these as absent.
     layout_results_suppressed: NodeSet,
+    /// Set while the frame driver commits a layout pass's box writes: it
+    /// publishes the whole pass scope right after, so the commit leaves the
+    /// written boxes to that publish: it would build each result only for
+    /// the scope publish to check it again.
+    pass_publishes_written_boxes: bool,
     /// Nodes that started or stopped being a containing block or a clip:
     /// every result under one records it as an anchor, so the next publish
     /// checks them although their boxes may not have moved.
@@ -1171,6 +1176,7 @@ impl UiWorld {
             framework_strings: Arc::default(),
             layout_results: crate::NodeMap::default(),
             layout_results_suppressed: NodeSet::default(),
+            pass_publishes_written_boxes: false,
             layout_anchor_roots: HashSet::new(),
             cursor_style_dirty: false,
             presenters: HashMap::new(),
@@ -3945,6 +3951,16 @@ impl UiWorld {
                     })
                 }),
         })
+    }
+
+    /// While set, a commit leaves the results of the boxes it writes to the
+    /// publish of the layout pass scope that follows it.
+    pub(crate) fn set_pass_publishes_written_boxes(&mut self, deferred: bool) {
+        self.pass_publishes_written_boxes = deferred;
+    }
+
+    pub(crate) fn pass_publishes_written_boxes(&self) -> bool {
+        self.pass_publishes_written_boxes
     }
 
     pub(crate) fn write_layout_padding(

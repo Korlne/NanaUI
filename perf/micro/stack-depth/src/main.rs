@@ -70,12 +70,14 @@ static GLOBAL: Counting = Counting;
 
 /// A page-shaped tree: `rows` rows of `cells` cells under one column, each
 /// cell a column holding a row (four levels, `1 + rows * (1 + 2 * cells)`
-/// boxes). Returns the microseconds the layout took, the live heap bytes
+/// boxes). Returns the microseconds the layout took and those the build and
+/// layout took together, the live heap bytes
 /// the laid-out tree holds and the allocation calls the layout made, the
 /// first and last without building it.
-fn nana_wide(rows: usize, cells: usize) -> (f64, isize, isize) {
+fn nana_wide(rows: usize, cells: usize) -> (f64, f64, isize, isize) {
     let document = DocumentId::new(1).unwrap();
     let before = LIVE.load(Ordering::Relaxed);
+    let built = Instant::now();
     let mut cx = AppContext::new();
     let root = cx
         .create_component(document, Stack::column(0.0).width(LengthSpec::Px(1280.0)))
@@ -109,16 +111,18 @@ fn nana_wide(rows: usize, cells: usize) -> (f64, isize, isize) {
     cx.layout_document(document, LayoutViewport::new(1280.0, 800.0))
         .unwrap();
     let took = start.elapsed().as_secs_f64() * 1e6;
+    let total = built.elapsed().as_secs_f64() * 1e6;
     let calls = CALLS.load(Ordering::Relaxed) - calls;
     let held = LIVE.load(Ordering::Relaxed) - before;
     drop(cx);
-    (took, held, calls)
+    (took, total, held, calls)
 }
 
 /// The same page laid out by Taffy.
-fn taffy_wide(rows: usize, cells: usize) -> (f64, isize, isize) {
+fn taffy_wide(rows: usize, cells: usize) -> (f64, f64, isize, isize) {
     use taffy::prelude::*;
     let before = LIVE.load(Ordering::Relaxed);
+    let built = Instant::now();
     let mut tree: TaffyTree<()> = TaffyTree::new();
     let padding = Rect {
         left: length(0.25_f32),
@@ -193,10 +197,11 @@ fn taffy_wide(rows: usize, cells: usize) -> (f64, isize, isize) {
     )
     .unwrap();
     let took = start.elapsed().as_secs_f64() * 1e6;
+    let total = built.elapsed().as_secs_f64() * 1e6;
     let calls = CALLS.load(Ordering::Relaxed) - calls;
     let held = LIVE.load(Ordering::Relaxed) - before;
     drop(tree);
-    (took, held, calls)
+    (took, total, held, calls)
 }
 
 struct FixedShaper;
@@ -479,28 +484,30 @@ fn main() {
                 "release"
             };
             println!(
-                "| engine ({build}) | boxes | fastest layout | per box | heap per box | allocations per box |"
+                "| engine ({build}) | boxes | fastest layout | per box | build + layout per box | heap per box | allocations per box |"
             );
-            println!("| --- | ---: | ---: | ---: | ---: | ---: |");
+            println!("| --- | ---: | ---: | ---: | ---: | ---: | ---: |");
             for (rows, cells) in [(100, 10), (500, 10), (1000, 10)] {
                 let boxes = 1 + rows * (1 + 2 * cells);
                 for (name, run) in [
                     (
                         "nana-layout",
-                        nana_wide as fn(usize, usize) -> (f64, isize, isize),
+                        nana_wide as fn(usize, usize) -> (f64, f64, isize, isize),
                     ),
                     ("taffy", taffy_wide),
                 ] {
-                    let mut fastest = f64::INFINITY;
+                    let (mut fastest, mut whole) = (f64::INFINITY, f64::INFINITY);
                     let (mut held, mut calls) = (0, 0);
                     for _ in 0..15 {
-                        let (took, bytes, made) = run(rows, cells);
+                        let (took, total, bytes, made) = run(rows, cells);
                         fastest = fastest.min(took);
+                        whole = whole.min(total);
                         (held, calls) = (bytes, made);
                     }
                     println!(
-                        "| {name} | {boxes} | {fastest:.0} µs | {:.2} µs | {} B | {:.1} |",
+                        "| {name} | {boxes} | {fastest:.0} µs | {:.2} µs | {:.2} µs | {} B | {:.1} |",
                         fastest / boxes as f64,
+                        whole / boxes as f64,
                         held / boxes as isize,
                         calls as f64 / boxes as f64
                     );

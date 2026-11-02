@@ -163,6 +163,52 @@ impl LineAdjust {
     }
 }
 
+/// The per-item columns one line's main-axis solve works through, kept
+/// between calls so a cold layout does not allocate eight vectors for every
+/// flex container. A solve nested inside another (a line's Dynamic Layout
+/// envelope measuring a child) finds the slot empty and starts fresh ones.
+#[derive(Default)]
+struct FlexColumns {
+    margin_mains: Vec<f32>,
+    fixed_or_fill: Vec<Option<f32>>,
+    mins: Vec<f32>,
+    maxs: Vec<Option<f32>>,
+    grows: Vec<f32>,
+    shrinks: Vec<f32>,
+    content_sized: Vec<bool>,
+    mains: Vec<f32>,
+}
+
+impl FlexColumns {
+    const fn new() -> Self {
+        Self {
+            margin_mains: Vec::new(),
+            fixed_or_fill: Vec::new(),
+            mins: Vec::new(),
+            maxs: Vec::new(),
+            grows: Vec::new(),
+            shrinks: Vec::new(),
+            content_sized: Vec::new(),
+            mains: Vec::new(),
+        }
+    }
+
+    fn clear(&mut self) {
+        self.margin_mains.clear();
+        self.fixed_or_fill.clear();
+        self.mins.clear();
+        self.maxs.clear();
+        self.grows.clear();
+        self.shrinks.clear();
+        self.content_sized.clear();
+        self.mains.clear();
+    }
+}
+
+thread_local! {
+    static FLEX_COLUMNS: std::cell::Cell<FlexColumns> = const { std::cell::Cell::new(FlexColumns::new()) };
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn distribute_flex_main(
     children: &[StableNodeId],
@@ -188,14 +234,19 @@ pub(super) fn distribute_flex_main(
     let content_main = main_extent(content, direction);
     let mut gap_total = gap * n.saturating_sub(1) as f32;
     let vp = Some((viewport.width, viewport.height));
-    let mut margin_mains = Vec::with_capacity(n);
-    let mut fixed_or_fill: Vec<Option<f32>> = Vec::with_capacity(n);
-    let mut mins = Vec::with_capacity(n);
-    let mut maxs = Vec::with_capacity(n);
-    let mut grows = Vec::with_capacity(n);
-    let mut shrinks = Vec::with_capacity(n);
-    // Items sized by their content: the only ones a line's solve may shrink.
-    let mut content_sized = Vec::with_capacity(n);
+    let mut columns = FLEX_COLUMNS.take();
+    columns.clear();
+    let FlexColumns {
+        margin_mains,
+        fixed_or_fill,
+        mins,
+        maxs,
+        grows,
+        shrinks,
+        // Items sized by their content: the only ones a line's solve may shrink.
+        content_sized,
+        mains,
+    } = &mut columns;
     for (index, child) in children.iter().enumerate() {
         let Some(style) = nodes.style(*child) else {
             margin_mains.push(0.0);
@@ -292,14 +343,16 @@ pub(super) fn distribute_flex_main(
             }
         }
     }
-    let mut mains = resolve_flex_fill_sizes(
+    mains.resize(n, 0.0);
+    resolve_flex_fill_sizes(
         content_main,
         gap_total,
-        &margin_mains,
-        &fixed_or_fill,
-        &mins,
-        &maxs,
-        &grows,
+        margin_mains,
+        fixed_or_fill,
+        mins,
+        maxs,
+        grows,
+        mains,
     );
     if let Some(line) = dynamic {
         // A line that overflows gives up its items' declared elasticity,
@@ -372,17 +425,11 @@ pub(super) fn distribute_flex_main(
             );
         }
     }
-    apply_flex_shrink(
-        content_main,
-        gap_total,
-        &margin_mains,
-        &mut mains,
-        &mins,
-        &shrinks,
-    );
-    for (size, main) in sizes.iter_mut().zip(mains) {
-        set_main_extent(size, direction, main);
+    apply_flex_shrink(content_main, gap_total, margin_mains, mains, mins, shrinks);
+    for (size, main) in sizes.iter_mut().zip(mains.iter()) {
+        set_main_extent(size, direction, *main);
     }
+    FLEX_COLUMNS.set(columns);
     adjust
 }
 
@@ -394,9 +441,10 @@ pub(super) fn resolve_flex_fill_sizes(
     mins: &[f32],
     maxs: &[Option<f32>],
     grows: &[f32],
-) -> Vec<f32> {
+    sizes: &mut [f32],
+) {
     let n = fixed_or_fill.len();
-    let mut sizes = vec![0.0f32; n];
+    sizes.fill(0.0);
     let mut active: Vec<(usize, f32)> = Vec::new();
     let mut occupied = gap_total;
     for i in 0..n {
@@ -474,7 +522,6 @@ pub(super) fn resolve_flex_fill_sizes(
             free = (free - frozen).max(0.0);
         }
     }
-    sizes
 }
 
 pub(super) fn apply_flex_shrink(

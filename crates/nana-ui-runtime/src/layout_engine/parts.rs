@@ -118,9 +118,9 @@ pub(crate) fn flex_parts<const N: usize>(
     if grows.iter().any(|grow| *grow > 0.0) {
         let fixed =
             std::array::from_fn::<_, N, _>(|index| (grows[index] == 0.0).then_some(sizes[index]));
-        let solved =
-            resolve_flex_fill_sizes(main, gap, &margins, &fixed, &mins, &[None; N], &grows);
-        sizes.copy_from_slice(&solved);
+        resolve_flex_fill_sizes(
+            main, gap, &margins, &fixed, &mins, &[None; N], &grows, &mut sizes,
+        );
     }
     apply_flex_shrink(main, gap, &margins, &mut sizes, &mins, &shrinks);
     let occupied = sizes.iter().sum::<f32>() + gap;

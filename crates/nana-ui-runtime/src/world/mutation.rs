@@ -3202,6 +3202,7 @@ impl UiWorld {
                 layout_inputs_changed = true;
             }
             let layout_result_id = match mutation {
+                UiMutation::WriteLayout { .. } if self.pass_publishes_written_boxes() => None,
                 UiMutation::WriteLayout { id, .. }
                 | UiMutation::SetScrollOffset { id, .. }
                 | UiMutation::SetScrollOverscroll { id, .. }
