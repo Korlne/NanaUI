@@ -2573,6 +2573,9 @@ pub struct TextInput {
     /// Show committed Unicode scalar count and this display-only limit.
     pub character_counter: Option<usize>,
     pub label: Option<Arc<str>>,
+    /// Said after the name by assistive technology (`aria-description`),
+    /// never drawn. `None` says nothing more.
+    pub accessible_description: Option<Arc<str>>,
     pub placeholder: Arc<str>,
     pub size: nana_ui_core::ControlSize,
     pub disabled: bool,
@@ -2592,6 +2595,7 @@ impl TextInput {
             max_length: None,
             character_counter: None,
             label: None,
+            accessible_description: None,
             placeholder: Arc::from(""),
             size: nana_ui_core::ControlSize::Medium,
             disabled: false,
@@ -2613,6 +2617,23 @@ impl TextInput {
 
     pub fn label(mut self, label: impl Into<Arc<str>>) -> Self {
         self.label = Some(label.into());
+        self
+    }
+
+    /// The spoken name (`aria-label`); the same field as [`Self::label`],
+    /// which this control never draws. Independent of the placeholder. An
+    /// empty name is none.
+    pub fn accessible_name(mut self, name: impl Into<Arc<str>>) -> Self {
+        let name = name.into();
+        self.label = (!name.is_empty()).then_some(name);
+        self
+    }
+
+    /// See [`Self::accessible_description`](field@Self::accessible_description);
+    /// an empty description is none.
+    pub fn accessible_description(mut self, description: impl Into<Arc<str>>) -> Self {
+        let description = description.into();
+        self.accessible_description = (!description.is_empty()).then_some(description);
         self
     }
 
@@ -2781,7 +2802,7 @@ impl ComponentView for TextInput {
                 style: &effective_style,
                 highlight: self.highlight.as_ref(),
                 numeric: None,
-                description: None,
+                description: self.accessible_description.clone(),
             },
         );
     }
@@ -3232,6 +3253,9 @@ pub struct TextArea {
     pub(crate) resized_height: Option<f32>,
     pub(crate) resize_drag: Option<TextAreaResizeDrag>,
     pub label: Option<Arc<str>>,
+    /// Said after the name by assistive technology (`aria-description`),
+    /// never drawn. `None` says nothing more.
+    pub accessible_description: Option<Arc<str>>,
     pub placeholder: Arc<str>,
     pub disabled: bool,
     /// Keeps focus, selection and copying available while rejecting user edits.
@@ -3331,6 +3355,7 @@ impl TextArea {
             resized_height: None,
             resize_drag: None,
             label: None,
+            accessible_description: None,
             placeholder: Arc::from(""),
             disabled: false,
             read_only: false,
@@ -3722,6 +3747,23 @@ impl TextArea {
         self
     }
 
+    /// The spoken name (`aria-label`); the same field as [`Self::label`],
+    /// which this control never draws. Independent of the placeholder. An
+    /// empty name is none.
+    pub fn accessible_name(mut self, name: impl Into<Arc<str>>) -> Self {
+        let name = name.into();
+        self.label = (!name.is_empty()).then_some(name);
+        self
+    }
+
+    /// See [`Self::accessible_description`](field@Self::accessible_description);
+    /// an empty description is none.
+    pub fn accessible_description(mut self, description: impl Into<Arc<str>>) -> Self {
+        let description = description.into();
+        self.accessible_description = (!description.is_empty()).then_some(description);
+        self
+    }
+
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
         self
@@ -3947,7 +3989,7 @@ impl ComponentView for TextArea {
                 style: &effective_style,
                 highlight: self.highlight.as_ref(),
                 numeric: None,
-                description: None,
+                description: self.accessible_description.clone(),
             },
         );
         // Clear composition while this node is still focused, then release focus.
@@ -5051,6 +5093,13 @@ impl ComponentView for Divider {
 pub struct Switch {
     pub label: String,
     pub hint: Option<Arc<str>>,
+    /// Spoken name in place of the visible one (`aria-label`): for a control
+    /// drawn without text, or several sharing one visible word. `None` keeps
+    /// the visible label.
+    pub accessible_name: Option<Arc<str>>,
+    /// Said after the name by assistive technology (`aria-description`),
+    /// never drawn. `None` says nothing more.
+    pub accessible_description: Option<Arc<str>>,
     pub checked: bool,
     pub control_position: nana_ui_core::SwitchControlPosition,
     pub size: nana_ui_core::ControlSize,
@@ -5066,6 +5115,8 @@ impl Switch {
         Self {
             label: label.into(),
             hint: None,
+            accessible_name: None,
+            accessible_description: None,
             checked,
             control_position: nana_ui_core::SwitchControlPosition::End,
             size: nana_ui_core::ControlSize::Medium,
@@ -5083,6 +5134,22 @@ impl Switch {
     }
     pub fn hint(mut self, hint: impl Into<Arc<str>>) -> Self {
         self.hint = Some(hint.into());
+        self
+    }
+
+    /// See [`Self::accessible_name`](field@Self::accessible_name); an empty
+    /// name is none.
+    pub fn accessible_name(mut self, name: impl Into<Arc<str>>) -> Self {
+        let name = name.into();
+        self.accessible_name = (!name.is_empty()).then_some(name);
+        self
+    }
+
+    /// See [`Self::accessible_description`](field@Self::accessible_description);
+    /// an empty description is none.
+    pub fn accessible_description(mut self, description: impl Into<Arc<str>>) -> Self {
+        let description = description.into();
+        self.accessible_description = (!description.is_empty()).then_some(description);
         self
     }
     pub fn control_position(mut self, position: nana_ui_core::SwitchControlPosition) -> Self {
@@ -5239,7 +5306,12 @@ impl ComponentView for Switch {
             },
             AccessibilityState {
                 role: AccessibilityRole::Switch,
-                label: Some(Arc::from(self.label.as_str())),
+                label: Some(
+                    self.accessible_name
+                        .clone()
+                        .unwrap_or_else(|| Arc::from(self.label.as_str())),
+                ),
+                description: self.accessible_description.clone(),
                 disabled: self.disabled,
                 checked: Some(self.checked),
                 busy: self.loading,
@@ -5290,6 +5362,13 @@ pub struct RangeField {
     /// When false, [`Self::label`] names the slider for accessibility only and
     /// the track takes the width the drawn label would have used.
     pub show_label: bool,
+    /// Spoken name in place of the visible one (`aria-label`): for a control
+    /// drawn without text, or several sharing one visible word. `None` keeps
+    /// the visible label.
+    pub accessible_name: Option<Arc<str>>,
+    /// Said after the name by assistive technology (`aria-description`),
+    /// never drawn. `None` says nothing more.
+    pub accessible_description: Option<Arc<str>>,
     pub size: nana_ui_core::ControlSize,
     /// `Some(girth)` draws only a rail that thick across the whole box; see
     /// [`Self::rail`].
@@ -5376,6 +5455,8 @@ impl RangeField {
             unit: None,
             show_value: true,
             show_label: true,
+            accessible_name: None,
+            accessible_description: None,
             size: nana_ui_core::ControlSize::Medium,
             rail: None,
             track_gradient: None,
@@ -5402,6 +5483,22 @@ impl RangeField {
     }
     pub fn show_label(mut self, show_label: bool) -> Self {
         self.show_label = show_label;
+        self
+    }
+
+    /// See [`Self::accessible_name`](field@Self::accessible_name); an empty
+    /// name is none.
+    pub fn accessible_name(mut self, name: impl Into<Arc<str>>) -> Self {
+        let name = name.into();
+        self.accessible_name = (!name.is_empty()).then_some(name);
+        self
+    }
+
+    /// See [`Self::accessible_description`](field@Self::accessible_description);
+    /// an empty description is none.
+    pub fn accessible_description(mut self, description: impl Into<Arc<str>>) -> Self {
+        let description = description.into();
+        self.accessible_description = (!description.is_empty()).then_some(description);
         self
     }
     pub fn show_value(mut self, show_value: bool) -> Self {
@@ -5658,7 +5755,8 @@ impl ComponentView for RangeField {
             },
             AccessibilityState {
                 role: AccessibilityRole::Slider,
-                label: self.label.clone(),
+                label: self.accessible_name.clone().or_else(|| self.label.clone()),
+                description: self.accessible_description.clone(),
                 value: Some(match &self.unit {
                     Some(unit) => Arc::from(format!("{} {}", value, unit)),
                     None => value,
@@ -7104,6 +7202,97 @@ mod stack_preset_tests {
         component.project(id, &world, &mut queue);
         world.commit(queue).unwrap();
         (world, id)
+    }
+
+    /// Controls drawn without text take an explicit spoken name and
+    /// description, and a placeholder never stands in for the name.
+    #[test]
+    fn unlabelled_controls_take_an_accessible_name_and_description() {
+        let spoken = |component: &dyn Fn() -> (UiWorld, StableNodeId)| {
+            let (world, id) = component();
+            let a11y = world.accessibility(id).unwrap().clone();
+            (
+                a11y.label.as_deref().map(str::to_owned),
+                a11y.description.as_deref().map(str::to_owned),
+            )
+        };
+        let named = (Some("Mute".to_owned()), Some("Silences alerts".to_owned()));
+        assert_eq!(
+            spoken(&|| project_one(
+                &Switch::new("", true)
+                    .accessible_name("Mute")
+                    .accessible_description("Silences alerts")
+            )),
+            named
+        );
+        // Without an override the visible label still names the switch.
+        assert_eq!(
+            spoken(&|| project_one(&Switch::new("Mute", true))),
+            (Some("Mute".to_owned()), None)
+        );
+        assert_eq!(
+            spoken(&|| project_one(
+                &RangeField::new(0.5, 0.0, 1.0, 0.1)
+                    .label("Volume")
+                    .accessible_name("Mute")
+                    .accessible_description("Silences alerts")
+            )),
+            named
+        );
+        assert_eq!(
+            spoken(&|| project_one(
+                &TextInput::new("")
+                    .placeholder("Search…")
+                    .accessible_name("Mute")
+                    .accessible_description("Silences alerts")
+            )),
+            named
+        );
+        assert_eq!(
+            spoken(&|| project_one(&TextInput::new("").placeholder("Search…"))),
+            (None, None)
+        );
+        assert_eq!(
+            spoken(&|| project_one(
+                &TextArea::new("")
+                    .placeholder("Notes")
+                    .accessible_name("Mute")
+                    .accessible_description("Silences alerts")
+            )),
+            named
+        );
+        let options = [crate::SelectOption::new("a", "A")];
+        assert_eq!(
+            spoken(&|| project_one(
+                &crate::Select::new(Some("a"))
+                    .options(options.clone())
+                    .accessible_name("Mute")
+                    .accessible_description("Silences alerts")
+            )),
+            named
+        );
+        assert_eq!(
+            spoken(&|| project_one(
+                &crate::Dropdown::single(Some("a"))
+                    .options([crate::DropdownOption::new("a", "A")])
+                    .accessible_name("Mute")
+                    .accessible_description("Silences alerts")
+            )),
+            named
+        );
+        assert_eq!(
+            spoken(&|| project_one(
+                &crate::RichTextEditor::new("")
+                    .accessible_name("Mute")
+                    .accessible_description("Silences alerts")
+            )),
+            named
+        );
+        // An empty name is none: the editor stays named by whatever names it.
+        assert_eq!(
+            spoken(&|| project_one(&crate::RichTextEditor::new("").accessible_name(""))),
+            (None, None)
+        );
     }
 
     #[test]

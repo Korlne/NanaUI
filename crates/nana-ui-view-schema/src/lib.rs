@@ -73,6 +73,8 @@ macro_rules! for_each_control {
             model checked: bool => ToggleChanged |event| event.checked;
             Switch => switch(label: text) for Switch {
                 label: String = set,
+                accessible_name: Option<Arc<str>> = set,
+                accessible_description: Option<Arc<str>> = set,
                 checked: bool = set,
                 disabled: bool = set,
                 loading: bool = set,
@@ -83,6 +85,8 @@ macro_rules! for_each_control {
                 value: f64 = clamp,
                 label: Option<Arc<str>> = set,
                 show_label: bool = set,
+                accessible_name: Option<Arc<str>> = set,
+                accessible_description: Option<Arc<str>> = set,
                 unit: Option<Arc<str>> = set,
                 disabled: bool = set,
             }
@@ -105,6 +109,7 @@ macro_rules! for_each_control {
                 value: String = text_state,
                 character_counter: Option<usize> = set,
                 label: Option<Arc<str>> = set,
+                accessible_description: Option<Arc<str>> = set,
                 placeholder: Arc<str> = set,
                 disabled: bool = set,
                 invalid: bool = set,
@@ -114,6 +119,7 @@ macro_rules! for_each_control {
             TextArea => text_area() for TextArea {
                 value: String = text_state,
                 label: Option<Arc<str>> = set,
+                accessible_description: Option<Arc<str>> = set,
                 placeholder: Arc<str> = set,
                 disabled: bool = set,
                 read_only: bool = set,
@@ -138,6 +144,7 @@ macro_rules! for_each_control {
                 value: Option<Arc<str>> = set,
                 options: Vec<SelectOption> = set,
                 label: Option<Arc<str>> = set,
+                accessible_description: Option<Arc<str>> = set,
                 placeholder: Option<Arc<str>> = set,
                 disabled: bool = set,
                 loading: bool = set,

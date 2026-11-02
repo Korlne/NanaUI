@@ -92,6 +92,9 @@ pub struct Select {
     /// the name to whatever names the field (a settings row's label,
     /// [`crate::view::El::labelled_by`]), else to the option it shows.
     pub label: Option<Arc<str>>,
+    /// Said after the name by assistive technology (`aria-description`),
+    /// never drawn. `None` says nothing more.
+    pub accessible_description: Option<Arc<str>>,
     pub placeholder: Option<Arc<str>>,
     pub size: ControlSize,
     pub disabled: bool,
@@ -122,6 +125,7 @@ impl Select {
             value: value.map(Into::into),
             options: Vec::new(),
             label: None,
+            accessible_description: None,
             placeholder: None,
             size: ControlSize::Medium,
             disabled: false,
@@ -144,6 +148,23 @@ impl Select {
     pub fn label(mut self, label: impl Into<Arc<str>>) -> Self {
         let label = label.into();
         self.label = (!label.is_empty()).then_some(label);
+        self
+    }
+
+    /// The spoken name (`aria-label`); the same field as [`Self::label`],
+    /// which this control never draws. Independent of the placeholder. An
+    /// empty name is none.
+    pub fn accessible_name(mut self, name: impl Into<Arc<str>>) -> Self {
+        let name = name.into();
+        self.label = (!name.is_empty()).then_some(name);
+        self
+    }
+
+    /// See [`Self::accessible_description`](field@Self::accessible_description);
+    /// an empty description is none.
+    pub fn accessible_description(mut self, description: impl Into<Arc<str>>) -> Self {
+        let description = description.into();
+        self.accessible_description = (!description.is_empty()).then_some(description);
         self
     }
 
@@ -484,6 +505,7 @@ impl crate::ComponentView for Select {
                 // it. The option shown is its value either way, its hint
                 // said after it even when the field has no room to draw it.
                 label: self.label.clone(),
+                description: self.accessible_description.clone(),
                 value: (!placeholder).then(|| match &hint {
                     Some(hint) => Arc::from(format!("{label} {hint}")),
                     None => label,

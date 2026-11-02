@@ -70,6 +70,19 @@ inactive overlay 与关闭菜单属于结构性隐藏。`ComputedStyle::box_visi
 
 设置行之外，视图里的任何元素都能声明同一层关联：`.labelled_by(标题)`（模板 `labelled_by={caption}`，`.vue` 里 `labelled-by="caption"`）。`标题` 是那段文字的 `NodeRef`、节点 id 或选出它的闭包。写在控件之前、之后或另一段视图里都行。标题重建（在 `when` 里）后关联跟到新节点上。字段标题写在旁边的下拉框、滑块、空标签开关都这样起名，不用挂载后再扫描文档。没有可见标题时，`Select` 写自己的 `label`（`aria-label`，不画出来），`RangeField` 写 `label` 加 `show_label(false)`。
 
+控件自己也能带一个显式的无障碍名称和描述，与 `Button::accessible_name` 同一套写法：`.accessible_name(名称)`（`aria-label`）与 `.accessible_description(描述)`（`aria-description`，读在名称之后，不画出来）。空字符串等于没写。
+
+| 控件 | 名称 | 描述 |
+| --- | --- | --- |
+| `Switch` | `accessible_name` 压过可见 `label`，空标签的开关靠它起名 | `accessible_description` |
+| `RangeField`（滑块） | `accessible_name` 压过 `label`，不改可见文字 | `accessible_description` |
+| `Select` | `accessible_name` 写的就是 `label`（本来就不画） | `accessible_description` |
+| `Dropdown` | `accessible_name` 代替显示值作名称，显示值仍作 value | `accessible_description` |
+| `TextInput` / `TextArea` | `accessible_name` 写的就是 `label`（本来就不画）；占位符从不充当名称 | `accessible_description` |
+| `RichTextEditor` | `accessible_name`；没写时由 `.labelled_by(..)` 或别的关联起名 | `accessible_description` |
+
+模板与 `.vue` 里同名属性可用：`Switch`、`Slider` 的 `accessible_name` / `accessible_description`，`TextInput`、`TextArea`、`Select` 的 `accessible_description`（名称仍是 `label`）。
+
 `mount_settings_leaf_row` 保留标签、提示和控件槽。初始没有提示也可以随后通过 `update_component(row, |row, _| row.hint = Some(...))` 显示提示。设置 `None` 隐藏。`assemble_appearance_section` 刷新已有行时保留应用设置的 `stack_below` 与 `stacked`。
 
 

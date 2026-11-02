@@ -258,6 +258,13 @@ pub struct RichTextEditor {
     pub value: RichText,
     pub read_only: bool,
     pub disabled: bool,
+    /// Spoken name (`aria-label`): the editor draws no label of its own.
+    /// Independent of any placeholder or hint drawn over it. `None` leaves
+    /// the name to whatever names the editor ([`crate::view::El::labelled_by`]).
+    pub accessible_name: Option<Arc<str>>,
+    /// Said after the name by assistive technology (`aria-description`),
+    /// never drawn. `None` says nothing more.
+    pub accessible_description: Option<Arc<str>>,
     /// What typing, the IME and a plain-text paste are styled with.
     pub typing_style_policy: RichTypingStylePolicy,
     pub style: NodeStyle,
@@ -279,8 +286,26 @@ impl RichTextEditor {
             typing_style_policy: RichTypingStylePolicy::default(),
             style,
             scroll_offset: crate::ScrollOffset::default(),
+            accessible_name: None,
+            accessible_description: None,
             state: EditState::default(),
         }
+    }
+
+    /// See [`Self::accessible_name`](field@Self::accessible_name); an empty
+    /// name is none.
+    pub fn accessible_name(mut self, name: impl Into<Arc<str>>) -> Self {
+        let name = name.into();
+        self.accessible_name = (!name.is_empty()).then_some(name);
+        self
+    }
+
+    /// See [`Self::accessible_description`](field@Self::accessible_description);
+    /// an empty description is none.
+    pub fn accessible_description(mut self, description: impl Into<Arc<str>>) -> Self {
+        let description = description.into();
+        self.accessible_description = (!description.is_empty()).then_some(description);
+        self
     }
 
     pub fn read_only(mut self, read_only: bool) -> Self {
@@ -1037,6 +1062,8 @@ impl ComponentView for RichTextEditor {
             },
             AccessibilityState {
                 role: AccessibilityRole::TextInput,
+                label: self.accessible_name.clone(),
+                description: self.accessible_description.clone(),
                 value: Some(Arc::from(self.value.text())),
                 editable: self.editable(),
                 multiline: true,

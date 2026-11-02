@@ -71,6 +71,13 @@ pub struct Dropdown {
     pub selection: DropdownSelection<Arc<str>>,
     pub options: Vec<DropdownOption>,
     pub placeholder: Option<Arc<str>>,
+    /// Spoken name in place of the visible one (`aria-label`): for a control
+    /// drawn without text, or several sharing one visible word. `None` keeps
+    /// the shown value as the name.
+    pub accessible_name: Option<Arc<str>>,
+    /// Said after the name by assistive technology (`aria-description`),
+    /// never drawn. `None` says nothing more.
+    pub accessible_description: Option<Arc<str>>,
     pub size: ControlSize,
     pub disabled: bool,
     pub loading: bool,
@@ -109,6 +116,8 @@ impl Dropdown {
             selection,
             options: Vec::new(),
             placeholder: None,
+            accessible_name: None,
+            accessible_description: None,
             size: ControlSize::Medium,
             disabled: false,
             loading: false,
@@ -119,6 +128,22 @@ impl Dropdown {
             bare_trigger: false,
             style: crate::select::field_style_for_size(ControlSize::Medium),
         }
+    }
+
+    /// See [`Self::accessible_name`](field@Self::accessible_name); an empty
+    /// name is none.
+    pub fn accessible_name(mut self, name: impl Into<Arc<str>>) -> Self {
+        let name = name.into();
+        self.accessible_name = (!name.is_empty()).then_some(name);
+        self
+    }
+
+    /// See [`Self::accessible_description`](field@Self::accessible_description);
+    /// an empty description is none.
+    pub fn accessible_description(mut self, description: impl Into<Arc<str>>) -> Self {
+        let description = description.into();
+        self.accessible_description = (!description.is_empty()).then_some(description);
+        self
     }
 
     pub fn options(mut self, options: impl IntoIterator<Item = DropdownOption>) -> Self {
@@ -499,7 +524,8 @@ impl ComponentView for Dropdown {
             },
             AccessibilityState {
                 role: AccessibilityRole::ComboBox,
-                label: Some(label),
+                label: Some(self.accessible_name.clone().unwrap_or(label)),
+                description: self.accessible_description.clone(),
                 value: match &self.selection {
                     DropdownSelection::Single(value) => value.clone(),
                     DropdownSelection::Multiple(values) => values
