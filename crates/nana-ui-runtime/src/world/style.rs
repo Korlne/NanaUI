@@ -871,6 +871,25 @@ impl UiWorld {
             .unwrap_or(SemanticColorRole::Muted);
         self.theme_color(role)
     }
+
+    /// The colour a list row's note and detail resolve to: the row's own
+    /// `primary` text colour at the theme's
+    /// [`nana_ui_core::OpacityTokens::secondary_text`] alpha, one step back
+    /// on whatever fill the row has now.
+    ///
+    /// A state that names its own [`crate::SemanticPaint::foreground_secondary`]
+    /// still wins. Focus does: light mode's focus fill is nearly solid and its
+    /// label is already the weakest text on it, so the detail keeps the
+    /// label's full colour there rather than fading under it.
+    pub(super) fn row_secondary_text_color(&self, id: StableNodeId, primary: [f32; 4]) -> [f32; 4] {
+        let local = &self.record(id).style;
+        if let Some(role) = self.semantic_paint(id, local).foreground_secondary {
+            return self.theme_color(role);
+        }
+        self.record_theme_read();
+        let [r, g, b, a] = primary;
+        [r, g, b, a * self.style_model.opacity.secondary_text]
+    }
 }
 
 impl UiWorld {

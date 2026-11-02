@@ -1666,6 +1666,17 @@ impl UiWorld {
                 };
                 let parts = self.component_content_parts(id);
                 let part = |kind| crate::layout_engine::parts::part_bounds(&parts, kind);
+                // Follows the label's resolved colour rather than the shared
+                // `secondary`, so a disabled, selected or recoloured row's
+                // detail moves with its label instead of staying `Muted`.
+                let secondary = self.row_secondary_text_color(
+                    id,
+                    style.color.unwrap_or_else(|| {
+                        self.style_model
+                            .color(SemanticColorRole::Text)
+                            .as_rgba_array()
+                    }),
+                );
                 let secondary_region = |text: &Option<Arc<str>>, kind| {
                     text.as_ref()
                         .zip(part(kind))

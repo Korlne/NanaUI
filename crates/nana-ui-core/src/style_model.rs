@@ -1234,6 +1234,65 @@ mod tests {
         }
     }
 
+    /// A list row's note and detail are its label at
+    /// `OpacityTokens::secondary_text`, blended the way the painter blends:
+    /// in linear light. That has to stay body-text readable (4.5:1) on every
+    /// fill a resting, hovered or selected row takes, and still sit a clear
+    /// step under the label. Focus is not here: it names its own secondary.
+    #[test]
+    fn row_secondary_text_stays_readable_in_linear_light() {
+        fn linear(value: f32) -> f64 {
+            let value = f64::from(value);
+            if value <= 0.040_45 {
+                value / 12.92
+            } else {
+                ((value + 0.055) / 1.055).powf(2.4)
+            }
+        }
+        fn over(top: SemanticColor, alpha: f32, bottom: [f64; 3]) -> [f64; 3] {
+            let alpha = f64::from(top.a * alpha);
+            [top.r, top.g, top.b]
+                .map(linear)
+                .into_iter()
+                .zip(bottom)
+                .map(|(top, bottom)| top * alpha + bottom * (1.0 - alpha))
+                .collect::<Vec<_>>()
+                .try_into()
+                .unwrap()
+        }
+        fn contrast(a: [f64; 3], b: [f64; 3]) -> f64 {
+            let luminance = |c: [f64; 3]| 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+            let (a, b) = (luminance(a), luminance(b));
+            let (hi, lo) = if a > b { (a, b) } else { (b, a) };
+            (hi + 0.05) / (lo + 0.05)
+        }
+
+        for (mode, palette) in [
+            (ThemeAppearance::Dark, SemanticPalette::dark()),
+            (ThemeAppearance::Light, SemanticPalette::light()),
+        ] {
+            let step = OpacityTokens::for_appearance(mode).secondary_text;
+            let page = over(palette.background, 1.0, [0.0; 3]);
+            let card = over(palette.surface, 1.0, page);
+            for (state, fill) in [
+                ("resting", card),
+                ("hovered", over(palette.hover, 1.0, card)),
+                ("selected", over(palette.selected, 1.0, card)),
+            ] {
+                let detail = contrast(over(palette.text, step, fill), fill);
+                let label = contrast(over(palette.text, 1.0, fill), fill);
+                assert!(
+                    detail >= 4.5,
+                    "{mode:?} {state} row detail is {detail:.2}:1, under 4.5:1"
+                );
+                assert!(
+                    label >= detail * 1.5,
+                    "{mode:?} {state} row detail at {detail:.2}:1 is no step under its {label:.2}:1 label"
+                );
+            }
+        }
+    }
+
     /// WCAG 2.4.11 asks for 3:1 between a control's focused and unfocused
     /// appearance. The focus fill is the whole indicator — there is no ring to
     /// fall back on — so the ratio is a property of the token, and this holds

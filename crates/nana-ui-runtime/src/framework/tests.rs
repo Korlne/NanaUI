@@ -8083,10 +8083,19 @@ fn a_focused_rows_secondary_text_follows_its_label() {
         other => panic!("a list item derives list-item geometry, got {other:?}"),
     };
     let palette = nana_ui_core::SemanticPalette::dark();
+    let step_back = |color: nana_ui_core::SemanticColor| {
+        let [r, g, b, a] = color.as_rgba_array();
+        [
+            r,
+            g,
+            b,
+            a * nana_ui_core::OpacityTokens::DARK.secondary_text,
+        ]
+    };
     assert_eq!(
         colors(&context),
-        Some(palette.muted.as_rgba_array()),
-        "an unfocused row's detail is still the muted role it always was"
+        Some(step_back(palette.text)),
+        "an unfocused row's detail is its label's colour one step back"
     );
 
     assert!(context.focus_node(document, row.stable_id()).unwrap());
@@ -8099,6 +8108,42 @@ fn a_focused_rows_secondary_text_follows_its_label() {
         "a focused row fills with focus_surface, so its detail has to follow \
          the label onto focus_text instead of staying resolved against the \
          surface underneath"
+    );
+}
+
+/// A row's detail moves with its label when a state recolours the label: a
+/// disabled row's detail fades with it instead of staying `Muted`, louder than
+/// the name it belongs to.
+#[test]
+fn a_disabled_rows_secondary_text_fades_with_its_label() {
+    let mut context = AppContext::new();
+    let document = DocumentId::new(1).unwrap();
+    let mut view = crate::ListItem::new("nanalive.model3.json");
+    view.detail = "current actor".into();
+    view.disabled = true;
+    let row = context.create_component(document, view).unwrap();
+    context
+        .layout_document(document, crate::LayoutViewport::new(320.0, 80.0))
+        .unwrap();
+
+    let detail = match context.world().extract_nodes(&[row.stable_id()])[0]
+        .component_geometry
+        .as_deref()
+    {
+        Some(crate::ComponentGeometry::ListItem { detail, .. }) => {
+            detail.as_ref().expect("the row declares a detail").color
+        }
+        other => panic!("a list item derives list-item geometry, got {other:?}"),
+    };
+    let [r, g, b, a] = nana_ui_core::SemanticPalette::dark().faint.as_rgba_array();
+    assert_eq!(
+        detail,
+        Some([
+            r,
+            g,
+            b,
+            a * nana_ui_core::OpacityTokens::DARK.secondary_text
+        ])
     );
 }
 
