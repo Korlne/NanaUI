@@ -182,6 +182,13 @@ pub enum WindowEvent {
         id: WindowId,
         reduced: bool,
     },
+    /// The system text-size factor changed (Windows "Text size"). Sent to
+    /// every window; read the current value from
+    /// `RuntimeProgramContext::text_scale`. NanaUI does not apply it.
+    TextScaleChanged {
+        id: WindowId,
+        scale: f32,
+    },
     /// A hovering mouse or pen pointer entered (`inside`) or left the client
     /// area. Delivered only on change. Touch contacts never report presence,
     /// and the leave a host-started native window drag produces is withheld

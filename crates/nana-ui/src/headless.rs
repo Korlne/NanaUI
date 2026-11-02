@@ -73,6 +73,8 @@ pub struct HeadlessOptions {
     pub reduced_motion: bool,
     pub high_contrast: bool,
     pub reduced_transparency: bool,
+    /// What `RuntimeProgramContext::text_scale` reports.
+    pub text_scale: Option<f32>,
 }
 
 /// What updates asked for since [`HeadlessRuntime::take_report`].
@@ -926,6 +928,7 @@ fn context<M: Send + 'static>(
     .with_reduced_motion(options.reduced_motion)
     .with_high_contrast(options.high_contrast)
     .with_reduced_transparency(options.reduced_transparency)
+    .with_text_scale(options.text_scale)
     .with_store(Arc::clone(store))
 }
 
@@ -944,6 +947,7 @@ fn event_window(event: &WindowEvent) -> WindowId {
         | WindowEvent::ReducedMotionChanged { id, .. }
         | WindowEvent::HighContrastChanged { id, .. }
         | WindowEvent::ReducedTransparencyChanged { id, .. }
+        | WindowEvent::TextScaleChanged { id, .. }
         | WindowEvent::PointerPresenceChanged { id, .. }
         | WindowEvent::CloseRequested { id }
         | WindowEvent::Closed { id }

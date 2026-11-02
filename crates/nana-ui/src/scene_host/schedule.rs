@@ -201,6 +201,27 @@ impl<Program: RuntimeProgram> WindowManager<Program> {
         }
     }
 
+    /// Deliver a system text-size change (Windows `TextScaleFactorChanged`).
+    fn sync_text_scale(&mut self, event_loop: &dyn ActiveEventLoop) {
+        if !nana_window::take_text_scale_change() {
+            return;
+        }
+        let Some(scale) = nana_window::system_text_scale() else {
+            return;
+        };
+        if self.text_scale == Some(scale) {
+            return;
+        }
+        self.text_scale = Some(scale);
+        for id in self.known_window_ids() {
+            let update = self.program.window_event(
+                WindowEvent::TextScaleChanged { id, scale },
+                &self.context_for(id),
+            );
+            self.apply_update(event_loop, update, None);
+        }
+    }
+
     /// Hand the window's document the system high-contrast setting: while it
     /// is on, the installed theme paints with the high-contrast palette.
     pub(super) fn apply_high_contrast(&mut self, id: WindowId) {
@@ -253,6 +274,7 @@ impl<Program: RuntimeProgram> WindowManager<Program> {
         self.sync_reduced_motion(event_loop);
         self.sync_high_contrast(event_loop);
         self.sync_reduced_transparency(event_loop);
+        self.sync_text_scale(event_loop);
         if self.next_wakeup().is_some_and(|deadline| now >= deadline) {
             self.wake(event_loop, now);
         }

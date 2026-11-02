@@ -473,6 +473,14 @@ fn build(&mut self, window: &mut ApplicationWindow, context: &RuntimeProgramCont
 - macOS：读取「减少透明度」（`NSWorkspace.accessibilityDisplayShouldReduceTransparency`）。变化走同一个显示选项通知。
 - Windows 与 Linux：不上报（Windows 的「透明效果」是个性化设置，不是这里的辅助功能偏好）。恒为 `false`。不发送事件。
 
+### 系统文字大小
+
+`RuntimeProgramContext::text_scale()` 返回系统文字大小系数（`1.0` 为默认大小）。窗口创建时读取。运行中变化时宿主向每扇窗口发送 `WindowEvent::TextScaleChanged { id, scale }`。NanaUI 不自动套用它：提供「跟随系统」界面缩放的应用读它，再交给 `AppContext::set_content_zoom`（整窗缩放，见 [运行时与场景](runtime-scene.md)）或自己的文字样式。平台接口是 `nana_window::system_text_scale()` / `take_text_scale_change()` / `set_text_scale_waker(..)`。
+
+- Windows：读取「文本大小」（`UISettings.TextScaleFactor`，1.0–2.25）。进程内持有一个订阅了 `TextScaleFactorChanged` 的 `UISettings`。该事件在工作线程触发，宿主装好的唤醒器把事件循环叫醒，在下一次 `about_to_wait` 重新读取。只在值变化时发送事件。
+- macOS：没有系统级文字大小（动态字体只在 iOS）。返回 `None`，按 `1.0` 处理。不发送事件。
+- Linux：没有可移植的系统文字大小。返回 `None`。不发送事件。
+
 ### 显示器与全屏
 
 `WindowService::displays()`（嵌入式宿主用 `EmbeddedRuntime::displays(event_loop)`）在窗口线程枚举当前连接的显示器。返回 `DisplayInfo`：id、名称、物理位置/尺寸、缩放、刷新率、是否主屏。Wayland 不上报主屏。`DisplayInfo::logical_bounds()` 把物理矩形换算成 `WindowDescriptor::initial_position` 使用的全局逻辑坐标。没有位置或尺寸时返回 `None`。

@@ -48,6 +48,7 @@ pub struct RuntimeProgramContext<Message: Send + 'static> {
     reduced_motion: bool,
     high_contrast: bool,
     reduced_transparency: bool,
+    text_scale: Option<f32>,
     store: SharedStore,
     startup: crate::StartupHandle,
     gpu_adapters: Arc<crate::GpuAdapterSelection>,
@@ -71,6 +72,7 @@ impl<Message: Send + 'static> Clone for RuntimeProgramContext<Message> {
             reduced_motion: self.reduced_motion,
             high_contrast: self.high_contrast,
             reduced_transparency: self.reduced_transparency,
+            text_scale: self.text_scale,
             store: Arc::clone(&self.store),
             startup: self.startup.clone(),
             gpu_adapters: Arc::clone(&self.gpu_adapters),
@@ -108,6 +110,7 @@ impl<Message: Send + 'static> RuntimeProgramContext<Message> {
             reduced_motion: false,
             high_contrast: false,
             reduced_transparency: false,
+            text_scale: None,
             store: memory_store(),
             startup,
             gpu_adapters: Arc::default(),
@@ -126,6 +129,11 @@ impl<Message: Send + 'static> RuntimeProgramContext<Message> {
 
     pub(crate) fn with_reduced_transparency(mut self, reduced: bool) -> Self {
         self.reduced_transparency = reduced;
+        self
+    }
+
+    pub(crate) fn with_text_scale(mut self, scale: Option<f32>) -> Self {
+        self.text_scale = scale;
         self
     }
 
@@ -192,6 +200,16 @@ impl<Message: Send + 'static> RuntimeProgramContext<Message> {
     /// materials for it: the application picks opaque surfaces.
     pub const fn reduced_transparency(&self) -> bool {
         self.reduced_transparency
+    }
+
+    /// The system text-size factor (`1.0` is the default size): Windows
+    /// "Text size". `None` where the platform has no system text size
+    /// (macOS, Linux), which means `1.0`. Changes arrive as
+    /// `WindowEvent::TextScaleChanged`. NanaUI does not apply it; an
+    /// application that follows it hands it to
+    /// `AppContext::set_content_zoom` (or its own text styles).
+    pub const fn text_scale(&self) -> Option<f32> {
+        self.text_scale
     }
 
     pub const fn geometry(&self) -> WindowGeometry {

@@ -349,6 +349,8 @@ struct WindowManager<Program: RuntimeProgram> {
     high_contrast: bool,
     /// System reduce-transparency preference, as last delivered.
     reduced_transparency: bool,
+    /// System text-size factor, as last delivered.
+    text_scale: Option<f32>,
     settings: WindowDescriptor,
     chrome: HashMap<WindowId, WindowChromeSession>,
     bind_after_present: HashSet<WindowId>,
@@ -1182,6 +1184,11 @@ fn complete_startup<Program: RuntimeProgram>(
     let reduced_motion = nana_window::system_reduced_motion().unwrap_or(false);
     let high_contrast = nana_window::system_high_contrast().unwrap_or(false);
     let reduced_transparency = nana_window::system_reduced_transparency().unwrap_or(false);
+    {
+        let wake = Arc::clone(&host_work);
+        nana_window::set_text_scale_waker(move || wake.wake());
+    }
+    let text_scale = nana_window::system_text_scale();
     let context = program_context(
         message_tx.clone(),
         Arc::clone(&host_work),
@@ -1199,6 +1206,7 @@ fn complete_startup<Program: RuntimeProgram>(
     .with_reduced_motion(reduced_motion)
     .with_high_contrast(high_contrast)
     .with_reduced_transparency(reduced_transparency)
+    .with_text_scale(text_scale)
     .with_store(nana_ui_core::ProgramStore::share(Arc::clone(&store)));
     host_startup.ui_ready_begins();
     let (program, startup) = Program::initialize(&context).map_err(|error| error.to_string())?;
@@ -1363,6 +1371,7 @@ fn complete_startup<Program: RuntimeProgram>(
         reduced_motion,
         high_contrast,
         reduced_transparency,
+        text_scale,
         settings,
         chrome: HashMap::new(),
         bind_after_present: HashSet::new(),
@@ -1498,6 +1507,7 @@ impl<Program: RuntimeProgram> WindowManager<Program> {
         .with_reduced_motion(self.reduced_motion)
         .with_high_contrast(self.high_contrast)
         .with_reduced_transparency(self.reduced_transparency)
+        .with_text_scale(self.text_scale)
         .with_store(Arc::clone(&self.program_store))
     }
 
