@@ -191,6 +191,9 @@ struct WindowContext {
     /// What the content is zoomed by on top of the display scale
     /// ([`WindowCommand::SetContentZoom`]); `geometry` stays the window's.
     content_zoom: f32,
+    /// Largest client size, in the display's logical units; the minimum is
+    /// `settings.minimum_size`. See `set_size_limits`.
+    maximum_size: Option<(f64, f64)>,
     input: InputTracker,
     /// This window as an input source: its endpoint, stamps and what the
     /// Runtime last had applied to it.
@@ -1279,6 +1282,7 @@ fn complete_startup<Program: RuntimeProgram>(
         surface,
         geometry,
         content_zoom: 1.0,
+        maximum_size: None,
         input: InputTracker::default(),
         input_source: WindowInputSource::new(
             nana_ui_platform::InputSourceId(WindowId::PRIMARY.0),
@@ -2566,6 +2570,7 @@ enum RoutedWindowCommand {
     Drag(WindowId),
     SetShadow(WindowId),
     SetContentZoom(WindowId),
+    SetSizeLimits(WindowId),
     Ignore,
 }
 
@@ -2618,6 +2623,9 @@ fn route_window_command(command: &WindowCommand, known: &[WindowId]) -> RoutedWi
         WindowCommand::SetShadow { id, .. } if known(*id) => RoutedWindowCommand::SetShadow(*id),
         WindowCommand::SetContentZoom { id, .. } if known(*id) => {
             RoutedWindowCommand::SetContentZoom(*id)
+        }
+        WindowCommand::SetSizeLimits { id, .. } if known(*id) => {
+            RoutedWindowCommand::SetSizeLimits(*id)
         }
         _ => RoutedWindowCommand::Ignore,
     }
@@ -4541,6 +4549,23 @@ mod tests {
                 },
                 &[WindowId::PRIMARY]
             ),
+            RoutedWindowCommand::Ignore
+        );
+    }
+
+    #[test]
+    fn size_limit_commands_route_to_open_windows_only() {
+        let command = |id| WindowCommand::SetSizeLimits {
+            id,
+            minimum: Some((480.0, 360.0)),
+            maximum: Some((1280.0, 960.0)),
+        };
+        assert_eq!(
+            route_window_command(&command(WindowId::PRIMARY), &[WindowId::PRIMARY]),
+            RoutedWindowCommand::SetSizeLimits(WindowId::PRIMARY)
+        );
+        assert_eq!(
+            route_window_command(&command(WindowId(4)), &[WindowId::PRIMARY]),
             RoutedWindowCommand::Ignore
         );
     }

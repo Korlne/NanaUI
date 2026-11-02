@@ -223,6 +223,22 @@ impl<Program: RuntimeProgram> WindowManager<Program> {
                 };
                 self.set_window_level(event_loop, id, level);
             }
+            RoutedWindowCommand::SetSizeLimits(id) => {
+                let WindowCommand::SetSizeLimits {
+                    minimum, maximum, ..
+                } = command
+                else {
+                    return;
+                };
+                // Batched commands have no reply: an invalid size is dropped.
+                if minimum
+                    .into_iter()
+                    .chain(maximum)
+                    .all(|size| crate::window_service::validate_size(size).is_ok())
+                {
+                    self.set_size_limits(id, Some(minimum), Some(maximum));
+                }
+            }
             RoutedWindowCommand::SetContentZoom(id) => {
                 let WindowCommand::SetContentZoom { zoom, .. } = command else {
                     return;
@@ -999,6 +1015,7 @@ impl<Program: RuntimeProgram> WindowManager<Program> {
                 surface,
                 geometry,
                 content_zoom: 1.0,
+                maximum_size: None,
                 input: InputTracker::default(),
                 input_source: WindowInputSource::new(
                     nana_ui_platform::InputSourceId(id.0),
@@ -1318,6 +1335,57 @@ impl<Program: RuntimeProgram> WindowManager<Program> {
         host.surface.window().set_min_surface_size(Some(
             winit::dpi::LogicalSize::new(minimum.0, minimum.1).into(),
         ));
+    }
+
+    /// Change the window's minimum and/or maximum client size (`None` leaves
+    /// that one as it is; `Some(None)` removes it) and bring a windowed
+    /// window inside them at once. The minimum is kept in the descriptor so
+    /// a content aspect lock derives its own minimum from it.
+    pub(super) fn set_size_limits(
+        &mut self,
+        id: WindowId,
+        minimum: Option<Option<(f64, f64)>>,
+        maximum: Option<Option<(f64, f64)>>,
+    ) {
+        let geometry = self.geometry_of(id);
+        let Some(host) = self.window_contexts.get_mut(&id) else {
+            return;
+        };
+        if let Some(minimum) = minimum {
+            host.settings.minimum_size = minimum.unwrap_or((1.0, 1.0));
+        }
+        if let Some(maximum) = maximum {
+            host.maximum_size = maximum;
+        }
+        let settings = &host.settings;
+        let minimum = settings
+            .content_aspect_ratio
+            .map_or(settings.minimum_size, |ratio| {
+                nana_ui_platform::aspect_minimum_size(settings.minimum_size, ratio)
+            });
+        let maximum = host
+            .maximum_size
+            .map(|maximum| (maximum.0.max(minimum.0), maximum.1.max(minimum.1)));
+        let window = Arc::clone(host.surface.window());
+        // The minimum and the aspect lock go together.
+        self.sync_content_aspect_lock(id);
+        window.set_max_surface_size(
+            maximum.map(|size| winit::dpi::LogicalSize::new(size.0, size.1).into()),
+        );
+        // Platforms apply new limits at the next user resize, not to the
+        // size the window has now; a windowed window is resized here.
+        if geometry.maximized || window.fullscreen().is_some() {
+            return;
+        }
+        let size = (
+            f64::from(geometry.logical_size.0),
+            f64::from(geometry.logical_size.1),
+        );
+        let target = nana_ui_platform::size_within_limits(size, Some(minimum), maximum);
+        if (target.0 - size.0).abs() >= 0.5 || (target.1 - size.1).abs() >= 0.5 {
+            let _ = window
+                .request_surface_size(winit::dpi::LogicalSize::new(target.0, target.1).into());
+        }
     }
 
     /// Bring a windowed window owed its content aspect ratio to it, keeping
@@ -2507,29 +2575,13 @@ impl<Program: RuntimeProgram> WindowManager<Program> {
                 if let Some(size) = size {
                     validate_size(size)?;
                 }
-                if let Some(host) = self.window_contexts.get_mut(&id)
-                    && host.settings.content_aspect_ratio.is_some()
-                {
-                    // A locked window keeps a ratio-exact minimum.
-                    host.settings.minimum_size = size.unwrap_or((1.0, 1.0));
-                    self.sync_content_aspect_lock(id);
-                    return Ok(());
-                }
-                self.mutate_window_geometry(id, |window| {
-                    window.set_min_surface_size(
-                        size.map(|s| winit::dpi::LogicalSize::new(s.0, s.1).into()),
-                    )
-                });
+                self.set_size_limits(id, Some(size), None);
             }
             Control::MaxSize(size) => {
                 if let Some(size) = size {
                     validate_size(size)?;
                 }
-                self.mutate_window_geometry(id, |window| {
-                    window.set_max_surface_size(
-                        size.map(|s| winit::dpi::LogicalSize::new(s.0, s.1).into()),
-                    )
-                });
+                self.set_size_limits(id, None, Some(size));
             }
             Control::Resizable(value) => {
                 self.mutate_native_style(id, |window| window.set_resizable(value));

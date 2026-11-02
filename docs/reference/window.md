@@ -547,6 +547,16 @@ commands.push(WindowCommand::SetContentAspectRatio { id, ratio: Some(9.0 / 16.0)
 
 只放视频的窗口，外壳的显隐交给媒体条的 `auto_hide(true)`：指针空闲、离开窗口（包括全屏时）都会收起，标题栏听条的 `OverlayVisibilityChanged` 跟着走。标题栏写 `AppTitleBar::over_media(true)`，不要只写 `transparent(true)`：浅色主题的深色前景落在画面上看不清。不要再用 `PointerPresenceChanged` 自己维护「指针在不在」来切换外壳，那样全屏时外壳永远不会收起。写法见 [MediaTransportBar](../components/media-transport-bar.md#自动收起)。
 
+### 运行中改尺寸限制
+
+窗口打开后改最小 / 最大客户区尺寸（例如界面放大后布局需要更大的最小宽度）用 `WindowCommand::SetSizeLimits { id, minimum, maximum }` 或 `WindowHandle::set_size_limits(minimum, maximum)`；只改一项用 `WindowHandle::set_min_size` / `set_max_size`。单位是显示器的逻辑单位，不随[整窗缩放](#整窗缩放)变。
+
+- `None` 去掉该项限制（最小值回到平台自己的下限）。最大值小于最小值时抬到最小值：最小值优先，与各平台一致。
+- 普通窗口当前尺寸落在新限制外时立即调整进去（`size_within_limits`，每条边各自夹取，左上角不动）；平台自己只在下一次用户拖动时才套用新限制。最大化或全屏的窗口保持平台给的尺寸，回到普通状态后由平台按限制约束。
+- 新的最小值写回窗口描述符，所以内容宽高比锁定仍按 `aspect_minimum_size` 从它推出自己的最小值。
+- 命令没有回执：尺寸不是有限正数时整条命令被忽略；`WindowHandle` 的请求返回 `InvalidParameter`。
+- 平台：macOS（`contentMinSize` / `contentMaxSize`）、Windows（`WM_GETMINMAXINFO`）、Linux X11 与 Wayland 都经 winit 的 `set_min_surface_size` / `set_max_surface_size` 生效，再由宿主请求一次尺寸把当前窗口夹进去；Wayland 合成器可能不接受程序发起的尺寸变化，此时限制在下一次用户缩放时生效。移动端宿主（Android、iOS、OHOS）的窗口尺寸由系统决定，忽略该命令。
+
 ### 整窗缩放
 
 应用的「界面缩放」设置（含跟随系统文字大小）用 `WindowHandle::set_content_zoom(zoom)` 或 `WindowCommand::SetContentZoom { id, zoom }`，`1.0` 为不缩放，夹到 `CONTENT_ZOOM_RANGE`（0.25–5.0），非有限正数按 `1.0`。缩放与显示器的 `scale_factor` 相乘，作用在这扇窗口画出的一切上：固定像素宽度、图标、边框、圆角、下拉框里的当前值、文字排版与栅格、命中测试、焦点环、无障碍树的边界、IME 候选框位置，都一起变大，应用不必重写样式。窗口不重建、尺寸不变；下一帧文档在更小的逻辑视口里重新布局，再以更大的比例绘制。当前值读 `RuntimeProgramContext::content_zoom()`。

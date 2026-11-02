@@ -855,6 +855,38 @@ pub enum WindowCommand {
         id: WindowId,
         zoom: f32,
     },
+    /// Change an open window's minimum and maximum client size, in the
+    /// display's logical units; `None` removes that limit (a minimum of
+    /// `None` is the platform's own). A windowed window outside the new
+    /// limits is resized into them at once ([`size_within_limits`]); a
+    /// maximized or fullscreen one keeps the platform's size. A maximum
+    /// below the minimum is raised to it. A size that is not finite and
+    /// positive leaves the window's limits unchanged.
+    SetSizeLimits {
+        id: WindowId,
+        minimum: Option<(f64, f64)>,
+        maximum: Option<(f64, f64)>,
+    },
+}
+
+/// `size` brought inside `minimum` and `maximum`, each edge on its own. A
+/// maximum below the minimum is raised to it: the minimum wins, as it does on
+/// every platform.
+pub fn size_within_limits(
+    size: (f64, f64),
+    minimum: Option<(f64, f64)>,
+    maximum: Option<(f64, f64)>,
+) -> (f64, f64) {
+    let minimum = minimum.unwrap_or((0.0, 0.0));
+    let maximum = maximum.map(|maximum| (maximum.0.max(minimum.0), maximum.1.max(minimum.1)));
+    let edge = |value: f64, low: f64, high: Option<f64>| {
+        let value = value.max(low);
+        high.map_or(value, |high| value.min(high))
+    };
+    (
+        edge(size.0, minimum.0, maximum.map(|maximum| maximum.0)),
+        edge(size.1, minimum.1, maximum.map(|maximum| maximum.1)),
+    )
 }
 
 /// `ratio` when it is finite and positive.
@@ -944,6 +976,30 @@ pub fn window_resize_edge(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_size_is_brought_inside_its_limits_and_the_minimum_wins() {
+        let min = Some((400.0, 300.0));
+        let max = Some((1200.0, 900.0));
+        assert_eq!(size_within_limits((800.0, 600.0), min, max), (800.0, 600.0));
+        assert_eq!(
+            size_within_limits((200.0, 1000.0), min, max),
+            (400.0, 900.0)
+        );
+        assert_eq!(
+            size_within_limits((2000.0, 100.0), min, None),
+            (2000.0, 300.0)
+        );
+        assert_eq!(
+            size_within_limits((2000.0, 100.0), None, max),
+            (1200.0, 100.0)
+        );
+        // A maximum under the minimum is raised to it.
+        assert_eq!(
+            size_within_limits((100.0, 100.0), Some((500.0, 500.0)), Some((300.0, 800.0))),
+            (500.0, 500.0)
+        );
+    }
 
     #[test]
     fn content_zoom_composes_with_the_display_scale_and_keeps_the_window() {

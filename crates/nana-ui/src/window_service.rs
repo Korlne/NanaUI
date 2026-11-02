@@ -409,6 +409,20 @@ impl WindowHandle {
     pub fn set_max_size(&self, size: Option<(f64, f64)>) -> WindowRequest<()> {
         self.control(Control::MaxSize(size))
     }
+    /// Change both client size limits at once (`None` removes one); a
+    /// windowed window outside them is resized into them. See
+    /// `WindowCommand::SetSizeLimits`.
+    pub fn set_size_limits(
+        &self,
+        minimum: Option<(f64, f64)>,
+        maximum: Option<(f64, f64)>,
+    ) -> WindowRequest<()> {
+        self.control(Control::Command(WindowCommand::SetSizeLimits {
+            id: self.id,
+            minimum,
+            maximum,
+        }))
+    }
     pub fn set_position(&self, position: (f32, f32)) -> WindowRequest<()> {
         self.control(Control::Command(WindowCommand::Move {
             id: self.id,
