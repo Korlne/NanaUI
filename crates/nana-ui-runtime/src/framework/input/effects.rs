@@ -225,7 +225,14 @@ impl AppContext {
                 owner: self.world.focused(document).map_or(0, StableNodeId::get),
                 purpose: TextInputPurpose::Normal,
                 cursor_area: self.rich_editor_caret_bounds(document).map(logical_rect),
-                surrounding: None,
+                surrounding: self.focused_rich_editor(document).and_then(|entity| {
+                    self.read(entity, |view: &crate::RichTextEditor| {
+                        let (anchor, focus) = view.selection();
+                        surrounding_window(view.value.text(), focus, anchor)
+                    })
+                    .ok()
+                    .flatten()
+                }),
             });
         }
         let (node, view) = self.editable_focused_text_input(document)?;

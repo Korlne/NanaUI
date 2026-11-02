@@ -510,6 +510,41 @@ impl RichTextEditor {
         true
     }
 
+    /// An IME deleting `before`/`after` bytes around the selection. While
+    /// composing, the selection is the text the preedit stands in for: it is
+    /// kept, and only the bytes around it go. The rule is `nana-text`'s
+    /// ([`nana_text::editable::ime`]), as for a plain text input.
+    fn delete_ime_surrounding(&mut self, before: usize, after: usize) -> bool {
+        if !self.editable() {
+            return false;
+        }
+        let composing = self.state.preedit.is_some();
+        let Some(deletion) = nana_text::editable::ime::surrounding_deletion(
+            self.value.text(),
+            self.range(),
+            before,
+            after,
+            composing,
+        ) else {
+            return false;
+        };
+        self.remember(false);
+        // The later range first, so the earlier one's offsets still hold.
+        for range in [deletion.after.clone(), deletion.before.clone()] {
+            if !range.is_empty() {
+                self.value.replace_range(range, "");
+            }
+        }
+        if composing {
+            self.state.anchor = deletion.map_offset(self.state.anchor);
+            self.state.focus = deletion.map_offset(self.state.focus);
+            self.state.preferred_x = None;
+        } else {
+            self.set_caret(deletion.before.start);
+        }
+        true
+    }
+
     fn apply_command(&mut self, command: RichEditCommand) -> bool {
         match command {
             RichEditCommand::SetAttrs(style) => {
@@ -1275,7 +1310,11 @@ impl AppContext {
                 true
             }
             CompositionInput::End => view.state.preedit.take().is_some(),
-            CompositionInput::Enabled | CompositionInput::DeleteSurrounding { .. } => false,
+            CompositionInput::DeleteSurrounding {
+                before_bytes,
+                after_bytes,
+            } => view.delete_ime_surrounding(*before_bytes, *after_bytes),
+            CompositionInput::Enabled => false,
         })?;
         Ok(Some(handled))
     }

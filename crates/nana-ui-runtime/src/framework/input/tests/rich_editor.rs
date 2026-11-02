@@ -690,3 +690,72 @@ fn ctrl_backspace_deletes_one_word_in_both_editor_types() {
         "one two "
     );
 }
+
+/// An IME that deletes around the caret (Korean, Vietnamese, autocorrect)
+/// gets the rich editor's surrounding text and its deletions land: while
+/// composing the selection the preedit replaces stays, and a deletion is one
+/// undo step. Half a character is refused.
+#[test]
+fn rich_editor_reports_surrounding_text_and_applies_ime_deletions() {
+    let (mut cx, doc, editor, _shaper) = fixture("abc 你好 xyz");
+    cx.focus_node(doc, editor.stable_id()).unwrap();
+    cx.rich_edit(editor, RichEditCommand::Select(4..10))
+        .unwrap();
+    let surrounding = cx
+        .text_input_context(doc)
+        .and_then(|context| context.surrounding)
+        .expect("a rich editor reports its surrounding text");
+    assert_eq!(surrounding.text, "abc 你好 xyz");
+    assert_eq!((surrounding.anchor, surrounding.cursor), (4, 10));
+
+    let mut input = TestInput::default();
+    let mut composition = |cx: &mut AppContext, composition| {
+        input
+            .dispatch(
+                cx,
+                doc,
+                &Gesture::Event(InputPayload::Composition(composition)),
+            )
+            .unwrap()
+            .handled
+    };
+    composition(&mut cx, CompositionInput::Start);
+    assert!(composition(
+        &mut cx,
+        CompositionInput::DeleteSurrounding {
+            before_bytes: 1,
+            after_bytes: 1,
+        },
+    ));
+    assert_eq!(
+        cx.read(editor, |e| (e.value.text().to_owned(), e.selection()))
+            .unwrap(),
+        ("abc你好xyz".to_owned(), (3, 9))
+    );
+    composition(&mut cx, CompositionInput::End);
+    cx.rich_edit(editor, RichEditCommand::Select(6..6)).unwrap();
+    assert!(!composition(
+        &mut cx,
+        CompositionInput::DeleteSurrounding {
+            before_bytes: 2,
+            after_bytes: 0,
+        },
+    ));
+    assert!(composition(
+        &mut cx,
+        CompositionInput::DeleteSurrounding {
+            before_bytes: 3,
+            after_bytes: 0,
+        },
+    ));
+    assert_eq!(
+        cx.read(editor, |e| (e.value.text().to_owned(), e.selection()))
+            .unwrap(),
+        ("abc好xyz".to_owned(), (3, 3))
+    );
+    cx.rich_edit(editor, RichEditCommand::Undo).unwrap();
+    assert_eq!(
+        cx.read(editor, |e| e.value.text().to_owned()).unwrap(),
+        "abc你好xyz"
+    );
+}
