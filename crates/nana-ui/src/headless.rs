@@ -65,6 +65,9 @@ pub struct HeadlessWindow {
     pub tag: Option<Arc<str>>,
     pub visible: bool,
     pub parent: Option<WindowId>,
+    /// `WindowCommand::SetContentZoom`'s value; [`HeadlessRuntime::present`]
+    /// lays out in [`WindowGeometry::content`] of `geometry` under it.
+    pub content_zoom: f32,
 }
 
 /// Options fixed for the life of the host.
@@ -155,6 +158,7 @@ impl<P: RuntimeProgram> HeadlessRuntime<P> {
                     tag: primary.tag.clone(),
                     visible: true,
                     parent: None,
+                    content_zoom: 1.0,
                 },
                 input: None,
             },
@@ -243,6 +247,7 @@ impl<P: RuntimeProgram> HeadlessRuntime<P> {
                 tag: None,
                 visible: false,
                 parent: None,
+                content_zoom: 1.0,
             });
         context(
             id,
@@ -370,7 +375,7 @@ impl<P: RuntimeProgram> HeadlessRuntime<P> {
         let context = self.context_for(id);
         self.program.prepare_window_frame(id, &context);
         let now = self.clock.runtime_time(Instant::now());
-        let (width, height) = context.geometry().logical_size;
+        let (width, height) = context.content_geometry().logical_size;
         let text = &mut self.text;
         let flushed = self.program.write_document(id, |document| {
             if document.compositor_needs_tick() {
@@ -750,6 +755,7 @@ impl<P: RuntimeProgram> HeadlessRuntime<P> {
             tag: descriptor.tag.clone(),
             visible: descriptor.visible,
             parent: descriptor.parent,
+            content_zoom: 1.0,
         };
         self.service.register(id);
         self.windows.insert(
@@ -845,6 +851,12 @@ impl<P: RuntimeProgram> HeadlessRuntime<P> {
                 self.close_window(*id);
                 RuntimeProgramUpdate::default()
             }
+            WindowCommand::SetContentZoom { id, zoom } => {
+                if let Some(state) = self.windows.get_mut(id) {
+                    state.window.content_zoom = nana_ui_platform::valid_content_zoom(*zoom);
+                }
+                RuntimeProgramUpdate::redraw(*id)
+            }
             WindowCommand::OpenFileDialog { id, request } => {
                 let result = match std::mem::take(&mut self.file_dialog) {
                     HeadlessFileDialog::Cancel => FileDialogResult::cancelled(request.id),
@@ -929,6 +941,7 @@ fn context<M: Send + 'static>(
     .with_high_contrast(options.high_contrast)
     .with_reduced_transparency(options.reduced_transparency)
     .with_text_scale(options.text_scale)
+    .with_content_zoom(window.content_zoom)
     .with_store(Arc::clone(store))
 }
 

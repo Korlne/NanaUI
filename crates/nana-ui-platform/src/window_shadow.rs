@@ -70,6 +70,15 @@ impl WindowVisualShape {
         }
     }
 
+    /// The same shape `scale` times larger, from the client origin: a shape
+    /// found in zoomed content units, in the window's.
+    pub fn scaled(self, scale: f32) -> Self {
+        Self {
+            rect: self.rect.map(|value| value * scale),
+            radii: self.radii.map(|value| value * scale),
+        }
+    }
+
     pub fn is_valid(self) -> bool {
         self.rect.iter().chain(&self.radii).all(|v| v.is_finite())
             && self.rect[2] > 0.0

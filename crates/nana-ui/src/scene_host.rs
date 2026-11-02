@@ -188,6 +188,9 @@ struct WindowContext {
     material_override: Option<nana_window::MaterialEffect>,
     surface: HostedGpuSurface,
     geometry: WindowGeometry,
+    /// What the content is zoomed by on top of the display scale
+    /// ([`WindowCommand::SetContentZoom`]); `geometry` stays the window's.
+    content_zoom: f32,
     input: InputTracker,
     /// This window as an input source: its endpoint, stamps and what the
     /// Runtime last had applied to it.
@@ -1275,6 +1278,7 @@ fn complete_startup<Program: RuntimeProgram>(
         material_override: None,
         surface,
         geometry,
+        content_zoom: 1.0,
         input: InputTracker::default(),
         input_source: WindowInputSource::new(
             nana_ui_platform::InputSourceId(WindowId::PRIMARY.0),
@@ -1508,6 +1512,7 @@ impl<Program: RuntimeProgram> WindowManager<Program> {
         .with_high_contrast(self.high_contrast)
         .with_reduced_transparency(self.reduced_transparency)
         .with_text_scale(self.text_scale)
+        .with_content_zoom(self.content_zoom_of(id))
         .with_store(Arc::clone(&self.program_store))
     }
 
@@ -1597,6 +1602,21 @@ impl<Program: RuntimeProgram> WindowManager<Program> {
             .get(&id)
             .map(|host| host.geometry)
             .unwrap_or_default()
+    }
+
+    /// The window's content zoom; `1.0` for a window that is gone.
+    fn content_zoom_of(&self, id: WindowId) -> f32 {
+        self.window_contexts
+            .get(&id)
+            .map_or(1.0, |host| host.content_zoom)
+    }
+
+    /// What the window's content is laid out, painted and hit-tested in:
+    /// [`WindowGeometry::content`] of the window under its content zoom.
+    /// Window management (size limits, bounds, persistence, resize events)
+    /// keeps [`Self::geometry_of`].
+    fn content_geometry_of(&self, id: WindowId) -> WindowGeometry {
+        self.geometry_of(id).content(self.content_zoom_of(id))
     }
 
     /// What `id` presents, and how. A window that is gone presents nothing, so
@@ -2545,6 +2565,7 @@ enum RoutedWindowCommand {
     SetApplicationIcon,
     Drag(WindowId),
     SetShadow(WindowId),
+    SetContentZoom(WindowId),
     Ignore,
 }
 
@@ -2595,6 +2616,9 @@ fn route_window_command(command: &WindowCommand, known: &[WindowId]) -> RoutedWi
         WindowCommand::SetApplicationIcon { .. } => RoutedWindowCommand::SetApplicationIcon,
         WindowCommand::Drag(id) if known(*id) => RoutedWindowCommand::Drag(*id),
         WindowCommand::SetShadow { id, .. } if known(*id) => RoutedWindowCommand::SetShadow(*id),
+        WindowCommand::SetContentZoom { id, .. } if known(*id) => {
+            RoutedWindowCommand::SetContentZoom(*id)
+        }
         _ => RoutedWindowCommand::Ignore,
     }
 }
@@ -2720,7 +2744,10 @@ fn shift_wheel_axes(delta: (f32, f32), shift: bool, platform_swaps: bool) -> (f3
 /// are client coordinates, so the screen position adds the client origin:
 /// the outer position plus the surface's offset inside the frame (title bar,
 /// borders), not the outer position alone.
-fn window_screen_origin(window: &dyn winit::window::Window) -> Option<ScreenSpace> {
+fn window_screen_origin(
+    window: &dyn winit::window::Window,
+    content_zoom: f32,
+) -> Option<ScreenSpace> {
     let own = window.scale_factor().max(0.01);
     let scale = desktop_scale(own, window_reference_scale(window));
     window.outer_position().ok().map(|outer| {
@@ -2729,7 +2756,8 @@ fn window_screen_origin(window: &dyn winit::window::Window) -> Option<ScreenSpac
         let origin = position.to_logical::<f32>(scale);
         ScreenSpace {
             origin: (origin.x, origin.y),
-            client_ratio: (own / scale) as f32,
+            // A client point is in the zoomed content's units.
+            client_ratio: (own / scale) as f32 * content_zoom,
         }
     })
 }
@@ -3643,8 +3671,8 @@ mod tests {
     use super::{
         Desktop, DisplayBounds, FileDragInput, FileDragKind, ForwardPointerAction, FrameMoveStep,
         InputTracker, PRIMARY_MOUSE_BUTTON, RoutedWindowCommand, allows_modal_parent_event,
-        desktop_position, frame_edge_cursor, frame_move_step, held_mouse_button,
-        invalidate_program_host_textures, mouse_button_code, mouse_button_mask,
+        desktop_position, frame_edge_cursor, frame_move_step, frame_resize_edge_for,
+        held_mouse_button, invalidate_program_host_textures, mouse_button_code, mouse_button_mask,
         platform_composition, platform_input_key, platform_input_modifiers, platform_physical_key,
         platform_window_event, remove_image_target_index, replace_image_target_index,
         route_window_command, scene_clear_color, scene_runtime_input_update,
@@ -4463,6 +4491,58 @@ mod tests {
         assert_eq!(tracker.cursor, (50.0, 25.0));
         tracker.set_cursor_physical(PhysicalPosition::new(220.0, 110.0), 2.0);
         assert_eq!(tracker.cursor, (110.0, 55.0));
+    }
+
+    /// Under a content zoom the surface stays, the content's scale grows, and
+    /// a pointer lands in content units; its screen position is still the
+    /// desktop's.
+    #[test]
+    fn content_zoom_maps_the_pointer_into_content_units_and_back_to_the_screen() {
+        let window = WindowGeometry {
+            physical_size: (1600, 1200),
+            logical_size: (800.0, 600.0),
+            scale_factor: 2.0,
+            ..WindowGeometry::default()
+        };
+        let content = window.content(1.5);
+        assert_eq!(content.scale_factor, 3.0);
+        let mut tracker = InputTracker::default();
+        tracker.set_cursor_physical(PhysicalPosition::new(300.0, 150.0), content.scale_factor);
+        assert_eq!(tracker.cursor, (100.0, 50.0));
+        // The client ratio carries the zoom: content (100, 50) is window
+        // logical (150, 75) from the client origin.
+        let space = ScreenSpace {
+            origin: (10.0, 20.0),
+            client_ratio: 1.5,
+        };
+        assert_eq!(screen_position(Some(space), tracker.cursor), (160.0, 95.0));
+        // A resize edge is found in the same content units as the pointer.
+        let settings = WindowDescriptor::new("zoomed");
+        let right = content.logical_size.0 - 1.0;
+        assert_eq!(
+            frame_resize_edge_for(&settings, &content, false, right, 200.0),
+            Some(WindowResizeEdge::East)
+        );
+        assert_eq!(
+            route_window_command(
+                &WindowCommand::SetContentZoom {
+                    id: WindowId::PRIMARY,
+                    zoom: 1.5,
+                },
+                &[WindowId::PRIMARY]
+            ),
+            RoutedWindowCommand::SetContentZoom(WindowId::PRIMARY)
+        );
+        assert_eq!(
+            route_window_command(
+                &WindowCommand::SetContentZoom {
+                    id: WindowId(9),
+                    zoom: 1.5,
+                },
+                &[WindowId::PRIMARY]
+            ),
+            RoutedWindowCommand::Ignore
+        );
     }
 
     #[test]

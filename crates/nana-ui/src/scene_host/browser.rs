@@ -103,9 +103,16 @@ impl<Program: RuntimeProgram> WindowManager<Program> {
                 continue;
             };
             let key = (id, request.id.clone());
-            let geometry =
-                native_browser_geometry(scene, request.node, self.geometry_of(id).logical_size);
+            // Placed in content units, then in the window's: the native view
+            // is a child of the window, not of the zoomed content.
+            let zoom = f64::from(self.content_zoom_of(id));
+            let geometry = native_browser_geometry(
+                scene,
+                request.node,
+                self.content_geometry_of(id).logical_size,
+            );
             let (bounds, clip, unobscured) = geometry.unwrap_or_default();
+            let (bounds, clip) = (scale_rect(bounds, zoom), scale_rect(clip, zoom));
             let visible = request.visible && reachable && unobscured;
             if !visible && !self.browsers.contains_key(&key) {
                 continue;
@@ -264,6 +271,15 @@ impl<Program: RuntimeProgram> WindowManager<Program> {
 
 /// Native child views cannot participate in nonrectangular WGPU composition.
 /// Hide only while unsupported clipping or a later painted sibling covers this pane.
+fn scale_rect(rect: BrowserRect, scale: f64) -> BrowserRect {
+    BrowserRect {
+        x: rect.x * scale,
+        y: rect.y * scale,
+        width: rect.width * scale,
+        height: rect.height * scale,
+    }
+}
+
 fn native_browser_geometry(
     scene: &nana_ui_scene::UiScene,
     node: StableNodeId,

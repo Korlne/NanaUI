@@ -66,7 +66,7 @@ impl<Program: RuntimeProgram> WindowManager<Program> {
         if !self.window_outputs.contains_key(&id) {
             return None;
         }
-        let geometry = self.geometry_of(id);
+        let geometry = self.content_geometry_of(id);
         // Unknown custom renderer versions require invalidation. The shared
         // render key tracks actual compositor clocks and presentation epochs.
         let renderer_revision = gpu_renderers.map(|registry| registry.retained_revision(scene));
@@ -370,7 +370,7 @@ impl<Program: RuntimeProgram> WindowManager<Program> {
         if event_loop.exiting() || !self.window_contexts.contains_key(&id) {
             return false;
         }
-        let geometry = self.geometry_of(id);
+        let geometry = self.content_geometry_of(id);
         let viewport = LayoutViewport::new(geometry.logical_size.0, geometry.logical_size.1);
         let Some(flush) = self.program.write_document(id, |document| {
             crate::output::driver::flush_presentation(document, viewport, &mut self.text)

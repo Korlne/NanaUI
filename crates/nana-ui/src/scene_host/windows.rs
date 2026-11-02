@@ -223,6 +223,12 @@ impl<Program: RuntimeProgram> WindowManager<Program> {
                 };
                 self.set_window_level(event_loop, id, level);
             }
+            RoutedWindowCommand::SetContentZoom(id) => {
+                let WindowCommand::SetContentZoom { zoom, .. } = command else {
+                    return;
+                };
+                self.set_content_zoom(id, zoom);
+            }
             RoutedWindowCommand::SetContentAspectRatio(id) => {
                 let WindowCommand::SetContentAspectRatio { ratio, .. } = command else {
                     return;
@@ -392,6 +398,7 @@ impl<Program: RuntimeProgram> WindowManager<Program> {
         let window = Arc::clone(host.surface.window());
         let revision = scene.projection_revision();
         let size = host.geometry.logical_size;
+        let zoom = host.content_zoom;
         let visible = !held && window.fullscreen().is_none();
         if host.shadow_body.is_some_and(|body| {
             body.revision == revision && body.size == size && body.visible == visible
@@ -399,7 +406,10 @@ impl<Program: RuntimeProgram> WindowManager<Program> {
             metric!(diagnostics_window::SHADOW_SYNC_SKIPPED);
             return;
         }
-        let shape = crate::window_shadow::derive_visual_shape(scene, [size.0, size.1]);
+        // The scene is in content units; the shadow follows the window's.
+        let shape =
+            crate::window_shadow::derive_visual_shape(scene, [size.0 / zoom, size.1 / zoom])
+                .scaled(zoom);
         if let Some(body) = host.shadow_body.as_mut()
             && body.shape == shape
             && body.size == size
@@ -561,7 +571,7 @@ impl<Program: RuntimeProgram> WindowManager<Program> {
 
     fn sample_client_pointer(&self, id: WindowId) -> Option<(f32, f32)> {
         let window = self.window(id)?;
-        let geometry = self.geometry_of(id);
+        let geometry = self.content_geometry_of(id);
         nana_window::pointer_in_client_area(
             window.as_ref(),
             f64::from(geometry.scale_factor),
@@ -623,7 +633,7 @@ impl<Program: RuntimeProgram> WindowManager<Program> {
         self.input_mut(id).cursor = point;
         let origin = self
             .window(id)
-            .and_then(|window| window_screen_origin(window.as_ref()));
+            .and_then(|window| window_screen_origin(window.as_ref(), self.content_zoom_of(id)));
         let modifiers = platform_input_modifiers(self.input_of(id).modifiers);
         let buttons = self.input_of(id).buttons;
         let pointer = self.input_of(id).pointer_event(
@@ -666,7 +676,7 @@ impl<Program: RuntimeProgram> WindowManager<Program> {
     fn dispatch_pointer_cancel(&mut self, event_loop: &dyn ActiveEventLoop, id: WindowId) {
         let origin = self
             .window(id)
-            .and_then(|window| window_screen_origin(window.as_ref()));
+            .and_then(|window| window_screen_origin(window.as_ref(), self.content_zoom_of(id)));
         let pointer = self.input_mut(id).cancel_mouse(origin);
         let _ = self.deliver_host_input(event_loop, id, InputPayload::Pointer(pointer));
     }
@@ -988,6 +998,7 @@ impl<Program: RuntimeProgram> WindowManager<Program> {
                 material_override: None,
                 surface,
                 geometry,
+                content_zoom: 1.0,
                 input: InputTracker::default(),
                 input_source: WindowInputSource::new(
                     nana_ui_platform::InputSourceId(id.0),
@@ -1984,9 +1995,10 @@ impl<Program: RuntimeProgram> WindowManager<Program> {
         let fullscreen = self
             .window(id)
             .is_some_and(|window| window.fullscreen().is_some());
+        // `x` and `y` are content coordinates, like the pointer they came from.
         let edge = frame_resize_edge_for(
             self.settings_of(id),
-            &self.geometry_of(id),
+            &self.content_geometry_of(id),
             fullscreen,
             x,
             y,
@@ -2181,10 +2193,33 @@ impl<Program: RuntimeProgram> WindowManager<Program> {
             place_native_controls(host);
         }
     }
+    /// The scale between the window's content units and its surface: the
+    /// display's scale factor times the content zoom. Input, accessibility
+    /// and drag-and-drop positions convert with it.
     pub(super) fn scale_factor(&self, id: WindowId) -> f32 {
         self.window(id)
             .map(|window| normalized_scale_factor(window.scale_factor() as f32))
             .unwrap_or(1.0)
+            * self.content_zoom_of(id)
+    }
+
+    /// Apply [`WindowCommand::SetContentZoom`]: the next frame lays the
+    /// document out in the smaller logical viewport and paints it larger.
+    /// The window is neither resized nor recreated.
+    pub(super) fn set_content_zoom(&mut self, id: WindowId, zoom: f32) {
+        let zoom = nana_ui_platform::valid_content_zoom(zoom);
+        let Some(host) = self.window_contexts.get_mut(&id) else {
+            return;
+        };
+        if host.content_zoom == zoom {
+            return;
+        }
+        host.content_zoom = zoom;
+        host.input_source.content_zoom = zoom;
+        // The pointer the Runtime holds is in the old units; it is mapped
+        // again on the next move.
+        place_native_controls(host);
+        self.request_redraw(id);
     }
     pub(super) fn title_bar_chrome_action(
         &mut self,
@@ -2608,12 +2643,15 @@ pub(super) fn place_native_controls(host: &WindowContext) {
     let Some(bounds) = host.native_controls_box.get() else {
         return;
     };
+    // The placeholder's box is in content units; the buttons sit in the
+    // window's.
+    let zoom = f64::from(host.content_zoom);
     let _ = nana_window::place_native_window_controls(
         host.surface.window().as_ref(),
-        f64::from(bounds.x),
-        f64::from(bounds.y),
-        f64::from(bounds.width),
-        f64::from(bounds.height),
+        f64::from(bounds.x) * zoom,
+        f64::from(bounds.y) * zoom,
+        f64::from(bounds.width) * zoom,
+        f64::from(bounds.height) * zoom,
     );
 }
 

@@ -144,7 +144,7 @@ impl<Program: RuntimeProgram> WindowManager<Program> {
         let scale = self.scale_factor(id);
         let origin = self
             .window(id)
-            .and_then(|window| window_screen_origin(window.as_ref()));
+            .and_then(|window| window_screen_origin(window.as_ref(), self.content_zoom_of(id)));
         let now = self.animation_clock.runtime_time(Instant::now());
         if let Some(lowered) = self.input_mut(id).map(&event, scale, origin, now) {
             if self.consume_frame_move(event_loop, id, &lowered.payload)

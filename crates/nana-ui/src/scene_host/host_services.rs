@@ -45,6 +45,9 @@ pub(super) struct WindowInputSource {
     /// Focus changed since the last native apply. Keep this edge even if
     /// loss and regain arrive in the same turn with the same editor.
     ime_reset_pending: bool,
+    /// The window's content zoom: the Runtime's caret is in content units,
+    /// the IME's in the window's.
+    pub(super) content_zoom: f32,
 }
 
 impl WindowInputSource {
@@ -57,6 +60,7 @@ impl WindowInputSource {
             ime: None,
             applied_ime: None,
             ime_reset_pending: false,
+            content_zoom: 1.0,
         }
     }
 
@@ -102,6 +106,7 @@ pub(super) struct NativeWindowServices<'a> {
     pub(super) clipboard: &'a SharedClipboardHost,
     pub(super) runtime_cursor: &'a mut nana_ui_platform::CursorIcon,
     pub(super) ime: &'a mut Option<TextInputContext>,
+    pub(super) content_zoom: f32,
     /// Set when the Runtime's cursor changed; the host composes and applies
     /// it once the drain is over.
     pub(super) cursor_changed: bool,
@@ -125,6 +130,7 @@ impl<'a> NativeWindowServices<'a> {
                 clipboard,
                 runtime_cursor: &mut source.runtime_cursor,
                 ime: &mut source.ime,
+                content_zoom: source.content_zoom,
                 cursor_changed: false,
             },
             &mut source.endpoint,
@@ -147,7 +153,7 @@ impl HostServices for NativeWindowServices<'_> {
         // messages, and an IME request made there re-enters the window
         // procedure (winit's Win32 backend then waits on its own window
         // lock). The host applies it once the turn's messages are handled.
-        *self.ime = state.cloned();
+        *self.ime = state.map(|state| zoomed_text_input(state, self.content_zoom));
     }
 
     fn read_clipboard(&mut self) -> Result<Option<String>, HostServiceError> {
@@ -215,6 +221,20 @@ fn ime_capabilities(state: &TextInputContext) -> ImeCapabilities {
         capabilities = capabilities.with_surrounding_text();
     }
     capabilities
+}
+
+/// `state` with its caret area moved from content units into the window's.
+fn zoomed_text_input(state: &TextInputContext, zoom: f32) -> TextInputContext {
+    let mut state = state.clone();
+    if zoom != 1.0
+        && let Some(area) = state.cursor_area.as_mut()
+    {
+        area.x *= zoom;
+        area.y *= zoom;
+        area.width *= zoom;
+        area.height *= zoom;
+    }
+    state
 }
 
 fn ime_request_data(state: &TextInputContext) -> ImeRequestData {
@@ -352,6 +372,7 @@ pub(super) fn apply_text_input(
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use nana_ui_core::LogicalRect;
     use nana_ui_platform::SurroundingText;
 
@@ -366,6 +387,18 @@ mod tests {
                 anchor: 3,
             }),
         }
+    }
+
+    #[test]
+    fn a_zoomed_caret_reaches_the_ime_in_window_units() {
+        let caret = state(true, false);
+        let zoomed = zoomed_text_input(&caret, 1.5);
+        let area = zoomed.cursor_area.expect("area");
+        assert_eq!(
+            (area.x, area.y, area.width, area.height),
+            (15.0, 30.0, 3.0, 27.0)
+        );
+        assert_eq!(zoomed_text_input(&caret, 1.0), caret);
     }
 
     #[test]

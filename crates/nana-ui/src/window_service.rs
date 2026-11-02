@@ -423,6 +423,16 @@ impl WindowHandle {
             ratio,
         }))
     }
+    /// Zoom everything this window's UI draws by `zoom` (1.0 is none) on top
+    /// of the display scale: fixed widths, borders, icons, text and hit
+    /// testing together. The window keeps its size and is not recreated;
+    /// see `WindowCommand::SetContentZoom`.
+    pub fn set_content_zoom(&self, zoom: f32) -> WindowRequest<()> {
+        self.control(Control::Command(WindowCommand::SetContentZoom {
+            id: self.id,
+            zoom,
+        }))
+    }
     pub fn set_resizable(&self, resizable: bool) -> WindowRequest<()> {
         self.control(Control::Resizable(resizable))
     }

@@ -175,7 +175,9 @@ impl<Program: RuntimeProgram> WindowManager<Program> {
         self.sync_window_output(id);
         self.sync_compositor_clock(id);
         self.reconcile_browser_lifetimes();
-        let geometry = self.geometry_of(id);
+        // The content's geometry: under a content zoom the document lays out
+        // in a smaller logical viewport and paints at a larger scale.
+        let geometry = self.content_geometry_of(id);
         let material = self.material_of(id);
         let viewport = LayoutViewport::new(geometry.logical_size.0, geometry.logical_size.1);
         let Some(flush) = self.program.write_document(id, |document| {

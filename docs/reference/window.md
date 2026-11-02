@@ -475,7 +475,7 @@ fn build(&mut self, window: &mut ApplicationWindow, context: &RuntimeProgramCont
 
 ### 系统文字大小
 
-`RuntimeProgramContext::text_scale()` 返回系统文字大小系数（`1.0` 为默认大小）。窗口创建时读取。运行中变化时宿主向每扇窗口发送 `WindowEvent::TextScaleChanged { id, scale }`。NanaUI 不自动套用它：提供「跟随系统」界面缩放的应用读它，再交给 `AppContext::set_content_zoom`（整窗缩放，见 [运行时与场景](runtime-scene.md)）或自己的文字样式。平台接口是 `nana_window::system_text_scale()` / `take_text_scale_change()` / `set_text_scale_waker(..)`。
+`RuntimeProgramContext::text_scale()` 返回系统文字大小系数（`1.0` 为默认大小）。窗口创建时读取。运行中变化时宿主向每扇窗口发送 `WindowEvent::TextScaleChanged { id, scale }`。NanaUI 不自动套用它：提供「跟随系统」界面缩放的应用读它，再交给 `WindowHandle::set_content_zoom`（[整窗缩放](#整窗缩放)）或自己的文字样式。平台接口是 `nana_window::system_text_scale()` / `take_text_scale_change()` / `set_text_scale_waker(..)`。
 
 - Windows：读取「文本大小」（`UISettings.TextScaleFactor`，1.0–2.25）。进程内持有一个订阅了 `TextScaleFactorChanged` 的 `UISettings`。该事件在工作线程触发，宿主装好的唤醒器把事件循环叫醒，在下一次 `about_to_wait` 重新读取。只在值变化时发送事件。
 - macOS：没有系统级文字大小（动态字体只在 iOS）。返回 `None`，按 `1.0` 处理。不发送事件。
@@ -546,6 +546,23 @@ commands.push(WindowCommand::SetContentAspectRatio { id, ratio: Some(9.0 / 16.0)
 - **平台**：拖动时保持比例只在 Windows 上实现。macOS 与 Linux 上开窗尺寸、换比例时的调整和最小尺寸照常生效，用户拖动不受约束。
 
 只放视频的窗口，外壳的显隐交给媒体条的 `auto_hide(true)`：指针空闲、离开窗口（包括全屏时）都会收起，标题栏听条的 `OverlayVisibilityChanged` 跟着走。标题栏写 `AppTitleBar::over_media(true)`，不要只写 `transparent(true)`：浅色主题的深色前景落在画面上看不清。不要再用 `PointerPresenceChanged` 自己维护「指针在不在」来切换外壳，那样全屏时外壳永远不会收起。写法见 [MediaTransportBar](../components/media-transport-bar.md#自动收起)。
+
+### 整窗缩放
+
+应用的「界面缩放」设置（含跟随系统文字大小）用 `WindowHandle::set_content_zoom(zoom)` 或 `WindowCommand::SetContentZoom { id, zoom }`，`1.0` 为不缩放，夹到 `CONTENT_ZOOM_RANGE`（0.25–5.0），非有限正数按 `1.0`。缩放与显示器的 `scale_factor` 相乘，作用在这扇窗口画出的一切上：固定像素宽度、图标、边框、圆角、下拉框里的当前值、文字排版与栅格、命中测试、焦点环、无障碍树的边界、IME 候选框位置，都一起变大，应用不必重写样式。窗口不重建、尺寸不变；下一帧文档在更小的逻辑视口里重新布局，再以更大的比例绘制。当前值读 `RuntimeProgramContext::content_zoom()`。
+
+```rust
+// 设置页的「界面缩放 125%」，或跟随系统：
+let zoom = cx.text_scale().unwrap_or(1.0);
+let _ = cx.window().set_content_zoom(zoom);
+```
+
+规则：
+
+- **内容几何是 `WindowGeometry::content(zoom)`**：物理尺寸不变，`scale_factor` 乘 `zoom`，`logical_size` 除以 `zoom`。布局视口、绘制视口（含 `WindowOutput`）、指针与拖放坐标、无障碍、IME、原生网页视图与 macOS 原生窗口按钮的落点、自绘边框的缩放命中都用它，所以 scene 坐标乘 `content_geometry().scale_factor` 就是 surface 像素。`RuntimeProgramContext::content_geometry()` 给应用同一个值。
+- **窗口管理不缩放**：`RuntimeProgramContext::geometry()`、`WindowEvent::Resized`、最小 / 最大尺寸、`SetBounds`、几何持久化都仍是显示器的逻辑单位。缩放不改变窗口大小，也不写入持久化几何。
+- **GPU 内容**：`CustomRenderNode` 与 `HostTexture` 的布局盒是逻辑单位，跟着缩放变大。应用以纹理像素声明的纹理尺寸不变：纹理按原尺寸采样进放大后的盒子。按 `scale_factor` 决定渲染目标尺寸的渲染器（`GpuView` 的上下文）拿到的是乘过缩放的值，因此画得更清楚而不是被拉伸。原生内容区域（Windows 合成）以 scene 坐标交给程序，换算用 `content_geometry().scale_factor`。
+- **嵌入式宿主与无头**：`HeadlessRuntime` 记下命令，`present` 在 `content(zoom)` 的视口里布局。自己持有 `AppContext` 的嵌入式宿主自己算视口与绘制比例。
 
 ### 嵌入已有宿主
 

@@ -19,6 +19,43 @@ pub struct WindowGeometry {
     pub maximized: bool,
 }
 
+/// The content zoom a window accepts; see [`WindowCommand::SetContentZoom`].
+pub const CONTENT_ZOOM_RANGE: std::ops::RangeInclusive<f32> = 0.25..=5.0;
+
+/// `zoom` clamped into [`CONTENT_ZOOM_RANGE`]; `1.0` when it is not a finite
+/// positive number.
+pub fn valid_content_zoom(zoom: f32) -> f32 {
+    if zoom.is_finite() && zoom > 0.0 {
+        zoom.clamp(*CONTENT_ZOOM_RANGE.start(), *CONTENT_ZOOM_RANGE.end())
+    } else {
+        1.0
+    }
+}
+
+impl WindowGeometry {
+    /// The geometry the window's content lives in under content `zoom`: the
+    /// same physical surface, a scale factor `zoom` times the display's, and
+    /// a logical size `zoom` times smaller. Layout, painting, hit testing,
+    /// accessibility bounds and the IME caret all use it, so every logical
+    /// unit — fixed widths, borders, icons, text — grows by `zoom` together.
+    ///
+    /// The window itself does not change: physical size, desktop position
+    /// and maximized state are the window's, and window sizes (minimum
+    /// size, `SetBounds`, persisted geometry) stay in the display's logical
+    /// units. `zoom` is passed through [`valid_content_zoom`].
+    pub fn content(self, zoom: f32) -> Self {
+        let zoom = valid_content_zoom(zoom);
+        if zoom == 1.0 {
+            return self;
+        }
+        Self {
+            logical_size: (self.logical_size.0 / zoom, self.logical_size.1 / zoom),
+            scale_factor: self.scale_factor * zoom,
+            ..self
+        }
+    }
+}
+
 /// Logical bounds of one display in the global logical coordinate space.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct DisplayBounds {
@@ -808,6 +845,16 @@ pub enum WindowCommand {
         id: WindowId,
         shadow: crate::WindowShadow,
     },
+    /// Zoom everything the window's UI draws by `zoom` (1.0 is none),
+    /// composed with the display scale factor: see
+    /// [`WindowGeometry::content`]. The window keeps its size and is not
+    /// recreated; the next frame lays the document out in the smaller
+    /// logical viewport and paints it at the larger scale. Clamped to
+    /// [`CONTENT_ZOOM_RANGE`].
+    SetContentZoom {
+        id: WindowId,
+        zoom: f32,
+    },
 }
 
 /// `ratio` when it is finite and positive.
@@ -897,6 +944,33 @@ pub fn window_resize_edge(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn content_zoom_composes_with_the_display_scale_and_keeps_the_window() {
+        let window = WindowGeometry {
+            physical_position: Some((100, 50)),
+            physical_size: (1600, 1200),
+            logical_position: Some((50.0, 25.0)),
+            logical_size: (800.0, 600.0),
+            scale_factor: 2.0,
+            maximized: true,
+        };
+        let content = window.content(1.25);
+        assert_eq!(content.scale_factor, 2.5);
+        assert_eq!(content.logical_size, (640.0, 480.0));
+        // The surface and the window's place on the desktop are unchanged.
+        assert_eq!(content.physical_size, window.physical_size);
+        assert_eq!(content.physical_position, window.physical_position);
+        assert_eq!(content.logical_position, window.logical_position);
+        assert!(content.maximized);
+        // Logical size times scale is still the surface.
+        assert_eq!(content.logical_size.0 * content.scale_factor, 1600.0);
+        assert_eq!(window.content(1.0), window);
+        assert_eq!(window.content(f32::NAN), window);
+        assert_eq!(window.content(100.0).scale_factor, 10.0);
+        assert_eq!(valid_content_zoom(0.0), 1.0);
+        assert_eq!(valid_content_zoom(0.1), 0.25);
+    }
 
     #[test]
     fn client_chrome_is_the_default_window_contract() {

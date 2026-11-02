@@ -49,6 +49,7 @@ pub struct RuntimeProgramContext<Message: Send + 'static> {
     high_contrast: bool,
     reduced_transparency: bool,
     text_scale: Option<f32>,
+    content_zoom: f32,
     store: SharedStore,
     startup: crate::StartupHandle,
     gpu_adapters: Arc<crate::GpuAdapterSelection>,
@@ -73,6 +74,7 @@ impl<Message: Send + 'static> Clone for RuntimeProgramContext<Message> {
             high_contrast: self.high_contrast,
             reduced_transparency: self.reduced_transparency,
             text_scale: self.text_scale,
+            content_zoom: self.content_zoom,
             store: Arc::clone(&self.store),
             startup: self.startup.clone(),
             gpu_adapters: Arc::clone(&self.gpu_adapters),
@@ -111,6 +113,7 @@ impl<Message: Send + 'static> RuntimeProgramContext<Message> {
             high_contrast: false,
             reduced_transparency: false,
             text_scale: None,
+            content_zoom: 1.0,
             store: memory_store(),
             startup,
             gpu_adapters: Arc::default(),
@@ -134,6 +137,11 @@ impl<Message: Send + 'static> RuntimeProgramContext<Message> {
 
     pub(crate) fn with_text_scale(mut self, scale: Option<f32>) -> Self {
         self.text_scale = scale;
+        self
+    }
+
+    pub(crate) fn with_content_zoom(mut self, zoom: f32) -> Self {
+        self.content_zoom = zoom;
         self
     }
 
@@ -206,14 +214,31 @@ impl<Message: Send + 'static> RuntimeProgramContext<Message> {
     /// "Text size". `None` where the platform has no system text size
     /// (macOS, Linux), which means `1.0`. Changes arrive as
     /// `WindowEvent::TextScaleChanged`. NanaUI does not apply it; an
-    /// application that follows it hands it to
-    /// `AppContext::set_content_zoom` (or its own text styles).
+    /// application that follows it hands it to `WindowHandle::set_content_zoom`
+    /// (or its own text styles).
     pub const fn text_scale(&self) -> Option<f32> {
         self.text_scale
     }
 
+    /// The window's geometry: its surface, desktop position and size in the
+    /// display's logical units, unaffected by content zoom. Window sizes,
+    /// bounds and persistence use it.
     pub const fn geometry(&self) -> WindowGeometry {
         self.geometry
+    }
+
+    /// The window's content zoom (`1.0` is none), set with
+    /// `WindowHandle::set_content_zoom` / `WindowCommand::SetContentZoom`.
+    pub const fn content_zoom(&self) -> f32 {
+        self.content_zoom
+    }
+
+    /// What the window's content lives in: [`Self::geometry`] under
+    /// [`Self::content_zoom`] ([`WindowGeometry::content`]). Scene and layout
+    /// coordinates — native content regions, GPU view boxes — map to the
+    /// surface with its `scale_factor`.
+    pub fn content_geometry(&self) -> WindowGeometry {
+        self.geometry.content(self.content_zoom)
     }
 
     pub fn gpu(&self) -> &GpuContext {
