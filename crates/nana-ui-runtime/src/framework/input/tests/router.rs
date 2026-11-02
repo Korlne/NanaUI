@@ -1111,6 +1111,73 @@ fn the_cursor_is_sent_only_when_it_changes() {
     assert_eq!(services.cursor(), CursorIcon::Text);
 }
 
+/// A numeric field shows a text beam over its text, but its spinner is a
+/// button: the default arrow there.
+#[test]
+fn a_number_input_spinner_shows_the_default_cursor() {
+    let mut context = AppContext::new();
+    let doc = document(18);
+    let source = InputSourceId(22);
+    let generation = EndpointGeneration(1);
+    context.bind_input_source(source, generation, doc).unwrap();
+    let input = context
+        .create_component(doc, crate::NumberInput::new(4.0).range(0.0, 10.0))
+        .unwrap()
+        .stable_id();
+    let mut layout = MutationQueue::new();
+    layout.write_layout(
+        input,
+        LayoutBox {
+            x: 0.0,
+            y: 0.0,
+            width: 160.0,
+            height: 32.0,
+        },
+    );
+    context.commit_mutations(layout).unwrap();
+    let work = context.take_system_work();
+    context.resolve_styles(&work.style).unwrap();
+    context
+        .compat_world_mut()
+        .shape_text(&work.text, &mut crate::MeasureTextShaper)
+        .unwrap();
+    context.rebuild_hit_test(doc);
+    let increment = match context.world().component_geometry(input) {
+        Some(crate::ComponentGeometry::TextInput {
+            steppers: Some(steppers),
+            ..
+        }) => steppers.increment,
+        other => panic!("expected spinner geometry, got {other:?}"),
+    };
+    let mut services = HeadlessHostServices::new();
+    let mut at = |sequence, x, y, services: &mut HeadlessHostServices| {
+        context
+            .route_input(
+                &event(
+                    source,
+                    generation,
+                    sequence,
+                    pointer(PointerPhase::Move, x, y),
+                ),
+                services,
+                None,
+            )
+            .unwrap();
+        services.cursor()
+    };
+    assert_eq!(at(1, 8.0, 16.0, &mut services), CursorIcon::Text);
+    assert_eq!(
+        at(
+            2,
+            increment.x + increment.width / 2.0,
+            increment.y + increment.height / 2.0,
+            &mut services,
+        ),
+        CursorIcon::Default
+    );
+    assert_eq!(at(3, 8.0, 16.0, &mut services), CursorIcon::Text);
+}
+
 /// The IME is told about the focused editor as state: its purpose, where
 /// its caret is, and a window of text around the selection. It hears again
 /// only when one of those changes.

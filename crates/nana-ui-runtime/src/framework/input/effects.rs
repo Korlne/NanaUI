@@ -116,7 +116,7 @@ impl AppContext {
         } else {
             state.effects.handle
         };
-        let icon = self.cursor_icon(handle, target);
+        let icon = self.cursor_icon(handle, target, x, y);
         let Some(state) = self.input.sources.get_mut(&source) else {
             return;
         };
@@ -134,11 +134,14 @@ impl AppContext {
 
     /// The cursor for a pointer over `target`, near `handle`: a resize
     /// handle's own, else the node's CSS cursor, else a text beam over a text
-    /// field, else the default.
+    /// field (but not over a numeric field's spinner, which is a button),
+    /// else the default.
     fn cursor_icon(
         &self,
         handle: Option<StableNodeId>,
         target: Option<StableNodeId>,
+        x: f32,
+        y: f32,
     ) -> CursorIcon {
         if let Some(bounds) = handle.and_then(|handle| self.world.component_layout_box(handle)) {
             return if bounds.width <= bounds.height {
@@ -152,11 +155,24 @@ impl AppContext {
             .and_then(|style| style.cursor_specified.then_some(style.cursor));
         match css {
             Some(spec) => cursor_icon_for(spec),
-            None if target.is_some_and(|node| self.world.text_input(node).is_some()) => {
+            None if target.is_some_and(|node| {
+                self.world.text_input(node).is_some() && !self.on_stepper_at(node, x, y)
+            }) =>
+            {
                 CursorIcon::Text
             }
             None => CursorIcon::Default,
         }
+    }
+
+    /// Whether the window point `(x, y)` is on `node`'s spinner, brought into
+    /// the field's layout space through the scrolls and transforms above it.
+    fn on_stepper_at(&self, node: StableNodeId, x: f32, y: f32) -> bool {
+        let (x, y) = self
+            .world
+            .pointer_layout_position(node, x, y)
+            .unwrap_or((x, y));
+        self.on_number_stepper(node, x, y)
     }
 
     /// Send the text-input state if it changed, or unconditionally when
