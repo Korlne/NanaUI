@@ -3,6 +3,8 @@
 //! ```text
 //! cargo run --release -- search --engine nana-frame --depth 500
 //! cargo run --release -- report            # every engine at depths 64..500
+//! cargo run --release -- wide              # a wide page: time, heap, allocations per box
+//! cargo run --release -- wide-loop         # that page over and over, for a profiler
 //! ```
 //!
 //! A probe runs the work once on a thread of the stack it is given; a stack
@@ -29,21 +31,26 @@ const ENGINES: [&str; 3] = ["nana-layout", "nana-frame", "taffy"];
 
 /// Live heap bytes: allocations minus frees.
 static LIVE: AtomicIsize = AtomicIsize::new(0);
+/// Allocation calls (`alloc`, `alloc_zeroed`, `realloc`).
+static CALLS: AtomicIsize = AtomicIsize::new(0);
 
 struct Counting;
 
 unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        CALLS.fetch_add(1, Ordering::Relaxed);
         LIVE.fetch_add(layout.size() as isize, Ordering::Relaxed);
         unsafe { System.alloc(layout) }
     }
 
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+        CALLS.fetch_add(1, Ordering::Relaxed);
         LIVE.fetch_add(layout.size() as isize, Ordering::Relaxed);
         unsafe { System.alloc_zeroed(layout) }
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+        CALLS.fetch_add(1, Ordering::Relaxed);
         LIVE.fetch_add(
             new_size as isize - layout.size() as isize,
             Ordering::Relaxed,
@@ -62,9 +69,10 @@ static GLOBAL: Counting = Counting;
 
 /// A page-shaped tree: `rows` rows of `cells` cells under one column, each
 /// cell a column holding a row (four levels, `1 + rows * (1 + 2 * cells)`
-/// boxes). Returns the microseconds the layout took and the live heap bytes
-/// the laid-out tree holds, both without building it.
-fn nana_wide(rows: usize, cells: usize) -> (f64, isize) {
+/// boxes). Returns the microseconds the layout took, the live heap bytes
+/// the laid-out tree holds and the allocation calls the layout made, the
+/// first and last without building it.
+fn nana_wide(rows: usize, cells: usize) -> (f64, isize, isize) {
     let document = DocumentId::new(1).unwrap();
     let before = LIVE.load(Ordering::Relaxed);
     let mut cx = AppContext::new();
@@ -95,17 +103,19 @@ fn nana_wide(rows: usize, cells: usize) -> (f64, isize) {
             cx.append_child(cell, leaf).unwrap();
         }
     }
+    let calls = CALLS.load(Ordering::Relaxed);
     let start = Instant::now();
     cx.layout_document(document, LayoutViewport::new(1280.0, 800.0))
         .unwrap();
     let took = start.elapsed().as_secs_f64() * 1e6;
+    let calls = CALLS.load(Ordering::Relaxed) - calls;
     let held = LIVE.load(Ordering::Relaxed) - before;
     drop(cx);
-    (took, held)
+    (took, held, calls)
 }
 
 /// The same page laid out by Taffy.
-fn taffy_wide(rows: usize, cells: usize) -> (f64, isize) {
+fn taffy_wide(rows: usize, cells: usize) -> (f64, isize, isize) {
     use taffy::prelude::*;
     let before = LIVE.load(Ordering::Relaxed);
     let mut tree: TaffyTree<()> = TaffyTree::new();
@@ -171,6 +181,7 @@ fn taffy_wide(rows: usize, cells: usize) -> (f64, isize) {
             &row_nodes,
         )
         .unwrap();
+    let calls = CALLS.load(Ordering::Relaxed);
     let start = Instant::now();
     tree.compute_layout(
         root,
@@ -181,9 +192,10 @@ fn taffy_wide(rows: usize, cells: usize) -> (f64, isize) {
     )
     .unwrap();
     let took = start.elapsed().as_secs_f64() * 1e6;
+    let calls = CALLS.load(Ordering::Relaxed) - calls;
     let held = LIVE.load(Ordering::Relaxed) - before;
     drop(tree);
-    (took, held)
+    (took, held, calls)
 }
 
 struct FixedShaper;
@@ -422,27 +434,39 @@ fn main() {
             } else {
                 "release"
             };
-            println!("| engine ({build}) | boxes | fastest layout | per box | heap per box |");
-            println!("| --- | ---: | ---: | ---: | ---: |");
+            println!(
+                "| engine ({build}) | boxes | fastest layout | per box | heap per box | allocations per box |"
+            );
+            println!("| --- | ---: | ---: | ---: | ---: | ---: |");
             for (rows, cells) in [(100, 10), (500, 10), (1000, 10)] {
                 let boxes = 1 + rows * (1 + 2 * cells);
                 for (name, run) in [
-                    ("nana-layout", nana_wide as fn(usize, usize) -> (f64, isize)),
+                    (
+                        "nana-layout",
+                        nana_wide as fn(usize, usize) -> (f64, isize, isize),
+                    ),
                     ("taffy", taffy_wide),
                 ] {
                     let mut fastest = f64::INFINITY;
-                    let mut held = 0;
+                    let (mut held, mut calls) = (0, 0);
                     for _ in 0..15 {
-                        let (took, bytes) = run(rows, cells);
+                        let (took, bytes, made) = run(rows, cells);
                         fastest = fastest.min(took);
-                        held = bytes;
+                        (held, calls) = (bytes, made);
                     }
                     println!(
-                        "| {name} | {boxes} | {fastest:.0} µs | {:.2} µs | {} B |",
+                        "| {name} | {boxes} | {fastest:.0} µs | {:.2} µs | {} B | {:.1} |",
                         fastest / boxes as f64,
-                        held / boxes as isize
+                        held / boxes as isize,
+                        calls as f64 / boxes as f64
                     );
                 }
+            }
+        }
+        Some("wide-loop") => {
+            // For a profiler: lay the 10 501-box page out over and over.
+            loop {
+                nana_wide(500, 10);
             }
         }
         Some("loop") => {

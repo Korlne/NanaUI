@@ -142,6 +142,34 @@ pub type NodeMap<V> = HashMap<StableNodeId, V, BuildIdHasher>;
 /// [`HashSet`] of nodes, hashed by [`IdHasher`].
 pub type NodeSet = HashSet<StableNodeId, BuildIdHasher>;
 
+/// Lists one publish builds every result's slices in, reused node to node so
+/// a result's slices are allocated once, at their final length.
+#[derive(Default)]
+struct ResultScratch {
+    parts: Vec<crate::LayoutPart>,
+    placements: Vec<crate::LayoutChildPlacement>,
+    fragments: Vec<crate::LayoutFragment>,
+    dependencies: Vec<StableNodeId>,
+}
+
+impl ResultScratch {
+    fn clear(&mut self) {
+        self.parts.clear();
+        self.placements.clear();
+        self.fragments.clear();
+        self.dependencies.clear();
+    }
+}
+
+/// `items` as a shared slice; an empty one allocates nothing.
+fn shared_slice<T: Clone>(items: &[T]) -> Arc<[T]> {
+    if items.is_empty() {
+        Arc::default()
+    } else {
+        Arc::from(items)
+    }
+}
+
 fn sorted_unique(mut ids: Vec<StableNodeId>) -> Vec<StableNodeId> {
     ids.sort_unstable();
     ids.dedup();
@@ -1668,17 +1696,18 @@ impl UiWorld {
         requested.dedup();
         // The children this publish covers, by parent. Every other child
         // keeps the box its parent's held result recorded, so a parent is
-        // checked against these and not against all of its children.
-        let mut covered: HashMap<StableNodeId, Vec<StableNodeId>> =
-            HashMap::with_capacity(unique.len());
-        for &id in &unique {
-            if let Some(parent) = self.parent_id(id) {
-                covered.entry(parent).or_default().push(id);
-            }
-        }
+        // checked against these and not against all of its children. One
+        // list sorted by parent: a parent's children are one run of it.
+        let mut covered: Vec<(StableNodeId, StableNodeId)> = unique
+            .iter()
+            .filter_map(|&id| Some((self.parent_id(id)?, id)))
+            .collect();
+        covered.sort_unstable();
+        let covered_ids: Vec<StableNodeId> = covered.iter().map(|&(_, id)| id).collect();
         #[cfg(feature = "benchmark")]
         let mut phase = crate::layout_engine::plan_stats::PhaseClock::start();
-        let mut built = Vec::new();
+        let mut built = Vec::with_capacity(unique.len());
+        let mut scratch = ResultScratch::default();
         let mut reused = 0usize;
         let mut children_visited = 0usize;
         for &id in &unique {
@@ -1687,7 +1716,9 @@ impl UiWorld {
                 self.layout_results_suppressed.remove(&id);
                 continue;
             }
-            let covered = covered.get(&id).map_or(&[][..], Vec::as_slice);
+            let start = covered.partition_point(|&(parent, _)| parent < id);
+            let end = start + covered[start..].partition_point(|&(parent, _)| parent == id);
+            let covered = &covered_ids[start..end];
             children_visited = children_visited.saturating_add(covered.len());
             if self.layout_result_geometry_current(id, covered) {
                 self.layout_results_suppressed.remove(&id);
@@ -1699,26 +1730,26 @@ impl UiWorld {
                     .get(id)
                     .map_or(0, |node| node.hierarchy.children.len()),
             );
-            if let Some(result) = self.build_layout_result(id, source) {
+            if let Some(result) = self.build_layout_result(id, source, &mut scratch) {
                 built.push((id, result));
             }
         }
         #[cfg(feature = "benchmark")]
         phase.lap(8);
-        let mut published = Vec::new();
-        for (id, result) in built {
+        let mut published = built;
+        published.retain(|(id, result)| {
             if self
                 .layout_results
-                .get(&id)
-                .is_some_and(|previous| previous.geometry_eq(&result))
+                .get(id)
+                .is_some_and(|previous| previous.geometry_eq(result))
             {
-                self.nodes.note_text_fragments(id);
-                self.layout_results_suppressed.remove(&id);
+                self.nodes.note_text_fragments(*id);
+                self.layout_results_suppressed.remove(id);
                 reused = reused.saturating_add(1);
-                continue;
+                return false;
             }
-            published.push((id, result));
-        }
+            true
+        });
         if published.is_empty() {
             self.note_layout_result_publish(reused, 0, 0, children_visited);
             return;
@@ -1831,7 +1862,15 @@ impl UiWorld {
         &self,
         id: StableNodeId,
         source: crate::LayoutResultSource,
+        scratch: &mut ResultScratch,
     ) -> Option<crate::LayoutResult> {
+        scratch.clear();
+        let ResultScratch {
+            parts,
+            placements,
+            fragments,
+            dependencies,
+        } = scratch;
         let node = self.nodes.get(id)?;
         let bounds = self.component_layout_box(id)?;
         let padding = self.used_layout_padding(id);
@@ -1847,7 +1886,6 @@ impl UiWorld {
         let child_kind = child_fragment_kind(node);
         result.formatting_context = established_context(node);
         result.participation = self.layout_node(id).and_then(|node| node.participation);
-        let mut parts = Vec::with_capacity(children.len() + 2);
         let mut overflow = bounds;
         // A box that clips or scrolls counts in its overflow only the
         // children its clip and scroll reach: not a `fixed` child, nor an
@@ -1878,8 +1916,6 @@ impl UiWorld {
                 result.content_box,
             ));
         } else {
-            let mut placements = Vec::with_capacity(children.len());
-            let mut fragments = Vec::with_capacity(children.len() + 2);
             let atom_sources: NodeMap<_> = self
                 .inline_record(id)
                 .map(|content| {
@@ -1973,12 +2009,12 @@ impl UiWorld {
                     result.padding_box,
                 ));
             }
-            result.child_placements = placements.into();
-            result.fragments = fragments.into();
+            result.child_placements = shared_slice(placements);
+            result.fragments = shared_slice(fragments);
         }
 
         let anchors = self.layout_anchors(id);
-        let mut dependencies = children.to_vec();
+        dependencies.extend_from_slice(children);
         if let Some(clip) = anchors.clip {
             dependencies.push(clip);
         }
@@ -1993,7 +2029,7 @@ impl UiWorld {
                 .flatten()
                 .filter(|part| part.kind != crate::LayoutPartKind::TextContent),
         );
-        result.parts = parts.into();
+        result.parts = shared_slice(parts);
         // Only scroll containers need the retained descendant index. Avoid
         // materializing that index for ordinary nodes while still publishing
         // the full scroll extent where a consumer can actually use it.
@@ -2031,7 +2067,7 @@ impl UiWorld {
         result.clip = anchors.clip;
         result.clip_parent = anchors.clip_parent;
         result.containing_block = anchors.containing_block;
-        result.dependencies = dependencies.into();
+        result.dependencies = shared_slice(dependencies);
         Some(result)
     }
 
@@ -2332,16 +2368,23 @@ impl UiWorld {
         id: StableNodeId,
         memo: &mut crate::NodeMap<AnchorPair>,
     ) -> AnchorPair {
+        // `id` itself is held apart from the chain above it, so a node whose
+        // parent is settled (every node of a publish walked top-down)
+        // collects nothing.
+        let mut first = None;
         let mut unsettled = Vec::new();
         let mut cursor = Some(id);
         while let Some(node) = cursor {
             if memo.contains_key(&node) || !self.contains(node) {
                 break;
             }
-            unsettled.push(node);
+            match first {
+                None => first = Some(node),
+                Some(_) => unsettled.push(node),
+            }
             cursor = self.parent_id(node);
         }
-        for node in unsettled.into_iter().rev() {
+        for node in unsettled.into_iter().rev().chain(first) {
             let containing_block = self.parent_id(node).and_then(|parent| {
                 let establishes = self
                     .nodes

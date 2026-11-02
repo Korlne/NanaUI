@@ -581,6 +581,9 @@ impl RuntimeLayoutEngine {
         let intrinsic_counters = intrinsic.counters();
         retained.execution_stats = intrinsic.execution_stats;
         let universe = if force_full { nodes.len() } else { world.len() };
+        if force_full {
+            retained.intrinsics.reserve(nodes.len());
+        }
         for (key, size) in std::mem::take(&mut intrinsic.used_order) {
             retained
                 .intrinsics
@@ -1085,6 +1088,9 @@ impl RetainedIntrinsicMetrics {
         if let Some(slot) = variants.iter_mut().find(|(held, _)| *held == key) {
             slot.1 = metrics;
         } else {
+            // Most contents hold one or two variants: grow by one, not to
+            // the four a first push reserves.
+            variants.reserve_exact(1);
             variants.push((key, metrics));
             self.len += 1;
         }
@@ -2233,7 +2239,8 @@ struct MeasurePlan {
 /// as [`RetainedIntrinsic`].
 #[derive(Default)]
 struct MeasurePlanSlots {
-    slots: [Option<MeasurePlan>; 2],
+    /// Boxed: most containers hold one plan, and the table stays small.
+    slots: [Option<Box<MeasurePlan>>; 2],
 }
 
 impl MeasurePlanSlots {
@@ -2250,9 +2257,11 @@ impl MeasurePlanSlots {
             .iter()
             .flatten()
             .find(|plan| plan.available == available)
+            .map(Box::as_ref)
     }
 
-    fn insert(&mut self, plan: MeasurePlan) {
+    fn insert(&mut self, plan: impl Into<Box<MeasurePlan>>) {
+        let plan = plan.into();
         if self.slots[0]
             .as_ref()
             .is_some_and(|held| held.available == plan.available)
@@ -2269,7 +2278,7 @@ impl MeasurePlanSlots {
     }
 
     /// The plans this holder carries, most recent first.
-    fn into_plans(self) -> impl Iterator<Item = MeasurePlan> {
+    fn into_plans(self) -> impl Iterator<Item = Box<MeasurePlan>> {
         self.slots.into_iter().flatten()
     }
 }
@@ -2437,12 +2446,21 @@ impl<'a> LayoutInputMap<'a> {
             );
         }
         let mut nodes = HashMap::with_capacity(ids.len());
+        let mut containers = 0;
         for &id in ids {
             let input = self.world.layout_input(id)?;
+            containers += usize::from(!input.children.is_empty());
             nodes.insert(id, input);
         }
         self.materialized = nodes.len();
         self.nodes = nodes;
+        // A full pass writes every box's padding and every container's
+        // context and plans: size the tables once rather than regrowing them.
+        self.used_padding.reserve(ids.len());
+        self.contexts.reserve(containers);
+        self.far_start.reserve(containers);
+        self.container_plans.reserve(containers);
+        self.measure_plans.reserve(containers);
         Ok(())
     }
 
@@ -3128,7 +3146,7 @@ struct PassIntrinsicCache {
     /// constraint each holds: they saw what changed under them this pass.
     consulted_plans: Vec<(StableNodeId, Size)>,
     latest_intrinsic_keys: HashMap<StableNodeId, crate::IntrinsicCacheKey>,
-    seeded_intrinsic: HashSet<crate::IntrinsicCacheKey>,
+    seeded_intrinsic: hashbrown::HashSet<crate::IntrinsicCacheKey>,
     extra_counters: crate::IntrinsicCacheCounters,
     execution_stats: LayoutExecutionStats,
     /// Dynamic Layout state for the pass.
@@ -3143,21 +3161,23 @@ struct PassIntrinsicCache {
 
 impl PassIntrinsicCache {
     fn with_capacity(capacity: usize) -> Self {
+        let mut cache = crate::IntrinsicCache::new(crate::IntrinsicCacheBudget {
+            // A node may be measured at its parent width and again at a
+            // flex/grid used width. Keep a few constraint classes alive
+            // for baseline and cross-context consumers in this pass.
+            max_entries: capacity.saturating_mul(4).max(1),
+            max_bytes: usize::MAX,
+        });
+        cache.reserve(capacity);
         Self {
-            cache: crate::IntrinsicCache::new(crate::IntrinsicCacheBudget {
-                // A node may be measured at its parent width and again at a
-                // flex/grid used width. Keep a few constraint classes alive
-                // for baseline and cross-context consumers in this pass.
-                max_entries: capacity.saturating_mul(4).max(1),
-                max_bytes: usize::MAX,
-            }),
+            cache,
             used: HashMap::with_capacity(capacity),
             used_order: Vec::with_capacity(capacity),
             new_metrics: HashMap::with_capacity(capacity),
             retired_facts: Vec::new(),
             consulted_plans: Vec::new(),
             latest_intrinsic_keys: HashMap::with_capacity(capacity),
-            seeded_intrinsic: HashSet::with_capacity(capacity),
+            seeded_intrinsic: hashbrown::HashSet::with_capacity(capacity),
             extra_counters: crate::IntrinsicCacheCounters::default(),
             execution_stats: LayoutExecutionStats::default(),
             dynamic: dynamic::DynamicPass::default(),
@@ -3389,8 +3409,9 @@ impl PassIntrinsicCache {
         // depend on the containing block. Keep that relevant basis in the
         // constraint class and carry the remaining environment in the style
         // identity; the formatting-context name itself is still absent.
-        use std::hash::{Hash, Hasher};
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        use std::hash::{BuildHasher, Hash, Hasher};
+        // A fixed seed: the identity is compared across passes.
+        let mut hasher = foldhash::fast::FixedState::with_seed(0x6e61_6e61).build_hasher();
         // Parent flow direction selects the *used-size* resolution path, but
         // it is not part of ordinary intrinsic facts. Aspect-ratio stretch
         // transfer is the deliberate exception: its used width depends on

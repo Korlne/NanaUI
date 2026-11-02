@@ -1716,6 +1716,7 @@ version = "0.1.0"
 dependencies = [
  "fancy-regex",
  "fixed_decimal",
+ "foldhash",
  "futures-core",
  "hashbrown",
  "icu_calendar",
@@ -1725,6 +1726,7 @@ dependencies = [
  "icu_plurals",
  "icu_provider",
  "icu_time",
+ "libc",
  "nana-diagnostics",
  "nana-text",
  "nana-ui-charts",

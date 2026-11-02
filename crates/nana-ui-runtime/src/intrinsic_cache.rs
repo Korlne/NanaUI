@@ -353,56 +353,55 @@ impl ConstraintClass {
         matches!(self.normalized(), Self::Unconstrained)
     }
 
-    fn tag(self) -> u8 {
-        match self {
-            Self::Unconstrained => 0,
-            Self::MaxInline(_) => 1,
-            Self::ExactInline(_) => 2,
-            Self::MaxBlock(_) => 3,
-            Self::ExactSize { .. } => 4,
-            Self::PercentageContainingBlock { .. }
-            | Self::PercentageCb { .. }
-            | Self::PercentageCB { .. } => 5,
-            Self::Fill { .. } => 6,
-            Self::AspectRatio { .. } => 7,
-        }
-    }
-
-    fn values(self) -> (u32, u32) {
-        let canonical = |value: f32| canonical_f32_bits(value);
-        match self {
-            Self::Unconstrained | Self::MaxInline(_) | Self::ExactInline(_) | Self::MaxBlock(_) => {
-                let value = match self {
-                    Self::MaxInline(value) | Self::ExactInline(value) | Self::MaxBlock(value) => {
-                        value
-                    }
-                    _ => 0.0,
-                };
-                (canonical(value), 0)
+    /// `(tag, values)` of [`Self::normalized`], read in one match: what
+    /// equality and hashing compare, on the hot path of every cache lookup.
+    fn canonical(self) -> (u8, (u32, u32)) {
+        const UNCONSTRAINED: (u8, (u32, u32)) = (0, (0, 0));
+        // A finite extent, clamped at zero, with one zero.
+        let bits = |value: f32| {
+            let value = value.max(0.0);
+            if value == 0.0 { 0 } else { value.to_bits() }
+        };
+        let one = |tag: u8, value: f32| {
+            if value.is_finite() {
+                (tag, (bits(value), 0))
+            } else {
+                UNCONSTRAINED
             }
-            Self::ExactSize { inline, block }
-            | Self::PercentageContainingBlock { inline, block }
+        };
+        let two = |tag: u8, inline: f32, block: f32| {
+            if inline.is_finite() && block.is_finite() {
+                (tag, (bits(inline), bits(block)))
+            } else {
+                UNCONSTRAINED
+            }
+        };
+        match self {
+            Self::Unconstrained => UNCONSTRAINED,
+            Self::MaxInline(value) => one(1, value),
+            Self::ExactInline(value) => one(2, value),
+            Self::MaxBlock(value) => one(3, value),
+            Self::ExactSize { inline, block } => two(4, inline, block),
+            Self::PercentageContainingBlock { inline, block }
             | Self::PercentageCb { inline, block }
-            | Self::PercentageCB { inline, block }
-            | Self::Fill { inline, block }
-            | Self::AspectRatio { inline, block } => (canonical(inline), canonical(block)),
+            | Self::PercentageCB { inline, block } => two(5, inline, block),
+            Self::Fill { inline, block } => two(6, inline, block),
+            Self::AspectRatio { inline, block } => two(7, inline, block),
         }
     }
 }
 
 impl PartialEq for ConstraintClass {
     fn eq(&self, other: &Self) -> bool {
-        let left = self.normalized();
-        let right = other.normalized();
-        left.tag() == right.tag() && left.values() == right.values()
+        self.canonical() == other.canonical()
     }
 }
 impl Eq for ConstraintClass {}
 impl Hash for ConstraintClass {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        let normalized = self.normalized();
-        normalized.tag().hash(state);
-        normalized.values().hash(state);
+        let (tag, values) = self.canonical();
+        tag.hash(state);
+        values.hash(state);
     }
 }
 
@@ -637,6 +636,12 @@ impl IntrinsicCache {
             bytes: 0,
             counters: IntrinsicCacheCounters::default(),
         }
+    }
+
+    /// Room for `additional` more entries without growing the table.
+    pub(crate) fn reserve(&mut self, additional: usize) {
+        self.entries
+            .reserve(additional.min(self.budget.max_entries));
     }
 
     #[must_use]
@@ -980,15 +985,6 @@ fn finite(value: f32) -> f32 {
 
 fn nonnegative(value: f32) -> f32 {
     finite(value).max(0.0)
-}
-
-fn canonical_f32_bits(value: f32) -> u32 {
-    let value = finite(value);
-    if value == 0.0 {
-        0.0f32.to_bits()
-    } else {
-        value.to_bits()
-    }
 }
 
 fn prefer_canonical(canonical: usize, compatibility: usize) -> usize {

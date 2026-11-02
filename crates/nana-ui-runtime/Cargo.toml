@@ -42,6 +42,8 @@ syntax-highlighting = ["dep:two-face"]
 [dependencies]
 fancy-regex = "0.16.2"
 hashbrown = "0.17.1"
+# Fixed-seed hashing for cache identities (the intrinsic cache's environment).
+foldhash = "0.2.0"
 nana-ui-view-schema = { path = "../nana-ui-view-schema" }
 futures-core.workspace = true
 nana-ui-core.workspace = true

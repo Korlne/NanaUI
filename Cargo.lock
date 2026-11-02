@@ -2570,6 +2570,7 @@ version = "0.1.0"
 dependencies = [
  "fancy-regex 0.16.2",
  "fixed_decimal",
+ "foldhash",
  "futures-core",
  "hashbrown 0.17.1",
  "icu_calendar",
