@@ -43,6 +43,7 @@ struct GeometryPaintContext<'a> {
     empty_state_content_clips: &'a Arc<[ClipRegion]>,
     opacity: f32,
     node_order: usize,
+    focus_ring: nana_ui_core::FocusRingMetrics,
 }
 
 impl UiScene {
@@ -736,6 +737,7 @@ impl UiScene {
                 empty_state_content_clips: &empty_state_content_clips,
                 opacity,
                 node_order,
+                focus_ring: self.focus_ring,
             };
             let mut emit = |primitive| self.insert_primitive(primitive);
             match node.component_geometry.as_deref() {
@@ -910,6 +912,8 @@ impl UiScene {
                             });
                         }
                         if let Some(color) = focus_ring {
+                            let (ring_rect, ring_style) =
+                                focus_ring_quad(style, bounds, self.focus_ring, 0.0, *color);
                             self.insert_primitive(visual_quad(
                                 &VisualPrimitiveContext {
                                     node: id,
@@ -920,27 +924,8 @@ impl UiScene {
                                     document_order: node_order,
                                 },
                                 7,
-                                SceneRect {
-                                    x: bounds.x - 3.0,
-                                    y: bounds.y - 3.0,
-                                    width: bounds.width + 6.0,
-                                    height: bounds.height + 6.0,
-                                },
-                                VisualQuadStyle {
-                                    background: None,
-                                    border_color: Some(*color),
-                                    border_width: 2.0,
-                                    corner_radius: focus_ring_corner_radius(
-                                        style,
-                                        SceneRect {
-                                            x: bounds.x - 3.0,
-                                            y: bounds.y - 3.0,
-                                            width: bounds.width + 6.0,
-                                            height: bounds.height + 6.0,
-                                        },
-                                        3.0,
-                                    ),
-                                },
+                                ring_rect,
+                                ring_style,
                             ));
                         }
                     }
@@ -1437,6 +1422,8 @@ impl UiScene {
                             ));
                         }
                         if let Some(color) = focus_ring {
+                            let (ring_rect, ring_style) =
+                                focus_ring_quad(style, bounds, self.focus_ring, 0.0, *color);
                             self.insert_primitive(visual_quad(
                                 &VisualPrimitiveContext {
                                     node: id,
@@ -1447,27 +1434,8 @@ impl UiScene {
                                     document_order: node_order,
                                 },
                                 7,
-                                SceneRect {
-                                    x: bounds.x - 3.0,
-                                    y: bounds.y - 3.0,
-                                    width: bounds.width + 6.0,
-                                    height: bounds.height + 6.0,
-                                },
-                                VisualQuadStyle {
-                                    background: None,
-                                    border_color: Some(*color),
-                                    border_width: 2.0,
-                                    corner_radius: focus_ring_corner_radius(
-                                        style,
-                                        SceneRect {
-                                            x: bounds.x - 3.0,
-                                            y: bounds.y - 3.0,
-                                            width: bounds.width + 6.0,
-                                            height: bounds.height + 6.0,
-                                        },
-                                        3.0,
-                                    ),
-                                },
+                                ring_rect,
+                                ring_style,
                             ));
                         }
                         // 补全弹层与 hover 浮窗：编辑器覆盖层的最上层
@@ -2057,11 +2025,15 @@ impl UiScene {
                     if node.focused {
                         // Focus marks the thumb (LiliaUI focus-visible outline),
                         // never the rail: the rail colour stays interaction-free.
+                        // The theme's ring, in the thumb's stroke units.
+                        let (width, offset) = focus_ring_stroke(self.focus_ring);
+                        let ring_width = width * border_width;
+                        let outset = (offset + width) * border_width;
                         let ring = SceneRect {
-                            x: thumb_rect.x - 3.0 * border_width,
-                            y: thumb_rect.y - 3.0 * border_width,
-                            width: thumb_rect.width + 6.0 * border_width,
-                            height: thumb_rect.height + 6.0 * border_width,
+                            x: thumb_rect.x - outset,
+                            y: thumb_rect.y - outset,
+                            width: thumb_rect.width + outset * 2.0,
+                            height: thumb_rect.height + outset * 2.0,
                         };
                         self.insert_primitive(visual_quad_with_paint(
                             &visual_context,
@@ -2070,7 +2042,7 @@ impl UiScene {
                             VisualQuadStyle {
                                 background: None,
                                 border_color: node.standard_visual_foreground,
-                                border_width: 2.0 * border_width,
+                                border_width: ring_width,
                                 corner_radius: corner_radii(ring.width.max(ring.height) / 2.0),
                             },
                             None,
@@ -2235,6 +2207,8 @@ impl UiScene {
                         && node.focused
                         && let Some(color) = node.standard_visual_foreground
                     {
+                        let (ring_rect, ring_style) =
+                            focus_ring_quad(style, bounds, self.focus_ring, 0.0, color);
                         self.insert_primitive(visual_quad(
                             &VisualPrimitiveContext {
                                 node: id,
@@ -2245,27 +2219,8 @@ impl UiScene {
                                 document_order: node_order,
                             },
                             7,
-                            SceneRect {
-                                x: bounds.x - 3.0,
-                                y: bounds.y - 3.0,
-                                width: bounds.width + 6.0,
-                                height: bounds.height + 6.0,
-                            },
-                            VisualQuadStyle {
-                                background: None,
-                                border_color: Some(color),
-                                border_width: 2.0,
-                                corner_radius: focus_ring_corner_radius(
-                                    style,
-                                    SceneRect {
-                                        x: bounds.x - 3.0,
-                                        y: bounds.y - 3.0,
-                                        width: bounds.width + 6.0,
-                                        height: bounds.height + 6.0,
-                                    },
-                                    3.0,
-                                ),
-                            },
+                            ring_rect,
+                            ring_style,
                         ));
                     }
                 }),

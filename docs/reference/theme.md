@@ -870,7 +870,7 @@ cargo run --release --locked -p nana-ui-runtime --features benchmark \
 | F3（解析点在 extract 不在保留期） | 未动。这是 #100 §6，要改的是 resolver 的形状，不是 token 的形状 |
 | F4（安装 = 全文档失效） | 未动。这是 #100 §7 的 dependency class |
 | typography / spacing 的调用点收敛 | 未做。合同建立了，但 `ControlSize::text_size()` 这类仍对 `type_scale` 常量解析——和 Phase 0 对 metrics 做的那一轮是同一形状的工作，只是换一个类别，留给 #107 |
-| focus ring 的 2px 描边与 4px 外扩 | **几何**仍是 `nana-ui-scene` 里的字面量；颜色已经是 `palette.focus_border`。`BorderTokens` 只有 `hairline` 一档，没有替这两个尺寸发明档位——按 `ChromeRadii` 的先例搬运需要动 `ExtractedNode`，那是 chrome recipe 的活。实际是**五处、两种外扩**（3.0 与 4.0），不是文里写的一种 |
+| focus ring 的 2px 描边与 4px 外扩 | **已收进主题**：`ThemeMetrics::focus_ring`（`FocusRingMetrics { width, offset }`，内置 `FOCUS_RING_METRICS` = 2px 描边、离控件 1px）。scene 在应用增量前从已装主题读它（`UiScene::set_focus_ring`），五处焦点环（按钮、文本框、列表行、选项、滑块拇指）都按它画；选项的环比别处再远 1px（它的指示器在更大的盒子里），滑块拇指的环按拇指描边单位缩放。只画不排：`same_layout` 不看它，改它不重排。长度按其它度量一样校验，负值拒装 |
 | `sidebar-section` 焦点底色覆盖整个 200x86 区块 | 可聚焦的节点就是整个 section，所以这是如实渲染。要只高亮 header，得把可聚焦节点从 section 根移到 header——那是行为变更（焦点顺序、命中），不是指示器变更 |
 
 ### 7.9.1 §7 之后补做的（consumer 驱动）

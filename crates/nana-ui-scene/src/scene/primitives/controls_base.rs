@@ -267,6 +267,8 @@ pub(super) fn build(context: &GeometryPaintContext<'_>, emit: &mut impl FnMut(Sc
                 });
             }
             if let Some(color) = focus_ring {
+                let (ring_rect, ring_style) =
+                    focus_ring_quad(style, bounds, context.focus_ring, 1.0, *color);
                 emit(visual_quad_with_paint(
                     &VisualPrimitiveContext {
                         node: id,
@@ -277,27 +279,8 @@ pub(super) fn build(context: &GeometryPaintContext<'_>, emit: &mut impl FnMut(Sc
                         document_order: node_order,
                     },
                     7,
-                    SceneRect {
-                        x: bounds.x - 4.0,
-                        y: bounds.y - 4.0,
-                        width: bounds.width + 8.0,
-                        height: bounds.height + 8.0,
-                    },
-                    VisualQuadStyle {
-                        background: None,
-                        border_color: Some(*color),
-                        border_width: 2.0,
-                        corner_radius: focus_ring_corner_radius(
-                            style,
-                            SceneRect {
-                                x: bounds.x - 4.0,
-                                y: bounds.y - 4.0,
-                                width: bounds.width + 8.0,
-                                height: bounds.height + 8.0,
-                            },
-                            4.0,
-                        ),
-                    },
+                    ring_rect,
+                    ring_style,
                     None,
                     matching_paint_color(node.style.paint_colors.color, Some(*color)).or_else(
                         || matching_paint_color(node.style.paint_colors.border, Some(*color)),

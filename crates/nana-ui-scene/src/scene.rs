@@ -52,6 +52,51 @@ fn focus_ring_corner_radius(
     corner_radii(max_r + outset)
 }
 
+/// The ring's stroke width and offset, each finite and non-negative: a value
+/// the theme compiler would refuse reads as the built-in one.
+fn focus_ring_stroke(ring: nana_ui_core::FocusRingMetrics) -> (f32, f32) {
+    let valid = |value: f32, fallback: f32| {
+        if value.is_finite() && value >= 0.0 {
+            value
+        } else {
+            fallback
+        }
+    };
+    (
+        valid(ring.width, nana_ui_core::FOCUS_RING_METRICS.width),
+        valid(ring.offset, nana_ui_core::FOCUS_RING_METRICS.offset),
+    )
+}
+
+/// The keyboard focus ring around `bounds` in `color`: the theme's stroke and
+/// offset ([`nana_ui_core::ThemeMetrics::focus_ring`]), pushed `extra_gap`
+/// further out where the indicator sits inside a larger box.
+fn focus_ring_quad(
+    style: &nana_ui_core::LayoutStyle,
+    bounds: SceneRect,
+    ring: nana_ui_core::FocusRingMetrics,
+    extra_gap: f32,
+    color: [f32; 4],
+) -> (SceneRect, VisualQuadStyle) {
+    let (width, offset) = focus_ring_stroke(ring);
+    let outset = offset + extra_gap + width;
+    let rect = SceneRect {
+        x: bounds.x - outset,
+        y: bounds.y - outset,
+        width: bounds.width + outset * 2.0,
+        height: bounds.height + outset * 2.0,
+    };
+    (
+        rect,
+        VisualQuadStyle {
+            background: None,
+            border_color: Some(color),
+            border_width: width,
+            corner_radius: focus_ring_corner_radius(style, rect, outset),
+        },
+    )
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct SceneRect {
     pub x: f32,
@@ -1679,6 +1724,9 @@ pub struct UiScene {
     /// theme's, set by the document that extracts into the scene. See
     /// [`UiScene::corner_shape`].
     corner_shape: nana_ui_core::CornerShape,
+    /// The installed theme's focus ring, read when primitives are built. See
+    /// [`UiScene::focus_ring`].
+    focus_ring: nana_ui_core::FocusRingMetrics,
 }
 
 impl Default for UiScene {
@@ -1712,6 +1760,7 @@ impl Default for UiScene {
             glyph_objects: NodeMap::default(),
             instance: next_scene_instance(),
             corner_shape: nana_ui_core::CornerShape::Round,
+            focus_ring: nana_ui_core::FOCUS_RING_METRICS,
         }
     }
 }
@@ -1754,6 +1803,7 @@ impl Clone for UiScene {
             glyph_objects: self.glyph_objects.clone(),
             instance: next_scene_instance(),
             corner_shape: self.corner_shape,
+            focus_ring: self.focus_ring,
         }
     }
 }
@@ -1808,6 +1858,22 @@ impl UiScene {
     pub fn set_corner_shape(&mut self, shape: nana_ui_core::CornerShape) {
         if self.corner_shape != shape {
             self.corner_shape = shape;
+            self.instance = next_scene_instance();
+        }
+    }
+
+    /// The focus ring geometry primitives are built with.
+    pub const fn focus_ring(&self) -> nana_ui_core::FocusRingMetrics {
+        self.focus_ring
+    }
+
+    /// Set the focus ring geometry. The document that extracts into the scene
+    /// sets its installed theme's ring here before it applies a delta; a
+    /// theme install re-extracts every node, so the change reaches every
+    /// ring in the same frame. A change is a new [`Self::instance_id`].
+    pub fn set_focus_ring(&mut self, ring: nana_ui_core::FocusRingMetrics) {
+        if self.focus_ring != ring {
+            self.focus_ring = ring;
             self.instance = next_scene_instance();
         }
     }

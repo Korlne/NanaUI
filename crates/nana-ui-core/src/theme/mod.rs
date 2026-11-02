@@ -250,6 +250,45 @@ pub struct ThemeMetrics {
     /// this field still loads with round corners.
     #[serde(default)]
     pub corner_shape: CornerShape,
+    /// Keyboard focus ring geometry: its stroke and its distance from the
+    /// control. A high-contrast theme thickens it. `serde(default)` so a
+    /// metrics blob written before this field still loads.
+    #[serde(default)]
+    pub focus_ring: FocusRingMetrics,
+}
+
+/// Keyboard focus ring geometry, in logical pixels.
+///
+/// The ring is a stroke of `width` drawn outside the control, its inner edge
+/// `offset` away from the control's edge, its corners the control's largest
+/// radius grown by the ring's outset. Painted only: the ring takes no layout
+/// space, so changing it repaints and lays nothing out again. Its colour is
+/// [`crate::SemanticColorRole::FocusBorder`].
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct FocusRingMetrics {
+    /// Stroke width.
+    pub width: f32,
+    /// Gap between the control's edge and the ring's inner edge.
+    pub offset: f32,
+}
+
+/// The built-in ring: a 2 px stroke 1 px off the control.
+pub const FOCUS_RING_METRICS: FocusRingMetrics = FocusRingMetrics {
+    width: 2.0,
+    offset: 1.0,
+};
+
+impl FocusRingMetrics {
+    /// How far the ring's outer edge sits outside the control.
+    pub const fn outset(self) -> f32 {
+        self.offset + self.width
+    }
+}
+
+impl Default for FocusRingMetrics {
+    fn default() -> Self {
+        FOCUS_RING_METRICS
+    }
 }
 
 /// How a rounded corner is shaped: CSS `corner-shape`, for every corner the
@@ -617,6 +656,7 @@ pub const UI_METRICS: ThemeMetrics = ThemeMetrics {
     tree: TREE_METRICS,
     keycap: KEYCAP_METRICS,
     corner_shape: CornerShape::Round,
+    focus_ring: FOCUS_RING_METRICS,
 };
 
 /// A dense example: the 20 px rows of professional tools' panels (3D, audio,
@@ -721,12 +761,14 @@ impl ThemeMetrics {
     }
 
     /// Whether `other` lays a document out the same: it differs from these
-    /// metrics in [`Self::corner_shape`] and [`Self::scrollbar`] at most,
-    /// which only paint — a bar overlays and never takes layout space.
+    /// metrics in [`Self::corner_shape`], [`Self::scrollbar`] and
+    /// [`Self::focus_ring`] at most, which only paint — a bar overlays and a
+    /// ring sits outside its control, so neither takes layout space.
     pub fn same_layout(&self, other: &Self) -> bool {
         Self {
             corner_shape: other.corner_shape,
             scrollbar: other.scrollbar,
+            focus_ring: other.focus_ring,
             ..*self
         } == *other
     }
@@ -986,5 +1028,28 @@ mod tests {
             ..shaped
         };
         assert!(!base.same_layout(&taller));
+    }
+
+    /// A thicker ring only paints, and a blob from before the ring was a
+    /// metric loads the built-in ring.
+    #[test]
+    fn the_focus_ring_is_paint_only_and_defaults_for_old_blobs() {
+        let base = super::UI_METRICS;
+        assert_eq!(base.focus_ring, super::FOCUS_RING_METRICS);
+        assert_eq!(base.focus_ring.outset(), 3.0);
+        let thick = super::ThemeMetrics {
+            focus_ring: super::FocusRingMetrics {
+                width: 3.0,
+                offset: 2.0,
+            },
+            ..base
+        };
+        assert!(base.same_layout(&thick));
+        let encoded = serde_json::to_string(&base).expect("metrics serializes");
+        let mut value: serde_json::Value = serde_json::from_str(&encoded).expect("json");
+        value.as_object_mut().expect("object").remove("focus_ring");
+        let restored: super::ThemeMetrics =
+            serde_json::from_value(value).expect("legacy metrics restore");
+        assert_eq!(restored, base);
     }
 }

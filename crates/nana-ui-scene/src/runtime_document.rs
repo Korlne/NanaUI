@@ -288,7 +288,13 @@ impl RuntimeDocument {
             // previous frame. Timing only `extract_nodes` left that outside
             // every `FrameStage`, so a large reflow frame reported roughly
             // half its real cost to the Issue #8 contract.
-            let scene = Arc::make_mut(&mut self.scene).apply_delta(extracted, render_removed);
+            // The installed theme's focus ring is read while primitives are
+            // built, so it is in place before this delta; a theme install
+            // re-extracts every node, so every ring follows in this frame.
+            let focus_ring = self.context.world().theme_metrics().focus_ring;
+            let retained = Arc::make_mut(&mut self.scene);
+            retained.set_focus_ring(focus_ring);
+            let scene = retained.apply_delta(extracted, render_removed);
             self.context
                 .time_stage_duration(FrameStage::Extract, started.elapsed());
             scene

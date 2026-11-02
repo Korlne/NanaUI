@@ -6810,6 +6810,59 @@ fn focused_list_item_paints_an_external_keyboard_ring() {
 }
 
 #[test]
+fn the_theme_focus_ring_sets_the_ring_stroke_and_offset() {
+    let mut item = node(1, None, &[]);
+    item.layout = LayoutBox {
+        x: 10.0,
+        y: 20.0,
+        width: 120.0,
+        height: 32.0,
+    };
+    item.focused = true;
+    item.standard_visual = Some(StandardVisual::ListItem {
+        leading: None,
+        content: None,
+        trailing: None,
+        note: None,
+        detail: None,
+    });
+    item.standard_visual_foreground = Some([0.2, 0.6, 1.0, 1.0]);
+
+    let mut scene = UiScene::new();
+    let before = scene.instance_id();
+    // A high-contrast theme: a 3 px stroke 2 px off the control.
+    scene.set_focus_ring(nana_ui_core::FocusRingMetrics {
+        width: 3.0,
+        offset: 2.0,
+    });
+    assert_ne!(scene.instance_id(), before);
+    scene.apply_delta([item], []);
+
+    let ring = scene
+        .primitive(PrimitiveId {
+            node: id(1),
+            slot: 7,
+        })
+        .expect("a focused list item paints its ring");
+    assert!(matches!(
+        ring.kind,
+        ScenePrimitiveKind::Quad {
+            border_width: 3.0,
+            ..
+        }
+    ));
+    assert_eq!(
+        ring.bounds,
+        SceneRect {
+            x: 5.0,
+            y: 15.0,
+            width: 130.0,
+            height: 42.0,
+        }
+    );
+}
+
+#[test]
 fn compact_leading_icon_centers_on_the_parent_text_line() {
     let mut row = node(1, None, &[2]);
     row.layout = LayoutBox {

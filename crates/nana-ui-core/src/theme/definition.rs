@@ -995,7 +995,7 @@ fn palette_fields(palette: &SemanticPalette) -> [(&'static str, SemanticColor); 
     ]
 }
 
-fn metrics_fields(metrics: ThemeMetrics) -> [(&'static str, f32); 32] {
+fn metrics_fields(metrics: ThemeMetrics) -> [(&'static str, f32); 34] {
     [
         ("metrics.radius_xs", metrics.radius_xs),
         ("metrics.radius_sm", metrics.radius_sm),
@@ -1046,6 +1046,8 @@ fn metrics_fields(metrics: ThemeMetrics) -> [(&'static str, f32); 32] {
         ("metrics.tree.icon", metrics.tree.icon),
         ("metrics.keycap.height", metrics.keycap.height),
         ("metrics.keycap.edge", metrics.keycap.edge),
+        ("metrics.focus_ring.width", metrics.focus_ring.width),
+        ("metrics.focus_ring.offset", metrics.focus_ring.offset),
         (
             "metrics.scrollbar.track_inset",
             metrics.scrollbar.track_inset,
@@ -1259,6 +1261,32 @@ mod tests {
         let metrics = squircle.compile().expect("compiles").metrics();
         assert_eq!(metrics.corner_shape, CornerShape::SQUIRCLE);
         assert!(metrics.same_layout(&UI_METRICS));
+    }
+
+    /// A high-contrast theme's thicker ring compiles and reaches the compiled
+    /// metrics; a negative stroke is refused like any other length.
+    #[test]
+    fn a_focus_ring_reaches_the_compiled_metrics_and_is_validated() {
+        let ring = super::super::FocusRingMetrics {
+            width: 3.0,
+            offset: 2.0,
+        };
+        let thick = dark().with_metrics(ThemeMetrics {
+            focus_ring: ring,
+            ..UI_METRICS
+        });
+        assert_eq!(
+            thick.compile().expect("compiles").metrics().focus_ring,
+            ring
+        );
+        let negative = dark().with_metrics(ThemeMetrics {
+            focus_ring: super::super::FocusRingMetrics {
+                width: -1.0,
+                offset: 1.0,
+            },
+            ..UI_METRICS
+        });
+        assert!(negative.compile().is_err());
     }
 
     #[test]
