@@ -9,7 +9,7 @@ pub(super) const WGPU: &str = "30.0.1";
 pub(super) const DXC: &str = "1.8 (4792, 23992152)";
 
 pub(in crate::scene_paint) const QUAD: Family = Family {
-    wgsl: 0xdd5fc9a78187e991,
+    wgsl: 0xab7dfcb18916e589,
     layout: 0x2cec81ab9701c664,
     vertex: Stage {
         entry: "solid_vs_main",

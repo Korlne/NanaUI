@@ -15,6 +15,15 @@ fn precompiled_stages_are_current_with_the_wgsl_and_layout() {
     );
 }
 
+/// The stages were generated from a Windows checkout; one with LF endings
+/// (Linux, macOS, a packaged crate) must still find them current.
+#[test]
+fn precompiled_hash_ignores_line_endings() {
+    let (wgsl, _, _) = crate::scene_paint::quad::precompiled_inputs();
+    let crlf = wgsl.replace("\r\n", "\n").replace('\n', "\r\n");
+    assert_eq!(fnv1a(crlf.as_bytes()), fnv1a(wgsl.as_bytes()));
+}
+
 /// naga writes the HLSL the DXIL is compiled from, with wgpu's binding
 /// conventions, and both may change in any wgpu release.
 #[test]

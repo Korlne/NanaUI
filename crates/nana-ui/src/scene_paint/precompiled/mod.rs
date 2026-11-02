@@ -50,13 +50,16 @@ impl Family {
 }
 
 /// FNV-1a, 64 bits. Tells a family's WGSL from the one its DXIL was compiled
-/// from; it is not a security check.
+/// from; it is not a security check. Carriage returns are skipped: a CRLF
+/// checkout compiles to the same DXIL, and must hash like an LF one.
 pub(super) const fn fnv1a(bytes: &[u8]) -> u64 {
     let mut hash = 0xcbf2_9ce4_8422_2325_u64;
     let mut index = 0;
     while index < bytes.len() {
-        hash ^= bytes[index] as u64;
-        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+        if bytes[index] != b'\r' {
+            hash ^= bytes[index] as u64;
+            hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+        }
         index += 1;
     }
     hash
