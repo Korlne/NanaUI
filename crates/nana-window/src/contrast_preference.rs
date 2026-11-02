@@ -2,8 +2,10 @@
 //!
 //! Windows reports it with `SPI_GETHIGHCONTRAST` (`HCF_HIGHCONTRASTON`) and
 //! broadcasts `WM_SETTINGCHANGE` with `SPI_SETHIGHCONTRAST` when the user
-//! flips it. The host's per-window subclass records that broadcast. Other
-//! platforms do not report it yet.
+//! flips it. The host's per-window subclass records that broadcast. macOS
+//! reports "Increase contrast" (`accessibilityDisplayShouldIncreaseContrast`)
+//! and its changes through the workspace display-options notification (see
+//! `display_options`). Other platforms do not report it yet.
 //!
 //! This is not DirectWrite text gamma (`system_contrast`).
 
@@ -70,10 +72,22 @@ fn platform_high_contrast() -> Option<bool> {
         };
         (ok != 0).then_some(info.flags & HCF_HIGHCONTRASTON != 0)
     }
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "macos")]
+    {
+        Some(crate::display_options::display_option(
+            crate::display_options::DisplayOption::IncreaseContrast,
+        ))
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
         None
     }
+}
+
+/// Mark the flag changed; the platform observer calls it.
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn mark_changed() {
+    CHANGED.store(true, Ordering::Release);
 }
 
 /// Whether the flag may have changed since the last call.
@@ -101,6 +115,8 @@ mod tests {
         observe_setting_change(SPI_SETHIGHCONTRAST);
         assert!(take_high_contrast_change());
         assert!(!take_high_contrast_change());
+        mark_changed();
+        assert!(take_high_contrast_change());
     }
 
     #[test]
@@ -110,9 +126,9 @@ mod tests {
         force_high_contrast(Some(false));
         assert_eq!(system_high_contrast(), Some(false));
         force_high_contrast(None);
-        #[cfg(target_os = "windows")]
+        #[cfg(any(target_os = "windows", target_os = "macos"))]
         assert!(system_high_contrast().is_some());
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
         assert!(system_high_contrast().is_none());
     }
 }

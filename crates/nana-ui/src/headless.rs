@@ -72,6 +72,7 @@ pub struct HeadlessWindow {
 pub struct HeadlessOptions {
     pub reduced_motion: bool,
     pub high_contrast: bool,
+    pub reduced_transparency: bool,
 }
 
 /// What updates asked for since [`HeadlessRuntime::take_report`].
@@ -924,6 +925,7 @@ fn context<M: Send + 'static>(
     .with_window_tag(window.tag.clone())
     .with_reduced_motion(options.reduced_motion)
     .with_high_contrast(options.high_contrast)
+    .with_reduced_transparency(options.reduced_transparency)
     .with_store(Arc::clone(store))
 }
 
@@ -941,6 +943,7 @@ fn event_window(event: &WindowEvent) -> WindowId {
         | WindowEvent::FocusChanged { id, .. }
         | WindowEvent::ReducedMotionChanged { id, .. }
         | WindowEvent::HighContrastChanged { id, .. }
+        | WindowEvent::ReducedTransparencyChanged { id, .. }
         | WindowEvent::PointerPresenceChanged { id, .. }
         | WindowEvent::CloseRequested { id }
         | WindowEvent::Closed { id }

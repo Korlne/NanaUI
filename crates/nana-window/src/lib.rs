@@ -13,6 +13,8 @@ pub use auxiliary::{AuxiliaryWindow, AuxiliaryWindowError};
 mod contrast_preference;
 #[cfg(target_os = "windows")]
 mod dcomp;
+#[cfg(target_os = "macos")]
+mod display_options;
 mod file_dialog;
 mod ime;
 mod keyboard;
@@ -24,6 +26,7 @@ mod reveal;
 pub mod shadow;
 mod size_move;
 mod splash;
+mod transparency_preference;
 mod underlay;
 mod web_surface;
 #[cfg(target_os = "windows")]
@@ -76,6 +79,7 @@ pub use splash::{
     SplashLogo, SplashLogoError, SplashLogoSource, SplashOutcome, SplashPackageError, SplashSkip,
     SplashSpec, SplashStaticReason, SplashWork, validate_logo,
 };
+pub use transparency_preference::{system_reduced_transparency, take_reduced_transparency_change};
 pub use underlay::{Underlay, UnderlayError};
 pub use web_surface::{
     WebFrame, WebFrameSink, WebSurface, WebSurfaceCommand, WebSurfaceCompletion, WebSurfaceDesc,

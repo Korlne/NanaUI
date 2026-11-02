@@ -952,6 +952,7 @@ impl<Program: RuntimeProgram> WindowManager<Program> {
         .with_window_tag(settings.tag.clone())
         .with_reduced_motion(self.reduced_motion)
         .with_high_contrast(self.high_contrast)
+        .with_reduced_transparency(self.reduced_transparency)
         .with_store(Arc::clone(&self.program_store));
         if let Err(error) = self.program.initialize_window(id, &context) {
             self.windows.unregister(id);

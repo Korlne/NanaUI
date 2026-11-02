@@ -180,6 +180,27 @@ impl<Program: RuntimeProgram> WindowManager<Program> {
         }
     }
 
+    /// Deliver a system reduce-transparency change (macOS display options).
+    fn sync_reduced_transparency(&mut self, event_loop: &dyn ActiveEventLoop) {
+        if !nana_window::take_reduced_transparency_change() {
+            return;
+        }
+        let Some(reduced) = nana_window::system_reduced_transparency() else {
+            return;
+        };
+        if reduced == self.reduced_transparency {
+            return;
+        }
+        self.reduced_transparency = reduced;
+        for id in self.known_window_ids() {
+            let update = self.program.window_event(
+                WindowEvent::ReducedTransparencyChanged { id, reduced },
+                &self.context_for(id),
+            );
+            self.apply_update(event_loop, update, None);
+        }
+    }
+
     /// Hand the window's document the system high-contrast setting: while it
     /// is on, the installed theme paints with the high-contrast palette.
     pub(super) fn apply_high_contrast(&mut self, id: WindowId) {
@@ -231,6 +252,7 @@ impl<Program: RuntimeProgram> WindowManager<Program> {
         self.sample_passthrough_forward(event_loop);
         self.sync_reduced_motion(event_loop);
         self.sync_high_contrast(event_loop);
+        self.sync_reduced_transparency(event_loop);
         if self.next_wakeup().is_some_and(|deadline| now >= deadline) {
             self.wake(event_loop, now);
         }

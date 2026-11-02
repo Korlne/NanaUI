@@ -454,7 +454,7 @@ fn build(&mut self, window: &mut ApplicationWindow, context: &RuntimeProgramCont
 `RuntimeProgramContext::reduced_motion()` 返回系统是否要求减少动态效果。窗口创建时读取。用户在运行中切换时。宿主向每扇窗口发送 `WindowEvent::ReducedMotionChanged { id, reduced }`。之后的回调上下文读到新值。应用据此选择过渡时长或关闭位移。NanaUI 不替应用改写已声明的动画。
 
 - Windows：读取「在 Windows 中显示动画」（`SPI_GETCLIENTAREAANIMATION`。关闭即减少动态效果）。宿主窗口子类收到 `WM_SETTINGCHANGE`（`SPI_SETCLIENTAREAANIMATION`）后在下一次 `about_to_wait` 重新读取。只在值变化时发送事件。不轮询。
-- macOS：读取「减少动态效果」（`NSWorkspace.accessibilityDisplayShouldReduceMotion`）。只在创建时读取。运行中切换不发送事件。
+- macOS：读取「减少动态效果」（`NSWorkspace.accessibilityDisplayShouldReduceMotion`）。首次读取时在工作区通知中心注册一个进程级观察者（`NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification`）。通知在主运行循环送达，宿主在下一次 `about_to_wait` 重新读取。只在值变化时发送事件。
 - Linux：暂不上报。恒为 `false`。不发送事件。
 
 ### 系统高对比
@@ -462,8 +462,16 @@ fn build(&mut self, window: &mut ApplicationWindow, context: &RuntimeProgramCont
 `RuntimeProgramContext::high_contrast()` 返回系统高对比是否打开。窗口创建时读取。用户在运行中切换时，宿主向每扇窗口发送 `WindowEvent::HighContrastChanged { id, high_contrast }`。之后的回调上下文读到新值。原生宿主在窗口初始化和每次切换时对窗口文档调用 `AppContext::set_high_contrast`，已装主题随之改用同明暗的高对比调色板绘制（见 [外观](look.md)）。这是呈现层覆盖：已装主题不被改写，关闭后原样回来。自己持有 `AppContext` 的嵌入式宿主要自己调用它。
 
 - Windows：读取 `SPI_GETHIGHCONTRAST` 的 `HCF_HIGHCONTRASTON`。宿主窗口子类收到 `WM_SETTINGCHANGE`（`SPI_SETHIGHCONTRAST`）后在下一次 `about_to_wait` 重新读取。只在值变化时发送事件。这不是 DirectWrite 的文字 gamma。
-- macOS 与 Linux：暂不上报。恒为 `false`。不发送事件。
+- macOS：读取「增强对比度」（`NSWorkspace.accessibilityDisplayShouldIncreaseContrast`）。变化走与减少动态效果同一个显示选项通知。只在值变化时发送事件。
+- Linux：暂不上报。恒为 `false`。不发送事件。
 - 测试用 `nana_window::force_high_contrast(Some(true))` 强制该标志，`None` 回到平台读取。
+
+### 减少透明度
+
+`RuntimeProgramContext::reduced_transparency()` 返回系统是否要求减少透明度。窗口创建时读取。运行中切换时宿主向每扇窗口发送 `WindowEvent::ReducedTransparencyChanged { id, reduced }`。NanaUI 不替应用改材质：应用据此改用不透明表面（例如不申请 `MaterialEffect`）。`nana_window::system_reduced_transparency()` / `take_reduced_transparency_change()` 是宿主读取的平台接口。
+
+- macOS：读取「减少透明度」（`NSWorkspace.accessibilityDisplayShouldReduceTransparency`）。变化走同一个显示选项通知。
+- Windows 与 Linux：不上报（Windows 的「透明效果」是个性化设置，不是这里的辅助功能偏好）。恒为 `false`。不发送事件。
 
 ### 显示器与全屏
 

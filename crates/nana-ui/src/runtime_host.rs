@@ -47,6 +47,7 @@ pub struct RuntimeProgramContext<Message: Send + 'static> {
     system_appearance: Option<SystemAppearance>,
     reduced_motion: bool,
     high_contrast: bool,
+    reduced_transparency: bool,
     store: SharedStore,
     startup: crate::StartupHandle,
     gpu_adapters: Arc<crate::GpuAdapterSelection>,
@@ -69,6 +70,7 @@ impl<Message: Send + 'static> Clone for RuntimeProgramContext<Message> {
             system_appearance: self.system_appearance,
             reduced_motion: self.reduced_motion,
             high_contrast: self.high_contrast,
+            reduced_transparency: self.reduced_transparency,
             store: Arc::clone(&self.store),
             startup: self.startup.clone(),
             gpu_adapters: Arc::clone(&self.gpu_adapters),
@@ -105,6 +107,7 @@ impl<Message: Send + 'static> RuntimeProgramContext<Message> {
             system_appearance,
             reduced_motion: false,
             high_contrast: false,
+            reduced_transparency: false,
             store: memory_store(),
             startup,
             gpu_adapters: Arc::default(),
@@ -118,6 +121,11 @@ impl<Message: Send + 'static> RuntimeProgramContext<Message> {
 
     pub(crate) fn with_high_contrast(mut self, high_contrast: bool) -> Self {
         self.high_contrast = high_contrast;
+        self
+    }
+
+    pub(crate) fn with_reduced_transparency(mut self, reduced: bool) -> Self {
+        self.reduced_transparency = reduced;
         self
     }
 
@@ -176,6 +184,14 @@ impl<Message: Send + 'static> RuntimeProgramContext<Message> {
     /// report it; changes arrive as `WindowEvent::HighContrastChanged`.
     pub const fn high_contrast(&self) -> bool {
         self.high_contrast
+    }
+
+    /// The system asks to reduce transparency (macOS "Reduce transparency").
+    /// `false` when the platform does not report it; changes arrive as
+    /// `WindowEvent::ReducedTransparencyChanged`. NanaUI does not change
+    /// materials for it: the application picks opaque surfaces.
+    pub const fn reduced_transparency(&self) -> bool {
+        self.reduced_transparency
     }
 
     pub const fn geometry(&self) -> WindowGeometry {

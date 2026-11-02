@@ -163,10 +163,6 @@ pub enum WindowEvent {
         id: WindowId,
         focused: bool,
     },
-    /// A hovering mouse or pen pointer entered (`inside`) or left the client
-    /// area. Delivered only on change. Touch contacts never report presence,
-    /// and the leave a host-started native window drag produces is withheld
-    /// until the pointer is reported again. Hiding the window reports a leave.
     /// The system "reduce motion" preference changed. Sent to every window;
     /// read the current value from `RuntimeProgramContext::reduced_motion`.
     ReducedMotionChanged {
@@ -179,6 +175,17 @@ pub enum WindowEvent {
         id: WindowId,
         high_contrast: bool,
     },
+    /// The system "reduce transparency" preference changed (macOS). Sent to
+    /// every window; read the current value from
+    /// `RuntimeProgramContext::reduced_transparency`.
+    ReducedTransparencyChanged {
+        id: WindowId,
+        reduced: bool,
+    },
+    /// A hovering mouse or pen pointer entered (`inside`) or left the client
+    /// area. Delivered only on change. Touch contacts never report presence,
+    /// and the leave a host-started native window drag produces is withheld
+    /// until the pointer is reported again. Hiding the window reports a leave.
     PointerPresenceChanged {
         id: WindowId,
         inside: bool,
