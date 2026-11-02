@@ -56,6 +56,11 @@ inactive overlay 与关闭菜单属于结构性隐藏。`ComputedStyle::box_visi
 
 用户的关闭手势（Escape、点外面、关闭位）先在 `Dialog`、`ConfirmDialog`、`Drawer` 自己身上发 `DialogCloseRequested { trigger }`，再按 `close_policy` 决定框架关不关。策略不允许的手势只发请求，浮层留着。`DialogClosePolicy::requests_only()` 让框架一种都不关，开合全由应用决定。应用不必轮询无障碍树去发现「对话框被框架关了」。
 
+浮层的键盘约定（真实按键路径上有测试守着：`enter_activates_the_focused_default_action_and_escape_closes_the_dialog`、`enter_opens_and_escape_closes_a_popover_from_the_keyboard`）：
+
+- **Escape** 关掉最上层的浮层：对话框、确认框、抽屉按 `close_policy`（默认允许，先发 `DialogCloseRequested { trigger: Escape }`）；`Popover` / `ActionMenu` 按 `close_on_escape`（默认开），关上后焦点若在面板里回到触发器。面板里还有打开的下拉框或补全时，Escape 先关那一层。
+- **Enter** 激活焦点所在的动作，没有另一个「默认按钮」的概念：模态打开时焦点落在 `initial_focus` 上（默认 `FirstAction`，确认框里是「取消」，误按 Enter 不会执行破坏性操作）。要 Enter 直接确认，写 `.initial_focus(ModalInitialFocus::Target(确认按钮))`。`Popover` 的触发器上 Enter / 空格开合面板。
+
 `Dialog`、`ConfirmDialog`、`Drawer` 也可以声明开合：`.open(..)` / `.model(信号)`，挂在 `OverlayHost` 下时就是 `activate_overlay` / `dismiss_overlay`，宿主自己做的开合发 `DialogToggled` 并写回 `open`（见 [Dialog](../components/dialog.md#声明式开合)）。
 
 `dismiss_overlay` 先关闭交互并恢复焦点。再保留菜单/对话框绘制到退出动画结束。宿主通过 `OverlayClosing { root }` 同步业务打开状态。通过 `OverlayChanged { active: None }` 处理最终释放。排队的关闭通知应在下一次投影前消费，并核对浮层身份，避免覆盖快速重开。退出期间保留父子关系和 `DesktopShell.overlays` 中的节点。直接 `remove_view` 会立即释放，并跳过退出动画。

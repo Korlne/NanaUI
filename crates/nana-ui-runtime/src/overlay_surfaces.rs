@@ -2971,6 +2971,110 @@ mod tests {
         );
     }
 
+    /// The keyboard contract of a modal dialog, through the real key router:
+    /// Enter activates the action focus is on (the first action when it
+    /// opens, or the `initial_focus` target), Escape closes it.
+    #[test]
+    fn enter_activates_the_focused_default_action_and_escape_closes_the_dialog() {
+        use nana_ui_input::{KeyInput, KeyState};
+        fn press(cx: &mut AppContext, document: DocumentId, key: &'static str) {
+            let mut input = crate::HeadlessInput::bind(cx, document);
+            input
+                .press(
+                    cx,
+                    KeyInput::named(key, key, KeyState::Pressed, Default::default()),
+                    None,
+                    None,
+                )
+                .unwrap();
+        }
+        let mut cx = AppContext::new();
+        let document = DocumentId::new(1).unwrap();
+        let host = cx
+            .create_component(document, crate::OverlayHost::new())
+            .unwrap();
+        let confirm = cx
+            .create_component(document, ConfirmDialog::new("Delete", "Cannot be undone"))
+            .unwrap();
+        let cancel = cx
+            .create_detached_component(document, Button::new("Cancel"))
+            .unwrap();
+        let commit = cx
+            .create_detached_component(document, Button::new("Delete"))
+            .unwrap();
+        cx.set_confirm_slots(
+            confirm,
+            ConfirmSlots {
+                title_icon: None,
+                body: None,
+                footer: None,
+                close_action: None,
+                cancel: cancel.stable_id(),
+                secondary: None,
+                confirm: commit.stable_id(),
+            },
+        )
+        .unwrap();
+        let intents = Arc::new(Mutex::new(Vec::new()));
+        let captured = Arc::clone(&intents);
+        cx.on(confirm, move |_dialog, intent: &ConfirmIntent, _| {
+            captured.lock().unwrap().push(*intent)
+        })
+        .unwrap();
+        let closes = Arc::new(Mutex::new(Vec::new()));
+        let heard = Arc::clone(&closes);
+        cx.on(
+            confirm,
+            move |_dialog, request: &crate::DialogCloseRequested, _| {
+                heard.lock().unwrap().push(request.trigger)
+            },
+        )
+        .unwrap();
+        cx.append_child(host, confirm).unwrap();
+        let open = |cx: &mut AppContext| {
+            assert!(cx.activate_overlay(host, confirm).unwrap());
+            cx.layout_document(document, crate::LayoutViewport::new(800.0, 600.0))
+                .unwrap();
+        };
+        // Open as far as the keyboard and the application are concerned; the
+        // host keeps the closing card until its exit motion ends.
+        let active = |cx: &AppContext| {
+            cx.active_runtime_overlay(document).is_some()
+                && cx.read(confirm, |dialog| dialog.open).unwrap()
+        };
+
+        // Opened, focus is on the first action; Enter activates it.
+        open(&mut cx);
+        assert_eq!(cx.world().focused(document), Some(cancel.stable_id()));
+        press(&mut cx, document, "Enter");
+        assert_eq!(*intents.lock().unwrap(), vec![ConfirmIntent::Cancel]);
+
+        // Escape asks first, then the default policy closes it.
+        assert!(active(&cx));
+        press(&mut cx, document, "Escape");
+        assert_eq!(
+            *closes.lock().unwrap(),
+            vec![nana_ui_core::DialogCloseTrigger::Escape]
+        );
+        assert!(!active(&cx));
+
+        // With the confirming action as the default, Enter confirms.
+        cx.update_component(confirm, |dialog, _| {
+            dialog.set_initial_focus(ModalInitialFocus::Target(commit.stable_id()))
+        })
+        .unwrap();
+        intents.lock().unwrap().clear();
+        open(&mut cx);
+        assert_eq!(cx.world().focused(document), Some(commit.stable_id()));
+        press(&mut cx, document, "Enter");
+        assert_eq!(
+            *intents.lock().unwrap(),
+            vec![ConfirmIntent::Confirm { danger: false }]
+        );
+        press(&mut cx, document, "Escape");
+        assert!(!active(&cx));
+    }
+
     #[test]
     fn confirm_initial_focus_and_busy_close_are_one_modal_authority() {
         let mut cx = AppContext::new();

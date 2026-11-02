@@ -1041,6 +1041,74 @@ mod tests {
     use crate::framework::AppContext;
     use std::time::Duration;
 
+    /// The popover's keyboard contract through the real key router: Enter on
+    /// the trigger opens it, Escape closes it and gives focus back to the
+    /// trigger, and with `close_on_escape(false)` Escape leaves it open.
+    #[test]
+    fn enter_opens_and_escape_closes_a_popover_from_the_keyboard() {
+        use crate::view::{entity_ref, widget, with_refs};
+        use crate::{Button, Stack};
+        use nana_ui_input::{KeyInput, KeyState};
+        fn press(context: &mut AppContext, key: &'static str) {
+            let mut input = crate::HeadlessInput::bind(context, document());
+            input
+                .press(
+                    context,
+                    KeyInput::named(key, key, KeyState::Pressed, Default::default()),
+                    None,
+                    None,
+                )
+                .unwrap();
+        }
+
+        let mut context = AppContext::new();
+        let root = context
+            .create_component(document(), Stack::column(0.0))
+            .unwrap();
+        let (_, (popover, item)) = context
+            .mount_view(root.stable_id(), || {
+                let popover = entity_ref::<Popover>();
+                let item = entity_ref::<Button>();
+                with_refs(
+                    widget(Popover::new().trigger("Options"))
+                        .entity_ref(popover)
+                        .children(widget(Button::new("Rename")).entity_ref(item)),
+                    (popover, item),
+                )
+            })
+            .unwrap();
+        let layout = |context: &mut AppContext| {
+            context
+                .layout_document(document(), LayoutViewport::new(400.0, 300.0))
+                .unwrap();
+        };
+        let open = |context: &AppContext| context.read(popover, |popover| popover.open).unwrap();
+        layout(&mut context);
+        assert!(context.focus_node(document(), popover.stable_id()).unwrap());
+        press(&mut context, "Enter");
+        layout(&mut context);
+        assert!(open(&context));
+
+        // From inside the panel, Escape closes it and focus returns.
+        assert!(context.focus_node(document(), item.stable_id()).unwrap());
+        press(&mut context, "Escape");
+        assert!(!open(&context));
+        assert_eq!(
+            context.world().focused(document()),
+            Some(popover.stable_id())
+        );
+
+        // A popover that keeps itself open on Escape does.
+        context
+            .update_component(popover, |popover, _| popover.close_on_escape = false)
+            .unwrap();
+        press(&mut context, "Enter");
+        layout(&mut context);
+        assert!(open(&context));
+        press(&mut context, "Escape");
+        assert!(open(&context));
+    }
+
     #[test]
     fn compact_heading_tools_keep_their_targets_and_menu_anchor() {
         use crate::view::{entity_ref, widget, with_refs};
