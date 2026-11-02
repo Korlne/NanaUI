@@ -724,6 +724,7 @@ fn parse_stylesheet_full_with_cache(
             loader,
             stack: &mut stack,
             cache,
+            nesting: 0,
         },
         true,
     );
@@ -734,6 +735,27 @@ struct ImportParseCtx<'a> {
     loader: Option<&'a dyn crate::css_at_rule::StylesheetLoader>,
     stack: &'a mut Vec<String>,
     cache: &'a mut HashMap<String, ParsedStylesheet>,
+    /// At-rule blocks open around the text being parsed.
+    nesting: usize,
+}
+
+/// Parses the body of a nested at-rule block, or skips it past
+/// [`crate::MAX_NESTING`]: `false` when skipped.
+fn parse_nested_block(
+    css: &str,
+    order: &mut u32,
+    sheet: &mut ParsedStylesheet,
+    report: &mut StylesheetParseReport,
+    ctx: &mut ImportParseCtx<'_>,
+) -> bool {
+    if ctx.nesting >= crate::MAX_NESTING {
+        report.skipped_at_rules += 1;
+        return false;
+    }
+    ctx.nesting += 1;
+    parse_stylesheet_into(css, order, sheet, report, ctx, false);
+    ctx.nesting -= 1;
+    true
 }
 
 /// `Some(rest)` when the at-rule was consumed; `None` means unknown.
@@ -772,7 +794,9 @@ fn parse_known_at_rule<'a>(
         let query = parse_media_query_list(prelude);
         let mut inner = ParsedStylesheet::default();
         // Nested `@import` is invalid (CSS spec); reuse the late-import skip.
-        parse_stylesheet_into(inner_css, order, &mut inner, report, ctx, false);
+        if !parse_nested_block(inner_css, order, &mut inner, report, ctx) {
+            return Some(next);
+        }
         sheet.media_rules.push(MediaRule {
             query,
             sheet: inner,
@@ -789,7 +813,9 @@ fn parse_known_at_rule<'a>(
         let mut inner = ParsedStylesheet::default();
         // Inner rules share the global order: they interleave with the rest
         // of the sheet in the cascade.
-        parse_stylesheet_into(inner_css, order, &mut inner, report, ctx, false);
+        if !parse_nested_block(inner_css, order, &mut inner, report, ctx) {
+            return Some(next);
+        }
         let nested = take_nested_container_rules(&mut inner);
         if query.is_err() {
             report.skipped_at_rules += 1;
@@ -834,7 +860,7 @@ fn parse_known_at_rule<'a>(
         };
         match evaluate_supports_condition(prelude) {
             Some(true) => {
-                parse_stylesheet_into(inner_css, order, sheet, report, ctx, false);
+                parse_nested_block(inner_css, order, sheet, report, ctx);
             }
             _ => {
                 report.skipped_at_rules += 1;
@@ -850,7 +876,7 @@ fn parse_known_at_rule<'a>(
         };
         record_layer_names(sheet, &parsed.names);
         if let Some(inner_css) = body {
-            parse_stylesheet_into(inner_css, order, sheet, report, ctx, false);
+            parse_nested_block(inner_css, order, sheet, report, ctx);
         }
         return Some(next);
     }
@@ -1061,123 +1087,137 @@ fn parse_stylesheet_into(
             continue;
         };
         rest = next;
-        let declarations = body.trim().to_string();
-        if declarations.is_empty() {
-            report.skipped_declarations += 1;
-            continue;
-        }
-        let declaration_entries = parse_declaration_entries(&declarations);
-        if declaration_entries.is_empty() {
-            report.skipped_declarations += 1;
-            continue;
-        }
-        let (layout_entries, motion) = partition_motion_entries(&declaration_entries);
-        if layout_entries.is_empty() && motion.is_empty() {
-            report.skipped_declarations += 1;
-            continue;
-        }
-        let layout_declarations = entries_to_declaration_text(&layout_entries);
+        parse_style_rule(selector_text, body, order, sheet, report);
+    }
+}
 
-        let mut static_selectors = Vec::new();
-        let mut interactive_selectors = Vec::new();
-        let mut generated = Vec::new();
-        let mut scrollbar = Vec::new();
-        for part in split_selector_list(selector_text) {
-            if let Some((originating, pseudo)) = parse_scrollbar_pseudo_selector(part) {
-                scrollbar.push((originating, pseudo));
-            } else if let Some((originating, pseudo)) = parse_generated_pseudo_selector(part) {
-                generated.push((originating, pseudo));
-            } else if let Some(sel) = parse_interactive_selector(part) {
-                interactive_selectors.push(sel);
-            } else if let Some(sel) = parse_selector(part) {
-                static_selectors.push(sel);
-            } else {
-                report.skipped_selectors += 1;
-            }
-        }
+/// One style rule: its selectors and declarations into `sheet`. Kept out of
+/// [`parse_stylesheet_into`] so the frame that recurses into nested at-rule
+/// blocks stays small.
+#[inline(never)]
+fn parse_style_rule(
+    selector_text: &str,
+    body: &str,
+    order: &mut u32,
+    sheet: &mut ParsedStylesheet,
+    report: &mut StylesheetParseReport,
+) {
+    let declarations = body.trim().to_string();
+    if declarations.is_empty() {
+        report.skipped_declarations += 1;
+        return;
+    }
+    let declaration_entries = parse_declaration_entries(&declarations);
+    if declaration_entries.is_empty() {
+        report.skipped_declarations += 1;
+        return;
+    }
+    let (layout_entries, motion) = partition_motion_entries(&declaration_entries);
+    if layout_entries.is_empty() && motion.is_empty() {
+        report.skipped_declarations += 1;
+        return;
+    }
+    let layout_declarations = entries_to_declaration_text(&layout_entries);
 
-        if static_selectors.is_empty()
-            && interactive_selectors.is_empty()
-            && generated.is_empty()
-            && scrollbar.is_empty()
-        {
-            continue;
-        }
-
-        let has_layout = !layout_entries.is_empty();
-        let has_motion = !motion.is_empty();
-        let motion_for_rules = if has_motion {
-            motion.clone()
+    let mut static_selectors = Vec::new();
+    let mut interactive_selectors = Vec::new();
+    let mut generated = Vec::new();
+    let mut scrollbar = Vec::new();
+    for part in split_selector_list(selector_text) {
+        if let Some((originating, pseudo)) = parse_scrollbar_pseudo_selector(part) {
+            scrollbar.push((originating, pseudo));
+        } else if let Some((originating, pseudo)) = parse_generated_pseudo_selector(part) {
+            generated.push((originating, pseudo));
+        } else if let Some(sel) = parse_interactive_selector(part) {
+            interactive_selectors.push(sel);
+        } else if let Some(sel) = parse_selector(part) {
+            static_selectors.push(sel);
         } else {
-            MotionDeclarations::default()
-        };
+            report.skipped_selectors += 1;
+        }
+    }
 
-        let mut consumed = false;
-        if !static_selectors.is_empty() && has_layout {
-            report.rules += 1;
-            consumed = true;
-            sheet.static_rules.push(StyleRule {
-                selectors: static_selectors.clone(),
+    if static_selectors.is_empty()
+        && interactive_selectors.is_empty()
+        && generated.is_empty()
+        && scrollbar.is_empty()
+    {
+        return;
+    }
+
+    let has_layout = !layout_entries.is_empty();
+    let has_motion = !motion.is_empty();
+    let motion_for_rules = if has_motion {
+        motion.clone()
+    } else {
+        MotionDeclarations::default()
+    };
+
+    let mut consumed = false;
+    if !static_selectors.is_empty() && has_layout {
+        report.rules += 1;
+        consumed = true;
+        sheet.static_rules.push(StyleRule {
+            selectors: static_selectors.clone(),
+            declarations: layout_declarations.clone(),
+            declaration_entries: layout_entries.clone(),
+            source_order: *order,
+        });
+    }
+    if !interactive_selectors.is_empty() && (has_layout || has_motion) {
+        consumed = true;
+        for sel in interactive_selectors {
+            sheet.interactive_rules.push(InteractiveStyleRule {
+                selector: sel,
                 declarations: layout_declarations.clone(),
                 declaration_entries: layout_entries.clone(),
-                source_order: *order,
-            });
-        }
-        if !interactive_selectors.is_empty() && (has_layout || has_motion) {
-            consumed = true;
-            for sel in interactive_selectors {
-                sheet.interactive_rules.push(InteractiveStyleRule {
-                    selector: sel,
-                    declarations: layout_declarations.clone(),
-                    declaration_entries: layout_entries.clone(),
-                    motion: motion_for_rules.clone(),
-                    source_order: *order,
-                    layer: None,
-                    media: Vec::new(),
-                });
-            }
-        }
-        if !generated.is_empty() && (has_layout || has_motion) {
-            consumed = true;
-            for (originating_selector, pseudo) in generated {
-                sheet.generated_pseudo_rules.push(GeneratedPseudoRule {
-                    originating_selector,
-                    pseudo,
-                    declarations: layout_declarations.clone(),
-                    declaration_entries: layout_entries.clone(),
-                    motion: motion_for_rules.clone(),
-                    source_order: *order,
-                    layer: None,
-                    media: Vec::new(),
-                });
-            }
-        }
-        if !scrollbar.is_empty() && has_layout {
-            consumed = true;
-            for (originating_selector, pseudo) in scrollbar {
-                sheet.scrollbar_pseudo_rules.push(ScrollbarPseudoRule {
-                    originating_selector,
-                    pseudo,
-                    declaration_entries: layout_entries.clone(),
-                    source_order: *order,
-                    layer: None,
-                    media: Vec::new(),
-                });
-            }
-        }
-        if !static_selectors.is_empty() && has_motion {
-            consumed = true;
-            sheet.motion_rules.push(MotionStyleRule {
-                selectors: static_selectors,
-                motion,
+                motion: motion_for_rules.clone(),
                 source_order: *order,
                 layer: None,
                 media: Vec::new(),
             });
         }
-        if consumed {
-            *order = order.saturating_add(1);
+    }
+    if !generated.is_empty() && (has_layout || has_motion) {
+        consumed = true;
+        for (originating_selector, pseudo) in generated {
+            sheet.generated_pseudo_rules.push(GeneratedPseudoRule {
+                originating_selector,
+                pseudo,
+                declarations: layout_declarations.clone(),
+                declaration_entries: layout_entries.clone(),
+                motion: motion_for_rules.clone(),
+                source_order: *order,
+                layer: None,
+                media: Vec::new(),
+            });
         }
+    }
+    if !scrollbar.is_empty() && has_layout {
+        consumed = true;
+        for (originating_selector, pseudo) in scrollbar {
+            sheet.scrollbar_pseudo_rules.push(ScrollbarPseudoRule {
+                originating_selector,
+                pseudo,
+                declaration_entries: layout_entries.clone(),
+                source_order: *order,
+                layer: None,
+                media: Vec::new(),
+            });
+        }
+    }
+    if !static_selectors.is_empty() && has_motion {
+        consumed = true;
+        sheet.motion_rules.push(MotionStyleRule {
+            selectors: static_selectors,
+            motion,
+            source_order: *order,
+            layer: None,
+            media: Vec::new(),
+        });
+    }
+    if consumed {
+        *order = order.saturating_add(1);
     }
 }
 

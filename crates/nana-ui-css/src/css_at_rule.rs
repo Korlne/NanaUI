@@ -274,7 +274,7 @@ pub fn parse_import_prelude(prelude: &str) -> Option<ImportPrelude> {
 /// `(width: <parseable>)`, plus `not` / `and` / `or` of those. Mixing `and`
 /// and `or` at the same level without wrapping parens is unknown.
 pub fn evaluate_supports_condition(prelude: &str) -> Option<bool> {
-    evaluate_supports_expr(prelude.trim())
+    evaluate_supports_expr(prelude.trim(), 0)
 }
 
 /// Parse `@layer` names (`base`, `framework.layout, utilities`). Empty prelude
@@ -848,9 +848,11 @@ fn parse_layer_name(s: &str) -> Option<String> {
     }
 }
 
-fn evaluate_supports_expr(s: &str) -> Option<bool> {
+/// `depth` counts the groups open around `s`; past [`crate::MAX_NESTING`]
+/// the condition is unknown.
+fn evaluate_supports_expr(s: &str, depth: usize) -> Option<bool> {
     let s = s.trim();
-    if s.is_empty() {
+    if s.is_empty() || depth > crate::MAX_NESTING {
         return None;
     }
     let has_and = has_keyword_at_depth0(s, "and");
@@ -861,7 +863,7 @@ fn evaluate_supports_expr(s: &str) -> Option<bool> {
     if has_and {
         let mut acc = true;
         for part in split_keyword_parts(s, "and") {
-            acc = acc && evaluate_supports_term(part)?;
+            acc = acc && evaluate_supports_term(part, depth)?;
         }
         return Some(acc);
     }
@@ -872,14 +874,14 @@ fn evaluate_supports_expr(s: &str) -> Option<bool> {
             return None;
         }
         for part in parts {
-            acc = acc || evaluate_supports_term(part)?;
+            acc = acc || evaluate_supports_term(part, depth)?;
         }
         return Some(acc);
     }
-    evaluate_supports_term(s)
+    evaluate_supports_term(s, depth)
 }
 
-fn evaluate_supports_term(s: &str) -> Option<bool> {
+fn evaluate_supports_term(s: &str, depth: usize) -> Option<bool> {
     let s = s.trim();
     if s.is_empty() {
         return None;
@@ -892,11 +894,11 @@ fn evaluate_supports_term(s: &str) -> Option<bool> {
     if rest.is_empty() {
         return None;
     }
-    let value = evaluate_supports_paren(rest)?;
+    let value = evaluate_supports_paren(rest, depth)?;
     Some(if negated { !value } else { value })
 }
 
-fn evaluate_supports_paren(s: &str) -> Option<bool> {
+fn evaluate_supports_paren(s: &str, depth: usize) -> Option<bool> {
     let s = s.trim();
     if !s.starts_with('(') {
         return None;
@@ -914,7 +916,7 @@ fn evaluate_supports_paren(s: &str) -> Option<bool> {
         || has_keyword_at_depth0(inner, "and")
         || has_keyword_at_depth0(inner, "or")
     {
-        return evaluate_supports_expr(inner);
+        return evaluate_supports_expr(inner, depth + 1);
     }
     evaluate_supports_declaration(inner)
 }

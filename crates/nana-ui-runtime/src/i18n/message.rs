@@ -625,4 +625,30 @@ mod tests {
             assert!(CompiledMessage::parse(pattern).is_err(), "{pattern}");
         }
     }
+
+    #[test]
+    fn selects_nested_past_the_limit_are_errors_on_a_small_stack() {
+        let nest = |depth: usize| {
+            format!(
+                "{}x{}",
+                "{a, select, other {".repeat(depth),
+                "}}".repeat(depth)
+            )
+        };
+        let (shallow, deep) = (nest(16), nest(10_000));
+        let (shallow, deep) = std::thread::Builder::new()
+            .stack_size(512 * 1024)
+            .spawn(move || {
+                (
+                    CompiledMessage::parse(&shallow),
+                    CompiledMessage::parse(&deep),
+                )
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+        assert!(shallow.is_ok());
+        assert!(deep.is_err());
+        assert_eq!(format(&nest(16), &MessageArgs::new().with("a", "b")).0, "x");
+    }
 }

@@ -26,7 +26,27 @@
 1. **测量**和**视图建树**是仅有的两处按树深递归的地方。测量里尺寸要从约束传下去的子项里算上来，建树时一个元素要在自己的作用域里建子元素，二者都没有不改变语义的迭代写法。每一层都必须经过兜底：测量走 `layout_engine::recursion::level`，建树走 `crate::stack::level`。剩余栈不足 256 KiB 时这一层换到新分配的 4 MiB 栈段上继续（`stacker::grow`）。剩余栈在桌面平台由 `stacker` 读取，在 iOS 和 Android 上读线程自己的栈边界（`pthread_get_stackaddr_np` / `pthread_getattr_np`）——`stacker` 读不到这两个平台，此前兜底在那里不生效。只有 wasm 读不到。
 2. **放置**是有界递归：一次调用最多下降 `recursion::SPAN`（24）层，再往下的节点只写下自己的盒子，子树作为边界排进本趟队列，由最外层调用按顺序放完再返回。递归深度与树深无关，放置不需要兜底。见 [布局 · 布局递归与栈](layout.md#布局递归与栈)。
 3. **其余所有树遍历**都必须用循环或堆上的显式栈，不得按深度递归。这次改掉的：命中索引建树（`HitIndex::insert_tree`）、样式解析沿祖先链（`resolve_style`）、行盒查询（`holds_line_box_in`）、原子基线沿祖先上溯（`atom_baseline_reads_content`）。新增遍历时用 `scripts/audit-stack-frames.py` 和下面的门禁验证。
-4. 解析运行时内容（Markdown、Mermaid 图、CSS）的递归按输入嵌套深度走，同样要有深度上限或显式栈；它们不在下面这道门禁里，逐个审计的结果见文末「待办」。
+4. **解析运行时内容**（Markdown、Mermaid 图、CSS、ICU 消息、绘制脚本）的递归跟着输入的嵌套深度走，所以每一处都有深度上限或改成了循环，见下「运行时内容的嵌套」。超出上限时返回解析错误、跳过那一段或按纯文本降级，不会 panic。
+
+### 运行时内容的嵌套
+
+| 解析器 | 上限 | 超出时 |
+| --- | --- | --- |
+| Mermaid：zenuml 花括号 | `MAX_BRACES` 64 | `TooLarge(ClusterDepth)` |
+| Mermaid：railroad 分组与调用 | `MAX_DEPTH` 48 | `TooLarge(ClusterDepth)` |
+| Mermaid：block、c4、state、class、sequence、architecture、flowchart 的容器 | `Limits::cluster_depth` 16，容器总数 `Limits::clusters` 300 | `TooLarge(ClusterDepth)` / `TooLarge(Clusters)` |
+| Mermaid：usecase 的 JSON 表 | 32 | 警告，不成表 |
+| Mermaid：`%%{init}%%` 配置 | 8 层 | 更深的对象整段跳过，后面的键照读 |
+| Mermaid：缩进树（mindmap、treeView、treemap、ishikawa、kanban） | 源码预算（约 490 层） | 布局不按层递归，无需上限 |
+| Markdown（`rich_text`） | 无 | 块是扁平的，`pulldown-cmark` 不递归，`layout_block` 只多一层 |
+| ICU 消息（`i18n::message`） | 16 层 | 解析错误，按原文显示 |
+| 绘制脚本的路径对象（`paint_script::parse_path`） | 无 | 循环展开；JSON 本身由 `serde_json` 限 128 层 |
+| CSS：`@media` / `@container` / `@supports` / `@layer` 块 | `MAX_NESTING` 32 | 跳过那一块，计入 `skipped_at_rules` |
+| CSS：容器查询与 `@supports` 条件的括号、`color-mix()` | `MAX_NESTING` 32 | 查询 `Invalid` / 条件未知 / 颜色无效 |
+| CSS：`calc()` 的括号与数学函数 | `MAX_CALC_DEPTH` 16 | 值无效 |
+| CSS：`var()` 引用链 | `MAX_VAR_DEPTH` 32 | 当作未解析：用回退值；自引用 `--a: var(--a)` 也在此终止 |
+
+每个解析器都有一条测试，在 512 KiB 的线程上解析一万层（缩进树取源码预算能装下的最深）：`nana-ui-diagram/tests/deep_nesting.rs`、`nana-ui-css/tests/deep_nesting.rs`，以及 `rich_text`、`i18n::message`、`paint_script` 各自的单元测试。上限之内的深度同样要受栈预算约束：CSS 嵌套块每层的帧在 debug 下约 6.5 KiB（样式规则的处理拆到了 `parse_style_rule`，不在递归的帧里），32 层约 210 KiB；railroad 48 层在 debug 下要 256–512 KiB，是这些解析器里最紧的。
 
 ### 门禁
 
@@ -123,5 +143,5 @@ NanaUI 的计时含布局写回的提交与结果发布（Taffy 没有对应步�
 - **深链上的整帧**：已定位。500 层 24.7 ms、256 层 7.4 ms 的平方项不在发布（计数确认发布是线性的：每次 501 次锚点查询、501 步上溯，`sample` 把时间归到 `layout_anchors` 是深栈截断造成的误归因），而在场景提取：250 → 500 层时 Extract 2.7 → 10.9 ms（×4），TextShape 0.56 → 1.7 ms（×3），布局与挂载都是 ×2。提取里每个节点都从根走一遍祖先：`compute_ancestor_state`（同父兄弟只有单槽缓存，链上每个节点都是独子，全部未命中）、`is_descendant_of_icon_visual`、`is_descendant_of_rasterized_svg`、`filter_groups_from`、`group_prefix`。要线性就得在重建期间按父节点记忆「给子节点的折叠状态」：子节点不逃逸裁剪链、本身不是 `fixed`、不是工作区调整手柄、祖先里没有 `ModalFrame` 时，`F(P) = step(F(parent(P)), P)`，遇到 `fixed` 祖先在它那里重置几何、透明度照乘；其余情况退回现有算法。TextShape 的 ×3 还没拆。
 - **debug 的大 `match` 帧**：把 `derive_component_geometry`、`build_node_primitives`、`controls_base::build` 的大分支拆成各自的函数，debug 整帧就能降到 256 KiB。
 - **`AppContext` / `UiWorld` 内联大小**：把大块字段装箱，构造路径的帧就能回到预算内。
-- **运行时内容解析的递归**：`nana-ui-diagram` 的各家族解析（zenuml、usecase、mindmap、block、c4、railroad）、`rich_text::layout_block`、`i18n::message`、`paint_script::parse_path` 和 `nana-ui-css` 的嵌套规则都按输入嵌套深度递归，需要逐个加深度上限或改成显式栈，并给每个加一条深嵌套输入的测试。
+- **railroad 解析的 debug 帧**：`alt → seq → term → primary` 每层五个帧、合计 5 KiB 以上，48 层在 debug 下余量不到一倍。把 `Result<Expr, Fail>` 的大小压下来，或把上限降到 32。
 - **移动端实机**：`stack` 的 iOS 与 Android 分支只做过交叉 `cargo check`（`aarch64-apple-ios`、`aarch64-linux-android`，后者先 `source scripts/android-env.sh`），没有在设备上跑过深树门禁。

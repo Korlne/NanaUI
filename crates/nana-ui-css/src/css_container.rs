@@ -356,6 +356,7 @@ pub fn parse_container_prelude(prelude: &str) -> Result<ContainerQuery, Containe
         tokens: &tokens,
         pos: usize::from(name.is_some()),
         axes: Vec::new(),
+        depth: 0,
     };
     if parser.pos == tokens.len() {
         return Err(if name.is_some() { NoCondition } else { Invalid });
@@ -653,6 +654,8 @@ struct Parser<'t> {
     pos: usize,
     /// The axis of every feature read, in order.
     axes: Vec<ContainerAxis>,
+    /// Groups open around the position.
+    depth: usize,
 }
 
 impl Parser<'_> {
@@ -714,10 +717,15 @@ impl Parser<'_> {
             _ => false,
         };
         let holds = if nested {
+            if self.depth >= crate::MAX_NESTING {
+                return Err(ContainerQueryUnsupported::Invalid);
+            }
             // The group is balanced, and its `)` is no keyword: the
             // condition inside ends at it or is invalid.
             self.pos = open + 1;
+            self.depth += 1;
             let holds = self.condition()?;
+            self.depth -= 1;
             if self.pos != close {
                 return Err(ContainerQueryUnsupported::Invalid);
             }

@@ -15,6 +15,12 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::type_complexity)]
 
+/// How deeply any one construct may nest: blocks inside at-rule blocks,
+/// parentheses in a condition, functions inside `calc()` or `color-mix()`.
+/// Real stylesheets stay in single digits; deeper input is hostile, and is
+/// skipped or rejected instead of recursing on the parser's stack.
+pub(crate) const MAX_NESTING: usize = 32;
+
 pub mod css_at_rule;
 pub mod css_cascade;
 pub mod css_container;

@@ -208,12 +208,19 @@ impl Lenient {
 
     fn object(&mut self, prefix: String, config: &mut Config, depth: usize) {
         self.ws();
-        if self.peek() != Some('{') || depth > 8 {
+        if self.peek() != Some('{') {
+            return;
+        }
+        // Config is shallow; anything deeper is skipped whole, so the
+        // caller resumes after it.
+        if depth > 8 {
+            self.skip_nested();
             return;
         }
         self.pos += 1;
         loop {
             self.ws();
+            let start = self.pos;
             match self.peek() {
                 None => return,
                 Some('}') => {
@@ -235,17 +242,22 @@ impl Lenient {
             };
             match self.peek() {
                 Some('{') => self.object(path, config, depth + 1),
-                Some('[') => self.skip_array(),
+                Some('[') => self.skip_nested(),
                 Some(_) => {
                     let value = self.scalar();
                     config.set(path, value);
                 }
                 None => return,
             }
+            // A stray `]` reads as an empty key and value: step over it.
+            if self.pos == start {
+                self.pos += 1;
+            }
         }
     }
 
-    fn skip_array(&mut self) {
+    /// Skips one bracketed value, `[...]` or `{...}`, quotes included.
+    fn skip_nested(&mut self) {
         let mut depth = 0;
         let mut quote: Option<char> = None;
         while let Some(c) = self.peek() {
@@ -322,6 +334,21 @@ mod tests {
         assert_eq!(pre.meta.acc_title.as_deref(), Some("Big"));
         assert_eq!(pre.meta.acc_descr.as_deref(), Some("line one\nline two"));
         assert_eq!(pre.body.lines().filter(|l| !l.is_empty()).count(), 2);
+    }
+
+    #[test]
+    fn init_deeper_than_config_is_skipped_and_reading_resumes() {
+        for depth in [12, 20_000] {
+            let source = format!(
+                "%%{{init: {{a: {}1{}, theme: 'dark'}}}}%%\ngraph TD\nA",
+                "{a: ".repeat(depth),
+                "}".repeat(depth)
+            );
+            let pre = preprocess(&source).unwrap();
+            assert_eq!(pre.config.get("theme"), Some("dark"));
+        }
+        let pre = preprocess("%%{init: {] theme: 'dark'}}%%\ngraph TD\nA").unwrap();
+        assert_eq!(pre.config.get("theme"), Some("dark"));
     }
 
     #[test]

@@ -2523,6 +2523,42 @@ mod tests {
     }
 
     #[test]
+    fn markdown_ten_thousand_deep_parses_and_lays_out_on_a_small_stack() {
+        let deep = [
+            format!("{} quoted", ">".repeat(10_000)),
+            format!("{}item", "- ".repeat(10_000)),
+            format!("{}x{}", "*".repeat(10_000), "*".repeat(10_000)),
+            format!("{}x{}", "[".repeat(10_000), "](u)".repeat(10_000)),
+        ];
+        std::thread::Builder::new()
+            .stack_size(512 * 1024)
+            .spawn(move || {
+                for source in deep {
+                    let markdown = NativeMarkdown::parse(&source);
+                    let geometry = layout_markdown(markdown.blocks(), bounds(400.0, 100.0));
+                    assert_eq!(geometry.blocks.len(), markdown.blocks().len());
+                }
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+        let shallow = NativeMarkdown::parse(">> quoted\n\n- - item");
+        let kinds: Vec<_> = shallow
+            .blocks()
+            .iter()
+            .filter_map(|block| match block {
+                MarkdownBlock::Text { kind, .. } => Some(*kind),
+                _ => None,
+            })
+            .collect();
+        assert!(kinds.contains(&MarkdownBlockKind::Quote), "{kinds:?}");
+        assert!(
+            kinds.contains(&MarkdownBlockKind::ListItem { depth: 2 }),
+            "{kinds:?}"
+        );
+    }
+
+    #[test]
     fn markdown_line_breaks_are_invariant_under_viewport_translation() {
         let markdown = NativeMarkdown::parse("NATIVE_PARITY_FORK_A_20260903");
         let measure =

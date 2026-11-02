@@ -1187,28 +1187,30 @@ fn parse_blend(value: Option<&Value>) -> Result<BlendMode, String> {
     }
 }
 
-fn parse_path(value: &Value) -> Result<ScriptPath, String> {
-    let (segments, fill_rule) = match value {
-        Value::String(text) => (parse_svg_path(text)?, FillRule::NonZero),
-        Value::Array(list) => (parse_segments(list)?, FillRule::NonZero),
-        Value::Object(map) => {
-            only_keys(map, &["d", "fillRule"], "a path object")?;
-            let rule = match map.get("fillRule").and_then(Value::as_str) {
-                None | Some("nonzero") => FillRule::NonZero,
-                Some("evenodd") => FillRule::EvenOdd,
-                Some(other) => return Err(format!("unknown fill rule `{other}`")),
-            };
-            let inner = parse_path(required(map, "d")?)?;
-            return Ok(ScriptPath {
-                segments: inner.segments,
-                fill_rule: rule,
-            });
+/// A path object's `d` may itself be a path object; the outermost
+/// `fillRule` wins. Walked as a loop, so nesting costs no stack.
+fn parse_path(mut value: &Value) -> Result<ScriptPath, String> {
+    let mut fill_rule = None;
+    let segments = loop {
+        match value {
+            Value::String(text) => break parse_svg_path(text)?,
+            Value::Array(list) => break parse_segments(list)?,
+            Value::Object(map) => {
+                only_keys(map, &["d", "fillRule"], "a path object")?;
+                let rule = match map.get("fillRule").and_then(Value::as_str) {
+                    None | Some("nonzero") => FillRule::NonZero,
+                    Some("evenodd") => FillRule::EvenOdd,
+                    Some(other) => return Err(format!("unknown fill rule `{other}`")),
+                };
+                fill_rule.get_or_insert(rule);
+                value = required(map, "d")?;
+            }
+            _ => return Err("a path is an SVG path string or an array of segments".into()),
         }
-        _ => return Err("a path is an SVG path string or an array of segments".into()),
     };
     Ok(ScriptPath {
         segments: segments.into(),
-        fill_rule,
+        fill_rule: fill_rule.unwrap_or(FillRule::NonZero),
     })
 }
 
@@ -1894,5 +1896,28 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.contains("zzz"), "{error}");
+    }
+
+    #[test]
+    fn nested_path_objects_take_the_outermost_fill_rule_on_a_small_stack() {
+        // As deep as the JSON reader admits: its own limit is 128.
+        let depth = 120;
+        let json = format!(
+            "{}\"M0 0 L1 1 Z\"{}",
+            r#"{"fillRule": "nonzero", "d": "#.repeat(depth),
+            "}".repeat(depth)
+        );
+        let json = json.replacen("nonzero", "evenodd", 1);
+        let path = std::thread::Builder::new()
+            .stack_size(512 * 1024)
+            .spawn(move || parse_path(&serde_json::from_str(&json).unwrap()))
+            .unwrap()
+            .join()
+            .unwrap()
+            .unwrap();
+        assert_eq!(path.fill_rule, FillRule::EvenOdd);
+        assert_eq!(path.segments.len(), 3);
+        let plain = parse_path(&serde_json::json!({"d": "M0 0"})).unwrap();
+        assert_eq!(plain.fill_rule, FillRule::NonZero);
     }
 }

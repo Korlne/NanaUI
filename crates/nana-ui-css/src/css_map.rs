@@ -724,7 +724,11 @@ fn parse_full_length_math(raw: &str) -> Option<LengthSpec> {
 }
 
 fn parse_calc_expr_top(raw: &str) -> Option<CalcExpr> {
-    let mut parser = CalcExprParser { s: raw, i: 0 };
+    let mut parser = CalcExprParser {
+        s: raw,
+        i: 0,
+        depth: 0,
+    };
     parser.skip_ws();
     if !parser.starts_math_fn() {
         return None;
@@ -740,6 +744,8 @@ fn parse_calc_expr_top(raw: &str) -> Option<CalcExpr> {
 struct CalcExprParser<'a> {
     s: &'a str,
     i: usize,
+    /// Values open around the position: groups and math functions.
+    depth: u8,
 }
 
 impl<'a> CalcExprParser<'a> {
@@ -839,6 +845,16 @@ impl<'a> CalcExprParser<'a> {
     }
 
     fn parse_value(&mut self) -> Option<CalcExpr> {
+        if self.depth >= MAX_CALC_DEPTH {
+            return None;
+        }
+        self.depth += 1;
+        let value = self.parse_value_inner();
+        self.depth -= 1;
+        value
+    }
+
+    fn parse_value_inner(&mut self) -> Option<CalcExpr> {
         self.skip_ws();
         if self.peek() == Some('(') {
             self.bump(1);
@@ -4582,9 +4598,17 @@ fn expand_css_vars_for_grid_tracks(input: &str) -> String {
     expand_css_vars_with_unresolved(input, Some("auto"))
 }
 
+/// How many custom properties one `var()` may pass through. A longer chain
+/// is a cycle (`--a: var(--a)`) or hostile, and reads as unresolved.
+const MAX_VAR_DEPTH: usize = 32;
+
 /// Single-pass `var()` expand against [`ACTIVE_CSS_VARS`].
 /// When a reference has no lookup and no fallback, emit `unresolved` (or omit).
 fn expand_css_vars_with_unresolved(input: &str, unresolved: Option<&str>) -> String {
+    expand_css_vars_at_depth(input, unresolved, 0)
+}
+
+fn expand_css_vars_at_depth(input: &str, unresolved: Option<&str>, depth: usize) -> String {
     let mut out = String::with_capacity(input.len());
     let mut rest = input;
     while let Some(start) = rest.find("var(") {
@@ -4608,8 +4632,12 @@ fn expand_css_vars_with_unresolved(input: &str, unresolved: Option<&str>) -> Str
                     out.push_str(placeholder);
                 }
             } else if value.contains("var(") {
-                // Nested/unfinished — try expanding the value recursively once.
-                let nested = expand_css_vars_with_unresolved(&value, unresolved);
+                // A value that refers on is expanded in turn, up to the depth.
+                let nested = if depth < MAX_VAR_DEPTH {
+                    expand_css_vars_at_depth(&value, unresolved, depth + 1)
+                } else {
+                    String::new()
+                };
                 if nested.contains("var(")
                     || nested.trim().is_empty()
                     || is_guaranteed_invalid_custom_prop_value(&nested)

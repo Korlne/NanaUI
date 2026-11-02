@@ -255,6 +255,22 @@ pub fn parse_css_named_color(input: &str) -> Option<[f32; 4]> {
     }
 }
 
+/// The deepest parenthesis nesting in `s`.
+fn paren_depth(s: &str) -> usize {
+    let (mut depth, mut deepest) = (0usize, 0usize);
+    for b in s.bytes() {
+        match b {
+            b'(' => {
+                depth += 1;
+                deepest = deepest.max(depth);
+            }
+            b')' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    deepest
+}
+
 /// CSS Color 5 `color-mix(in srgb|oklch, A P%, B)`.
 fn parse_color_mix(input: &str) -> Option<[f32; 4]> {
     parse_color_mix_paint(input).map(CssPaintColor::to_srgb)
@@ -265,6 +281,11 @@ fn parse_color_mix(input: &str) -> Option<[f32; 4]> {
 /// clipped by an intermediate sRGB conversion before interpolation.
 fn parse_color_mix_paint(input: &str) -> Option<CssPaintColor> {
     let s = input.trim();
+    // Each operand is parsed in turn and may be another mix, one group
+    // deeper: bounding the groups bounds that recursion.
+    if paren_depth(s) > crate::MAX_NESTING {
+        return None;
+    }
     let lower = s.to_ascii_lowercase();
     let rest = lower
         .strip_prefix("color-mix(")?
