@@ -2324,11 +2324,38 @@ impl MeasurePlan {
     }
 }
 
+/// What a pass reads of a node: [`LayoutInput`] with its rare modal part on
+/// the heap. Every pass walks these once per node, so they are kept to
+/// about one cache line (264 B inline before) rather than carrying a modal
+/// frame's text metrics for every box.
+#[derive(Debug, Clone, PartialEq)]
+struct PassInput {
+    children: Arc<Vec<StableNodeId>>,
+    style: Arc<nana_ui_core::LayoutStyle>,
+    writing: nana_ui_core::WritingContext,
+    containing_writing: nana_ui_core::WritingContext,
+    text_metrics: Option<crate::TextMetrics>,
+    modal: Option<Box<crate::ModalLayoutInput>>,
+}
+
+impl From<LayoutInput> for PassInput {
+    fn from(input: LayoutInput) -> Self {
+        Self {
+            children: input.children,
+            style: input.style,
+            writing: input.writing,
+            containing_writing: input.containing_writing,
+            text_metrics: input.text_metrics,
+            modal: input.modal.map(Box::new),
+        }
+    }
+}
+
 /// On-demand `LayoutInput` cache. A miss loads exactly that id from `UiWorld`.
 struct LayoutInputMap<'a> {
     inline_objects: HashMap<StableNodeId, Arc<[nana_text::InlineObject]>>,
     world: &'a UiWorld,
-    nodes: crate::store::DenseNodeMap<LayoutInput>,
+    nodes: crate::store::DenseNodeMap<PassInput>,
     /// Effective styles for nodes this pass never materialized into `nodes`.
     ///
     /// A scoped pass prefetches nothing, so an unchanged sibling is reached
@@ -2442,7 +2469,7 @@ impl<'a> LayoutInputMap<'a> {
         if !ids.is_empty() {
             self.world.record_hot_path_allocation(
                 1,
-                ids.len().saturating_mul(std::mem::size_of::<LayoutInput>()),
+                ids.len().saturating_mul(std::mem::size_of::<PassInput>()),
             );
         }
         let mut nodes = ids.iter().max().map_or_else(Default::default, |&highest| {
@@ -2450,7 +2477,7 @@ impl<'a> LayoutInputMap<'a> {
         });
         let mut containers = 0;
         for &id in ids {
-            let input = self.world.layout_input(id)?;
+            let input = PassInput::from(self.world.layout_input(id)?);
             containers += usize::from(!input.children.is_empty());
             nodes.insert(id, input);
         }
@@ -2466,14 +2493,14 @@ impl<'a> LayoutInputMap<'a> {
         Ok(())
     }
 
-    fn get(&mut self, id: StableNodeId) -> Result<Option<&LayoutInput>, UiWorldError> {
+    fn get(&mut self, id: StableNodeId) -> Result<Option<&PassInput>, UiWorldError> {
         let world = self.world;
         let materialized = &mut self.materialized;
         self.nodes
             .get_or_try_insert(id, || match world.layout_input(id) {
                 Ok(input) => {
                     *materialized = materialized.saturating_add(1);
-                    Ok(Some(input))
+                    Ok(Some(PassInput::from(input)))
                 }
                 Err(UiWorldError::MissingNode(_)) => Ok(None),
                 Err(error) => Err(error),

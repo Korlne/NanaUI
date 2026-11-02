@@ -1549,7 +1549,7 @@ struct NodeFacts {
     /// its ancestors when it declares none of its own, and its parent's.
     writing: nana_ui_core::WritingContext,
     containing_writing: nana_ui_core::WritingContext,
-    modal: Option<crate::ModalLayoutInput>,
+    modal: Option<Box<crate::ModalLayoutInput>>,
 }
 
 /// Everything a level does once its own box is written: lay out and place

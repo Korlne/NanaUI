@@ -5,6 +5,9 @@
 //! cargo run --release -- report            # every engine at depths 64..500
 //! cargo run --release -- wide              # a wide page: time, heap, allocations per box
 //! cargo run --release -- wide-loop         # that page over and over, for a profiler
+//! /usr/bin/time -l target/release/nana-stack-depth reps 3200 10 nana
+//!                                          # a fixed run: instructions and cycles per box;
+//!                                          # SKIP_LAYOUT=1 builds the page only
 //! cargo run --release -- stages 250,500    # a deep frame's least time per stage
 //! ```
 //!
@@ -108,8 +111,12 @@ fn nana_wide(rows: usize, cells: usize) -> (f64, f64, isize, isize) {
     }
     let calls = CALLS.load(Ordering::Relaxed);
     let start = Instant::now();
-    cx.layout_document(document, LayoutViewport::new(1280.0, 800.0))
-        .unwrap();
+    // `SKIP_LAYOUT` leaves the build alone in a `reps` run: subtracting it
+    // gives the layout's own instructions and cycles.
+    if std::env::var_os("SKIP_LAYOUT").is_none() {
+        cx.layout_document(document, LayoutViewport::new(1280.0, 800.0))
+            .unwrap();
+    }
     let took = start.elapsed().as_secs_f64() * 1e6;
     let total = built.elapsed().as_secs_f64() * 1e6;
     let calls = CALLS.load(Ordering::Relaxed) - calls;
@@ -516,6 +523,19 @@ fn main() {
                         held / boxes as isize,
                         calls as f64 / boxes as f64
                     );
+                }
+            }
+        }
+        Some("reps") => {
+            // A fixed amount of work for `time -l`: `reps <rows> <runs> [taffy]`.
+            let rows: usize = arg(1).unwrap().parse().unwrap();
+            let runs: usize = arg(2).unwrap().parse().unwrap();
+            let taffy = arg(3) == Some("taffy");
+            for _ in 0..runs {
+                if taffy {
+                    taffy_wide(rows, 10);
+                } else {
+                    nana_wide(rows, 10);
                 }
             }
         }

@@ -4776,8 +4776,14 @@ fn lazy_layout_input_avoids_a_single_item_projection_batch() {
     let expected = world.layout_inputs(&[id(1)]).unwrap().pop().unwrap();
     let before = world.last_work_counters().allocations;
     let mut inputs = LayoutInputMap::new(&world);
-    assert_eq!(inputs.get(id(1)).unwrap(), Some(&expected));
-    assert_eq!(inputs.get(id(1)).unwrap(), Some(&expected));
+    assert_eq!(
+        inputs.get(id(1)).unwrap(),
+        Some(&PassInput::from(expected.clone()))
+    );
+    assert_eq!(
+        inputs.get(id(1)).unwrap(),
+        Some(&PassInput::from(expected.clone()))
+    );
     assert!(inputs.get(id(2)).unwrap().is_none());
     assert_eq!(inputs.materialized, 1);
     // This counter covers projection output batches, not the map's own storage.

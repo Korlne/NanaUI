@@ -810,7 +810,7 @@ fn plain_leaf_baseline(
 /// (`world/block_reads.rs`), and its page and containing block are
 /// horizontal, so its edges resolve against width. Its key then drops the
 /// offered height, and a height-only resize finds its measurement.
-fn block_extent_unread(id: StableNodeId, node: &LayoutInput, world: &UiWorld) -> bool {
+fn block_extent_unread(id: StableNodeId, node: &PassInput, world: &UiWorld) -> bool {
     #[cfg(any(test, feature = "layout-verify"))]
     if !super::verify::honors_block_reads() {
         return false;
