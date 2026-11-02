@@ -8,7 +8,7 @@ use std::time::Duration;
 use nana_ui_core::motion::{
     AnimatableProperty, AnimationClass, MotionDescriptorStore, MotionGpuDescriptor,
     MotionGpuKeyframe, MotionHandle, MotionInspectorEntry, MotionTargetId, MotionTrackId,
-    MotionValue, MotionWorkCounters, PresentationStore,
+    MotionValue, MotionWorkCounters, PresentationStore, evaluate_track,
 };
 use nana_ui_core::{ColorFilter, PaintTransform};
 use nana_ui_runtime::{ExtractedNode, NodeMap, NodeSet, StableNodeId};
@@ -1122,9 +1122,24 @@ fn layer_snapshot(
         {
             continue;
         }
-        if !bindings.iter().any(|binding| binding.track_id == *track_id) {
-            bindings.push(CompositorMotionBinding::from_track(*track_id, descriptors));
+        if bindings.iter().any(|binding| binding.track_id == *track_id) {
+            continue;
         }
+        // It keeps the layer, but the shader gets no id for a track that
+        // shows nothing now (one that ended without filling forwards): handed
+        // one, it would draw the node without its own transform, which the
+        // overlay was standing in for.
+        let mut binding = CompositorMotionBinding::from_track(*track_id, descriptors);
+        let shows = match store.get(*track_id) {
+            Some(overlay) => evaluate_track(&overlay.track, now).applies,
+            None => descriptors
+                .and_then(|store| store.evaluate_track(*track_id, now))
+                .is_some_and(|sample| sample.applies),
+        };
+        if !shows {
+            binding.generation = 0;
+        }
+        bindings.push(binding);
     }
     let eligible = !bindings.is_empty()
         || node.compositor.request_layer
@@ -2901,5 +2916,82 @@ mod tests {
         assert_eq!(scene.draw_primitive(primitive).unwrap().transform, before);
         assert_eq!(effective_paint_opacity(&scene, primitive), expected);
         scene.audit_retained_projection();
+    }
+
+    /// Where the shader draws a primitive's origin: the base the painter
+    /// encodes, carrying the overlay only while its track applies at the
+    /// GPU's clock, as `motion_compose_projective` does.
+    fn gpu_drawn_y(
+        scene: &UiScene,
+        descriptors: &MotionDescriptorStore,
+        node: StableNodeId,
+    ) -> f32 {
+        let primitive = crate::PrimitiveId { node, slot: 0 };
+        let draw = scene.draw_primitive(primitive).expect("draw");
+        let encode = scene.compositor_paint_encode(
+            draw.node,
+            &draw.kind,
+            draw.transform,
+            draw.paint_opacity,
+        );
+        let base = encode.transform;
+        if encode.motion_ids.0 == 0 {
+            return base.0[5];
+        }
+        let index = encode.motion_ids.0 - 1;
+        let track = scene
+            .compositor
+            .layers
+            .get(&node)
+            .and_then(|layer| layer.bindings.iter().find(|binding| binding.index == index))
+            .expect("the id is one of the layer's bindings")
+            .track_id;
+        match descriptors.evaluate_track(track, scene.motion_gpu_now()) {
+            Some(sample) if sample.applies => match sample.value {
+                MotionValue::Transform(value) => base.0[5] + value.f,
+                _ => base.0[5],
+            },
+            _ => base.0[5],
+        }
+    }
+
+    /// A node resting on a transform of its own (a highlight that slid to
+    /// its place) keeps it once the slide ends, while the ended track is
+    /// still bound: the shader, handed the slide's id, would draw the node
+    /// at its parent's origin instead.
+    #[test]
+    fn an_ended_transition_leaves_the_node_on_its_own_transform_on_the_gpu() {
+        let mut scene = UiScene::new();
+        let mut accent = node(1, None, &[]);
+        let rest = PaintTransform {
+            f: 100.0,
+            ..PaintTransform::default()
+        };
+        Arc::make_mut(&mut accent.source_style.layout).transform = Some(rest);
+        let slide = transform_track(7, 1, 0, 180, PaintTransform::default(), rest);
+        // Extracted mid-slide, as the runtime does: the binding outlives the
+        // slide until the node extracts again.
+        accent.compositor.bindings = vec![slide.id];
+        scene.apply_delta([accent], []);
+        let mut descriptors = MotionDescriptorStore::new();
+        descriptors.bind(&slide).expect("descriptor slot");
+        let mut store = PresentationStore::new();
+        store.insert(slide, MotionValue::Transform(PaintTransform::default()));
+
+        scene.apply_presentation(&store, Duration::from_millis(90), Some(&descriptors));
+        let midway = gpu_drawn_y(&scene, &descriptors, id(1));
+        assert!(
+            midway > 1.0 && midway < 99.0,
+            "midway through the slide: {midway}"
+        );
+
+        for after in [180, 200, 260] {
+            scene.apply_presentation(&store, Duration::from_millis(after), Some(&descriptors));
+            let drawn = gpu_drawn_y(&scene, &descriptors, id(1));
+            assert!(
+                (drawn - 100.0).abs() < 0.5,
+                "{after} ms: drawn at {drawn}, not on its own transform"
+            );
+        }
     }
 }
