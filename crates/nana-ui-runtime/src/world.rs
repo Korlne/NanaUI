@@ -949,6 +949,9 @@ pub struct UiWorld {
     /// Boxes the coming layout publish moved by translation: their results
     /// are placed again from their own geometry instead of rebuilt.
     translated_layout: NodeSet,
+    /// The same boxes for the coming hit-index patch: an entry whose geometry
+    /// is only its box is moved in place instead of rebuilt.
+    translated_hit: NodeSet,
     /// Set while the frame driver commits a layout pass's box writes: it
     /// publishes the whole pass scope right after, so the commit leaves the
     /// written boxes to that publish: it would build each result only for
@@ -1223,6 +1226,7 @@ impl UiWorld {
             layout_results: crate::NodeMap::default(),
             layout_results_suppressed: NodeSet::default(),
             translated_layout: NodeSet::default(),
+            translated_hit: NodeSet::default(),
             pass_publishes_written_boxes: false,
             layout_anchor_roots: HashSet::new(),
             cursor_style_dirty: false,
@@ -1605,6 +1609,7 @@ impl UiWorld {
     /// Notes the boxes the coming layout publish moved with a container that
     /// only moved; see `RuntimeLayoutEngine`'s `take_translated`.
     pub(crate) fn note_translated_layout(&mut self, ids: Vec<StableNodeId>) {
+        self.translated_hit.extend(ids.iter().copied());
         self.translated_layout.extend(ids);
     }
 

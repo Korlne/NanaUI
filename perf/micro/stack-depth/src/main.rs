@@ -332,7 +332,7 @@ fn nana_edits(rows: usize, cells: usize, edit: &str, runs: usize) -> (f64, f64) 
         if run + 1 == runs && std::env::var_os("PRINT_COUNTERS").is_some() {
             let w = runtime.context().last_work_counters();
             eprintln!(
-                "{edit}: seeds {} full {} local {} measure {} hits {} misses {} place {} reused {} changed {} origin {} commits {} children {} plans {}/{} suffix {} translations {}/{}",
+                "{edit}: seeds {} full {} local {} measure {} hits {} misses {} place {} reused {} changed {} origin {} commits {} children {} plans {}/{} suffix {} translations {}/{} hit moved {} rebuilt {:?}",
                 w.layout_frontier_seeds,
                 w.layout_full_document_fallbacks,
                 w.layout_local_subtree_fallbacks,
@@ -350,6 +350,8 @@ fn nana_edits(rows: usize, cells: usize, edit: &str, runs: usize) -> (f64, f64) 
                 w.layout_suffixes_replayed,
                 w.layout_translations,
                 w.layout_translated_nodes,
+                w.hit_test_entries_moved,
+                w.hit_test_nodes_rebuilt,
             );
         }
     }

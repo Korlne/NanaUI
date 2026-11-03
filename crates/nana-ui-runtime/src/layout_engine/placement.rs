@@ -1973,7 +1973,14 @@ fn place_moved_container(
         && triggered_menu_overlay(nodes.world, id).is_none()
         && let Some(moved) = plan.moved_to(origin, content_origin)
     {
-        if !translate_moved_children(plan, &moved, viewport, nodes, intrinsic, output, scope) {
+        if translate_moved_children(plan, &moved, viewport, nodes, intrinsic, output, scope) {
+            // The container itself only moved too, when its box kept its
+            // size and nothing about it changed: its result and hit entry
+            // keep their own geometry like the boxes it took along.
+            if plan.size == size && !scope.affected.contains(&id) {
+                nodes.translated.push(id);
+            }
+        } else {
             place_moved_children(
                 &moved,
                 content_origin,

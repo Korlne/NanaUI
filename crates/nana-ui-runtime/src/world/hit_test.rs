@@ -186,6 +186,19 @@ pub(super) struct IndexedHit {
     sibling_slot: usize,
 }
 
+/// An entry that is its box and nothing the box gives it: no transform of
+/// its own or above it, no clip, no shape, no menu or painter, not escaped.
+fn plain_hit_entry(entry: &HitEntry) -> bool {
+    entry.transform == IDENTITY_AFFINE
+        && entry.persp == [0.0, 0.0]
+        && entry.self_clips.is_empty()
+        && entry.child_clips.is_empty()
+        && entry.path_clips.is_empty()
+        && entry.menu.is_none()
+        && entry.painter.is_none()
+        && !entry.escaped
+}
+
 fn hit_bounds(entry: &HitEntry) -> Bounds {
     if !entry.hittable && entry.menu.is_none() {
         return Bounds::Inactive;
@@ -593,6 +606,45 @@ impl HitIndex {
         } else {
             self.root_bounds = bounds;
             self.roots = children;
+        }
+    }
+
+    /// [`Self::refresh_bounds`] for many entries: the deepest first, so each
+    /// entry and each ancestor is refreshed once, after everything under it.
+    fn refresh_bounds_of(&mut self, ids: &[StableNodeId]) {
+        let depth = |index: &Self, id: StableNodeId| {
+            std::iter::successors(Some(id), |id| index.entries.get(id)?.parent).count()
+        };
+        let mut open: std::collections::BinaryHeap<(usize, StableNodeId)> = ids
+            .iter()
+            .filter(|&&id| self.entries.contains_key(&id))
+            .map(|&id| (depth(self, id), id))
+            .collect();
+        let mut queued: crate::NodeSet = ids.iter().copied().collect();
+        while let Some((level, id)) = open.pop() {
+            let Some(node) = self.entries.get_mut(&id) else {
+                continue;
+            };
+            let own = hit_bounds(&node.entry);
+            node.bounds = if node.children.is_empty() {
+                own
+            } else {
+                own.merge(node.child_bounds.bounds().translated(node.shift))
+            };
+            let (parent, slot, bounds) = (node.parent, node.sibling_slot, node.bounds);
+            match parent {
+                Some(parent) => {
+                    self.entries
+                        .get_mut(&parent)
+                        .unwrap()
+                        .child_bounds
+                        .set(slot, bounds);
+                    if queued.insert(parent) {
+                        open.push((level - 1, parent));
+                    }
+                }
+                None => self.root_bounds.set(slot, bounds),
+            }
         }
     }
 
@@ -1872,6 +1924,16 @@ impl UiWorld {
         &self,
         seeds: Vec<(StableNodeId, [f32; 6])>,
     ) -> (Vec<BuiltHit>, Vec<StableNodeId>) {
+        self.build_hit_entries_reaching(seeds, true)
+    }
+
+    /// [`Self::build_hit_entries_deferring`]; with `descend` false, the
+    /// seeds' own entries alone.
+    fn build_hit_entries_reaching(
+        &self,
+        seeds: Vec<(StableNodeId, [f32; 6])>,
+        descend: bool,
+    ) -> (Vec<BuiltHit>, Vec<StableNodeId>) {
         let mut stack = seeds
             .into_iter()
             .enumerate()
@@ -1992,9 +2054,11 @@ impl UiWorld {
                     parent,
                 });
                 child_states.push((parent_hit, false));
-                stack.extend(children.iter().enumerate().rev().map(|(position, child)| {
-                    (*child, parent_hit, Some(index), position, used_pe, false)
-                }));
+                if descend {
+                    stack.extend(children.iter().enumerate().rev().map(|(position, child)| {
+                        (*child, parent_hit, Some(index), position, used_pe, false)
+                    }));
+                }
                 continue;
             }
             let motion_layout = if let Some(style) = resolved_layout {
@@ -2151,6 +2215,9 @@ impl UiWorld {
             // Sibling position is the sort key. Invisible siblings are skipped
             // and leave gaps, which is harmless because only relative order
             // between surviving siblings is ever compared.
+            if !descend {
+                continue;
+            }
             stack.extend(children.iter().enumerate().rev().map(|(position, child)| {
                 (
                     *child,
@@ -2485,6 +2552,155 @@ impl UiWorld {
 }
 
 impl UiWorld {
+    /// Whether `id`'s hit entry is its box and nothing that box gives it:
+    /// no transform of its own or above it, no clip, no shape, no menu or
+    /// painter, not escaped and not sticky. A box layout only moved then
+    /// takes the entry along by its box alone, to the bit what a rebuild
+    /// would make of it.
+    fn hit_entry_moves_in_place(&self, document: DocumentId, id: StableNodeId) -> bool {
+        let Some(hit) = self
+            .hit_test_index
+            .get(&document)
+            .and_then(|index| index.entries.get(&id))
+        else {
+            return false;
+        };
+        plain_hit_entry(&hit.entry)
+            && hit.shift == [0.0, 0.0]
+            && self
+                .layout_style(id)
+                .is_some_and(|style| style.position != PositionSpec::Sticky)
+            && self.component_layout_box(id).is_some()
+    }
+
+    /// `id`'s entry built again on its own, when the one held is plain (see
+    /// [`plain_hit_entry`]) under plain entries without scroll, and so is the
+    /// new one, over the same children. Such an entry hands its children
+    /// nothing a change of it could alter, so they keep theirs; anything
+    /// else patches the subtree.
+    fn rebuilt_plain_hit_entry(&self, document: DocumentId, id: StableNodeId) -> Option<HitEntry> {
+        let index = self.hit_test_index.get(&document)?;
+        let hit = index.entries.get(&id)?;
+        if !plain_hit_entry(&hit.entry)
+            || hit.shift != [0.0, 0.0]
+            || hit.parent != self.parent_id(id)
+            || index.inherited_shift(id) != [0.0, 0.0]
+        {
+            return None;
+        }
+        if let Some(parent) = hit.parent
+            && (!index
+                .entries
+                .get(&parent)
+                .is_some_and(|parent| plain_hit_entry(&parent.entry))
+                || self.record(parent).scroll_offset != crate::ScrollOffset::default())
+        {
+            return None;
+        }
+        let (mut built, deferred) =
+            self.build_hit_entries_reaching(vec![(id, IDENTITY_AFFINE)], false);
+        if !deferred.is_empty() || built.len() != 1 {
+            return None;
+        }
+        let mut fresh = built.pop()?.entry;
+        // A box that turns fixed hangs from the viewport, and one whose
+        // stacking moved takes another place among its siblings: both are
+        // structural, for the subtree patch.
+        if !plain_hit_entry(&fresh)
+            || !Arc::ptr_eq(&fresh.source_children, &hit.entry.source_children)
+            || fresh.z_index != hit.entry.z_index
+            || self
+                .layout_style(id)
+                .is_none_or(|style| style.position == PositionSpec::Fixed)
+        {
+            return None;
+        }
+        fresh.order = hit.entry.order;
+        Some(fresh)
+    }
+
+    /// Move the entries of boxes that only moved (see
+    /// [`Self::hit_entry_moves_in_place`]) to where their boxes now stand,
+    /// and refresh the bounds above them once each.
+    fn move_hit_entries(
+        &mut self,
+        document: DocumentId,
+        moved: &[StableNodeId],
+        rebuilt: Vec<(StableNodeId, HitEntry)>,
+    ) {
+        if moved.is_empty() && rebuilt.is_empty() {
+            return;
+        }
+        let boxes: Vec<(StableNodeId, LayoutBox)> = moved
+            .iter()
+            .filter_map(|&id| Some((id, self.component_layout_box(id)?)))
+            .collect();
+        let Some(index) = self.hit_test_index.get_mut(&document) else {
+            return;
+        };
+        for &(id, layout) in &boxes {
+            if let Some(hit) = index.entries.get_mut(&id) {
+                hit.entry.layout = layout;
+            }
+        }
+        let mut touched: Vec<StableNodeId> = moved.to_vec();
+        let built = rebuilt.len();
+        for (id, mut entry) in rebuilt {
+            if let Some(hit) = index.entries.get_mut(&id) {
+                entry.children = std::mem::take(&mut hit.entry.children);
+                hit.entry = entry;
+                touched.push(id);
+            }
+        }
+        index.refresh_bounds_of(&touched);
+        let moved = boxes.len();
+        self.bump_last_counters(|counters| {
+            counters.hit_test_entries_moved += moved;
+            if built > 0 {
+                counters.record_hit_test_rebuild(built);
+            }
+        });
+        #[cfg(any(test, feature = "layout-verify"))]
+        self.check_moved_hit_entries(document, &touched);
+    }
+
+    /// A moved entry is what a rebuild of the whole index makes of it,
+    /// wherever that rebuild stays cheap.
+    #[cfg(any(test, feature = "layout-verify"))]
+    fn check_moved_hit_entries(&self, document: DocumentId, moved: &[StableNodeId]) {
+        if self.len() > 4096 {
+            return;
+        }
+        let seeds = self
+            .document_roots(document)
+            .iter()
+            .map(|&id| (id, IDENTITY_AFFINE))
+            .collect::<Vec<_>>();
+        let fresh = HitIndex::from_entries(self.build_hit_entries(seeds));
+        let index = &self.hit_test_index[&document];
+        for id in moved {
+            let (Some(ours), Some(theirs)) = (index.entries.get(id), fresh.entries.get(id)) else {
+                panic!("{id:?}: a moved hit entry has no counterpart in a rebuild");
+            };
+            let (a, b) = (&ours.entry, &theirs.entry);
+            assert!(
+                ours.parent == theirs.parent
+                    && a.layout == b.layout
+                    && a.transform == b.transform
+                    && a.persp == b.persp
+                    && a.hittable == b.hittable
+                    && a.z_index == b.z_index
+                    && a.menu == b.menu
+                    && a.escaped == b.escaped
+                    && a.self_clips == b.self_clips
+                    && a.child_clips == b.child_clips
+                    && a.path_clips.is_empty() == b.path_clips.is_empty()
+                    && hit_bounds(a) == hit_bounds(b),
+                "{id:?}: a moved hit entry differs from a rebuilt one: {a:?} != {b:?}"
+            );
+        }
+    }
+
     /// Rebuild only the subtrees covering `dirty` instead of the whole document.
     ///
     /// Returns `false` when the change cannot be expressed as a local splice and
@@ -2503,6 +2719,23 @@ impl UiWorld {
         if !self.hit_test_index.contains_key(&document) {
             return false;
         }
+        // A plain entry is moved or built again on its own, in place; the
+        // rest patch the subtrees over them.
+        let translated = std::mem::take(&mut self.translated_hit);
+        let mut moved = Vec::new();
+        let mut rebuilt = Vec::new();
+        let mut rest = Vec::new();
+        for &id in dirty {
+            if translated.contains(&id) && self.hit_entry_moves_in_place(document, id) {
+                moved.push(id);
+            } else if let Some(entry) = self.rebuilt_plain_hit_entry(document, id) {
+                rebuilt.push((id, entry));
+            } else {
+                rest.push(id);
+            }
+        }
+        self.move_hit_entries(document, &moved, rebuilt);
+        let dirty = rest.as_slice();
         let Some(roots) = self.minimal_hit_patch_roots(document, dirty) else {
             return false;
         };
@@ -2650,6 +2883,7 @@ impl UiWorld {
     /// or layout work. Pointer dispatch walks that tree in z/order with clip
     /// early-out instead of flattening and sorting every query.
     pub fn rebuild_hit_test(&mut self, document: DocumentId) {
+        self.translated_hit.clear();
         let roots = self.document_roots(document);
         let seeds = roots
             .iter()

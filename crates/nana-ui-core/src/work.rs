@@ -329,6 +329,9 @@ pub struct WorkCounters {
     /// rebuild. Not the containers scrolled, whose descendants share one
     /// shift (Issue #381).
     pub scroll_clip_updates: usize,
+    /// Hit entries a box that only moved took along in place instead of
+    /// being rebuilt.
+    pub hit_test_entries_moved: usize,
     /// Container axes whose content extent moved while responsive rules read
     /// them (Issue #265).
     pub container_query_size_changes: usize,
@@ -683,7 +686,8 @@ accumulate_counters! {
             virtual_row_metric_updates, virtual_prefix_index_updates, virtual_rows_remeasured,
             virtual_rows_repositioned, virtual_logical_rows_scanned, virtual_scroll_extent_updates,
             virtual_rows_materialized_from_layout, scroll_viewport_updates,
-            scroll_content_extent_recomputes, scroll_clip_updates, container_query_size_changes,
+            scroll_content_extent_recomputes, scroll_clip_updates, hit_test_entries_moved,
+            container_query_size_changes,
             container_query_rules_evaluated, container_query_results_changed,
             container_query_results_unchanged, container_query_downstream_invalidations,
             container_query_convergence_rounds, container_query_cycle_fallbacks,
