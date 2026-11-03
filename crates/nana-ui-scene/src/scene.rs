@@ -2118,6 +2118,9 @@ impl UiScene {
         // re-projected, and a group that stops isolating hands its opacity
         // down to primitives that baked it.
         let mut subtree_rebuild = Vec::new();
+        // Boxes that only moved and paint nothing: a rebuild would give them
+        // no primitive again.
+        let mut paintless_moves = Vec::new();
         let mut scroll_translations = Vec::new();
         let mut stacking_changed = false;
         let mut inherited_geometry_changed = !inherited_roots.is_empty();
@@ -2214,7 +2217,17 @@ impl UiScene {
             }) {
                 subtree_rebuild.push(node.id);
             }
-            changed.push(node.id);
+            // What it hands its children is derived from the node map, not
+            // from its primitives, and its projection is read only to draw
+            // primitives of its own: a box that only moved and has none keeps
+            // nothing a rebuild would change.
+            if self.node_primitive_count(node.id) == 0
+                && previous.is_some_and(|old| moved_only(old, &node))
+            {
+                paintless_moves.push(node.id);
+            } else {
+                changed.push(node.id);
+            }
             if scroll_changed {
                 inherited_roots.insert(node.id);
                 let old = self.nodes.get(&node.id).expect("scrolling retained node");
@@ -2321,6 +2334,16 @@ impl UiScene {
             }
             if let Ok(mut scratch) = self.rebuild_scratch.lock() {
                 scratch.end();
+            }
+            #[cfg(debug_assertions)]
+            if self.nodes.len() <= RETAINED_AUDIT_LIMIT {
+                for &id in &paintless_moves {
+                    assert_eq!(
+                        self.rebuild_node_primitives(id),
+                        0,
+                        "{id:?} moved without paint, yet a rebuild paints it"
+                    );
+                }
             }
             // Rebuilt nodes re-enter `ordered` at their own key, so a reorder is
             // only needed when keys the delta did not touch also moved.
@@ -3633,6 +3656,24 @@ struct PaintOrderFacts {
     /// A scroll view whose bars can show opens a group for them.
     scrollbar_chrome: bool,
     scroll_edge_fade: bool,
+}
+
+/// Whether `new` is `old` moved: the same node in every respect but where
+/// its box stands, at the same size, and the result that publishes it.
+fn moved_only(old: &ExtractedNode, new: &ExtractedNode) -> bool {
+    // A box that stayed is not a move; one that changed size is more than
+    // one. Both are settled before the whole node is compared, which reads
+    // a wide container's result placement by placement.
+    if old.layout == new.layout
+        || old.layout.width.to_bits() != new.layout.width.to_bits()
+        || old.layout.height.to_bits() != new.layout.height.to_bits()
+    {
+        return false;
+    }
+    let mut probe = new.clone();
+    probe.layout = old.layout;
+    probe.layout_result = old.layout_result.clone();
+    probe == *old
 }
 
 fn paint_order_facts(node: &ExtractedNode) -> PaintOrderFacts {
