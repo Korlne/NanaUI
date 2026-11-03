@@ -3363,7 +3363,11 @@ impl UiScene {
     /// Every primitive of a node sits under the same stack — the z-index and
     /// document order in it are the node's — so while the rebuild pass runs it
     /// is computed once per node and every primitive shares that `Arc`.
-    fn scene_order_key(&self, primitive: &ScenePrimitive) -> SceneOrderKey {
+    fn scene_order_key(
+        &self,
+        primitive: &ScenePrimitive,
+        retained: Option<&GroupPrefix>,
+    ) -> SceneOrderKey {
         if let Some(key) = root_layer_key(&self.nodes, primitive) {
             return key;
         }
@@ -3376,7 +3380,7 @@ impl UiScene {
                 return SceneOrderKey::at(Arc::clone(stack), primitive);
             }
             let prefix = self.group_prefix_of(&mut scratch, primitive.node);
-            let stack = order_stack(&self.nodes, &prefix, primitive);
+            let stack = order_stack_reusing(&self.nodes, &prefix, primitive, retained);
             // A painted node's primitives do not share one stack, nor do a
             // scroll view's own paint and its bars.
             if !self.splits_paint(primitive.node) {
@@ -3428,12 +3432,14 @@ impl UiScene {
             return ancestor_answer(
                 &self.nodes,
                 &mut scratch.in_rasterized_svg,
+                &mut scratch.walk,
                 parent,
                 rasterized_svg_decides,
             ) || (!node.source_style.layout.is_out_of_flow()
                 && ancestor_answer(
                     &self.nodes,
                     &mut scratch.in_icon_visual,
+                    &mut scratch.walk,
                     parent,
                     icon_visual_decides,
                 ));
@@ -3454,7 +3460,12 @@ impl UiScene {
     }
 
     fn insert_primitive(&mut self, primitive: ScenePrimitive) {
-        let key = self.scene_order_key(&primitive);
+        let key = self.scene_order_key(
+            &primitive,
+            self.primitives
+                .get(&primitive.id)
+                .map(|held| &held.key.stack),
+        );
         let build = self.build;
         if let Some(held) = self.primitives.get_mut(&primitive.id) {
             // A rebuild usually puts the same primitive back in the same
@@ -3472,10 +3483,10 @@ impl UiScene {
             self.structure_changed |= moved
                 && !self.custom_paint.is_empty()
                 && has_custom_paint(&self.nodes, primitive.node);
-            let previous = std::mem::replace(&mut held.key, key.clone());
             held.primitive = primitive;
             held.build = build;
             if moved {
+                let previous = std::mem::replace(&mut held.key, key.clone());
                 self.ordered.remove(&previous);
                 self.ordered.insert(key);
             }
@@ -3668,14 +3679,16 @@ fn icon_visual_decides(ancestor: &ExtractedNode) -> Option<bool> {
 ///
 /// Every node the walk passes over defers to its parent, so they all share
 /// the one answer: a chain of only children pays one step a node, not one
-/// walk a node.
+/// walk a node. `passed` is the caller's buffer for the nodes walked, kept
+/// across calls so a walk does not allocate.
 fn ancestor_answer(
     nodes: &SceneNodes,
     memo: &mut NodeMap<bool>,
+    passed: &mut Vec<StableNodeId>,
     start: StableNodeId,
     decides: fn(&ExtractedNode) -> Option<bool>,
 ) -> bool {
-    let mut passed = Vec::new();
+    passed.clear();
     let mut cursor = Some(start);
     let answer = loop {
         let Some(id) = cursor else {
@@ -3693,7 +3706,7 @@ fn ancestor_answer(
         }
         cursor = node.parent;
     };
-    memo.extend(passed.into_iter().map(|id| (id, answer)));
+    memo.extend(passed.drain(..).map(|id| (id, answer)));
     answer
 }
 
@@ -4171,6 +4184,8 @@ struct RebuildScratch {
     /// for every node the pass has walked through. See [`ancestor_answer`].
     in_rasterized_svg: NodeMap<bool>,
     in_icon_visual: NodeMap<bool>,
+    /// The nodes an [`ancestor_answer`] walk passed, reused across walks.
+    walk: Vec<StableNodeId>,
     /// What each parent hands a plain child, logical then presented. See
     /// [`UiScene::handed_down`].
     handed_down: [NodeMap<Option<AncestorState>>; 2],
@@ -4194,6 +4209,7 @@ impl RebuildScratch {
         self.group_prefixes = NodeMap::default();
         self.in_rasterized_svg = NodeMap::default();
         self.in_icon_visual = NodeMap::default();
+        self.walk = Vec::new();
         self.handed_down = Default::default();
     }
 }
@@ -4390,6 +4406,28 @@ fn group_prefix_memo(
     memo: &mut NodeMap<GroupPrefix>,
     node: StableNodeId,
 ) -> GroupPrefix {
+    if let Some(held) = memo.get(&node) {
+        return Arc::clone(held);
+    }
+    // Most asks are for a node whose parent the pass has already answered,
+    // a sibling's parent: one step, with no chain to collect.
+    if let Some(candidate) = nodes.get(&node)
+        && candidate.source_style.layout.position != nana_ui_core::PositionSpec::Fixed
+        && let Some(parent) = candidate.parent
+        && let Some(inherited) = memo.get(&parent)
+    {
+        let prefix = if is_stacking_group(nodes, candidate) {
+            let entry = (
+                candidate.z_index,
+                node_order.get(&node).copied().unwrap_or(0),
+            );
+            extended_prefix(inherited, entry, None)
+        } else {
+            Arc::clone(inherited)
+        };
+        memo.insert(node, Arc::clone(&prefix));
+        return prefix;
+    }
     // The nodes still to answer, innermost first.
     let mut chain = Vec::new();
     let mut cursor = Some(node);
@@ -4413,9 +4451,8 @@ fn group_prefix_memo(
     };
     for (id, candidate) in chain.into_iter().rev() {
         if is_stacking_group(nodes, candidate) {
-            let mut own = prefix.to_vec();
-            own.push((candidate.z_index, node_order.get(&id).copied().unwrap_or(0)));
-            prefix = Arc::from(own);
+            let entry = (candidate.z_index, node_order.get(&id).copied().unwrap_or(0));
+            prefix = extended_prefix(&prefix, entry, None);
         }
         memo.insert(id, Arc::clone(&prefix));
     }
@@ -4479,6 +4516,17 @@ pub(super) fn order_stack(
     prefix: &GroupPrefix,
     primitive: &ScenePrimitive,
 ) -> GroupPrefix {
+    order_stack_reusing(nodes, prefix, primitive, None)
+}
+
+/// [`order_stack`], handing back `retained` itself when it already holds
+/// the same entries: a rebuild usually keys a primitive where it was.
+fn order_stack_reusing(
+    nodes: &SceneNodes,
+    prefix: &GroupPrefix,
+    primitive: &ScenePrimitive,
+    retained: Option<&GroupPrefix>,
+) -> GroupPrefix {
     // A group's own paint is the prefix, before its descendants. Repeating its
     // outer z-index here incorrectly puts lower-z children behind its backplate.
     if let Some(node) = nodes.get(&primitive.node)
@@ -4486,10 +4534,7 @@ pub(super) fn order_stack(
     {
         // A scroll view's bars sit past every child of its group.
         if is_scrollbar_chrome_slot(primitive.id.slot) {
-            let mut stack = Vec::with_capacity(prefix.len() + 1);
-            stack.extend_from_slice(prefix);
-            stack.push((i32::MAX, usize::MAX));
-            return Arc::from(stack);
+            return extended_prefix(prefix, (i32::MAX, usize::MAX), retained);
         }
         // A painted node splits its own paint around its children.
         if let Some(entry) = node
@@ -4497,17 +4542,36 @@ pub(super) fn order_stack(
             .as_deref()
             .and_then(|recording| custom_paint::custom_paint_stack(recording, primitive.id.slot))
         {
-            let mut stack = Vec::with_capacity(prefix.len() + 1);
-            stack.extend_from_slice(prefix);
-            stack.push(entry);
-            return Arc::from(stack);
+            return extended_prefix(prefix, entry, retained);
         }
         return Arc::clone(prefix);
     }
-    let mut stack = Vec::with_capacity(prefix.len() + 1);
-    stack.extend_from_slice(prefix);
-    stack.push((primitive.z_index, primitive.document_order));
-    Arc::from(stack)
+    extended_prefix(
+        prefix,
+        (primitive.z_index, primitive.document_order),
+        retained,
+    )
+}
+
+/// `prefix` followed by `entry`: `retained` when it holds exactly that,
+/// else a new list built in one allocation.
+fn extended_prefix(
+    prefix: &[(i32, usize)],
+    entry: (i32, usize),
+    retained: Option<&GroupPrefix>,
+) -> GroupPrefix {
+    if let Some(retained) = retained
+        && let Some((last, head)) = retained.split_last()
+        && *last == entry
+        && head == prefix
+    {
+        return Arc::clone(retained);
+    }
+    prefix
+        .iter()
+        .copied()
+        .chain(std::iter::once(entry))
+        .collect()
 }
 
 impl SceneOrderKey {
