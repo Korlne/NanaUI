@@ -32,6 +32,7 @@ mod underlay;
 mod web_surface;
 #[cfg(target_os = "windows")]
 mod win32;
+mod work_area;
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 pub use chrome::LiveFrameResize;
@@ -87,6 +88,7 @@ pub use web_surface::{
     WebFrame, WebFrameSink, WebSurface, WebSurfaceCommand, WebSurfaceCompletion, WebSurfaceDesc,
     WebSurfaceEvent, WebSurfaceWake, web_surface_support,
 };
+pub use work_area::{enter_work_area_fullscreen, leave_work_area_fullscreen, work_area_fullscreen};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SkipTaskbarError {

@@ -90,7 +90,9 @@ fn should_restore_level_after_fullscreen_change(
 fn observe_mode(window: &dyn winit::window::Window, level: WindowLevel) -> WindowModeState {
     #[cfg(target_os = "macos")]
     let simple = WindowExtMacOS::simple_fullscreen(window);
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    let simple = nana_window::work_area_fullscreen(window);
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     let simple = false;
     WindowModeState {
         fullscreen: if simple {
@@ -193,7 +195,29 @@ impl<Program: RuntimeProgram> WindowManager<Program> {
                 }
             });
         }
-        #[cfg(not(target_os = "macos"))]
+        // Simple fills the work area: a window covering the monitor would put
+        // the taskbar beneath it, still showing through a transparent window
+        // that takes its clicks. Borderless covers the monitor.
+        #[cfg(target_os = "windows")]
+        self.mutate_native_style(id, |window| match request.map(|request| request.mode) {
+            Some(FullscreenMode::Simple) => {
+                if window.fullscreen().is_some() {
+                    window.set_fullscreen(None);
+                }
+                let origin = monitor
+                    .as_ref()
+                    .and_then(|monitor| monitor.position())
+                    .map(|position| (position.x, position.y));
+                if !nana_window::enter_work_area_fullscreen(window, origin) {
+                    window.set_fullscreen(Some(Fullscreen::Borderless(monitor)));
+                }
+            }
+            mode => {
+                nana_window::leave_work_area_fullscreen(window);
+                window.set_fullscreen(mode.map(|_| Fullscreen::Borderless(monitor)));
+            }
+        });
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
         self.mutate_native_style(id, |window| {
             window.set_fullscreen(request.map(|_| Fullscreen::Borderless(monitor)));
         });

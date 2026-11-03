@@ -2724,6 +2724,13 @@ fn geometry_maximized(window: &dyn winit::window::Window) -> bool {
     window.is_maximized()
 }
 
+/// winit's fullscreen, or the Windows one that fills the work area (see
+/// `apply_fullscreen`): either way the window has no frame to resize or move
+/// and no shadow to show.
+fn covers_display(window: &dyn winit::window::Window) -> bool {
+    window.fullscreen().is_some() || nana_window::work_area_fullscreen(window)
+}
+
 /// Where a window sits in desktop-logical space, and what takes a point from
 /// the window's own logical scale into that same space.
 ///

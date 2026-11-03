@@ -382,7 +382,7 @@ impl<Program: RuntimeProgram> WindowManager<Program> {
             if let Some(owner) = shadow_owner {
                 host.shadow.set_ordering_parent(owner.as_ref());
             }
-            let visible = !held && window.fullscreen().is_none();
+            let visible = !held && !covers_display(window.as_ref());
             host.shadow
                 .set_shape(window.as_ref(), crate::window_shadow::shape(body), visible);
         }
@@ -415,7 +415,7 @@ impl<Program: RuntimeProgram> WindowManager<Program> {
         let revision = scene.projection_revision();
         let size = host.geometry.logical_size;
         let zoom = host.content_zoom;
-        let visible = !held && window.fullscreen().is_none();
+        let visible = !held && !covers_display(window.as_ref());
         if host.shadow_body.is_some_and(|body| {
             body.revision == revision && body.size == size && body.visible == visible
         }) {
@@ -1374,7 +1374,7 @@ impl<Program: RuntimeProgram> WindowManager<Program> {
         );
         // Platforms apply new limits at the next user resize, not to the
         // size the window has now; a windowed window is resized here.
-        if geometry.maximized || window.fullscreen().is_some() {
+        if geometry.maximized || covers_display(window.as_ref()) {
             return;
         }
         let size = (
@@ -1407,7 +1407,7 @@ impl<Program: RuntimeProgram> WindowManager<Program> {
             host.aspect_conform_pending = false;
             return;
         };
-        if geometry.maximized || host.surface.window().fullscreen().is_some() {
+        if geometry.maximized || covers_display(host.surface.window().as_ref()) {
             return;
         }
         host.aspect_conform_pending = false;
@@ -1829,7 +1829,7 @@ impl<Program: RuntimeProgram> WindowManager<Program> {
         // that state first, as the system move loop does, and the restored
         // frame comes back under the cursor at the same point across its
         // width, rather than at its old restored position.
-        if window.fullscreen().is_some() {
+        if covers_display(window.as_ref()) {
             return false;
         }
         let live = if geometry_maximized(window.as_ref()) {
@@ -2062,7 +2062,7 @@ impl<Program: RuntimeProgram> WindowManager<Program> {
     ) -> Option<WindowResizeEdge> {
         let fullscreen = self
             .window(id)
-            .is_some_and(|window| window.fullscreen().is_some());
+            .is_some_and(|window| covers_display(window.as_ref()));
         // `x` and `y` are content coordinates, like the pointer they came from.
         let edge = frame_resize_edge_for(
             self.settings_of(id),

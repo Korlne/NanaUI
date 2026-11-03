@@ -297,7 +297,9 @@ pub enum FullscreenMode {
     /// Borderless fullscreen at the display's current video mode.
     #[default]
     Borderless,
-    /// macOS fullscreen without a separate Space; `Borderless` elsewhere.
+    /// Fullscreen that stays among the other windows: on macOS without a
+    /// separate Space; on Windows filling the work area, so the taskbar stays
+    /// above and usable; `Borderless` elsewhere.
     Simple,
 }
 

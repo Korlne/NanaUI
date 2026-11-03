@@ -1203,13 +1203,16 @@ const fn dwm_border_color(rounded_corners: bool) -> u32 {
     }
 }
 
+/// The rounding each window last asked for, kept so the work-area
+/// fullscreen can square the window and give the rounding back on leaving.
+/// Stored as `rounded + 1`, since an absent property reads as zero.
+#[cfg(target_os = "windows")]
+static ROUNDED_PROP: crate::win32::WindowProp = crate::win32::WindowProp::new("NanaRoundedCorners");
+
 #[cfg(target_os = "windows")]
 fn apply_window_shape<W: HasWindowHandle + ?Sized>(window: &W, rounded_corners: bool) -> bool {
     use raw_window_handle::RawWindowHandle;
     use windows_sys::Win32::Foundation::HWND;
-    use windows_sys::Win32::Graphics::Dwm::{
-        DWM_WINDOW_CORNER_PREFERENCE, DWMWA_WINDOW_CORNER_PREFERENCE, DwmSetWindowAttribute,
-    };
 
     let Ok(handle) = window.window_handle() else {
         return false;
@@ -1218,6 +1221,30 @@ fn apply_window_shape<W: HasWindowHandle + ?Sized>(window: &W, rounded_corners: 
         return false;
     };
     let hwnd = handle.hwnd.get() as HWND;
+    ROUNDED_PROP.set(hwnd, usize::from(rounded_corners) + 1);
+    set_dwm_shape(
+        hwnd,
+        rounded_corners && !crate::work_area::hwnd_active(hwnd),
+    )
+}
+
+/// Re-apply the rounding the window last asked for, square while it fills
+/// the work area like a fullscreen window.
+#[cfg(target_os = "windows")]
+pub(crate) fn reapply_window_shape(hwnd: windows_sys::Win32::Foundation::HWND) {
+    let Some(rounded) = ROUNDED_PROP.get(hwnd).checked_sub(1) else {
+        return;
+    };
+    let fullscreen = crate::work_area::hwnd_active(hwnd);
+    set_dwm_shape(hwnd, rounded == 1 && !fullscreen);
+}
+
+#[cfg(target_os = "windows")]
+fn set_dwm_shape(hwnd: windows_sys::Win32::Foundation::HWND, rounded_corners: bool) -> bool {
+    use windows_sys::Win32::Graphics::Dwm::{
+        DWM_WINDOW_CORNER_PREFERENCE, DWMWA_WINDOW_CORNER_PREFERENCE, DwmSetWindowAttribute,
+    };
+
     let preference: DWM_WINDOW_CORNER_PREFERENCE = dwm_corner_preference(rounded_corners);
     let corner_ok = unsafe {
         DwmSetWindowAttribute(
