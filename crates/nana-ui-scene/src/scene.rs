@@ -1,8 +1,8 @@
 mod attributes;
 mod composition;
 mod compositor;
-use attributes::DrawAttributes;
 pub use attributes::SceneDraw;
+use attributes::{DrawAttributes, PlacedClipStamp};
 use compositor::CompositorRegistry;
 pub use compositor::{
     CompositorLayer, CompositorLayerId, CompositorLayerKind, CompositorMotionBinding,
@@ -16,6 +16,7 @@ mod custom_paint;
 pub use custom_paint::{PathMesh, PathVertex};
 mod order;
 mod placement;
+use placement::{offset_rect, record_on_page};
 mod primitives;
 #[cfg(test)]
 use nana_ui_core::ControlSize;
@@ -1642,6 +1643,12 @@ struct RetainedPrimitive {
     /// counter. A slot an ongoing rebuild has not written is one the node no
     /// longer has.
     build: u64,
+    /// Where the node's origin stood when this was built: where it is drawn
+    /// while its projection is retained, which no move has touched since.
+    origin: [f32; 2],
+    /// How many of [`ScenePrimitive::clips`] the node inherited; the rest
+    /// are its own, in its own coordinates.
+    inherited_clips: usize,
 }
 
 #[derive(Debug)]
@@ -1657,12 +1664,20 @@ pub struct UiScene {
     /// Nodes that hang from a clip parent other than their parent (#201): a
     /// scroll above them that they escape must not move their culling bounds.
     escaped_nodes: NodeSet,
-    /// Nodes whose record a layout move kept ([`ExtractedMove`]): each the
-    /// root of a subtree whose records, primitives included, stay in the
-    /// space they were extracted in, placed from their frames' current
-    /// origins at draw time. A full extraction or a removal takes a node
-    /// out. Empty means every record stands where it was extracted.
-    moved_roots: NodeSet,
+    /// Set by the first layout move the scene keeps ([`ExtractedMove`]):
+    /// from then on a record may stand elsewhere than where it was
+    /// extracted, and where it stands is summed down its frame chain
+    /// ([`UiScene::placed_origin`]). Until then every record stands at its
+    /// [`ExtractedNode::layout`], which a fresh record's frame chain gives to
+    /// the bit.
+    placement_live: bool,
+    /// Nodes whose last build read where they stand -- a transform a painter
+    /// applies about the node's corner, an icon centred on its parent's
+    /// text -- and so are built again when they or a box above them move.
+    origin_bound: NodeSet,
+    /// Nodes measured from a frame other than their parent, or sticking to
+    /// a scroller: what a move of a box above them does not carry along.
+    unfollowing: NodeSet,
     /// Bumped whenever a record's local box or frame may have changed;
     /// stamps [`Self::placed_origins`].
     placement_epoch: u64,
@@ -1670,6 +1685,11 @@ pub struct UiScene {
     /// frame chain ([`UiScene::placed_origin`]), at a placement epoch.
     placed_origins: std::sync::Mutex<NodeMap<(u64, [f32; 2])>>,
     draw_attributes: std::sync::Mutex<NodeMap<DrawAttributes>>,
+    /// The clip chains drawn primitives are cut by, their own clips put at
+    /// their node's origin ([`UiScene::draw_primitive`]), each stamped with
+    /// what it was put together from. Emptied by every delta that changes
+    /// the scene.
+    placed_clips: std::sync::Mutex<HashMap<PrimitiveId, (PlacedClipStamp, Arc<[ClipRegion]>)>>,
     /// Dest groups per node, stamped with the scene instance they were read
     /// at. See [`UiScene::opacity_groups`].
     opacity_group_cache: std::sync::Mutex<OpacityGroupCache>,
@@ -1752,10 +1772,13 @@ impl Default for UiScene {
             unadjustable_projections: NodeSet::default(),
             sticky_nodes: nana_ui_runtime::StickyDependencies::default(),
             escaped_nodes: NodeSet::default(),
-            moved_roots: NodeSet::default(),
+            placement_live: false,
+            origin_bound: NodeSet::default(),
+            unfollowing: NodeSet::default(),
             placement_epoch: 0,
             placed_origins: std::sync::Mutex::new(NodeMap::default()),
             draw_attributes: std::sync::Mutex::new(NodeMap::default()),
+            placed_clips: std::sync::Mutex::new(HashMap::new()),
             opacity_group_cache: std::sync::Mutex::new(OpacityGroupCache::default()),
             layer_factor_cache: std::sync::Mutex::new(LayerFactorCache::default()),
             rebuild_scratch: std::sync::Mutex::new(RebuildScratch::default()),
@@ -1791,7 +1814,9 @@ impl Clone for UiScene {
             unadjustable_projections: self.unadjustable_projections.clone(),
             sticky_nodes: self.sticky_nodes.clone(),
             escaped_nodes: self.escaped_nodes.clone(),
-            moved_roots: self.moved_roots.clone(),
+            placement_live: self.placement_live,
+            origin_bound: self.origin_bound.clone(),
+            unfollowing: self.unfollowing.clone(),
             placement_epoch: self.placement_epoch,
             placed_origins: std::sync::Mutex::new(
                 self.placed_origins
@@ -1805,6 +1830,7 @@ impl Clone for UiScene {
                     .expect("scene attributes")
                     .clone(),
             ),
+            placed_clips: std::sync::Mutex::new(HashMap::new()),
             // Stamped with the instance they were read at, and a clone is a
             // new instance, so carrying them over would only be work.
             opacity_group_cache: std::sync::Mutex::new(OpacityGroupCache::default()),
@@ -1933,18 +1959,11 @@ impl UiScene {
         self.nodes.get(&id).map(Arc::as_ref)
     }
 
-    /// `id`'s box in its layout space: the space its record, and every
-    /// primitive and rectangle built from it, is in. That is the page when
-    /// the record was extracted; a layout move kept since moves the space,
-    /// not the box ([`Self::node_layout_bounds`]). [`Self::draw_node_rect`]
-    /// maps this space to where it is drawn.
+    /// Where `id`'s box stands on the page now, before any scroll or
+    /// transform: the same as [`Self::node_layout_bounds`].
+    /// [`Self::draw_node_rect`] maps this space to where it is drawn.
     pub fn node_bounds(&self, id: StableNodeId) -> Option<SceneRect> {
-        self.nodes.get(&id).map(|node| SceneRect {
-            x: node.layout.x,
-            y: node.layout.y,
-            width: node.layout.width,
-            height: node.layout.height,
-        })
+        self.node_layout_bounds(id)
     }
 
     /// Isolating opacity groups from outermost to innermost that contain `node`.
@@ -2074,7 +2093,7 @@ impl UiScene {
         let Some((own, outer)) = groups.split_last().filter(|(own, _)| own.node == menu.id) else {
             return groups;
         };
-        let logical = dest_group(&self.nodes, menu.id, menu);
+        let logical = dest_group(&self.nodes, menu.id, menu, self.placed_layout(menu));
         if logical.is_identity() {
             return Arc::from(outer);
         }
@@ -2087,7 +2106,7 @@ impl UiScene {
     }
 
     fn presented_dest_group(&self, id: StableNodeId, node: &ExtractedNode) -> OpacityGroup {
-        let mut group = dest_group(&self.nodes, id, node);
+        let mut group = dest_group(&self.nodes, id, node, self.placed_layout(node));
         group.opacity = self.resolved_local_opacity(node);
         group
     }
@@ -2135,7 +2154,8 @@ impl UiScene {
                 delta.removed.push(id);
                 self.projections.remove(&id);
                 self.unadjustable_projections.remove(&id);
-                self.moved_roots.remove(&id);
+                self.origin_bound.remove(&id);
+                self.unfollowing.remove(&id);
                 self.placed_origins
                     .get_mut()
                     .expect("scene placements")
@@ -2178,35 +2198,76 @@ impl UiScene {
         let mut scroll_translations = Vec::new();
         let mut stacking_changed = false;
         let mut inherited_geometry_changed = !inherited_roots.is_empty();
-        // A root layout only moved keeps its record, primitives and all, in
-        // the space it was extracted in, and so does everything under it:
-        // each is placed from its frame's origin when it is drawn
-        // (`placement.rs`), as a scroll places what it holds. Nothing is
-        // rebuilt; what the root and its subtree project is rebased.
-        let mut layout_moves = Vec::new();
+        // A root layout only moved keeps its record, primitives and all, and
+        // so does everything under it: what a record holds is in its node's
+        // own coordinates and is drawn at the node's origin, summed down its
+        // frames when it is drawn (`placement.rs`). Nothing is rebuilt; what
+        // the subtree projects is rebased, and its culling bounds move by the
+        // root's shift.
+        let mut layout_moves: Vec<StableNodeId> = Vec::new();
+        let moved: Vec<ExtractedMove> = moved.into_iter().collect();
+        let extracted: Vec<ExtractedNode> = extracted.into_iter().collect();
+        // Where each record that may move stands before anything in this
+        // delta is written, when there are culling bounds to move: a root's
+        // shift is measured against it.
+        let track_shifts = self.visibility.get().is_some();
+        let stood: NodeMap<[f32; 2]> = if let Some(visibility) = self.visibility.get() {
+            let ids: Vec<StableNodeId> = moved
+                .iter()
+                .map(|moved| moved.id)
+                .chain(extracted.iter().filter_map(|node| {
+                    let old = self.nodes.get(&node.id)?;
+                    (old.layout != node.layout).then_some(node.id)
+                }))
+                .filter(|&id| visibility.paints_under(id))
+                .collect();
+            ids.into_iter()
+                .filter_map(|id| Some((id, self.placed_origin_mut(id)?)))
+                .collect()
+        } else {
+            NodeMap::default()
+        };
         for moved in moved {
             let id = moved.id;
-            let Some(held) = self.nodes.get_mut(&id) else {
+            let Some(held) = self.nodes.get(&id) else {
                 debug_assert!(false, "{id:?} moved, but the scene holds no record of it");
                 continue;
             };
             let bits = |layout: &LayoutBox| {
                 [layout.x, layout.y, layout.width, layout.height].map(f32::to_bits)
             };
+            let same_result = same_layout_result(&held.layout_result, &moved.layout_result);
             if bits(&held.local_layout) == bits(&moved.local_layout)
                 && held.layout_frame == moved.layout_frame
-                && held.layout_result == moved.layout_result
+                && same_result
             {
                 continue;
             }
-            let node = Arc::make_mut(held);
+            // A record of another size or result paints other primitives.
+            let resized = held.layout.width.to_bits() != moved.layout.width.to_bits()
+                || held.layout.height.to_bits() != moved.layout.height.to_bits()
+                || !same_result;
+            let frame_changed = held.layout_frame != moved.layout_frame;
+            let node = Arc::make_mut(self.nodes.get_mut(&id).expect("held above"));
             node.local_layout = moved.local_layout;
             node.layout_frame = moved.layout_frame;
             node.layout_result = moved.layout_result;
-            self.moved_roots.insert(id);
+            if resized {
+                node.layout.width = moved.layout.width;
+                node.layout.height = moved.layout.height;
+                changed.push(id);
+            }
+            if frame_changed {
+                if node.layout_frame == nana_ui_runtime::LayoutFrame::Parent
+                    && node.source_style.layout.position != nana_ui_core::PositionSpec::Sticky
+                {
+                    self.unfollowing.remove(&id);
+                } else {
+                    self.unfollowing.insert(id);
+                }
+            }
+            self.placement_live = true;
             self.attribute_epoch = self.attribute_epoch.wrapping_add(1);
-            inherited_geometry_changed = true;
-            inherited_roots.insert(id);
             delta.transforms.push(id);
             delta.clips.push(id);
             delta.paint.push(id);
@@ -2243,6 +2304,18 @@ impl UiScene {
                     };
                     facts(old) != facts(&node)
                 });
+            // A node extracted again that only moved keeps its primitives,
+            // as a move the runtime sent would: they are in its own
+            // coordinates.
+            let kept_move = previous
+                .filter(|old| !record_on_page(old) && !record_on_page(&node))
+                .is_some_and(|old| moved_in_place(old, &node));
+            // Whatever else changed, what it holds and was not extracted moves
+            // with it, as under a move the runtime sent.
+            if previous.is_some_and(|old| old.layout != node.layout) {
+                self.placement_live = true;
+                layout_moves.push(node.id);
+            }
             let inherited_changed = previous.map_or(!node.children.is_empty(), |old| {
                 sticky_geometry_changed
                     || old.parent != node.parent
@@ -2316,8 +2389,15 @@ impl UiScene {
                 && previous.is_some_and(|old| moved_only(old, &node))
             {
                 paintless_moves.push(node.id);
-            } else {
+            } else if !kept_move {
                 changed.push(node.id);
+            }
+            if node.layout_frame == nana_ui_runtime::LayoutFrame::Parent
+                && node.source_style.layout.position != nana_ui_core::PositionSpec::Sticky
+            {
+                self.unfollowing.remove(&node.id);
+            } else {
+                self.unfollowing.insert(node.id);
             }
             if scroll_changed {
                 inherited_roots.insert(node.id);
@@ -2344,8 +2424,6 @@ impl UiScene {
             // has and retires the ones it does not. Dropping them here would
             // only mean taking each one out of `ordered` and putting it back.
             self.retain_compositor_requests(&node);
-            // Extracted where it stands: its record is in page space again.
-            self.moved_roots.remove(&node.id);
             #[cfg(debug_assertions)]
             fresh.push(node.id);
             let candidate = may_be_dest_group(&node);
@@ -2358,13 +2436,21 @@ impl UiScene {
         // Every record is in place: placements read from here on see them.
         if updated_nodes != 0 || removed_nodes != 0 {
             self.placement_epoch = self.placement_epoch.wrapping_add(1);
+            self.placed_clips
+                .get_mut()
+                .expect("scene placed clips")
+                .clear();
         }
         // A fresh record stands where its frames place it, to the bit, or a
         // move kept above it would place it off by the difference.
         #[cfg(debug_assertions)]
-        if !self.moved_roots.is_empty() && self.nodes.len() <= RETAINED_AUDIT_LIMIT {
+        if self.placement_live && self.nodes.len() <= RETAINED_AUDIT_LIMIT {
             for id in fresh {
                 let node = self.nodes.get(&id).expect("inserted above");
+                // The document is the page: its origin is the page's.
+                if matches!(node.kind.as_ref(), NodeKind::Document) {
+                    continue;
+                }
                 let placed = self.placed_origin(node);
                 assert_eq!(
                     placed.map(f32::to_bits),
@@ -2373,11 +2459,79 @@ impl UiScene {
                 );
             }
         }
-        // What paints under a move is placed again and rebuilt; only what
-        // paints nothing keeps the space it was extracted in.
-        if !layout_moves.is_empty() {
-            changed.extend(self.place_painted_records(&layout_moves));
+        // What a move does not carry: a node that built from where it stands
+        // is built again where it stands now, and the culling bounds of what
+        // does not follow its root are derived again.
+        let moved_set: NodeSet = layout_moves.iter().copied().collect();
+        let under_move = |nodes: &SceneNodes, id: StableNodeId, inclusive: bool| {
+            let mut cursor = if inclusive {
+                Some(id)
+            } else {
+                nodes.get(&id).and_then(|node| node.parent)
+            };
+            let mut depth = 0;
+            while let Some(at) = cursor {
+                if moved_set.contains(&at) {
+                    return true;
+                }
+                depth += 1;
+                if depth > MAX_ANCESTOR_DEPTH {
+                    return false;
+                }
+                cursor = nodes.get(&at).and_then(|node| node.parent);
+            }
+            false
+        };
+        if !moved_set.is_empty() {
+            for &id in &self.origin_bound {
+                if under_move(&self.nodes, id, true) {
+                    changed.push(id);
+                }
+            }
         }
+        let unfollowing_moved: Vec<StableNodeId> = if moved_set.is_empty() || !track_shifts {
+            Vec::new()
+        } else {
+            self.unfollowing
+                .iter()
+                .copied()
+                .filter(|&id| under_move(&self.nodes, id, false))
+                .collect()
+        };
+        // How far each root moved, less what the nearest moved root above it
+        // already moves it by in the culling index.
+        let layout_shifts: Vec<(StableNodeId, [f32; 2])> = {
+            let total: NodeMap<[f32; 2]> = stood
+                .iter()
+                .filter_map(|(&id, &stood)| {
+                    let [x, y] = self.placed_origin_mut(id)?;
+                    Some((id, [x - stood[0], y - stood[1]]))
+                })
+                .collect();
+            total
+                .iter()
+                .map(|(&id, &[dx, dy])| {
+                    let mut cursor = self.nodes.get(&id).and_then(|node| {
+                        (node.source_style.layout.position != nana_ui_core::PositionSpec::Fixed)
+                            .then_some(node.parent)
+                            .flatten()
+                    });
+                    let mut above = [0.0, 0.0];
+                    while let Some(at) = cursor {
+                        if let Some(&shift) = total.get(&at) {
+                            above = shift;
+                            break;
+                        }
+                        cursor = self.nodes.get(&at).and_then(|node| {
+                            (node.source_style.layout.position != nana_ui_core::PositionSpec::Fixed)
+                                .then_some(node.parent)
+                                .flatten()
+                        });
+                    }
+                    (id, [dx - above[0], dy - above[1]])
+                })
+                .collect()
+        };
         rebind_sticky.sort_unstable();
         rebind_sticky.dedup();
         for id in rebind_sticky {
@@ -2432,9 +2586,10 @@ impl UiScene {
             let mut rebuilding: HashSet<_> = rebuild.iter().copied().collect();
             for &id in &self.unadjustable_projections {
                 if !rebuilding.contains(&id)
-                    && inherited_roots
+                    && (inherited_roots
                         .iter()
                         .any(|root| self.node_descends_from(id, *root))
+                        || (!moved_set.is_empty() && under_move(&self.nodes, id, true)))
                 {
                     rebuilding.insert(id);
                     rebuild.push(id);
@@ -2476,6 +2631,17 @@ impl UiScene {
                 self.visibility.take();
             }
             if let Some(mut visibility) = self.visibility.take() {
+                // Every translation goes in before any bound is derived again:
+                // a derived bound is already where it stands, and a shift
+                // after it would move it twice.
+                //
+                // A moved subtree's bounds move with its root, less what a
+                // moved root above it already moved them by.
+                for &(root, shift) in &layout_shifts {
+                    if shift != [0.0, 0.0] {
+                        visibility.translate_subtree(root, shift);
+                    }
+                }
                 for &(root, offset) in &scroll_translations {
                     visibility.translate_subtree(root, offset);
                 }
@@ -2495,6 +2661,16 @@ impl UiScene {
                         }
                     }
                 }
+                // A moved root's own primitives are not under it, and what is
+                // under it measured from a frame above it (or sticking to a
+                // scroller above it) did not move with it.
+                if !layout_moves.is_empty() {
+                    visibility.update(self, &layout_moves);
+                    for &id in &unfollowing_moved {
+                        visibility.update(self, &[id]);
+                        visibility.refresh_subtree(self, id);
+                    }
+                }
                 if inherited_geometry_changed {
                     // An ancestor's projection moved, and its retained
                     // descendants are not in `rebuild`, so their bounds have to
@@ -2508,20 +2684,6 @@ impl UiScene {
                     }
                 }
                 visibility.update(self, &rebuild);
-                // A moved root's own primitives, and the boxes under one that
-                // hang from a clip parent above it (#201): `refresh_subtree`
-                // reaches neither.
-                if !layout_moves.is_empty() {
-                    visibility.update(self, &layout_moves);
-                    for &root in &layout_moves {
-                        for &id in &self.escaped_nodes {
-                            if id != root && self.node_descends_from(id, root) {
-                                visibility.update(self, &[id]);
-                                visibility.refresh_subtree(self, id);
-                            }
-                        }
-                    }
-                }
                 let _ = self.visibility.set(visibility);
             }
             self.instance = next_scene_instance();
@@ -2691,12 +2853,21 @@ impl UiScene {
         self.primitives.get(&id).map(|held| &held.primitive)
     }
 
-    /// The primitive and the rebuild that last wrote it. See
-    /// [`SceneDraw::revision`].
-    fn primitive_at(&self, id: PrimitiveId) -> Option<(&ScenePrimitive, u64)> {
-        self.primitives
-            .get(&id)
-            .map(|held| (&held.primitive, held.build))
+    /// The primitive, the rebuild that last wrote it ([`SceneDraw::revision`]),
+    /// where it was built ([`RetainedPrimitive::origin`]) and how many of its
+    /// clips it inherited.
+    fn primitive_placed_at(
+        &self,
+        id: PrimitiveId,
+    ) -> Option<(&ScenePrimitive, u64, [f32; 2], usize)> {
+        self.primitives.get(&id).map(|held| {
+            (
+                &held.primitive,
+                held.build,
+                held.origin,
+                held.inherited_clips,
+            )
+        })
     }
 
     /// Rewrite one primitive kind and bump instance identity.
@@ -2750,15 +2921,19 @@ impl UiScene {
     }
 
     /// Compact leading glyphs share the parent (or own) text line-box center.
+    ///
+    /// The second half of the answer is whether it read the parent's text
+    /// box, which stands where the node does not move with it: the node is
+    /// built again when it moves ([`Self::origin_bound`]).
     fn icon_y_aligned_to_adjacent_text(
         &self,
         node: &ExtractedNode,
         icon_bounds: SceneRect,
         extent: f32,
-    ) -> f32 {
+    ) -> (f32, bool) {
         let geometric = icon_bounds.y + (icon_bounds.height - extent) / 2.0;
         if node.layout.height > extent + 0.5 || node.layout.width > extent + 0.5 {
-            return geometric;
+            return (geometric, false);
         }
         let host = if node
             .text
@@ -2780,36 +2955,44 @@ impl UiScene {
                 {
                     parent
                 }
-                _ => return geometric,
+                _ => return (geometric, false),
             }
         };
+        // In the space the host's record is in.
         let mut text_box = match host.component_geometry.as_deref() {
             Some(ComponentGeometry::ListItem {
                 content: Some(content),
                 ..
             }) => *content,
-            _ => host.layout,
+            _ => Self::record_box(host),
         };
-        // The host's record may be in another space than this one's: a move
-        // kept one of them where it was extracted.
-        if host.id != node.id {
-            let shift = |node| self.layout_shift(node).map_or(0.0, |[_, y]| y);
-            let (host_shift, own_shift) = (shift(host), shift(node));
-            if host_shift != own_shift {
-                text_box.y += host_shift - own_shift;
+        // Into this node's: a child measured from its parent stands at its
+        // local box in the parent's coordinates, wherever the two stand.
+        let reads_parent = host.id != node.id;
+        if reads_parent {
+            if node.layout_frame == nana_ui_runtime::LayoutFrame::Parent
+                && !record_on_page(host)
+                && !record_on_page(node)
+            {
+                text_box.y -= node.local_layout.y;
+            } else {
+                text_box.y += self.paint_origin(host)[1] - self.paint_origin(node)[1];
             }
         }
         let centered = matches!(
             host.source_style.text_vertical_alignment,
             TextVerticalAlignment::Center
         );
-        icon_y_on_text_glyph_center(
-            text_box.y,
-            text_box.height,
-            host.style.font_size,
-            host.style.line_height,
-            centered,
-            extent,
+        (
+            icon_y_on_text_glyph_center(
+                text_box.y,
+                text_box.height,
+                host.style.font_size,
+                host.style.line_height,
+                centered,
+                extent,
+            ),
+            reads_parent,
         )
     }
 }
@@ -3023,7 +3206,9 @@ impl UiScene {
         if !geometry {
             return false;
         }
-        let layout = ancestor.layout;
+        // Where the ancestor stands now: its clips are cut on the page.
+        let layout = self.placed_layout(ancestor);
+        let geometry_origin = self.paint_origin(ancestor);
         // `blocks_3d` is what the ancestors *above* this one closed, the
         // same question asked of the queried node below — an ancestor's
         // own `perspective` opens a context for its children, not against
@@ -3035,8 +3220,7 @@ impl UiScene {
         } else {
             self.logical_page_transform(ancestor, fold.blocks_3d)
         };
-        // What it hands down is on the page; its clips are cut from its own
-        // record, in the space that was extracted in.
+        // What it hands down is on the page, and so are its clips.
         let handed = fold.transform.then(local);
         fold.transform = handed;
         if ancestor.source_style.layout.fails_closed_3d_context() {
@@ -3045,7 +3229,7 @@ impl UiScene {
         if !reaches {
             return false;
         }
-        let transform = self.record_space(ancestor, handed);
+        let transform = handed;
         let mut node_dependent = false;
         let clips = &mut fold.clips;
         if let Some(region) = overflow_clip_region(
@@ -3066,7 +3250,7 @@ impl UiScene {
             ancestor.component_geometry.as_deref()
         {
             clips.push(ClipRegion {
-                bounds: scene_rect(*root_clip),
+                bounds: offset_rect(scene_rect(*root_clip), geometry_origin),
                 transform,
                 corner_radius: 0.0,
                 polygon_clip: None,
@@ -3076,6 +3260,7 @@ impl UiScene {
             ancestor.component_geometry.as_deref()
         {
             node_dependent = true;
+            let surface = offset_rect(scene_rect(*surface), geometry_origin);
             let focus_inset = if node.is_some_and(|node| node.focused) {
                 3.0
             } else {
@@ -3100,7 +3285,7 @@ impl UiScene {
                     .is_some_and(|body_root| self.node_descends_from(node.id, body_root))
             {
                 clips.push(ClipRegion {
-                    bounds: scene_rect(*body),
+                    bounds: offset_rect(scene_rect(*body), geometry_origin),
                     transform,
                     corner_radius: 0.0,
                     polygon_clip: None,
@@ -3253,7 +3438,14 @@ impl UiScene {
             return;
         }
         let mut moved = false;
+        // An object scales about its centre where it is drawn: on the page.
+        let origins: NodeMap<[f32; 2]> = self
+            .glyph_objects
+            .keys()
+            .map(|&node| (node, self.paint_origin_of(node)))
+            .collect();
         for (node, (presentation, objects)) in &self.glyph_objects {
+            let [ox, oy] = origins[node];
             for object in objects.iter() {
                 let Some(held) = self.primitives.get_mut(&PrimitiveId {
                     node: *node,
@@ -3277,7 +3469,7 @@ impl UiScene {
                 }
                 let reveal_now = presentation.transitions.freeze_reveal.unwrap_or(now);
                 let sample = presentation.sample(reveal.as_ref(), object.ordinal, reveal_now);
-                let [cx, cy] = object.center;
+                let [cx, cy] = [ox + object.center[0], oy + object.center[1]];
                 let scale = sample.scale;
                 let local = AffineTransform::from_matrix([
                     scale,
@@ -3528,6 +3720,12 @@ impl UiScene {
                 .map(|held| &held.key.stack),
         );
         let build = self.build;
+        let origin = self.paint_origin_mut(primitive.node);
+        let inherited_clips = self
+            .projections
+            .get(&primitive.node)
+            .map_or(primitive.clips.len(), |&(_, _, count)| count)
+            .min(primitive.clips.len());
         if let Some(held) = self.primitives.get_mut(&primitive.id) {
             // A rebuild usually puts the same primitive back in the same
             // place. Re-entering `ordered` at a key it already holds is the
@@ -3546,6 +3744,8 @@ impl UiScene {
                 && has_custom_paint(&self.nodes, primitive.node);
             held.primitive = primitive;
             held.build = build;
+            held.origin = origin;
+            held.inherited_clips = inherited_clips;
             if moved {
                 let previous = std::mem::replace(&mut held.key, key.clone());
                 self.ordered.remove(&previous);
@@ -3560,6 +3760,8 @@ impl UiScene {
                 primitive,
                 key: key.clone(),
                 build,
+                origin,
+                inherited_clips,
             },
         );
         self.ordered.insert(key);
@@ -3632,9 +3834,13 @@ fn local_opacity(node: &ExtractedNode) -> f32 {
 /// than this; it just does not move a bound, so it must not cost a pass over
 /// every primitive in the scene. A fade is the case that matters: it rewrites
 /// one node's style every frame and moves nothing.
+///
+/// Where the node stands is not part of it either: a descendant's primitives
+/// are drawn at the descendant's own origin, and a box that moved carries its
+/// subtree's culling bounds with it (`layout_moves`). Where its transform
+/// pivots is, and is compared below.
 fn inherited_transform_changed(old: &ExtractedNode, node: &ExtractedNode) -> bool {
     if old.parent != node.parent
-        || old.layout != node.layout
         || old.source_style.layout.position != node.source_style.layout.position
         || old.source_style.layout.fails_closed_3d_context()
             != node.source_style.layout.fails_closed_3d_context()
@@ -3815,6 +4021,25 @@ struct PaintOrderFacts {
     scroll_edge_fade: bool,
 }
 
+/// [`moved_only`], with the same result: what the node paints is in its own
+/// coordinates, so it paints the same primitives wherever it stands.
+fn moved_in_place(old: &ExtractedNode, new: &ExtractedNode) -> bool {
+    same_layout_result(&old.layout_result, &new.layout_result) && moved_only(old, new)
+}
+
+/// Whether two records hold the same layout result: the same allocation,
+/// as a node that only moved shares it, or one equal to it.
+fn same_layout_result(
+    old: &Option<Arc<nana_ui_runtime::LayoutResult>>,
+    new: &Option<Arc<nana_ui_runtime::LayoutResult>>,
+) -> bool {
+    match (old, new) {
+        (Some(old), Some(new)) => Arc::ptr_eq(old, new) || old == new,
+        (None, None) => true,
+        _ => false,
+    }
+}
+
 /// Whether `new` is `old` moved: the same node in every respect but where
 /// its box stands, at the same size, and the result that publishes it.
 fn moved_only(old: &ExtractedNode, new: &ExtractedNode) -> bool {
@@ -3907,18 +4132,14 @@ fn has_scroll_edge_fade(node: &ExtractedNode) -> bool {
 }
 
 /// The edge fade `node`'s group composites with at its current offset.
-fn edge_fade_mask(node: &ExtractedNode) -> Option<EdgeFadeMask> {
+fn edge_fade_mask(node: &ExtractedNode, placed: LayoutBox) -> Option<EdgeFadeMask> {
     if !has_scroll_edge_fade(node) {
         return None;
     }
     let style = &node.source_style.layout;
     let fade = style.paint.scroll_edge_fade?;
-    let (x, y, width, height) = style.overflow_clip_box(
-        node.layout.x,
-        node.layout.y,
-        node.layout.width,
-        node.layout.height,
-    )?;
+    let (x, y, width, height) =
+        style.overflow_clip_box(placed.x, placed.y, placed.width, placed.height)?;
     // Physical offsets run from the topmost reachable one to the lowest,
     // whichever edge the axis starts at: the content above the scrollport
     // is the distance from the first, and below it the distance to the last.
@@ -4026,7 +4247,7 @@ fn is_dest_group(nodes: &SceneNodes, node: &ExtractedNode) -> bool {
     is_opacity_group(nodes, node)
 }
 
-fn inset_shadow_overlay(node: &ExtractedNode) -> Option<InsetShadowOverlay> {
+fn inset_shadow_overlay(node: &ExtractedNode, placed: LayoutBox) -> Option<InsetShadowOverlay> {
     let shadow = node
         .source_style
         .layout
@@ -4037,12 +4258,7 @@ fn inset_shadow_overlay(node: &ExtractedNode) -> Option<InsetShadowOverlay> {
         .find(|shadow| shadow.inset)?;
     Some(InsetShadowOverlay {
         elevation: ComponentElevation::from_box_shadow(shadow),
-        bounds: SceneRect {
-            x: node.layout.x,
-            y: node.layout.y,
-            width: node.layout.width,
-            height: node.layout.height,
-        },
+        bounds: scene_rect(placed),
         corner_radius: surface_corner_radii(
             node.source_style.layout.as_ref(),
             node.layout.width,
@@ -4283,7 +4499,13 @@ fn empty_opacity_groups() -> Arc<[OpacityGroup]> {
     Arc::clone(EMPTY.get_or_init(|| Arc::from(Vec::new())))
 }
 
-fn dest_group(nodes: &SceneNodes, id: StableNodeId, candidate: &ExtractedNode) -> OpacityGroup {
+/// `candidate`'s group, its box where it stands now at `placed`.
+fn dest_group(
+    nodes: &SceneNodes,
+    id: StableNodeId,
+    candidate: &ExtractedNode,
+    placed: LayoutBox,
+) -> OpacityGroup {
     OpacityGroup {
         node: id,
         opacity: local_opacity(candidate),
@@ -4298,8 +4520,8 @@ fn dest_group(nodes: &SceneNodes, id: StableNodeId, candidate: &ExtractedNode) -
             ColorFilter::default()
         },
         mix_blend: candidate.source_style.layout.paint.mix_blend,
-        inset_shadow: inset_shadow_overlay(candidate),
-        edge_fade: edge_fade_mask(candidate),
+        inset_shadow: inset_shadow_overlay(candidate, placed),
+        edge_fade: edge_fade_mask(candidate, placed),
     }
 }
 

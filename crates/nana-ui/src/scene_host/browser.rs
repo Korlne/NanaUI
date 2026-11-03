@@ -285,7 +285,11 @@ fn native_browser_geometry(
     node: StableNodeId,
     size: (f32, f32),
 ) -> Option<(BrowserRect, BrowserRect, bool)> {
-    let primitives: Vec<_> = scene.primitives().collect();
+    // As drawn: on the page, cut by clips on the page.
+    let primitives: Vec<_> = scene
+        .primitives()
+        .filter_map(|primitive| scene.draw_primitive(primitive.id))
+        .collect();
     let anchor = primitives.iter().find(|primitive| primitive.node == node)?;
     let bounds = translated_rect(scene.node_bounds(node)?, anchor.transform)?;
     if anchor.opacity != 1.0
@@ -315,7 +319,7 @@ fn native_browser_geometry(
             && (other.z_index, other.document_order) > (anchor.z_index, anchor.document_order)
             && !scene.is_node_in_subtree(node, other.node)
             && other.opacity > 0.0
-            && translated_rect(other.bounds, other.transform).is_none_or(|bounds| {
+            && translated_rect(other.placed_bounds(), other.transform).is_none_or(|bounds| {
                 let mut bounds = bounds;
                 for region in other.clips.iter() {
                     if let Some(region) = translated_rect(region.bounds, region.transform) {
@@ -494,6 +498,9 @@ mod tests {
         projected[0].layout.y = 40.0;
         projected[0].layout.width = 120.0;
         projected[0].layout.height = 80.0;
+        // A box written by hand stands on the page: its local box is that.
+        projected[0].layout_frame = nana_ui_runtime::LayoutFrame::Page;
+        projected[0].local_layout = projected[0].layout;
         scene.apply_delta(projected, []);
         assert!(
             !native_browser_geometry(&scene, node, (600.0, 400.0))

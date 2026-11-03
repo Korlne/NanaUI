@@ -98,8 +98,8 @@ fn unlabeled_spinner_centers_in_the_node_labeled_spinner_stays_leading() {
                 node: id(1),
                 slot: 3
             })
-            .unwrap()
-            .bounds,
+            .map(|primitive| scene.primitive_layout_bounds(primitive))
+            .unwrap(),
         SceneRect {
             x: 76.0,
             y: 51.0,
@@ -113,8 +113,8 @@ fn unlabeled_spinner_centers_in_the_node_labeled_spinner_stays_leading() {
                 node: id(2),
                 slot: 3
             })
-            .unwrap()
-            .bounds,
+            .map(|primitive| scene.primitive_layout_bounds(primitive))
+            .unwrap(),
         SceneRect {
             x: 0.0,
             y: 0.0,
@@ -826,7 +826,7 @@ fn selection_option_emits_surface_text_icon_and_focus_slots() {
         })
         .unwrap();
     assert_eq!(
-        focus.bounds,
+        scene.primitive_layout_bounds(focus),
         SceneRect {
             x: 6.0,
             y: 16.0,
@@ -6000,7 +6000,8 @@ fn empty_state_separates_intrinsic_clip_from_focused_action_root_clip() {
             slot: 7,
         })
         .unwrap();
-    assert_eq!(ring.bounds.y + ring.bounds.height, root.bounds.height);
+    let ring = scene.primitive_layout_bounds(ring);
+    assert_eq!(ring.y + ring.height, root.bounds.height);
 }
 
 #[test]
@@ -6801,7 +6802,7 @@ fn focused_list_item_paints_an_external_keyboard_ring() {
         }
     ));
     assert_eq!(
-        ring.bounds,
+        scene.primitive_layout_bounds(ring),
         SceneRect {
             x: 7.0,
             y: 17.0,
@@ -6854,7 +6855,7 @@ fn the_theme_focus_ring_sets_the_ring_stroke_and_offset() {
         }
     ));
     assert_eq!(
-        ring.bounds,
+        scene.primitive_layout_bounds(ring),
         SceneRect {
             x: 5.0,
             y: 15.0,
@@ -6909,7 +6910,7 @@ fn compact_leading_icon_centers_on_the_parent_text_line() {
         })
         .expect("leading icon");
     assert_eq!(
-        primitive.bounds,
+        scene.primitive_layout_bounds(primitive),
         SceneRect {
             x: 8.0,
             y: 8.0,
@@ -7343,7 +7344,7 @@ fn migrated_components_consume_runtime_subregion_geometry() {
         })
         .unwrap();
     assert_eq!(
-        icon.bounds,
+        scene.primitive_layout_bounds(icon),
         SceneRect {
             x: 18.0,
             y: 28.0,
@@ -7591,7 +7592,7 @@ fn scroll_offset_transforms_descendants_but_not_viewport_clip() {
         })
         .unwrap();
     assert_eq!(text.transform.0[5], -60.0);
-    assert_eq!(text.bounds.y, 80.0);
+    assert_eq!(scene.primitive_layout_bounds(text).y, 80.0);
     assert_eq!(text.clips.len(), 1);
     assert_eq!(text.clips[0].bounds.height, 50.0);
     assert_eq!(text.clips[0].transform, AffineTransform::IDENTITY);
@@ -7630,7 +7631,7 @@ fn scroll_offset_delta_updates_attributes_without_rebuilding_descendant_geometry
         text.transform.0[5], -60.0,
         "extracting only the scroller must recompose descendant paint transforms"
     );
-    assert_eq!(text.bounds.y, 80.0);
+    assert_eq!(text.placed_bounds().y, 80.0);
 }
 
 #[test]
@@ -10819,10 +10820,21 @@ mod custom_paint {
         assert_eq!(origin, [0.0, 0.0]);
         let mut moved = first;
         moved.layout.x += 30.0;
+        // On the page, its local box is its page box.
+        moved.local_layout = moved.layout;
         scene.apply_delta([moved], []);
         let (again, origin) = mesh_of(&scene);
         assert!(Arc::ptr_eq(&mesh, &again), "same recording, same triangles");
-        assert_eq!(origin, [30.0, 0.0]);
+        assert_eq!(origin, [0.0, 0.0], "in the node's own coordinates");
+        let path = scene
+            .primitives()
+            .find(|p| matches!(p.kind, ScenePrimitiveKind::Path { .. }))
+            .unwrap();
+        assert_eq!(
+            scene.draw_primitive(path.id).unwrap().origin,
+            [30.0, 0.0],
+            "drawn where the node stands"
+        );
     }
 
     #[test]
@@ -11684,9 +11696,11 @@ fn composer_trailing_action_icon_survives_editor_clip_in_the_bottom_footer() {
         })
         .expect("the real action paints its icon");
     assert!(icon.opacity > 0.0);
-    let x = icon.bounds.x + icon.bounds.width / 2.0;
-    let y = icon.bounds.y + icon.bounds.height / 2.0;
-    for clip in icon.clips.iter() {
+    let drawn = scene.draw_primitive(icon.id).unwrap();
+    let icon = drawn.placed_bounds();
+    let x = icon.x + icon.width / 2.0;
+    let y = icon.y + icon.height / 2.0;
+    for clip in drawn.clips.iter() {
         assert!(
             x >= clip.bounds.x
                 && x <= clip.bounds.x + clip.bounds.width
@@ -11697,10 +11711,11 @@ fn composer_trailing_action_icon_survives_editor_clip_in_the_bottom_footer() {
     }
     let counter = scene.primitives().find(|primitive| primitive.node == area.stable_id()
         && matches!(&primitive.kind, ScenePrimitiveKind::Text { content, .. } if content == "12/40")).unwrap();
-    assert!(counter.bounds.x + counter.bounds.width <= icon.bounds.x);
-    assert!(editor.y + editor.height <= counter.bounds.y);
-    assert!(editor.y + editor.height <= icon.bounds.y);
-    assert!(editor.x + editor.width >= icon.bounds.x + icon.bounds.width);
+    let counter = scene.primitive_layout_bounds(counter);
+    assert!(counter.x + counter.width <= icon.x);
+    assert!(editor.y + editor.height <= counter.y);
+    assert!(editor.y + editor.height <= icon.y);
+    assert!(editor.x + editor.width >= icon.x + icon.width);
 }
 
 #[test]

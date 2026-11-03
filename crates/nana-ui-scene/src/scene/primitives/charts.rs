@@ -76,15 +76,23 @@ pub(super) fn build(context: &GeometryPaintContext<'_>, emit: &mut impl FnMut(Sc
                     },
                 });
             }
-            // A hairline on a half pixel stays one device pixel wide.
-            let crisp = |v: f32| v.floor() + 0.5;
+            // A hairline on a half pixel of the page stays one device pixel
+            // wide (the node is built again when it moves).
+            let crisp_x = |v: f32| {
+                let o = context.page_origin[0];
+                (o + v).floor() + 0.5 - o
+            };
+            let crisp_y = |v: f32| {
+                let o = context.page_origin[1];
+                (o + v).floor() + 0.5 - o
+            };
             match hover.pointer {
                 Some(nana_ui_charts::PointerGeometry::Line { from, to }) => {
                     let (a, b) = (at(from), at(to));
                     let (a, b) = if (a[0] - b[0]).abs() < 0.01 {
-                        ([crisp(a[0]), a[1]], [crisp(b[0]), b[1]])
+                        ([crisp_x(a[0]), a[1]], [crisp_x(b[0]), b[1]])
                     } else {
-                        ([a[0], crisp(a[1])], [b[0], crisp(b[1])])
+                        ([a[0], crisp_y(a[1])], [b[0], crisp_y(b[1])])
                     };
                     emit(pointer_line(&visual, POINTER_LINE_SLOT, a, b, line_color));
                 }
@@ -95,15 +103,15 @@ pub(super) fn build(context: &GeometryPaintContext<'_>, emit: &mut impl FnMut(Sc
                     emit(pointer_line(
                         &visual,
                         POINTER_LINE_SLOT,
-                        [crisp(c[0]), y0],
-                        [crisp(c[0]), y1],
+                        [crisp_x(c[0]), y0],
+                        [crisp_x(c[0]), y1],
                         line_color,
                     ));
                     emit(pointer_line(
                         &visual,
                         POINTER_CROSS_SLOT,
-                        [x0, crisp(c[1])],
-                        [x1, crisp(c[1])],
+                        [x0, crisp_y(c[1])],
+                        [x1, crisp_y(c[1])],
                         line_color,
                     ));
                 }

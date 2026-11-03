@@ -476,6 +476,8 @@ pub struct SceneWgpuPainter {
     /// Natural sizes of the content images the active target drew, for the
     /// host to take; swapped per target like `painted`.
     natural_sizes: natural_sizes::NaturalSizes,
+    /// A stroke's points put at its node's origin, reused every stroke.
+    placed_points: Vec<[f32; 2]>,
     image_revision: u64,
     /// The host's waker, counting into `materials_ready` first; see
     /// [`Self::set_material_waker`].
@@ -810,6 +812,7 @@ impl SceneWgpuPainter {
             painted: None,
             painted_demand: Default::default(),
             natural_sizes: Default::default(),
+            placed_points: Vec::new(),
             image_revision: 0,
             material_waker: None,
             materials_ready: Arc::default(),
@@ -1668,10 +1671,11 @@ impl SceneWgpuPainter {
                         blend,
                         clip: layer_clip,
                     } => {
+                        let layer_clip = layer_clip.map(|rect| primitive.place(rect));
                         if let Some(rect) = layer_clip
                             && !encode_transform.is_projective()
                             && !rect_meets_target(
-                                *rect,
+                                rect,
                                 clip::paint_affine(encode_transform.0, origin),
                                 scale,
                                 dest_physical,
@@ -1714,7 +1718,10 @@ impl SceneWgpuPainter {
                                 paint_transform(encode_transform.0, encode_transform.1, origin);
                             if let Some(range) = self.meshes.push_path(
                                 &mask.mesh,
-                                mask.origin,
+                                [
+                                    primitive.origin[0] + mask.origin[0],
+                                    primitive.origin[1] + mask.origin[1],
+                                ],
                                 mesh_affine(affine, persp),
                                 1.0,
                                 clip::FragmentClip::PASS,
@@ -1743,7 +1750,7 @@ impl SceneWgpuPainter {
                     ScenePrimitiveKind::Quad { surface, .. } => match &surface.polygon_clip {
                         Some(own) => clip::without_own_polygon(
                             &primitive.clips,
-                            primitive.bounds,
+                            primitive.placed_bounds(),
                             primitive.transform,
                             own,
                         ),
@@ -1763,7 +1770,12 @@ impl SceneWgpuPainter {
                 };
                 let (affine, persp) =
                     paint_transform(encode_transform.0, encode_transform.1, origin);
-                let bounds = local_rect(primitive.bounds);
+                // The geometry is in its node's coordinates: put it where the
+                // node stands first, one add per coordinate, as a box laid out
+                // there is. Only then does the transform -- and the grid it
+                // snaps a translation to -- apply, so a box that moved paints
+                // what one laid out where it now stands does.
+                let bounds = local_rect(primitive.placed_bounds());
                 // Wrapping drains and re-inserts this primitive's commands
                 // behind a `PushGroup`, so no batch may span the edit.
                 let clip_dests = clip_dests_for(&primitive.kind, clips, origin);
@@ -1862,7 +1874,7 @@ impl SceneWgpuPainter {
                         surface,
                     } => {
                         for item in batch {
-                            let item_bounds = local_rect(*item);
+                            let item_bounds = local_rect(primitive.place(*item));
                             let painted = quad_painted_bounds(
                                 item_bounds,
                                 shadow.as_ref(),
@@ -2059,7 +2071,7 @@ impl SceneWgpuPainter {
                         let no_shadow: Option<nana_ui_runtime::ComponentElevation> = None;
                         let default_surface = nana_ui_scene::QuadSurfacePaint::default();
                         for (item, color) in batch.iter().zip(colors.iter()) {
-                            let item_bounds = local_rect(*item);
+                            let item_bounds = local_rect(primitive.place(*item));
                             let painted = quad_painted_bounds(
                                 item_bounds,
                                 None,
@@ -2130,7 +2142,7 @@ impl SceneWgpuPainter {
                         color,
                     } => {
                         for item in batch {
-                            let item_bounds = local_rect(*item);
+                            let item_bounds = local_rect(primitive.place(*item));
                             if let Some(prepared) = self.icons.prepare_with_work(
                                 &self.device,
                                 &self.queue,
@@ -2199,6 +2211,8 @@ impl SceneWgpuPainter {
                             ),
                             None => ([].as_slice(), 0.0, [].as_slice(), 0.0),
                         };
+                        let points =
+                            placed_points(&mut self.placed_points, points, primitive.origin);
                         if let Some(range) = self.meshes.push_stroke_with_path_length(
                             points,
                             StrokeStyle {
@@ -2246,7 +2260,10 @@ impl SceneWgpuPainter {
                         let path_affine = mesh_affine(affine, persp);
                         if let Some(range) = self.meshes.push_path(
                             mesh,
-                            *origin,
+                            [
+                                primitive.origin[0] + origin[0],
+                                primitive.origin[1] + origin[1],
+                            ],
                             path_affine,
                             opacity,
                             frag_clip,
@@ -2281,6 +2298,10 @@ impl SceneWgpuPainter {
                         origin: chart_origin,
                         hover,
                     } => {
+                        let chart_origin = &[
+                            primitive.origin[0] + chart_origin[0],
+                            primitive.origin[1] + chart_origin[1],
+                        ];
                         let pipeline = self.charts.get_or_insert_with(|| {
                             chart::ChartPipeline::new(
                                 &self.device,
@@ -2816,6 +2837,21 @@ fn custom_paint_bounds(
     } else {
         transformed_aabb(bounds, affine)
     }
+}
+
+/// `points`, a stroke's in its node's coordinates, put at `origin`: one add
+/// per coordinate, into `buffer` unless there is nothing to add.
+fn placed_points<'a>(
+    buffer: &'a mut Vec<[f32; 2]>,
+    points: &'a [[f32; 2]],
+    [x, y]: [f32; 2],
+) -> &'a [[f32; 2]] {
+    if [x, y] == [0.0, 0.0] {
+        return points;
+    }
+    buffer.clear();
+    buffer.extend(points.iter().map(|&[px, py]| [x + px, y + py]));
+    buffer
 }
 
 fn clip_dests_for(

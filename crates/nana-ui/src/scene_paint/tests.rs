@@ -14184,3 +14184,178 @@ mod precompiled_quads {
         assert_eq!(differing, 0, "of {} pixels", from_wgsl.len() / 4);
     }
 }
+
+/// A page whose rows a growing box above them pushes down by a fraction of a
+/// pixel each frame: each row's record is kept, primitives and all, and
+/// drawn where it now stands (`docs/reference/relative-geometry.md`, phase
+/// 4). What the painter draws from that scene is, to the pixel, what it
+/// draws from a scene built cold from the same layout -- the labels' glyph
+/// phase, the buttons' plates and labels, the chips' edges and borders -- at
+/// the fractional scales where a translation does not land on whole pixels.
+#[test]
+fn rows_a_reflow_moves_by_a_fraction_paint_what_a_cold_scene_does() {
+    use nana_ui_core::{FlexDirection, LayoutStyle};
+    use nana_ui_runtime::LayoutViewport;
+    let (device, queue) = test_device();
+    let document = DocumentId::new(1).unwrap();
+    let id = |raw: u64| StableNodeId::new(raw).unwrap();
+    let ticker = id(3);
+    let ticker_style = |height: f32| NodeStyle {
+        layout: Arc::new(LayoutStyle {
+            width: Some(LengthSpec::Px(200.0)),
+            height: Some(LengthSpec::Px(height)),
+            ..LayoutStyle::default()
+        }),
+        background: Some(SemanticColorRole::Subtle),
+        ..NodeStyle::default()
+    };
+    for scale in [1.0f32, 1.1, 1.2, 1.75] {
+        let mut runtime = nana_ui_scene::RuntimeDocument::new(document);
+        let mut queue_ = MutationQueue::new();
+        queue_.create(id(1), document, NodeKind::Document);
+        queue_.create(id(2), document, NodeKind::Element { tag: "div".into() });
+        queue_.insert(id(1), id(2), None);
+        queue_.set_style(
+            id(2),
+            NodeStyle {
+                layout: Arc::new(LayoutStyle {
+                    width: Some(LengthSpec::Px(240.0)),
+                    direction: Some(FlexDirection::Column),
+                    padding_left: Some(LengthSpec::Px(3.3)),
+                    ..LayoutStyle::default()
+                }),
+                ..NodeStyle::default()
+            },
+        );
+        queue_.create(ticker, document, NodeKind::Element { tag: "div".into() });
+        queue_.insert(id(2), ticker, None);
+        queue_.set_style(ticker, ticker_style(4.0));
+        let mut buttons = Vec::new();
+        for row in 0..4u64 {
+            let (row_id, label, chip) = (id(10 + row * 3), id(11 + row * 3), id(12 + row * 3));
+            queue_.create(row_id, document, NodeKind::Element { tag: "div".into() });
+            queue_.create(label, document, NodeKind::Text);
+            queue_.create(chip, document, NodeKind::Element { tag: "div".into() });
+            queue_.insert(id(2), row_id, None);
+            queue_.insert(row_id, label, None);
+            queue_.insert(row_id, chip, None);
+            queue_.set_style(
+                row_id,
+                NodeStyle {
+                    layout: Arc::new(LayoutStyle {
+                        width: Some(LengthSpec::Px(236.0)),
+                        height: Some(LengthSpec::Px(26.4)),
+                        direction: Some(FlexDirection::Row),
+                        ..LayoutStyle::default()
+                    }),
+                    ..NodeStyle::default()
+                },
+            );
+            queue_.set_text(
+                label,
+                TextContent {
+                    value: format!("Row {row} label").into(),
+                },
+            );
+            queue_.set_style(
+                label,
+                NodeStyle {
+                    foreground: Some(SemanticColorRole::Text),
+                    ..NodeStyle::default()
+                },
+            );
+            queue_.set_style(
+                chip,
+                NodeStyle {
+                    layout: Arc::new(LayoutStyle {
+                        width: Some(LengthSpec::Px(13.3)),
+                        height: Some(LengthSpec::Px(9.7)),
+                        margin_left: Some(LengthSpec::Px(2.6)),
+                        border_width: Some(1.0),
+                        border_radius: Some(3.0),
+                        ..LayoutStyle::default()
+                    }),
+                    background: Some(SemanticColorRole::Accent),
+                    border: Some(SemanticColorRole::Text),
+                    ..NodeStyle::default()
+                },
+            );
+            buttons.push(row_id);
+        }
+        runtime.context_mut().commit_mutations(queue_).unwrap();
+        for row_id in buttons {
+            let button = runtime
+                .context_mut()
+                .create_detached_component(document, RuntimeButton::new("Go"))
+                .unwrap()
+                .stable_id();
+            let mut attach = MutationQueue::new();
+            attach.insert(row_id, button, None);
+            runtime.context_mut().commit_mutations(attach).unwrap();
+        }
+        let logical = [240.0, 160.0];
+        let physical = [
+            (logical[0] * scale).round() as u32,
+            (logical[1] * scale).round() as u32,
+        ];
+        let viewport = LayoutViewport::new(logical[0], logical[1]);
+        let mut shaper = crate::NanaTextShaper::default();
+        let mut painter = SceneWgpuPainter::for_test(wgpu::TextureFormat::Rgba8Unorm);
+        runtime.flush(viewport, &mut shaper).unwrap();
+        paint_scene_rgba(
+            &device,
+            &queue,
+            &mut painter,
+            runtime.scene(),
+            logical,
+            physical,
+            scale,
+        );
+        let mut kept = 0;
+        for step in 1..8 {
+            let mut grow = MutationQueue::new();
+            grow.set_style(ticker, ticker_style(4.0 + step as f32 * 0.37));
+            runtime.context_mut().commit_mutations(grow).unwrap();
+            let update = runtime.flush(viewport, &mut shaper).unwrap();
+            kept += usize::from(update.scene.rebuilt_primitives < 4);
+            let warm = paint_scene_rgba(
+                &device,
+                &queue,
+                &mut painter,
+                runtime.scene(),
+                logical,
+                physical,
+                scale,
+            );
+            let mut cold = UiScene::new();
+            cold.apply_delta(runtime.context().world().extract_document(document), []);
+            let mut cold_painter = SceneWgpuPainter::for_test(wgpu::TextureFormat::Rgba8Unorm);
+            let fresh = paint_scene_rgba(
+                &device,
+                &queue,
+                &mut cold_painter,
+                &cold,
+                logical,
+                physical,
+                scale,
+            );
+            let differing = (0..physical[1])
+                .flat_map(|y| (0..physical[0]).map(move |x| (x, y)))
+                .filter(|&(x, y)| {
+                    pixel(&warm, physical[0], x, y) != pixel(&fresh, physical[0], x, y)
+                })
+                .collect::<Vec<_>>();
+            assert!(
+                differing.is_empty(),
+                "at {scale}x, {} px down, {} pixels differ from a cold scene, the first at {:?}",
+                step as f32 * 0.37,
+                differing.len(),
+                differing.first()
+            );
+        }
+        assert!(
+            kept > 0,
+            "the rows moved as kept records, not rebuilt ones, at {scale}x"
+        );
+    }
+}

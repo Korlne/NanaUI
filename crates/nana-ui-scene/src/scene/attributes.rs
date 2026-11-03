@@ -4,15 +4,36 @@ use super::*;
 #[derive(Debug, Clone)]
 pub(super) struct DrawAttributes {
     epoch: u64,
+    /// The placement epoch [`Self::origin`] was read at.
+    placement: u64,
     delta: AffineTransform,
     parent_clips: Arc<[ClipRegion]>,
+    /// Where the node's geometry is drawn from ([`UiScene::paint_origin`]).
+    origin: [f32; 2],
 }
+
+/// What a placed clip chain was put together from.
+pub(super) type PlacedClipStamp = (u64, u64, u64);
 
 /// A retained primitive with the current inherited transform and clip chain.
 /// Dereferencing exposes its immutable geometry; no geometry is regenerated.
+///
+/// The geometry is in its node's own coordinates ([`ScenePrimitive::bounds`]):
+/// it is drawn put at [`Self::origin`] -- one add per coordinate, before
+/// anything else -- and then through [`Self::transform`]. The origin is
+/// where the node stands, not a translation to snap: a painter that puts
+/// a scroll's translation on whole pixels puts the origin nowhere but where
+/// it is, as it would a box laid out there.
 pub struct SceneDraw<'a> {
     pub primitive: &'a ScenePrimitive,
+    /// Where the primitive's geometry is put before [`Self::transform`]:
+    /// its node's origin on the page, or the page's own for a record on the
+    /// page.
+    pub origin: [f32; 2],
+    /// From the page, where the geometry is once at [`Self::origin`], to
+    /// where it is drawn.
     pub transform: AffineTransform,
+    /// The clips that cut it, on the page under their own transforms.
     pub clips: Arc<[ClipRegion]>,
     /// Logical primitive opacity with compositor layer factors applied.
     pub paint_opacity: f32,
@@ -27,6 +48,28 @@ impl std::ops::Deref for SceneDraw<'_> {
     type Target = ScenePrimitive;
     fn deref(&self) -> &Self::Target {
         self.primitive
+    }
+}
+
+impl SceneDraw<'_> {
+    /// `rect`, any of the primitive's own geometry, put at [`Self::origin`]:
+    /// on the page, before [`Self::transform`].
+    pub fn place(&self, rect: SceneRect) -> SceneRect {
+        super::offset_rect(rect, self.origin)
+    }
+
+    /// The primitive's bounds on the page, before [`Self::transform`].
+    pub fn placed_bounds(&self) -> SceneRect {
+        self.place(self.primitive.bounds)
+    }
+
+    /// [`Self::transform`] after the move to [`Self::origin`]: from the
+    /// primitive's own geometry to where it is drawn, for a reader that
+    /// does not put either on a pixel grid.
+    pub fn geometry_transform(&self) -> AffineTransform {
+        let [x, y] = self.origin;
+        self.transform
+            .then(AffineTransform::from_matrix([1.0, 0.0, 0.0, 1.0, x, y]))
     }
 }
 /// Whether two draws are the same transform for rebasing purposes.
@@ -122,7 +165,9 @@ impl UiScene {
             .lock()
             .expect("scene attributes")
             .get(&node)
-            .filter(|entry| entry.epoch == self.attribute_epoch)
+            .filter(|entry| {
+                entry.epoch == self.attribute_epoch && entry.placement == self.placement_epoch
+            })
             .cloned();
         let attributes = if let Some(attributes) = cached {
             attributes
@@ -146,8 +191,10 @@ impl UiScene {
             };
             let attributes = DrawAttributes {
                 epoch: self.attribute_epoch,
+                placement: self.placement_epoch,
                 delta,
                 parent_clips,
+                origin: self.paint_origin(extracted),
             };
             self.draw_attributes
                 .lock()
@@ -162,50 +209,114 @@ impl UiScene {
     }
 
     pub fn draw_primitive(&self, id: PrimitiveId) -> Option<SceneDraw<'_>> {
-        let (primitive, revision) = self.primitive_at(id)?;
+        let (primitive, revision, built_at, own_from) = self.primitive_placed_at(id)?;
         let paint_opacity = self.compositor_primitive_opacity(primitive);
-        match self.primitive_projection(primitive)? {
-            NodeProjection::Retained => Some(SceneDraw {
-                primitive,
-                transform: primitive.transform,
-                clips: Arc::clone(&primitive.clips),
-                paint_opacity,
-                revision,
-            }),
-            NodeProjection::Moved(delta) => Some(SceneDraw {
-                primitive,
-                transform: delta.then(primitive.transform),
-                clips: Arc::clone(&primitive.clips),
-                paint_opacity,
-                revision,
-            }),
+        // The clips a primitive inherits are on the page; the ones it was
+        // cut with by its own node are in the node's coordinates, after them.
+        let (origin, transform, clips) = match self.primitive_projection(primitive)? {
+            // Nothing it inherits has changed since it was built, a move
+            // among them: it stands where it was built.
+            NodeProjection::Retained => (
+                {
+                    debug_assert_eq!(
+                        built_at.map(f32::to_bits),
+                        self.paint_origin_of(primitive.node).map(f32::to_bits),
+                        "{id:?} moved without a new projection"
+                    );
+                    built_at
+                },
+                primitive.transform,
+                self.placed_own_clips(
+                    primitive,
+                    revision,
+                    &primitive.clips,
+                    own_from,
+                    own_from,
+                    AffineTransform::IDENTITY,
+                    built_at,
+                ),
+            ),
+            NodeProjection::Moved(delta) => (
+                self.paint_origin_of(primitive.node),
+                delta.then(primitive.transform),
+                Arc::clone(&primitive.clips),
+            ),
             NodeProjection::Rebased {
                 attributes,
                 parent_clip_count,
-            } => {
-                // Most primitives are cut only by what they inherit, and that
-                // list is already the one the ancestor walk produced.
-                let clips = if primitive.clips.len() == parent_clip_count {
-                    Arc::clone(&attributes.parent_clips)
-                } else {
-                    let mut clips = attributes.parent_clips.to_vec();
-                    clips.extend(primitive.clips.iter().skip(parent_clip_count).cloned().map(
-                        |mut clip| {
-                            clip.transform = attributes.delta.then(clip.transform);
-                            clip
-                        },
-                    ));
-                    clips.into()
-                };
-                Some(SceneDraw {
+            } => (
+                attributes.origin,
+                attributes.delta.then(primitive.transform),
+                self.placed_own_clips(
                     primitive,
-                    transform: attributes.delta.then(primitive.transform),
-                    clips,
-                    paint_opacity,
                     revision,
-                })
-            }
+                    &attributes.parent_clips,
+                    attributes.parent_clips.len(),
+                    parent_clip_count.min(primitive.clips.len()),
+                    attributes.delta,
+                    attributes.origin,
+                ),
+            ),
+        };
+        Some(SceneDraw {
+            primitive,
+            origin,
+            transform,
+            clips,
+            paint_opacity,
+            revision,
+        })
+    }
+
+    /// `primitive`'s clip chain as drawn: the first `kept` clips of
+    /// `inherited` (on the page), then its own clips from `own_from` on,
+    /// rebased by `delta` and put at `origin`. Most primitives have none of
+    /// their own, and the inherited list is the one the ancestor walk
+    /// already holds; a chain that has to be put together is kept until the
+    /// scene or the projection changes.
+    #[allow(clippy::too_many_arguments)]
+    fn placed_own_clips(
+        &self,
+        primitive: &ScenePrimitive,
+        revision: u64,
+        inherited: &Arc<[ClipRegion]>,
+        kept: usize,
+        own_from: usize,
+        delta: AffineTransform,
+        origin: [f32; 2],
+    ) -> Arc<[ClipRegion]> {
+        let own = &primitive.clips[own_from..];
+        if own.is_empty() && kept == inherited.len() {
+            return Arc::clone(inherited);
         }
+        let identity = delta == AffineTransform::IDENTITY;
+        if origin == [0.0, 0.0] && identity && Arc::ptr_eq(inherited, &primitive.clips) {
+            return Arc::clone(&primitive.clips);
+        }
+        let stamp = (revision, self.attribute_epoch, self.placement_epoch);
+        if let Some((held, clips)) = self
+            .placed_clips
+            .lock()
+            .expect("scene placed clips")
+            .get(&primitive.id)
+            && *held == stamp
+        {
+            return Arc::clone(clips);
+        }
+        let mut clips = inherited[..kept].to_vec();
+        clips.extend(own.iter().cloned().map(|mut clip| {
+            if !identity {
+                clip.transform = delta.then(clip.transform);
+            }
+            clip.bounds = super::offset_rect(clip.bounds, origin);
+            clip
+        }));
+        let clips: Arc<[ClipRegion]> = clips.into();
+        self.placed_clips
+            .lock()
+            .expect("scene placed clips")
+            .insert(primitive.id, (stamp, Arc::clone(&clips)));
+        clips
     }
 
     /// [`Self::draw_primitive`]'s transform alone, for a primitive already in

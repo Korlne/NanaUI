@@ -1,12 +1,16 @@
 //! Where a retained record stands now.
 //!
-//! A record keeps the page box it was extracted with ([`ExtractedNode::layout`])
-//! and every rectangle derived from it -- primitives, component geometry,
-//! clips -- in that space. When layout only moves a subtree, the runtime
-//! sends its root's new local box ([`ExtractedMove`]) and nothing for what it
-//! holds: each record is placed from its frame's current origin instead, the
-//! same sum down the frame chain the runtime takes, and the difference from
-//! where it was extracted is a translation its own transform takes on.
+//! A record's primitives, its component geometry and the clips it cuts its
+//! own content with are in the node's own coordinates: its border box at
+//! the origin ([`UiScene::record_box`]). They are drawn at the node's page
+//! origin ([`UiScene::paint_origin`]), the same sum down the frame chain the
+//! runtime takes. When layout only moves a subtree, the runtime sends its
+//! root's new local box ([`ExtractedMove`]) and nothing for what it holds:
+//! every record under it is drawn at its new origin, and nothing is rebuilt.
+//!
+//! A visual whose geometry reads the page
+//! ([`StandardVisual::geometry_reads_page`]) is the exception: its record is
+//! on the page, and the runtime extracts it again whenever it moves.
 use super::*;
 
 impl UiScene {
@@ -17,139 +21,119 @@ impl UiScene {
     /// origin to the bit. A frame the scene does not hold leaves the record
     /// where it was extracted.
     pub(super) fn placed_origin(&self, node: &ExtractedNode) -> [f32; 2] {
+        if !self.placement_live {
+            return [node.layout.x, node.layout.y];
+        }
         let mut memo = self.placed_origins.lock().expect("scene placements");
         placed_origin_in(&self.nodes, &mut memo, self.placement_epoch, node)
     }
 
-    /// How far `node`'s box stands from where its record was extracted:
-    /// `None` when it stands there, which is every record but those under a
-    /// kept move.
-    pub(super) fn layout_shift(&self, node: &ExtractedNode) -> Option<[f32; 2]> {
-        if self.moved_roots.is_empty() {
-            return None;
+    /// [`Self::placed_origin`] of `id`, for a caller that holds the scene:
+    /// no lock.
+    pub(super) fn placed_origin_mut(&mut self, id: StableNodeId) -> Option<[f32; 2]> {
+        let node = self.nodes.get(&id)?;
+        if !self.placement_live {
+            return Some([node.layout.x, node.layout.y]);
         }
-        let [x, y] = self.placed_origin(node);
-        let shift = [x - node.layout.x, y - node.layout.y];
-        (shift != [0.0, 0.0]).then_some(shift)
+        let memo = self.placed_origins.get_mut().expect("scene placements");
+        Some(placed_origin_in(
+            &self.nodes,
+            memo,
+            self.placement_epoch,
+            node,
+        ))
     }
 
     /// `node`'s box where it stands now, at its record's size.
     pub(super) fn placed_layout(&self, node: &ExtractedNode) -> LayoutBox {
-        match self.layout_shift(node) {
-            Some([x, y]) => LayoutBox {
-                x: node.layout.x + x,
-                y: node.layout.y + y,
+        let [x, y] = self.placed_origin(node);
+        LayoutBox {
+            x,
+            y,
+            ..node.layout
+        }
+    }
+
+    /// Where `node`'s primitives, component geometry and own clips are drawn
+    /// from: its page origin, or the page's for a record that is on the page
+    /// ([`record_on_page`]).
+    pub(super) fn paint_origin(&self, node: &ExtractedNode) -> [f32; 2] {
+        if record_on_page(node) {
+            [0.0, 0.0]
+        } else {
+            self.placed_origin(node)
+        }
+    }
+
+    /// [`Self::paint_origin_of`] for a caller that holds the scene: no lock.
+    pub(super) fn paint_origin_mut(&mut self, id: StableNodeId) -> [f32; 2] {
+        match self.nodes.get(&id) {
+            Some(node) if record_on_page(node) => [0.0, 0.0],
+            Some(_) => self.placed_origin_mut(id).unwrap_or([0.0, 0.0]),
+            None => [0.0, 0.0],
+        }
+    }
+
+    /// [`Self::paint_origin`] by id; the page's for a node the scene does not
+    /// hold.
+    pub(super) fn paint_origin_of(&self, id: StableNodeId) -> [f32; 2] {
+        self.nodes
+            .get(&id)
+            .map_or([0.0, 0.0], |node| self.paint_origin(node))
+    }
+
+    /// `node`'s border box in the space its record is in: at the origin, or
+    /// where it was extracted for a record on the page.
+    pub(super) fn record_box(node: &ExtractedNode) -> LayoutBox {
+        if record_on_page(node) {
+            node.layout
+        } else {
+            LayoutBox {
+                x: 0.0,
+                y: 0.0,
                 ..node.layout
-            },
-            None => node.layout,
-        }
-    }
-
-    /// `transform`, a page-space transform of `node` (one its children are
-    /// handed), for the space `node`'s own record is in: what was extracted
-    /// at its old origin moves to the new one first.
-    pub(super) fn record_space(
-        &self,
-        node: &ExtractedNode,
-        transform: AffineTransform,
-    ) -> AffineTransform {
-        match self.layout_shift(node) {
-            Some([x, y]) => {
-                transform.then(AffineTransform::from_matrix([1.0, 0.0, 0.0, 1.0, x, y]))
             }
-            None => transform,
         }
     }
 
-    /// Where `id`'s box stands now, before any scroll or transform: its
-    /// [`Self::node_bounds`] moved by what layout moved it since its record
-    /// was extracted.
+    /// Where `id`'s box stands now, before any scroll or transform.
     pub fn node_layout_bounds(&self, id: StableNodeId) -> Option<SceneRect> {
         let node = self.nodes.get(&id)?;
         Some(scene_rect(self.placed_layout(node)))
     }
+
+    /// `rect`, given in the space `primitive`'s node's record is in (any of
+    /// its own geometry), where it stands on the page now.
+    pub fn place_rect(&self, node: StableNodeId, rect: SceneRect) -> SceneRect {
+        let [x, y] = self.paint_origin_of(node);
+        offset_rect(rect, [x, y])
+    }
+
+    /// `primitive`'s bounds where they stand on the page now, before any
+    /// scroll or transform: its [`ScenePrimitive::bounds`] moved to its
+    /// node's origin.
+    pub fn primitive_layout_bounds(&self, primitive: &ScenePrimitive) -> SceneRect {
+        self.place_rect(primitive.node, primitive.bounds)
+    }
 }
 
-impl UiScene {
-    /// Place again, where its frames stand now, every record under `roots`
-    /// (moved this delta) that paints, and every record above one up to the
-    /// page that a move kept: returns the ones that paint, to be rebuilt.
-    ///
-    /// A kept record is drawn through a translation, and the painter puts a
-    /// pure translation on whole device pixels and keeps the glyph phase of
-    /// the box the record was built at (#223): a record drawn that way does
-    /// not paint what a cold one does when the move is a fraction of a
-    /// pixel. So only what paints nothing -- most of a page's boxes -- stays
-    /// where it was extracted. A record placed again is the cold record to
-    /// the bit (its box is the frames' sum, and nothing else of it is on the
-    /// page: a record with component geometry is extracted again instead),
-    /// and so are the primitives built from it once the records above it
-    /// are placed too.
-    pub(super) fn place_painted_records(&mut self, roots: &[StableNodeId]) -> Vec<StableNodeId> {
-        let mut candidates = Vec::new();
-        match self.visibility.get() {
-            Some(index) => {
-                for &root in roots {
-                    index.painted_under(root, &mut candidates);
-                }
-                candidates.sort_unstable();
-                candidates.dedup();
-            }
-            // Primitives are keyed by node first: one run per node.
-            None => {
-                for id in self.primitives.keys() {
-                    if candidates.last() != Some(&id.node) {
-                        candidates.push(id.node);
-                    }
-                }
-            }
-        }
-        let epoch = self.placement_epoch;
-        let nodes = &self.nodes;
-        let memo = self.placed_origins.get_mut().expect("scene placements");
-        let stands = |node: &ExtractedNode, memo: &mut NodeMap<(u64, [f32; 2])>| {
-            let origin = placed_origin_in(nodes, memo, epoch, node);
-            (origin != [node.layout.x, node.layout.y]).then_some(origin)
-        };
-        let mut visited = NodeSet::default();
-        let mut placed = Vec::new();
-        let mut painted = Vec::new();
-        for id in candidates {
-            let Some(node) = nodes.get(&id) else {
-                continue;
-            };
-            let Some(origin) = stands(node, memo) else {
-                continue;
-            };
-            painted.push(id);
-            placed.push((id, origin));
-            visited.insert(id);
-            let mut cursor = node.parent;
-            while let Some(at) = cursor {
-                if !visited.insert(at) {
-                    break;
-                }
-                let Some(node) = nodes.get(&at) else {
-                    break;
-                };
-                cursor = node.parent;
-                if let Some(origin) = stands(node, memo) {
-                    placed.push((at, origin));
-                }
-            }
-        }
-        for (id, [x, y]) in placed {
-            let held = self.nodes.get_mut(&id).expect("held above");
-            debug_assert!(
-                held.component_geometry.is_none(),
-                "{id:?}: a record with component geometry was kept through a move"
-            );
-            let node = Arc::make_mut(held);
-            node.layout.x = x;
-            node.layout.y = y;
-        }
-        painted
+/// `rect` moved by `origin`, one add per axis: the one way a record's
+/// geometry is put on the page, so every reader puts it at the same place
+/// to the bit.
+pub(super) fn offset_rect(rect: SceneRect, [x, y]: [f32; 2]) -> SceneRect {
+    SceneRect {
+        x: x + rect.x,
+        y: y + rect.y,
+        ..rect
     }
+}
+
+/// Whether `node`'s record -- its component geometry and so its primitives
+/// -- is on the page rather than in its own coordinates.
+pub(super) fn record_on_page(node: &ExtractedNode) -> bool {
+    node.standard_visual
+        .as_ref()
+        .is_some_and(StandardVisual::geometry_reads_page)
 }
 
 /// [`UiScene::placed_origin`] against `memo`, stamped with `epoch`.

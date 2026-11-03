@@ -3696,17 +3696,24 @@ impl UiWorld {
                 self.record_mut(root).render_moved_epoch = epoch;
             }
         }
+        // A component's geometry is in its own coordinates and moves with it,
+        // except for one that reads the page (a select's menu, fitted to the
+        // viewport): that is extracted again under a moved box.
         if self.nodes.has_visuals() {
             // Whether a box is a moved root or under one, remembered for
-            // every box an answer passed: a page of controls walks each box
-            // once, not once per control under it.
+            // every box an answer passed.
             let moved_roots: NodeSet = roots.iter().map(|&(root, _)| root).collect();
             let mut under: NodeMap<bool> = moved_roots.iter().map(|&root| (root, true)).collect();
             let mut chain = Vec::new();
             let mut reread = Vec::new();
             for id in self.nodes.visual_nodes() {
                 // A moved root's own record is decided where it is extracted.
-                if moved_roots.contains(&id) {
+                if moved_roots.contains(&id)
+                    || !self
+                        .nodes
+                        .visual(id)
+                        .is_some_and(StandardVisual::geometry_reads_page)
+                {
                     continue;
                 }
                 let mut cursor = self.parent_id(id);

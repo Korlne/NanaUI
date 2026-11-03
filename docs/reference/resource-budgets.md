@@ -309,6 +309,26 @@ Scene（2026-11-03）：图元是用绝对坐标的布局盒（加祖先变换�
 
 公开接口变化：`ExtractedNode` 新增 `local_layout`、`layout_frame`（字面量构造要补上）；`ExtractedMove` 新增同名两项，只给平移的根发；`SystemWork` 新增 `layout_moved`；`UiScene` 新增 `node_layout_bounds`。`UiScene::extracted_node(id).layout` 与 `node_bounds` 现在是记录所在的空间，平移子树里不画东西的记录可能停在提取时的位置；现在的位置用 `node_layout_bounds`，绘制位置仍是 `draw_node_bounds` / `draw_primitive`。
 
+相对几何第 4 阶段（2026-11-04）：图元、节点自己的裁剪和 `ExtractedNode.component_geometry` 改为节点本地坐标，painter 先把几何放到节点原点（每个坐标一次加法）再变换、再把平移吸附到整像素，所以布局平移不再被当成滚动吸附，挪了小数像素的子树和冷场景逐像素相同（做法见 [relative-geometry.md](relative-geometry.md) 3.5、3.6）。`place_painted_records` 与提取的 `component_geometry.is_none()` 守卫删除：平移的子树一个图元也不重建、按钮输入框不再重新提取，剔除索引整棵平移（`translate_subtree`），只有读页面的 visual（Select、MenuSurface、NativeMarkdown）和读了自己位置的节点（`origin_bound`）还按节点处理。与 3e9c83b80 交替 8 轮、每轮交换先后读最小值（负载 2–6.5，µs；VISIBLE=1 是 `perf/micro/stack-depth` 新增的开关，每帧后调 `visible_operations`，即有 painter 时）：
+
+| 页面 | 编辑 | 阶段 | 3e9c83b80 | 第 4 阶段 |
+| --- | --- | --- | ---: | ---: |
+| 控件页 62 001 节点，VISIBLE=1 | height | 提取（含 Scene） | 59 183 | 330 |
+| 控件页，VISIBLE=1 | height | 整帧 | 66 494 | 4 076 |
+| 控件页，无头 | height | 提取（含 Scene） | 41 292 | 122 |
+| 控件页，无头 | height | 整帧 | 48 846 | 3 731 |
+| 控件页 | height | 布局 / 无障碍 | 2 934 / 2 928 | 801 / 2 207 |
+| 简单页 42 001 盒，无头 | height | 提取 / 整帧 | 81 / 1 782 | 58 / 1 728 |
+| 简单页，VISIBLE=1 | height | 提取 / 整帧 | 86 / 1 736 | 60 / 1 748（另 3 轮） |
+| 简单页 | width | 整帧 | 122 | 119 |
+| 控件页 | text | 整帧 | 22 | 22 |
+
+每次编辑的指令（`RUNS=240` 与 `RUNS=40` 之差除以 200）：控件页改行高 407 M → 54 M（无头）、597 M → 64 M（VISIBLE=1），简单页 31 M → 31 M。控件页布局段的下降来自 `settle_layout_moves` 不再把平移根下面的 2 万个按钮标 RENDER。剩下的大头是无障碍（2.2 ms，`project_viewport_entries`）。
+
+painter 段（`nana-text-paint-benchmark --workload reflow`，交替 8 轮读最小值，ms）：1 000 标签 flush 2.07 → 1.76、batch 0.151 → 0.192，合计 2.22 → 1.95；10 000 标签 flush 27.7 → 23.4、batch 2.47 → 2.59，合计 30.1 → 26.0。两边都不重建文字实例（`text_instance_rebuilds` 0），平移行上传量相同；batch 多出的约 20 ns/标签是重定基时为每个节点读一次放置原点（`DrawAttributes.origin`），flush 少的是 Scene 不再为每个平移的标签重建图元、剔除索引不再逐个重算。快照套件与 3e9c83b80 的输出逐字节相同（680 张，`gallery-sidebar-collapsed-dark` 为已知抖动）。NativeMarkdown 先试过放进本地坐标：整篇文档的排版从内容盒一路累加，按本地累加再放到页面上和按页面累加在末位不同，`gallery-rich-text` 两张快照的 Mermaid 曲线有 7 个像素差 1 级，所以它留在页面坐标里（平移时重新提取）。
+
+公开接口变化（第 4 阶段）：`ScenePrimitive` 的几何（`bounds`、批量矩形、笔画点、`Path` / `Chart` 的 `origin`、`LayerBegin` 的裁剪、`LayerMask.origin`、节点自己的裁剪）改为节点本地坐标（读页面的 visual 除外）；页面位置用新增的 `UiScene::primitive_layout_bounds` / `place_rect`。`SceneDraw` 新增 `origin` 字段与 `place`、`placed_bounds`、`geometry_transform`，`transform` 不再含原点，`clips` 全在页面上。`ExtractedNode.component_geometry` 改为本地坐标（`UiWorld::component_geometry` 仍是页面坐标，不变）；新增 `StandardVisual::geometry_reads_page`。`UiScene::node_bounds` 恢复为现在的页面盒子（与 `node_layout_bounds` 相同）。
+
 `component-gallery` 的语义快照另有 8 个与此无关的差异（对话框、空状态等文字的 `line_height` 由 `Relative` 变为 `normal`），来自 b1bc92819，不含这些改动的树上同样出现，基线没有重录。
 
 已做的（2026-11-02）：发布阶段每个结果的四个切片在复用的暂存表里建好、按最终长度一次分配，空切片不分配（`Arc::<[T]>::default()`），按父分组的子集改为一张排序表，不再每个父节点一个 `Vec`；意图缓存键的环境哈希从 SipHash 换成固定种子的 foldhash，`seeded_intrinsic` 换成 hashbrown；`ConstraintClass` 的相等与哈希一趟读出归一化后的标签与值，不再各自归一化两遍；`RetainedIntrinsicMetrics` 每个内容的变体表按一增长（首个 push 原本预留 4 个，320 B 只用 80 B）；`MeasurePlanSlots` 的两个槽装箱（原本每个容器 528 B 内联在表里，通常只用一个槽）；整页 pass 按节点数和容器数预先给各表留好容量；锚点记忆表在父节点已结算时不再分配。

@@ -42,8 +42,13 @@ pub(super) fn describe_fixture(fixture: Fixture, runtime: &RuntimeEvidence) -> S
         )),
         None => out.push_str("  a11y: none\n"),
     }
-    for primitive in runtime.document.scene().primitives() {
-        out.push_str(&format!("  {}\n", describe_primitive(primitive)));
+    // Where each primitive stands on the page: the scene keeps a node's own
+    // geometry in the node's coordinates.
+    let scene = runtime.document.scene();
+    for primitive in scene.primitives() {
+        let mut placed = primitive.clone();
+        placed.bounds = scene.primitive_layout_bounds(primitive);
+        out.push_str(&format!("  {}\n", describe_primitive(&placed)));
     }
     out
 }

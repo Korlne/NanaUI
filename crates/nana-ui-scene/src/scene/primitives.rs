@@ -44,6 +44,10 @@ struct GeometryPaintContext<'a> {
     opacity: f32,
     node_order: usize,
     focus_ring: nana_ui_core::FocusRingMetrics,
+    /// Where `bounds` is drawn from on the page ([`UiScene::paint_origin`]),
+    /// for the rare geometry put on the page's pixel grid.
+    #[cfg_attr(not(feature = "charts"), allow(dead_code))]
+    page_origin: [f32; 2],
 }
 
 impl UiScene {
@@ -64,6 +68,8 @@ impl UiScene {
 
     fn build_node_primitives(&mut self, id: StableNodeId) {
         self.unadjustable_projections.remove(&id);
+        // Written again below when what it builds reads where it stands.
+        self.origin_bound.remove(&id);
         // Written again below when the node still presents per glyph.
         self.glyph_live.remove(&id);
         self.chart_live.remove(&id);
@@ -79,13 +85,10 @@ impl UiScene {
         }
         let (parent_transform, parent_opacity, parent_clips, parent_blocks_3d) =
             self.ancestor_state(&node);
-        let layout = node.layout;
-        let bounds = SceneRect {
-            x: layout.x,
-            y: layout.y,
-            width: layout.width,
-            height: layout.height,
-        };
+        // Everything below is built in the node's own coordinates, its
+        // border box at the origin, and drawn at the node's origin: a node
+        // that only moves keeps it all ([`Self::record_box`]).
+        let bounds = scene_rect(Self::record_box(&node));
         let local_transform = self.logical_local_transform(&node, parent_blocks_3d);
         let transform = parent_transform.then(local_transform);
         // The base is the logical projection. While the compositor presents
@@ -501,7 +504,14 @@ impl UiScene {
                         && presentation.transitions.viewport.is_none()
                     {
                         let mut viewport = text_bounds;
-                        if let Some(inverse) = super::attributes::inverse(transform) {
+                        // The clips are on the page; the text is where its
+                        // node stands, which a move changes.
+                        let [ox, oy] = self.paint_origin(&node);
+                        self.origin_bound.insert(id);
+                        if let Some(inverse) = super::attributes::inverse(
+                            transform
+                                .then(AffineTransform::from_matrix([1.0, 0.0, 0.0, 1.0, ox, oy])),
+                        ) {
                             for clip in clips.iter() {
                                 if let Some(rect) = super::visibility::transform(
                                     clip.bounds,
@@ -696,6 +706,8 @@ impl UiScene {
                             .collect();
                         self.glyph_objects
                             .insert(id, (Arc::clone(presentation), held.into()));
+                        // They turn about centres on the page.
+                        self.origin_bound.insert(id);
                     }
                     for primitive in objects {
                         self.insert_primitive(primitive);
@@ -727,7 +739,17 @@ impl UiScene {
             {
                 self.markdown_diagram_paint.remove(&id);
             }
+            let page_origin = self.paint_origin(&node);
+            let pixel_snapped = matches!(
+                node.component_geometry.as_deref(),
+                Some(ComponentGeometry::Chart { hover, .. })
+                    if hover.pointer.is_some()
+            );
+            if pixel_snapped {
+                self.origin_bound.insert(id);
+            }
             let context = GeometryPaintContext {
+                page_origin,
                 node: &node,
                 bounds,
                 transform,
@@ -1695,7 +1717,11 @@ impl UiScene {
                 Some(StandardVisual::Icon { icon, size, .. }) => own_frame(|| {
                     let extent = size.max(0.0).min(bounds.width).min(bounds.height);
                     let x = bounds.x + (bounds.width - extent) / 2.0;
-                    let y = self.icon_y_aligned_to_adjacent_text(&node, bounds, extent);
+                    let (y, reads_parent) =
+                        self.icon_y_aligned_to_adjacent_text(&node, bounds, extent);
+                    if reads_parent {
+                        self.origin_bound.insert(id);
+                    }
                     self.insert_primitive(ScenePrimitive {
                         id: PrimitiveId { node: id, slot: 3 },
                         node: id,

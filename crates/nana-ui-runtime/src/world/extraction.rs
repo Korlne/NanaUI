@@ -182,7 +182,7 @@ impl UiWorld {
         }
         let mut component_geometry = standard_visual
             .as_ref()
-            .and_then(|visual| self.derive_component_geometry(id, visual, style.as_ref()))
+            .and_then(|visual| self.local_component_geometry(id, visual, style.as_ref()))
             .map(Box::new);
         if self.caret_hidden(id)
             && let Some(crate::ComponentGeometry::TextInput {
@@ -710,9 +710,9 @@ impl UiWorld {
     /// the last call gave it. A node that layout only moved since the last
     /// call -- its local box changed, its result did not, and no other
     /// render mark -- comes back as a move, where it is now measured from,
-    /// and the renderer keeps the rest of its record, in the space it was
-    /// extracted in. What the node holds moved with it and is not marked at
-    /// all: only the root of a moved subtree comes back. Anything else, or a
+    /// and the renderer keeps the rest of its record: what it holds is in
+    /// its own coordinates. What the node holds moved with it and is not
+    /// marked at all: only the root of a moved subtree comes back. Anything else, or a
     /// node `previous` does not know, is extracted in full. The record is
     /// not read: it is cold, and reading it costs what extracting it does.
     pub fn extract_nodes_reusing<'a>(
@@ -726,13 +726,15 @@ impl UiWorld {
         let mut moved = Vec::new();
         for &id in ids {
             // A component's geometry (a button's label region, a field's
-            // caret) is derived on the page, and a record the renderer
-            // places again where it stands paints what a cold one does only
-            // with the geometry a cold extraction gives: such a node is
-            // extracted again rather than kept.
+            // caret) is in its own coordinates and moves with it. Only one
+            // that reads the page (a select's menu, fitted to the viewport)
+            // is extracted again rather than kept.
             if self.only_moved_since(id, epoch)
                 && let Some(held) = previous(id)
-                && held.component_geometry.is_none()
+                && !held
+                    .standard_visual
+                    .as_ref()
+                    .is_some_and(StandardVisual::geometry_reads_page)
             {
                 moved.extend(self.extract_move_memo(id, held, &mut memo));
             } else {
@@ -779,9 +781,10 @@ impl UiWorld {
             let mut full = self
                 .extract_node_memo(id, &mut AncestorMemo::default())
                 .expect("a live node extracts");
-            // The kept record stays in the space it was extracted in: its
-            // page box differs from a fresh one's by where the box moved, at
-            // the same size.
+            // The kept record keeps the page box it was extracted with, which
+            // differs from a fresh one's by where the box moved, at the same
+            // size. Everything else -- its component geometry among it -- is
+            // in its own coordinates, and the same.
             full.layout.x = held.layout.x;
             full.layout.y = held.layout.y;
             let differs = extracted_fields_differ(&reused, &full);

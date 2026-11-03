@@ -151,7 +151,7 @@ pub(crate) fn derive_visual_shape(scene: &UiScene, logical: [f32; 2]) -> WindowV
         if (a, b, c, d) != (1.0, 0.0, 0.0, 1.0) || primitive.transform.1 != [0.0, 0.0] {
             continue;
         }
-        let bounds = primitive.bounds;
+        let bounds = scene.primitive_layout_bounds(primitive);
         if bounds.width * bounds.height < area * 0.25 {
             continue;
         }

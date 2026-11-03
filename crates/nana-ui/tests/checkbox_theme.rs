@@ -194,11 +194,11 @@ fn switch_thumb_and_range_rail_paint_their_resolved_theme_geometry() {
         assert_eq!((control.width, control.height), (60.0, 32.0));
         let track = primitive(&scene, switch.stable_id(), 4);
         let thumb = primitive(&scene, switch.stable_id(), 5);
-        assert_eq!((thumb.bounds.width, thumb.bounds.height), (20.0, 20.0));
-        assert!(
-            (thumb.bounds.x + thumb.bounds.width - control.x - control.width + 6.0).abs() < 0.5
-        );
-        assert!((thumb.bounds.y - control.y - 6.0).abs() < 0.5);
+        // Where it stands on the page, as the geometry it is compared with.
+        let thumb_box = scene.primitive_layout_bounds(thumb);
+        assert_eq!((thumb_box.width, thumb_box.height), (20.0, 20.0));
+        assert!((thumb_box.x + thumb_box.width - control.x - control.width + 6.0).abs() < 0.5);
+        assert!((thumb_box.y - control.y - 6.0).abs() < 0.5);
         let ScenePrimitiveKind::Quad {
             border_width,
             corner_radius,

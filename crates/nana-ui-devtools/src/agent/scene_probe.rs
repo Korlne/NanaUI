@@ -71,15 +71,11 @@ pub fn probe(
         group_opacity * own_opacity
     };
 
+    // As drawn: a node's own clips are kept in its own coordinates.
     let clips: Vec<RectDump> = primitives
         .first()
-        .map(|primitive| {
-            primitive
-                .clips
-                .iter()
-                .map(|clip| rect(clip.bounds))
-                .collect()
-        })
+        .and_then(|primitive| scene.draw_primitive(primitive.id))
+        .map(|draw| draw.clips.iter().map(|clip| rect(clip.bounds)).collect())
         .unwrap_or_default();
 
     let draw_rect = draw.map(rect);

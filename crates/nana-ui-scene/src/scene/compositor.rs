@@ -627,14 +627,14 @@ impl UiScene {
         }
     }
 
-    /// [`Self::resolved_page_transform`] for `node`'s own record, which is in
-    /// the space it was extracted in ([`Self::record_space`]).
+    /// [`Self::resolved_page_transform`]: what `node`'s own primitives are
+    /// drawn through, once put at its origin ([`Self::paint_origin`]).
     pub(super) fn resolved_local_transform(
         &self,
         node: &ExtractedNode,
         block_3d: bool,
     ) -> AffineTransform {
-        self.record_space(node, self.resolved_page_transform(node, block_3d))
+        self.resolved_page_transform(node, block_3d)
     }
 
     /// `node`'s own presented transform on the page, as its children are
@@ -921,9 +921,8 @@ impl UiScene {
             return (composed, [0.0, 0.0]);
         };
         let (parent, _, _, _) = self.draw_ancestor_state(extracted);
-        // The pivot is in the record's space, as the primitives it turns.
-        let parent = self.record_space(extracted, parent);
-        let layout = extracted.layout;
+        // On the page, where the painter puts the primitives it turns.
+        let layout = self.placed_layout(extracted);
         let [ox, oy] = presentation_pivot(extracted).unwrap_or_else(|| {
             extracted
                 .source_style
@@ -1222,7 +1221,7 @@ fn affine_from_paint(
 fn presentation_pivot(node: &ExtractedNode) -> Option<[f32; 2]> {
     node.component_geometry
         .as_deref()?
-        .presentation_pivot(node.layout)
+        .presentation_pivot(super::UiScene::record_box(node))
 }
 
 #[cfg(test)]
@@ -2850,6 +2849,8 @@ mod tests {
         let mut child = node(2, Some(1), &[]);
         let mut other = node(3, None, &[]);
         other.layout.x = 400.0;
+        // On the page, its local box is its page box.
+        other.local_layout = other.layout;
         scene.apply_delta([parent, child.clone(), other.clone()], []);
         let scaled = PaintTransform {
             a: 0.94,
@@ -2896,6 +2897,7 @@ mod tests {
             presented
         );
         other.layout.x += 20.0;
+        other.local_layout = other.layout;
         scene.apply_delta([other], []);
         assert_eq!(
             scene.draw_primitive(primitive).unwrap().transform,

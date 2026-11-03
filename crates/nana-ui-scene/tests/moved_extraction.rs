@@ -157,15 +157,14 @@ fn near(a: [f32; 4], b: [f32; 4]) -> bool {
 }
 
 /// Every record the scene holds is a cold extraction of its node, and it
-/// paints what a scene built from a cold extraction paints.
+/// paints what a scene built from a cold extraction paints, to the bit.
 ///
 /// A record a layout move kept -- the root of the moved subtree and every
-/// record under it that paints nothing -- stays in the space it was
-/// extracted in and is placed where its frames stand now when it is read.
-/// So it is its node's cold record but for its page box, and it stands where
-/// the cold one does to the bit. Whatever paints is in page space and
-/// paints exactly the cold primitives, each drawn where the cold scene's is,
-/// through the clips the cold one is cut by.
+/// record under it -- is in its node's own coordinates, as a cold one is, and
+/// is drawn at its node's origin, summed down its frames. So every primitive
+/// is the cold one, put at the cold origin, through the cold transform, cut
+/// by the cold clips: a painter that snaps the transform's translation and
+/// takes text phase from where the geometry lands draws the cold pixels.
 fn assert_scene_is_cold(runtime: &RuntimeDocument, frame: &str) {
     let world = runtime.context().world();
     let document = DocumentId::new(1).unwrap();
@@ -178,23 +177,60 @@ fn assert_scene_is_cold(runtime: &RuntimeDocument, frame: &str) {
         ids, cold_ids,
         "{frame}: the scene paints other primitives than a cold one"
     );
+    let rect_bits = |rect: SceneRect| [rect.x, rect.y, rect.width, rect.height].map(f32::to_bits);
+    let transform_bits =
+        |transform: AffineTransform| (transform.0.map(f32::to_bits), transform.1.map(f32::to_bits));
     for (held, fresh) in scene.primitives().zip(cold.primitives()) {
-        let node = held.node;
-        let kept = scene.node_bounds(node) != scene.node_layout_bounds(node);
         let (draw, cold_draw) = (
             scene.draw_primitive(held.id).unwrap(),
             cold.draw_primitive(fresh.id).unwrap(),
         );
         assert!(
             near(
-                drawn(held.bounds, draw.transform),
-                drawn(fresh.bounds, cold_draw.transform)
+                drawn(draw.placed_bounds(), draw.transform),
+                drawn(cold_draw.placed_bounds(), cold_draw.transform)
             ),
             "{frame}: {:?} draws at {:?}, a cold scene at {:?}",
             held.id,
-            drawn(held.bounds, draw.transform),
-            drawn(fresh.bounds, cold_draw.transform),
+            drawn(draw.placed_bounds(), draw.transform),
+            drawn(cold_draw.placed_bounds(), cold_draw.transform),
         );
+        assert_eq!(
+            draw.origin.map(f32::to_bits),
+            cold_draw.origin.map(f32::to_bits),
+            "{frame}: {:?} is put at {:?}, a cold one at {:?}",
+            held.id,
+            draw.origin,
+            cold_draw.origin
+        );
+        // A translation is what a painter puts on the grid, and the same
+        // one to the bit. Anything else is rebased through an inverse, an ulp
+        // off a fresh composition whether or not anything moved.
+        let translation = |transform: AffineTransform| {
+            transform.0[..4] == [1.0, 0.0, 0.0, 1.0] && transform.1 == [0.0, 0.0]
+        };
+        if translation(cold_draw.transform) {
+            assert_eq!(
+                transform_bits(draw.transform),
+                transform_bits(cold_draw.transform),
+                "{frame}: {:?} is drawn through {:?}, a cold one through {:?}",
+                held.id,
+                draw.transform,
+                cold_draw.transform
+            );
+        } else {
+            assert!(
+                draw.transform
+                    .0
+                    .iter()
+                    .zip(cold_draw.transform.0)
+                    .all(|(a, b)| (a - b).abs() <= 1e-3),
+                "{frame}: {:?} is drawn through {:?}, a cold one through {:?}",
+                held.id,
+                draw.transform,
+                cold_draw.transform
+            );
+        }
         assert_eq!(
             draw.clips.len(),
             cold_draw.clips.len(),
@@ -202,25 +238,24 @@ fn assert_scene_is_cold(runtime: &RuntimeDocument, frame: &str) {
             held.id
         );
         for (clip, cold_clip) in draw.clips.iter().zip(cold_draw.clips.iter()) {
+            assert_eq!(
+                rect_bits(clip.bounds),
+                rect_bits(cold_clip.bounds),
+                "{frame}: {:?} is cut by {clip:?}, a cold one by {cold_clip:?}",
+                held.id
+            );
             assert!(
                 near(
                     drawn(clip.bounds, clip.transform),
                     drawn(cold_clip.bounds, cold_clip.transform)
-                ),
-                "{frame}: {:?} is cut other than in a cold scene",
+                ) && (!translation(cold_clip.transform)
+                    || transform_bits(clip.transform) == transform_bits(cold_clip.transform)),
+                "{frame}: {:?} is cut by {clip:?}, a cold one by {cold_clip:?}",
                 held.id
             );
         }
-        // What paints is placed again where it stands: the painter puts a
-        // translation on whole pixels, so a primitive drawn through one is
-        // not the cold one under a fractional move.
-        assert!(
-            !kept,
-            "{frame}: {:?} paints from a record kept where it was extracted",
-            held.id
-        );
-        // Where it draws and what cuts it are checked above: a scroll
-        // rebases both without rebuilding the primitive.
+        // Where it draws and what cuts it are checked above: a move or a
+        // scroll rebases both without rebuilding the primitive.
         let mut held = held.clone();
         held.clips = fresh.clips.clone();
         held.transform = fresh.transform;
@@ -228,6 +263,35 @@ fn assert_scene_is_cold(runtime: &RuntimeDocument, frame: &str) {
             &held, fresh,
             "{frame}: {:?} is not a cold primitive",
             held.id
+        );
+    }
+    // What a painter culls to: a scene that keeps its culling bounds through
+    // moves (it built them on the first frame, below) answers what a fresh
+    // one does, at the viewport edges included.
+    for viewport in [
+        SceneRect {
+            x: 0.0,
+            y: 0.0,
+            width: 300.0,
+            height: 800.0,
+        },
+        SceneRect {
+            x: 0.0,
+            y: 60.0,
+            width: 300.0,
+            height: 40.0,
+        },
+        SceneRect {
+            x: 40.0,
+            y: 133.0,
+            width: 20.0,
+            height: 7.0,
+        },
+    ] {
+        assert_eq!(
+            scene.visible_operations(viewport).unwrap(),
+            cold.visible_operations(viewport).unwrap(),
+            "{frame}: a painter culling to {viewport:?} draws other primitives than in a cold scene"
         );
     }
     for node in world.document_order(document) {

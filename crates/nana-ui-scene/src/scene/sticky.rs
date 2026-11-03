@@ -5,8 +5,8 @@ impl UiScene {
         if node.source_style.layout.position != nana_ui_core::PositionSpec::Sticky {
             return [0.0; 2];
         }
-        // Boxes where they stand now: a record a move kept is still in the
-        // space it was extracted in.
+        // Boxes where they stand now, not where their records were
+        // extracted.
         let ancestors = node
             .parent
             .into_iter()
@@ -54,13 +54,13 @@ impl UiScene {
         )
     }
 
-    /// [`Self::logical_page_transform`] for `node`'s own record, which is in
-    /// the space it was extracted in ([`Self::record_space`]).
+    /// [`Self::logical_page_transform`]: what `node`'s own primitives are
+    /// built through, once put at its origin ([`Self::paint_origin`]).
     pub(super) fn logical_local_transform(
         &self,
         node: &ExtractedNode,
         blocks_3d: bool,
     ) -> AffineTransform {
-        self.record_space(node, self.logical_page_transform(node, blocks_3d))
+        self.logical_page_transform(node, blocks_3d)
     }
 }

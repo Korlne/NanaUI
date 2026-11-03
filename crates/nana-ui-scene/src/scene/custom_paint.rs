@@ -310,7 +310,10 @@ impl UiScene {
             node,
             built,
             PaintPlacement {
-                origin: [node.layout.x, node.layout.y],
+                origin: {
+                    let record = Self::record_box(node);
+                    [record.x, record.y]
+                },
                 size: [node.layout.width, node.layout.height],
                 phases: [
                     (PaintPhaseOps::Behind, PAINT_BEHIND_PRE, PAINT_BEHIND_POST),
@@ -483,6 +486,14 @@ impl UiScene {
     ) {
         let node_mask = built.node_mask.as_ref();
         let origin = placement.origin;
+        // A painter's local transform turns about the recording's corner on
+        // the page, where the node's geometry is drawn: one that turns
+        // anything is built again when the node moves.
+        let pivot = {
+            let [x, y] = self.paint_origin(node);
+            [origin[0] + x, origin[1] + y]
+        };
+        let mut bound = false;
         let [width, height] = placement.size;
         for (phase, pre, post) in placement.phases {
             let ops: &[BuiltOp] = match phase {
@@ -507,7 +518,7 @@ impl UiScene {
                 // A primitive the painter drew under a local transform keeps
                 // its layout-space bounds; the transform goes on top of the
                 // node's, about the node's origin.
-                let under = |local: &Affine| transform.then(about_origin(*local, origin));
+                let under = |local: &Affine| transform.then(about_origin(*local, pivot));
                 let mut primitive_opacity = opacity;
                 let (bounds, kind, primitive_clips, primitive_transform) = match op {
                     BuiltOp::Default {
@@ -524,7 +535,8 @@ impl UiScene {
                             .map(|clip| clip_region(clip, origin, transform))
                             .collect();
                         let moved = (*local_transform != AFFINE_IDENTITY)
-                            .then(|| about_origin(*local_transform, origin));
+                            .then(|| about_origin(*local_transform, pivot));
+                        bound |= moved.is_some();
                         if !extra.is_empty() || moved.is_some() || *op_opacity != 1.0 {
                             self.adjust_default_paint(node.id, &extra, moved, *op_opacity);
                         }
@@ -680,6 +692,7 @@ impl UiScene {
                         under(local_transform),
                     ),
                 };
+                bound |= primitive_transform != transform;
                 self.insert_primitive(ScenePrimitive {
                     id: PrimitiveId {
                         node: node.id,
@@ -695,6 +708,9 @@ impl UiScene {
                     kind,
                 });
             }
+        }
+        if bound {
+            self.origin_bound.insert(node.id);
         }
     }
 }

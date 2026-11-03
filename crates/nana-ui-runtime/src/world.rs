@@ -968,6 +968,15 @@ pub struct UiWorld {
     /// Counts [`Self::extract_nodes_reusing`] calls: a node's render marks
     /// (`NodeRecord::render_full_epoch`) say why it is dirty since the last.
     render_epoch: Cell<u64>,
+    /// While extraction derives a component's geometry in the component's
+    /// own coordinates ([`Self::local_component_geometry`]): that node. Every
+    /// box read meanwhile is measured from its border-box origin, so the
+    /// geometry is the same wherever the node stands.
+    geometry_frame: Cell<Option<StableNodeId>>,
+    /// Set when a box read under [`Self::geometry_frame`] is not inside that
+    /// node, or something else on the page is read: geometry that depends on
+    /// where the node stands.
+    geometry_read_page: Cell<bool>,
     /// Set while a layout move marks its box: the INPUT it marks is the
     /// move's alone (no [`DirtyMask::INPUT_ELSEWHERE`]).
     marking_layout_move: bool,
@@ -1254,6 +1263,8 @@ impl UiWorld {
             pending_document_layouts: Vec::new(),
             layout_reframe_roots: Vec::new(),
             render_epoch: Cell::new(0),
+            geometry_frame: Cell::new(None),
+            geometry_read_page: Cell::new(false),
             marking_layout_move: false,
             #[cfg(any(test, feature = "layout-verify"))]
             accessibility_shipped: Default::default(),
@@ -3741,13 +3752,24 @@ impl UiWorld {
     }
 
     pub(super) fn record_layout_origin(&self, record: &NodeRecord) -> [f32; 2] {
+        // Deriving a component's geometry in its own coordinates: a chain
+        // through that node starts at its origin.
+        let frame = self
+            .geometry_frame
+            .get()
+            .and_then(|frame| self.nodes.get(frame));
         // Most chains are shallow: their locals stay on the stack.
         const INLINE: usize = 48;
         let mut inline = [[0.0f32; 2]; INLINE];
         let mut spilled: Vec<[f32; 2]> = Vec::new();
         let mut len = 0usize;
         let mut cursor = Some(record);
+        let mut reached = frame.is_none();
         while let Some(node) = cursor {
+            if frame.is_some_and(|frame| std::ptr::eq(frame, node)) {
+                reached = true;
+                break;
+            }
             if matches!(node.kind.as_ref(), NodeKind::Document) {
                 break;
             }
@@ -3771,10 +3793,66 @@ impl UiWorld {
             spilled.as_slice()
         };
         let mut rest = chain.iter().rev();
-        let Some(&top) = rest.next() else {
-            return [0.0, 0.0];
+        let origin = match rest.next() {
+            Some(&top) => rest.fold(top, |[x, y], [dx, dy]| [x + dx, y + dy]),
+            None => [0.0, 0.0],
         };
-        rest.fold(top, |[x, y], [dx, dy]| [x + dx, y + dy])
+        if reached {
+            return origin;
+        }
+        // A box outside the node whose geometry is being derived: on the
+        // page, and so measured from that node's page origin.
+        self.geometry_read_page.set(true);
+        let frame = frame.expect("unreached only under a frame");
+        let previous = self.geometry_frame.replace(None);
+        let [fx, fy] = self.record_layout_origin(frame);
+        self.geometry_frame.set(previous);
+        [origin[0] - fx, origin[1] - fy]
+    }
+
+    /// `id`'s component geometry in its own coordinates: every rectangle
+    /// measured from its border-box origin, so a node that only moved has
+    /// the geometry it had. The page geometry ([`Self::component_geometry`])
+    /// is this placed at the node's page origin, up to rounding. A visual
+    /// whose geometry reads the page ([`StandardVisual::geometry_reads_page`])
+    /// comes back on the page instead.
+    pub(super) fn local_component_geometry(
+        &self,
+        id: StableNodeId,
+        visual: &StandardVisual,
+        style: &ComputedStyle,
+    ) -> Option<crate::ComponentGeometry> {
+        if visual.geometry_reads_page() {
+            return self.page_component_geometry(id, visual, style);
+        }
+        let previous = self.geometry_frame.replace(Some(id));
+        let read_before = self.geometry_read_page.replace(false);
+        let geometry = self.derive_component_geometry(id, visual, style);
+        let read_page = self.geometry_read_page.replace(read_before);
+        self.geometry_frame.set(previous);
+        debug_assert!(
+            !read_page,
+            "{id:?}: {visual:?} derives its geometry from the page; list it in \
+             `StandardVisual::geometry_reads_page`"
+        );
+        geometry
+    }
+
+    /// [`Self::derive_component_geometry`] on the page, whatever frame
+    /// extraction is deriving in.
+    fn page_component_geometry(
+        &self,
+        id: StableNodeId,
+        visual: &StandardVisual,
+        style: &ComputedStyle,
+    ) -> Option<crate::ComponentGeometry> {
+        let previous = self.geometry_frame.replace(None);
+        if previous.is_some() {
+            self.geometry_read_page.set(true);
+        }
+        let geometry = self.derive_component_geometry(id, visual, style);
+        self.geometry_frame.set(previous);
+        geometry
     }
 
     /// Compatibility accessor for callers that need the retained box during
@@ -4210,7 +4288,7 @@ impl UiWorld {
     pub fn component_geometry(&self, id: StableNodeId) -> Option<crate::ComponentGeometry> {
         let visual = self.nodes.visual(id)?;
         let style = self.painted_style(id)?;
-        self.derive_component_geometry(id, visual, &style)
+        self.page_component_geometry(id, visual, &style)
     }
 
     pub(crate) fn component_content_box(&self, id: StableNodeId) -> Option<LayoutBox> {
@@ -5150,6 +5228,9 @@ impl UiWorld {
 
     /// Viewport of the document owning `id`, if it has been laid out.
     pub(crate) fn document_viewport_of(&self, id: StableNodeId) -> Option<crate::LayoutViewport> {
+        if self.geometry_frame.get().is_some() {
+            self.geometry_read_page.set(true);
+        }
         let document = self.node(id)?.document;
         self.document_viewports.get(&document).copied()
     }

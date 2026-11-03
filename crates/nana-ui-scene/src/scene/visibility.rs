@@ -131,7 +131,12 @@ pub(super) fn transform(bounds: SceneRect, affine: AffineTransform) -> Option<Sc
 }
 fn primitive_bounds(scene: &UiScene, id: PrimitiveId) -> Option<Bounds> {
     let primitive = scene.primitive(id)?;
-    let draw_transform = scene.draw_transform(primitive)?;
+    // The geometry is in its node's coordinates: put at its origin, then
+    // drawn. A cull does not need the painter's grid.
+    let [ox, oy] = scene.paint_origin_of(primitive.node);
+    let draw_transform = scene
+        .draw_transform(primitive)?
+        .then(AffineTransform::from_matrix([1.0, 0.0, 0.0, 1.0, ox, oy]));
     // Destination groups need their complete source, including pixels that a
     // blur or blend can move into the viewport. Do not cull their source leaves.
     // A scroll edge fade moves none, and a long list under one must still cull.
@@ -278,7 +283,7 @@ fn self_clip_bounds(
     draw_transform: AffineTransform,
 ) -> Option<Bounds> {
     let node = scene.nodes.get(&primitive.node)?;
-    let layout = node.layout;
+    let layout = UiScene::record_box(node);
     let (x, y, width, height) = node.source_style.layout.overflow_clip_box(
         layout.x,
         layout.y,
@@ -486,23 +491,10 @@ impl VisibilityIndex {
         self.translate_range(at * 2 + 1, mid, end, range, offset);
         self.bounds[at] = union(self.bounds[at * 2], self.bounds[at * 2 + 1]);
     }
-    /// The nodes with a primitive under `root` (`root` among them), in no
-    /// particular order and possibly repeated, into `out`. Viewport-fixed
-    /// descendants are not among them: nothing above them moves them.
-    pub(super) fn painted_under(&self, root: StableNodeId, out: &mut Vec<StableNodeId>) {
-        if self.nodes.contains_key(&root) {
-            out.push(root);
-        }
-        let Some(ranges) = self.descendants.get(&root) else {
-            return;
-        };
-        for range in ranges {
-            for operation in &self.plan.operations[range.clone()] {
-                if let RenderOperation::Draw(id) | RenderOperation::InvokeCustom(id) = operation {
-                    out.push(id.node);
-                }
-            }
-        }
+    /// Whether anything under `root` paints: a subtree with nothing to cull
+    /// has no bounds to move.
+    pub(super) fn paints_under(&self, root: StableNodeId) -> bool {
+        self.descendants.contains_key(&root)
     }
 
     pub(super) fn translate_subtree(&mut self, root: StableNodeId, offset: [f32; 2]) {

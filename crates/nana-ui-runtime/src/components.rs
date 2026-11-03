@@ -4782,11 +4782,11 @@ pub struct ExtractedNode {
     pub parent: Option<StableNodeId>,
     /// Shared with retained hierarchy. Idle extract does not clone the child list.
     pub children: Arc<Vec<StableNodeId>>,
-    /// Where the box stood on the page when this record was extracted, and
-    /// the space every page-space rectangle of the record is in (its
-    /// [`Self::component_geometry`] among them). A renderer that keeps the
-    /// record of a node only moved since ([`ExtractedMove`]) keeps it in this
-    /// space and places it from [`Self::local_layout`] instead.
+    /// Where the box stood on the page when this record was extracted. A
+    /// renderer that keeps the record of a node only moved since
+    /// ([`ExtractedMove`]) places it from [`Self::local_layout`] instead:
+    /// everything else the record holds is measured from the box's own
+    /// origin, or (a visual that reads the page) extracted again.
     pub layout: LayoutBox,
     /// The box measured from the origin of [`Self::layout_frame`], as
     /// [`crate::UiWorld::local_layout_box`] keeps it: what stays put when a
@@ -4829,6 +4829,11 @@ pub struct ExtractedNode {
     /// The node's per-glyph presentation (effects table and reveal).
     pub glyph_presentation: Option<nana_ui_core::GlyphPresentation>,
     pub standard_visual: Option<StandardVisual>,
+    /// In the node's own coordinates, its border box at the origin, so a
+    /// node that only moved keeps it -- except for a visual whose geometry
+    /// reads the page ([`StandardVisual::geometry_reads_page`]), which is on
+    /// the page, where [`Self::layout`] is.
+    ///
     /// Boxed: the `TextInput` variant alone is ~1.8 KB, which would otherwise
     /// dominate `ExtractedNode` and be memcpy'd for every extracted node.
     pub component_geometry: Option<Box<ComponentGeometry>>,
@@ -4904,6 +4909,29 @@ pub struct ExtractedTextSpan {
 }
 
 impl StandardVisual {
+    /// Whether this visual's [`ComponentGeometry`] is derived on the page
+    /// rather than in its node's own coordinates.
+    ///
+    /// A select menu fits the viewport and a triggered menu places its items
+    /// on the page: their geometry depends on where the node stands. A
+    /// Markdown document lays a whole document out from its content box, and
+    /// a position summed down that layout from the page's origin is not, to
+    /// the last bit, the one summed from the box's own and then put on the
+    /// page: a diagram's curves would shift by an ulp, which their
+    /// anti-aliasing shows. Both are carried on the page
+    /// ([`ExtractedNode::component_geometry`]) and their node is extracted
+    /// again whenever it or a box above it moves.
+    ///
+    /// Every other visual's geometry is in its node's own coordinates, its
+    /// border box at the origin, and a node that only moved keeps it.
+    pub fn geometry_reads_page(&self) -> bool {
+        #[cfg(feature = "rich-text")]
+        if matches!(self, Self::NativeMarkdown { .. }) {
+            return true;
+        }
+        matches!(self, Self::Select { .. } | Self::MenuSurface { .. })
+    }
+
     /// The overlay of a triggered menu (Popover, ActionMenu, HoverCard): an
     /// in-flow trigger with a surface hanging off it. Its node's presentation
     /// layers belong to that surface: they fade and scale the surface and the

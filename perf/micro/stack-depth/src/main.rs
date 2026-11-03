@@ -11,6 +11,7 @@
 //! FRAME_PATH=1 cargo run --release -- wide  # the product frame's first layout
 //!                                          # (`layout_document_for_viewport`), not a full pass
 //! CONTROLS=1 cargo run --release -- wide    # a page of labels and buttons instead of bare boxes
+//! VISIBLE=1 cargo run --release -- edits    # cull the scene after each frame, as a painter does
 //! cargo run --release -- edits 200,2000   # one edit a product frame: layout and frame time
 //! RUNS=240 /usr/bin/time -l target/release/nana-stack-depth edits 2000 height
 //!                                          # 240 edits; less RUNS=40, over 200: one edit's instructions
@@ -277,7 +278,22 @@ fn nana_edits(rows: usize, cells: usize, edit: &str, runs: usize) -> (f64, f64) 
     let mut runtime = RuntimeDocument::new(document);
     let target = nana_page(runtime.context_mut(), document, rows, cells);
     let viewport = LayoutViewport::new(1280.0, 800.0);
+    // `VISIBLE=1`: cull the scene after every frame, as a painter does, so
+    // the scene keeps its visibility index and pays for keeping it current.
+    let visible = std::env::var_os("VISIBLE").is_some();
+    let cull = |runtime: &RuntimeDocument| {
+        if visible {
+            let rect = nana_ui_scene::SceneRect {
+                x: 0.0,
+                y: 0.0,
+                width: 1280.0,
+                height: 800.0,
+            };
+            std::hint::black_box(runtime.scene().visible_operations(rect).unwrap());
+        }
+    };
     runtime.flush(viewport, &mut FixedShaper).unwrap();
+    cull(&runtime);
     let (mut layout, mut whole) = (f64::INFINITY, f64::INFINITY);
     // The least time each stage took over the runs, by stage.
     let mut least: Vec<(FrameStage, f64)> = Vec::new();
@@ -307,6 +323,7 @@ fn nana_edits(rows: usize, cells: usize, edit: &str, runs: usize) -> (f64, f64) 
         let start = Instant::now();
         runtime.flush(viewport, &mut FixedShaper).unwrap();
         whole = whole.min(start.elapsed().as_secs_f64() * 1e6);
+        cull(&runtime);
         let stage: f64 = runtime
             .context()
             .last_frame_profile()

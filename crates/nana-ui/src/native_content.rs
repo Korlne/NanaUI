@@ -70,7 +70,7 @@ pub fn native_content_regions(
         {
             return Err("native content requires an opaque, unfiltered composition parent".into());
         }
-        let bounds = translated_rect(primitive.bounds, primitive.transform)?;
+        let bounds = translated_rect(primitive.placed_bounds(), primitive.transform)?;
         let mut clip = intersection(bounds, viewport);
         for parent in primitive.clips.iter() {
             if parent.corner_radius != 0.0 || parent.polygon_clip.is_some() {

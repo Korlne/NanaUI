@@ -19,7 +19,21 @@ pub(super) fn write_evidence(
     let accessibility = world.accessibility(runtime.target);
     let text_input = world.text_input(runtime.target);
     let geometry = world.component_geometry(runtime.target);
-    let primitives = runtime.document.scene().primitives().collect::<Vec<_>>();
+    // What the painter draws: each primitive put where its node stands on
+    // the page, cut by its clips as drawn. The scene keeps a node's own
+    // geometry and clips in the node's coordinates.
+    let scene = runtime.document.scene();
+    let placed = scene
+        .primitives()
+        .filter_map(|primitive| {
+            let drawn = scene.draw_primitive(primitive.id)?;
+            let mut primitive = primitive.clone();
+            primitive.bounds = drawn.placed_bounds();
+            primitive.clips = std::sync::Arc::clone(&drawn.clips);
+            Some(primitive)
+        })
+        .collect::<Vec<_>>();
+    let primitives = placed.iter().collect::<Vec<_>>();
     let primitive = |slot| {
         primitives
             .iter()

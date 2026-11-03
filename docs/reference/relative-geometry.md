@@ -60,7 +60,7 @@ Taffy 做同一次编辑只要 0.48 ms。真正重新排布的只有约 1 000 �
 
 - `LayoutResult` 在本节点坐标里存：边框盒在 (0,0)。`child_placements`、子节点片段和 `ChildPlacement` 部件存子节点的本地盒子（它自己的参照系里），`overflow` 和 `scroll_extent` 在本节点坐标里，只并入参照系是本节点的子节点；参照系在别处的子节点（`fixed`、逃逸的绝对定位、菜单项）在放到页面上时才并入溢出框。
 - 节点只是被平移时，它的结果不变，发布时 `geometry_eq` 直接判为相同。`placed` 层、`OwnGeometry`、`moved_local_result` 和 `place_layout_result` 都去掉了。
-- `ComponentGeometry` 本来就不存：`component_geometry(id)` 每次按当前盒子现算，仍然给绝对坐标。第 3 阶段要让带组件几何的节点也走轻量路径时，需要一个按本地坐标算的版本。`ModalSurfaceSections` 早就是 surface 本地的。
+- `ComponentGeometry` 本来就不存：`component_geometry(id)` 每次按当前盒子现算，仍然给绝对坐标。提取用的本地版本（第 4 阶段）见 3.5。`ModalSurfaceSections` 早就是 surface 本地的。
 
 ### 3.3 对外 API：语义不变，绝对值靠推导
 
@@ -89,23 +89,25 @@ Taffy 做同一次编辑只要 0.48 ms。真正重新排布的只有约 1 000 �
 - 冷对照：`check_moved_hit_entries` 在所有补丁打完后，对被替换的条目**及其下面所有没被滚动平移过的条目**逐字段（含 `origin`、`pinned`、包围盒）比对全量重建；`reflow_oracle` 的命中几何加上 `entry_offset`。
 - 第 3 阶段起后代不再标 INPUT，`layout_followers` 删除：平移子树下需要重建的条目只靠 `pinned_hit_entries_under` 找（参照系没跟着动的后代离命中父节点的偏移靠跨参照系求差得出，本来就是钉住的）。
 
-### 3.5 提取与 Scene（第 3 阶段，已落地）
+### 3.5 提取与 Scene（第 3、4 阶段，已落地）
 
-落地的做法与最初设想（图元一律改本地坐标、原点进节点变换）不同，原因在 painter：它把纯平移变换吸附到整设备像素（#223，合成滚动的语义），文字的亚像素相位只取图元自身的位置。图元若靠变换平移，挪了小数像素的子树就画得和冷场景不一样——快照 `area-layout/maximized` 上文字整体偏了 0.28 px。所以：
+第 3 阶段只发平移的根，但根下面画东西的记录仍在同一次 delta 里换成现在的页面盒子并重建图元，带组件几何的节点仍完整重新提取：painter 把纯平移变换吸附到整设备像素（#223，合成滚动的语义），文字的亚像素相位只取图元自身的位置，靠变换平移、挪了小数像素的子树画出来和冷场景不一样（快照 `area-layout/maximized` 上文字整体偏了 0.28 px）；组件几何又是按页面坐标算的。第 4 阶段把两者都改成本地坐标，平移的子树一个图元也不重建：
 
-- **记录**：`ExtractedNode` 新增 `local_layout` 与 `layout_frame`（与 `UiWorld::local_layout_box` / `layout_frame` 相同）；`layout` 仍是提取那一刻的页面盒子，也是这份记录、它的组件几何和由它建的图元所在的空间。`ExtractedMove` 同样带 `local_layout` / `layout_frame`，只给平移的根发。
-- **放置**：Scene 按参照系链从上往下累加本地偏移得到每个节点现在的页面原点（`placed_origin`，与运行时 `record_layout_origin` 同样的加法顺序，按 `placement_epoch` 记忆）。新提取的记录这个值与 `layout` 逐位相等（调试构建在有平移时断言）。两者之差就是这份记录自提取以来被挪的量（`layout_shift`）。
-- **平移的根**：只换本地盒子、参照系和结果，记入 `moved_roots`，抬 `attribute_epoch`，不重建图元。变换分两种：交给子节点的一律在页面空间、轴心按现在的位置（`*_page_transform`）；节点自己的记录与图元在提取时的空间里，所以自己的变换和它的裁剪再右乘 `layout_shift` 的平移（`record_space`）。没被挪过的记录平移为零，变换与改造前逐位相同。`draw_node_rect` / `draw_node_bounds`、投影重定基、粘性、合成层（层快照的轴心、GPU 动效的父变换）都按这个约定。
-- **画东西的记录重新放置**：根下面有图元的记录，以及它到页面之间被挪过的祖先，在同一次 delta 里把 `layout` 换成现在的页面盒子（逐位等于冷提取）并重建图元（`place_painted_records`；有可见性索引时只看根下面的图元，`painted_under`，否则扫一遍图元表）。图元和冷场景逐位相同，painter 不需要知道发生过平移。只有不画东西的盒子（页面上的大多数容器）留在提取时的空间里。
-- **组件几何**：仍按页面坐标现算（`derive_component_geometry`）。重新放置要求记录上没有页面空间的东西，所以带组件几何的节点在平移时仍完整重新提取：根上由 `extract_nodes_reusing` 的 `component_geometry.is_none()` 守卫，根下面的由 `settle_layout_moves` 按 visual 表找出标 RENDER（O(visual 数)，按祖先记忆）。本地版本的组件几何要让冷提取也按「原点 + 本地」相加，会改动冷场景的末位，和 painter 的相位一起属于第 4 阶段。
-- **可见性**：平移的根自身 `update`，后代 `refresh_subtree`（不画东西的子树没有操作，代价为零），逃逸的盒子单独刷新。
-- **公开语义**：`UiScene::extracted_node(id).layout` 与 `node_bounds` 是记录所在的空间（即提取时的页面盒子）；现在的位置用新增的 `node_layout_bounds`，绘制位置仍用 `draw_node_bounds`。devtools 的 `scene_probe` 改读 `node_layout_bounds`。
+- **记录**：`ExtractedNode` 带 `local_layout` 与 `layout_frame`（与 `UiWorld::local_layout_box` / `layout_frame` 相同）；`layout` 是提取那一刻的页面盒子，只作参考。`ExtractedMove` 同样带 `local_layout` / `layout_frame`，只给平移的根发。
+- **组件几何本地化**：`ExtractedNode.component_geometry` 在节点自己的坐标里（边框盒在原点）。运行时用同一份 `derive_component_geometry` 求它：`UiWorld::local_component_geometry` 把 `geometry_frame` 设成这个节点，期间 `record_layout_origin` 沿参照系链求和时走到这个节点就停（它自己的原点记 0），所以内容盒、部件、子孙的盒子都是相对这个节点的、和节点站在哪无关；链上碰不到它（读了外面的盒子）或读了视口（`document_viewport_of`）就记 `geometry_read_page`，调试构建断言。对外的 `UiWorld::component_geometry` 不设 frame，仍是页面坐标，逐位和改造前相同，命中、IME、无障碍都读它。
+- **读页面的 visual**（`StandardVisual::geometry_reads_page`）：Select（菜单贴视口）、MenuSurface（菜单项放在页面上）和 NativeMarkdown 仍在页面坐标里推导，记录在页面上，节点或它上面的盒子一动就重新提取（`extract_nodes_reusing` 的守卫与 `settle_layout_moves` 的 visual 扫描只看这几种）。Markdown 本身不读页面，但它把整篇文档从内容盒往下排，按页面坐标一路累加和按本地累加再放到页面上在末位不同，Mermaid 图的曲线抗锯齿会差 1 级（`gallery-rich-text` 两张快照 7 个像素），为保持冷场景逐位不变留在页面上。其余带组件几何的节点（按钮、输入框等）平移时直接沿用记录。
+- **图元本地化**：`build_node_primitives` 以 `UiScene::record_box`（本地记录为 `(0, 0, 宽, 高)`，页面记录为提取时的页面盒子）为 `bounds` 建图元，所有坐标——`bounds`、批量矩形、笔画点、`Path` / `Chart` 的 `origin`、图层裁剪、节点自己的裁剪（`clips` 里继承部分之后的那些）——都在节点自己的坐标里；`transform` 是页面上的变换（祖先的变换、滚动、节点自己绕现在位置的变换），不含原点。
+- **放置**：节点现在的页面原点按参照系链从上往下累加本地偏移（`placed_origin`，与运行时 `record_layout_origin` 同样的加法顺序，按 `placement_epoch` 记忆；第一次平移之前直接取 `layout`，`placement_live`）。新提取的记录这个值与 `layout` 逐位相等（调试构建断言）。`paint_origin` 是图元的落点：本地记录取 `placed_origin`，页面记录取 0。
+- **绘制**：`draw_primitive` 给出 `SceneDraw { origin, transform, clips }`：几何先加 `origin`（每个坐标一次加法），再过 `transform`；`clips` 全在页面上——继承的那些由 `fold_ancestor` 从祖先现在的页面盒子（`placed_layout`，组件裁剪是本地几何加 `paint_origin`）现算，节点自己的加上 `origin`（按图元、revision、两个 epoch 缓存在 `placed_clips`）。冷场景走同一个公式，所以平移后的子树画出来和冷场景逐位相同：几何是同一份本地值，原点是同一个链和，变换是同一个页面变换。保留投影（`Retained`，自建图元以来没有任何会改原点的变化）直接用建图元时记下的原点（`RetainedPrimitive::origin`，调试构建断言与现算相同）；重定基（`Rebased`）的原点和继承裁剪一起记在 `DrawAttributes`。
+- **平移的根**：只换本地盒子、参照系和结果，抬 `attribute_epoch` 与 `placement_epoch`，图元不动；尺寸或结果变了才重建。整节点重新提取、但只挪了位置且结果相同的（`moved_in_place`）同样不重建。
+- **读了自己位置的节点**（`origin_bound`）：画家（`Painter`）的局部变换绕节点的页面角点、对齐父节点文字的小图标（读父节点文字框相对自己的偏移）、图表悬停指示线（对齐页面半像素）、逐字形呈现的行内对象（绕页面上的中心缩放）和带转场视口的文字。它们自己或上面的盒子平移时整节点重建，O(集合大小 × 深度)。
+- **可见性**：平移的根（含整节点重新提取、位置变了的）在剔除索引里整棵子树平移（`translate_subtree`，与滚动同一条路，嵌套的根只补自己多出来的那一段），根自己的图元重算；参照系不是父节点或粘性定位的（`unfollowing`：逃逸的绝对定位、`fixed`、菜单项、`sticky`）在平移根下面时重算自己和子树。所有平移先做、再做任何重算，重算出来的边界不会被再平移一次。`inherited_transform_changed` 不再把“位置变了”算作变换变了，只改尺寸或位置的祖先不再重算整棵子树的边界。
+- **公开语义**：`ScenePrimitive` 的几何在节点自己的坐标里（读页面的 visual 除外）；页面上的位置用 `UiScene::primitive_layout_bounds` / `place_rect`，或 `SceneDraw::placed_bounds` / `place`；`SceneDraw::geometry_transform` 是“先放到原点再变换”的合成矩阵，给不吸附网格的读者。`node_bounds` 与 `node_layout_bounds` 相同，都是现在的页面盒子。
 
-### 3.6 painter：先测量，再决定
+### 3.6 painter：几何先放到原点，再变换、再吸附
 
-- painter 的整批重建只遍历**可见**图元，代价和视口里的内容成正比，跟页面总节点数无关。改行高的基准不测 painter。
-- 先在视口内塞满图元的场景上测量平移帧的 painter CPU 时间。只有这部分显著时，才做每节点变换的存储缓冲（索引方式同 `transform_id`），让平移只需写一次缓冲、批次照旧沿用。
-- 文字的亚像素相位跟绝对 x 走，平移了小数像素就要重新求字形，这是正确性要求，不能省。
+- painter 对每个图元先把几何加上 `SceneDraw::origin`（`placed_bounds`、`place`、笔画点进复用的暂存区、`Path` / `Chart` / 图层蒙版的 `origin`），之后的路径与改造前对页面坐标图元完全一样：`paint_transform` 只把 `transform` 的纯平移吸附到整设备像素（#223 的滚动语义不变），文字的整像素与亚像素相位从放好的页面位置取。布局的平移因此不是一个要吸附的平移，挪了小数像素的标签按新位置重新求相位（正确性要求），挪了整数像素的只换运行的 `origin`、实例照旧沿用。
+- 不需要每节点变换缓冲：painter 每帧只遍历 `visible_operations` 裁剪后的图元，每个图元多一次加法和一次原点读取，代价和视口里的内容成正比。`nana-ui` 的 `rows_a_reflow_moves_by_a_fraction_paint_what_a_cold_scene_does` 在 1、1.1、1.2、1.75 倍下把行一帧挪 0.37 px，逐像素对比冷场景（变异实验：只让重定基的原点取整，第一帧就有 1 823 个像素不同）。
 
 ### 3.7 无障碍
 
@@ -116,7 +118,8 @@ Taffy 做同一次编辑只要 0.48 ms。真正重新排布的只有约 1 000 �
 - **冷对照**：`assert_matches_cold`，以及各层的冷重建对照（命中 `check_moved_hit_entries`、提取逐字段比对、Scene 冷建、无障碍冷投影）全部保留，并改为在相对数据上比对；绝对值另外经推导后再比一次。
 - **端到端**：`crates/nana-ui-scene/tests/moved_extraction.rs` 加入组件（按钮、输入框）、滚动容器、`fixed`、逃逸绝对定位、粘性、变换祖先等场景。
 - **基准**：改行高、改宽度、改控件文字三组交替跑 A/B，读最小值，再加 `RUNS=240 /usr/bin/time -l` 的 instructions retired。
-- **快照套件**：预期零像素变化。
+- **快照套件**：预期零像素变化。第 4 阶段改动后与 3e9c83b80 的输出逐字节相同（`gallery-sidebar-collapsed-dark` 为已知抖动）。
+- **painter 冷对照**：`rows_a_reflow_moves_by_a_fraction_paint_what_a_cold_scene_does`（见 3.6）；`moved_extraction.rs` 逐位比对 `SceneDraw` 的原点、纯平移变换、裁剪矩形和剔除结果。
 
 ## 5. 分阶段
 
@@ -125,7 +128,7 @@ Taffy 做同一次编辑只要 0.48 ms。真正重新排布的只有约 1 000 �
 | 1 | 布局权威改相对；结果、组件几何改本地；对外 API 靠推导给绝对值；`ContentBoundsIndex`、粘性定位改读本地值 | 无 |
 | 2 | 命中索引用本地条目，平移只改根原点 | 1 |
 | 3 | 提取和 Scene 用本地图元、根平移、投影重定基 | 1 |
-| 4 | painter 测量，按结果决定是否做每节点变换缓冲 | 3 |
+| 4 | 图元与组件几何改本地，painter 先放到原点再吸附；平移子树不重建图元 | 3 |
 | 5 | 端到端基准，更新 `docs/reference/resource-budgets.md` | 2、3 |
 
 第 2、3 阶段在第 1 阶段落地之后并行推进。
@@ -134,6 +137,8 @@ Taffy 做同一次编辑只要 0.48 ms。真正重新排布的只有约 1 000 �
 
 第 2 阶段已落地：命中 3.6 → 0.66 ms，整帧 17.3 → 13.8 ms，每次编辑指令 168 M → 140 M；改宽度、改控件文字持平（做法见 3.4，数字见 `resource-budgets.md`）。
 
-第 3 阶段已落地：提取 3.74 → 0.08 ms（其中 Scene 的 delta 约 1.95 → 0.05 ms），无障碍 2.86 → 0.80 ms，布局 2.06 → 0.47 ms（`spread_layout_moves` 删除），命中 0.65 → 0.24 ms，整帧 11.7 → 1.7 ms，每次编辑指令 127 M → 32 M；改宽度、改控件文字持平（做法见 3.5、3.7，数字见 `resource-budgets.md`）。第 4 阶段的起点：painter 已有每节点的文字平移行（`text_presentation_upload_bytes`），挪动 1 万个标签的帧 `batch` 约 2.5 ms、不重建实例；平移子树里画东西的记录目前仍在 Scene 重建，要让它们也只改一个偏移，painter 得按最终页面位置取文字相位、不再把布局平移当滚动吸附。
+第 3 阶段已落地：提取 3.74 → 0.08 ms（其中 Scene 的 delta 约 1.95 → 0.05 ms），无障碍 2.86 → 0.80 ms，布局 2.06 → 0.47 ms（`spread_layout_moves` 删除），命中 0.65 → 0.24 ms，整帧 11.7 → 1.7 ms，每次编辑指令 127 M → 32 M；改宽度、改控件文字持平（做法见 3.5、3.7，数字见 `resource-budgets.md`）。
+
+第 4 阶段已落地：图元、节点自己的裁剪和组件几何改为本地坐标，painter 先把几何放到节点原点再变换（3.5、3.6）；`place_painted_records` 与 `component_geometry.is_none()` 守卫删除，平移的子树一个图元也不重建，剔除索引整棵平移。控件页（`CONTROLS=1 edits 2000 height`，62 001 节点）改行高的提取段 59.7 → 0.4 ms、整帧 67 → 4 ms，无头运行提取段 41 → 0.3 ms；简单页提取段 79 → 60 µs；`nana-text-paint-benchmark --workload reflow` 的 flush+batch 合计下降（数字见 `resource-budgets.md`）。快照与 3e9c83b80 逐像素相同。
 
 **目标**：改行高时整帧和 Taffy 布局在同一数量级，个位数毫秒；改宽度和改控件文字不回退。
