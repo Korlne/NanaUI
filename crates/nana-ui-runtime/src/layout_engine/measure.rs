@@ -951,16 +951,13 @@ fn measure_node_level(
     // A full pass measures every childless text row through the container
     // path: empty flow, then the same unset padding, border, and min/max
     // specs. Those specs do not change the border box, so the text box is
-    // the result. A scoped pass still takes the general path; it records a
-    // measure plan this shortcut does not.
-    if unforced
-        && scope.is_none()
-        && !cache.records_measure_plans
-        && child_ids.is_empty()
+    // the result. A scoped pass still takes the general path, which records
+    // no measure plan for such a leaf either (`plain_leaf` below).
+    let plain_leaf = child_ids.is_empty()
         && plain_childless_content(style_arc.as_ref())
         && nodes.world.standard_visual_ref(id).is_none()
-        && nodes.world.replaced_natural_size(id).is_none()
-    {
+        && nodes.world.replaced_natural_size(id).is_none();
+    if unforced && scope.is_none() && plain_leaf {
         #[cfg(test)]
         super::measure_trace::record(id);
         return measure_plain_childless(
@@ -1724,7 +1721,9 @@ fn measure_node_level(
     // (css-parity, `layout_style_tree`) throws the map
     // away entirely, and `force_full` has just cleared the retained cache, so
     // in both cases the plans would be built for nobody.
-    if unforced && cache.records_measure_plans {
+    // A plain leaf has no children for a plan to replay: its memo answers
+    // the same query, and the first frame's shortcut records none.
+    if unforced && cache.records_measure_plans && !plain_leaf {
         // The plain in-flow path and a 2D grid are cacheable. One-axis grid
         // tracks stay out: `auto_track_contributions` measures children
         // against constraints other than `content_available`. A subgrid is
@@ -1846,6 +1845,12 @@ fn measure_node_level(
             // container was still on the cacheable path.
             None => slots.clear(),
         }
+    } else if unforced
+        && plain_leaf
+        && scope.is_some_and(|scope| scope.retained.measure_plans.contains_key(&id))
+    {
+        // A container that lost its last child retires its plans.
+        nodes.measure_plans.entry(id).or_default().clear();
     }
     if unforced {
         cache.insert(cache_key, size);
