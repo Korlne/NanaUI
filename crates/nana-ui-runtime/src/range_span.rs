@@ -52,7 +52,7 @@ pub const fn range_span_thumb_extent(size: ControlSize) -> f32 {
 
 /// How far a thumb's focus ring reaches past the thumb: a hairline gap and a
 /// ring as wide as the smallest spacing step, as on a [`crate::RangeField`].
-const fn focus_ring_outset() -> f32 {
+pub(crate) const fn focus_ring_outset() -> f32 {
     nana_ui_core::HAIRLINE + space::XXS
 }
 
@@ -476,7 +476,7 @@ impl ComponentView for RangeSpanField {
 }
 
 /// The decimal places `value` is written with, up to six; `None` past that.
-fn decimal_places(value: f64) -> Option<i32> {
+pub(crate) fn decimal_places(value: f64) -> Option<i32> {
     (0..=6).find(|places| {
         let scaled = value * 10_f64.powi(*places);
         (scaled - scaled.round()).abs() <= f64::EPSILON * scaled.abs().max(1.0)
@@ -675,8 +675,8 @@ impl Painter for TrackPainter {
 
 /// A thumb, styled as a [`crate::RangeField`] thumb, and its focus ring.
 #[derive(Debug, Clone, Copy, PartialEq)]
-struct ThumbPainter {
-    extent: f32,
+pub(crate) struct ThumbPainter {
+    pub(crate) extent: f32,
 }
 
 impl Painter for ThumbPainter {

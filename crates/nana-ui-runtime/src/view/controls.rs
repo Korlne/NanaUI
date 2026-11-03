@@ -13,12 +13,13 @@ use crate::{
     SizeFieldChanged, SizePreset, TabsEvent, TextSelection, ThumbnailState, TreeNode, TreeView,
 };
 use crate::{
-    Activate, AppContext, Avatar, Button, Card, Checkbox, Chip, Divider, EmptyState, Entity,
-    GpuTextureView, IconButton, ListItem, NodeStyle, NumberChanged, NumberInput, Progress,
-    RangeChanged, RangeField, RangeInput, RangeSpanChanged, RangeSpanField, RangeSpanInput,
-    RangeSpanOrientation, RangeSpanThumb, ScrollView, Select, SelectChanged, SelectOption,
-    SelectToggled, Spinner, StableNodeId, Stack, StatusBadge, Switch, Text, TextArea, TextChanged,
-    TextInput, TextSubmitted, TextureSlotName, Thumbnail, ThumbnailPick, ToggleChanged,
+    Activate, AppContext, Avatar, Button, Card, Checkbox, Chip, CurveChanged, CurveField,
+    CurveInput, Divider, EmptyState, Entity, GpuTextureView, IconButton, ListItem, NodeStyle,
+    NumberChanged, NumberInput, Progress, RangeChanged, RangeField, RangeInput, RangeSpanChanged,
+    RangeSpanField, RangeSpanInput, RangeSpanOrientation, RangeSpanThumb, ScrollView, Select,
+    SelectChanged, SelectOption, SelectToggled, Spinner, StableNodeId, Stack, StatusBadge, Switch,
+    Text, TextArea, TextChanged, TextInput, TextSubmitted, TextureSlotName, Thumbnail,
+    ThumbnailPick, ToggleChanged,
 };
 use crate::{
     AppTitleBar, Breadcrumb, Dialog, Drawer, FormField, GpuView, IconGlyph, InteractiveCard,
@@ -306,6 +307,12 @@ macro_rules! controls {
         next.set_span($value.0, $value.1);
         ($target.low, $target.high) != (next.low, next.high)
     }};
+    (@write curve $target:ident, $value:ident, $field:ident) => {
+        $target.set_values($value)
+    };
+    (@differs curve $target:ident, $value:ident, $field:ident) => {
+        $target.values != $target.quantized($value)
+    };
     (@write builder $target:ident, $value:ident, $field:ident) => {
         *$target = $target.clone().$field($value)
     };
@@ -449,6 +456,13 @@ pub fn range_span(minimum: f64, maximum: f64, step: f64) -> El<RangeSpanField> {
     widget(RangeSpanField::new(
         minimum, maximum, minimum, maximum, step,
     ))
+}
+
+/// A curve over the unit square whose points move up and down, on a grid
+/// of `step`; bind `.values(…)` or `.model(…)`, one height per point.
+#[track_caller]
+pub fn curve(step: f64) -> El<CurveField> {
+    widget(CurveField::new(Vec::new(), step))
 }
 
 #[track_caller]
@@ -955,6 +969,36 @@ impl FieldText for (f64, f64) {
     }
 }
 
+impl FieldText for Option<(f64, f64)> {
+    /// Two numbers separated by a comma; empty text is `None`.
+    fn parse(text: &str) -> Result<Self, String> {
+        if text.trim().is_empty() {
+            return Ok(None);
+        }
+        <(f64, f64)>::parse(text).map(Some)
+    }
+}
+
+impl FieldText for Vec<f64> {
+    /// Numbers separated by commas: `0.1, 0.4, 0.9`; empty text is none.
+    fn parse(text: &str) -> Result<Self, String> {
+        if text.trim().is_empty() {
+            return Ok(Vec::new());
+        }
+        text.split(',').map(f64::parse).collect()
+    }
+}
+
+impl FieldText for Vec<Arc<str>> {
+    /// Names separated by commas; empty text is none.
+    fn parse(text: &str) -> Result<Self, String> {
+        if text.trim().is_empty() {
+            return Ok(Vec::new());
+        }
+        Ok(text.split(',').map(|name| Arc::from(name.trim())).collect())
+    }
+}
+
 impl FieldText for u64 {
     fn parse(text: &str) -> Result<Self, String> {
         text.trim()
@@ -1026,6 +1070,7 @@ pub(crate) fn inspect_control(
         (@read span_low $control:ident, $field:ident) => { &$control.low };
         (@read span_high $control:ident, $field:ident) => { &$control.high };
         (@read span $control:ident, $field:ident) => { &($control.low, $control.high) };
+        (@read curve $control:ident, $field:ident) => { &$control.values };
         (@read builder $control:ident, $field:ident) => { &$control.$field };
         (@read tab $control:ident, $field:ident) => { &$control.selected };
         (@read resource $control:ident, $field:ident) => { &$control.resource };

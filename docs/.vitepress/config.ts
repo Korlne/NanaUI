@@ -120,6 +120,7 @@ export default defineConfig({
             { text: "Switch", link: "/components/switch" },
             { text: "RangeField", link: "/components/range-field" },
             { text: "RangeSpanField", link: "/components/range-span-field" },
+            { text: "CurveField", link: "/components/curve-field" },
             { text: "Select", link: "/components/select" },
             { text: "Dropdown", link: "/components/dropdown" },
             { text: "SearchDropdown", link: "/components/search-dropdown" },

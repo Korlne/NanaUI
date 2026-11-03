@@ -24,6 +24,7 @@
 - [PropertyGrid](property-grid.md) — 检查器式两列属性面板：可折叠的组、共用且可拖动的标签列、混合值与带原因的禁用行；控件按行 id 放入。
 - [ScrubField](scrub-field.md) — 在数字上左右拖动改值的属性字段，单击后可键入，支持混合值。
 - [RangeSpanField](range-span-field.md) — 双滑块区间，可横可竖，轨道上可标实时值。模板标签是 `<RangeSpan>`，函数是 `range_span(min, max, step)`。
+- [CurveField](curve-field.md) — 单位方格里的折线，各点横向位置固定、上下拖动改高度。模板标签是 `<Curve>`，函数是 `curve(step)`。
 - [Select](select.md) — 单值下拉。
 - [Dropdown](dropdown.md) — 单值或多值。没有 `<Dropdown>` 标签。
 - [SearchDropdown](search-dropdown.md) — 查询走已提交的 `TextInput`。

@@ -63,11 +63,13 @@ column().gap(8).children((
 | `Slider` | `on_change` | `&RangeChanged` |
 | `RangeSpan` | `on_input` | `&RangeSpanInput` |
 | `RangeSpan` | `on_change` | `&RangeSpanChanged` |
+| `Curve` | `on_input` | `&CurveInput` |
+| `Curve` | `on_change` | `&CurveChanged` |
 | `NumberInput` | `on_change` | `&NumberChanged` |
 | `Select` | `on_change` | `&SelectChanged` |
 | `Select` | `on_toggle` | `&SelectToggled` |
 
-`TextChanged` 有 `value` 和 `selection`。`TextSubmitted`、`RangeInput`、`RangeChanged`、`NumberChanged` 都有 `value`。`ToggleChanged` 有 `checked`。`SelectChanged` 有 `value`，`SelectToggled` 有 `open`。`RangeSpanInput`、`RangeSpanChanged` 有 `low` 和 `high`。
+`TextChanged` 有 `value` 和 `selection`。`TextSubmitted`、`RangeInput`、`RangeChanged`、`NumberChanged` 都有 `value`。`ToggleChanged` 有 `checked`。`SelectChanged` 有 `value`，`SelectToggled` 有 `open`。`RangeSpanInput`、`RangeSpanChanged` 有 `low` 和 `high`。`CurveInput`、`CurveChanged` 有 `point`（动的那个点，整组替换时是 `None`）和 `values`。
 
 模板里 `@input={|event: &TextChanged| …}` 把闭包原样传给 `on_input`。写成普通表达式时，会包成 `move |_| { …; }`，事件被忽略。要读 `event.value`，就写带参数的闭包。
 

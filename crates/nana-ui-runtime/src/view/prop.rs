@@ -316,6 +316,10 @@ const_props! {
     // An unsuffixed literal settles on `f64`: `.thickness(3.0)`.
     f64 => Option<f32>, |v| Some(v as f32);
     (f64, f64) => (f64, f64), |v| v;
+    Option<(f64, f64)> => Option<(f64, f64)>, |v| v;
+    (f64, f64) => Option<(f64, f64)>, |v| Some(v);
+    Vec<f64> => Vec<f64>, |v| v;
+    Vec<Arc<str>> => Vec<Arc<str>>, |v| v;
     Option<(u32, u32)> => Option<(u32, u32)>, |v| v;
     (u32, u32) => Option<(u32, u32)>, |v| Some(v);
     [f32; 4] => [f32; 4], |v| v;

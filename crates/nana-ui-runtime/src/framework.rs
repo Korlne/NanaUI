@@ -3372,6 +3372,17 @@ impl AppContext {
                     }
                     return Ok(false);
                 }
+                if let Some((entity, Some(index))) = self.curve_target(request.target) {
+                    return self.adjust_curve_point(
+                        entity,
+                        index,
+                        if steps > 0 {
+                            RangeAdjustment::Increment
+                        } else {
+                            RangeAdjustment::Decrement
+                        },
+                    );
+                }
                 if let Some((entity, Some(thumb))) = self.range_span_target(request.target) {
                     return self.adjust_range_span(
                         entity,
@@ -3461,6 +3472,21 @@ impl AppContext {
                         .ok()
                         .filter(|value| value.is_finite())
                         .map(|value| self.set_range_span_thumb(entity, thumb, value))
+                        .transpose()
+                        .map(|changed| changed.unwrap_or(false));
+                }
+                if let Some((entity, Some(index))) = self.curve_target(request.target) {
+                    // A point reads as a percentage; "35%" and "0.35" both
+                    // set it to 0.35.
+                    let text = value.trim();
+                    let parsed = match text.strip_suffix('%') {
+                        Some(percent) => percent.trim().parse::<f64>().map(|value| value / 100.0),
+                        None => text.parse::<f64>(),
+                    };
+                    return parsed
+                        .ok()
+                        .filter(|value| value.is_finite())
+                        .map(|value| self.set_curve_point(entity, index, value))
                         .transpose()
                         .map(|changed| changed.unwrap_or(false));
                 }

@@ -262,6 +262,7 @@ impl AppContext {
                     self.update_scrollbar_drag(document, *pointer_id, *x, *y)?
                         || self.update_range_drag_at(document, *pointer_id, *x, *y)?
                         || self.update_range_span_drag_at(document, *pointer_id, *x, *y)?
+                        || self.update_curve_drag_at(document, *pointer_id, *x, *y)?
                         || self.update_xy_pad_drag(
                             document,
                             *pointer_id,
@@ -586,6 +587,8 @@ impl AppContext {
                                     *x,
                                     *y,
                                 )?;
+                            } else if self.curve_target(target).is_some() {
+                                self.begin_curve_drag_at(document, *pointer_id, target, *x, *y)?;
                             } else if self.is_xy_pad(target) {
                                 self.begin_xy_pad_drag(document, *pointer_id, target, *x, *y)?;
                             }
@@ -641,6 +644,7 @@ impl AppContext {
                 if self.end_scrollbar_drag(document, *pointer_id, false)?
                     || self.end_range_drag(document, *pointer_id, false)?
                     || self.end_range_span_drag(document, *pointer_id, false)?
+                    || self.end_curve_drag(document, *pointer_id, false)?
                     || self.end_xy_pad_drag(document, *pointer_id, false)?
                     || optional_input!(
                         "graph-canvas",
@@ -708,6 +712,7 @@ impl AppContext {
                 let scrollbar = self.end_scrollbar_drag(document, *pointer_id, true)?;
                 let range = self.end_range_drag(document, *pointer_id, true)?;
                 let range_span = self.end_range_span_drag(document, *pointer_id, true)?;
+                let curve = self.end_curve_drag(document, *pointer_id, true)?;
                 let xy_pad = self.end_xy_pad_drag(document, *pointer_id, true)?;
                 let graph = optional_input!(
                     "graph-canvas",
@@ -752,6 +757,7 @@ impl AppContext {
                 scrollbar
                     || range
                     || range_span
+                    || curve
                     || xy_pad
                     || graph
                     || minimap
@@ -1159,6 +1165,13 @@ impl AppContext {
         {
             return Ok(true);
         }
+        // Across a curve the side arrows walk its points; the others step
+        // the focused one as on a vertical slider.
+        if matches!(key, "ArrowLeft" | "ArrowRight")
+            && self.focus_curve_neighbour(document, key == "ArrowRight")?
+        {
+            return Ok(true);
+        }
         let range_adjustment = match key {
             "ArrowLeft" | "ArrowDown" => Some(RangeAdjustment::Decrement),
             "ArrowRight" | "ArrowUp" => Some(RangeAdjustment::Increment),
@@ -1171,6 +1184,7 @@ impl AppContext {
         if let Some(adjustment) = range_adjustment
             && (self.adjust_focused_range(document, adjustment)?
                 || self.adjust_focused_range_span(document, adjustment)?
+                || self.adjust_focused_curve(document, adjustment)?
                 || self.adjust_focused_scrub_field(document, adjustment)?)
         {
             return Ok(true);

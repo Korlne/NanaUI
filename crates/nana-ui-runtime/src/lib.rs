@@ -101,6 +101,7 @@ mod panel;
 mod path_field;
 mod path_text;
 pub use path_text::PathText;
+mod curve_field;
 mod placeholders;
 mod popover;
 mod presence;
@@ -246,6 +247,10 @@ pub use components::{
     TooltipVisual, TriggeredMenuOverlay, decode_virtual_menu_item, decode_virtual_tree_item,
     decode_virtual_tree_toggle, menu_row_index, menu_row_slots, virtual_listbox_id,
     virtual_menu_item_id, virtual_tree_item_id, virtual_tree_toggle_id,
+};
+pub use curve_field::{
+    CurveChanged, CurveDragState, CurveDragging, CurveField, CurveInput, CurvePoint,
+    curve_plot_inset, curve_point_extent,
 };
 pub use custom_paint::{
     AFFINE_IDENTITY, Affine, BlendMode, BoxPaint, ColorStop, CornerRadii, FillRule, Gradient,

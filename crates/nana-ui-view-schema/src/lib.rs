@@ -34,6 +34,8 @@
 //!   order two bindings land in does not change the pair;
 //! - `span`: both thumbs of a range span as `(low, high)`, in order whichever
 //!   way they arrive;
+//! - `curve`: a curve's heights, each held inside `0 ..= 1` on its step
+//!   grid; their number is the number of points;
 //! - `builder`: through the component's builder method of the same name,
 //!   which keeps what it derives (a colour's hue, saturation and value);
 //! - `tab`: the chosen tab, which also takes the strip's focus;
@@ -105,6 +107,15 @@ macro_rules! for_each_control {
             }
             with { on_input: RangeSpanInput, on_change: RangeSpanChanged }
             model span: (f64, f64) => RangeSpanInput |event| (event.low, event.high);
+            Curve => curve(step: f64) for CurveField {
+                values: Vec<f64> = curve,
+                ends: Option<(f64, f64)> = set,
+                label: Option<Arc<str>> = set,
+                point_labels: Vec<Arc<str>> = set,
+                disabled: bool = set,
+            }
+            with { on_input: CurveInput, on_change: CurveChanged }
+            model values: Vec<f64> => CurveInput |event| event.values.clone();
             TextInput => text_input() for TextInput {
                 value: String = text_state,
                 character_counter: Option<usize> = set,

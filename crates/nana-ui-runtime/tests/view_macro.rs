@@ -1950,6 +1950,52 @@ fn a_range_span_binds_its_pair_both_ways_and_its_indicator_one_way() {
     assert_eq!(span.get(), (0.4, 0.9));
 }
 
+/// `<Curve>`: the heights bound both ways through `v-model`, a new count
+/// reassembling the points, and keys on a point written back.
+#[test]
+fn a_curve_binds_its_heights_both_ways() {
+    use nana_ui_runtime::CurveField;
+    let mut cx = AppContext::new();
+    let document = DocumentId::new(1).unwrap();
+    let heights = signal(vec![0.25_f64, 0.5, 0.75]);
+    let mounted = cx
+        .mount_view_root(document, || {
+            view! {
+                <Curve step=0.05 ends={Some((0.0, 1.0))} label="曲线"
+                    point_labels={vec!["点 1".into(), "点 2".into(), "点 3".into()]}
+                    v-model={heights} />
+            }
+        })
+        .unwrap();
+    let field = mounted.root::<CurveField>().unwrap();
+    let read = |cx: &AppContext| {
+        cx.read(field, |field| (field.values.clone(), field.ends))
+            .unwrap()
+    };
+    assert_eq!(read(&cx), (vec![0.25, 0.5, 0.75], Some((0.0, 1.0))));
+    let second = cx
+        .read(field, |field| field.point_node(1))
+        .unwrap()
+        .expect("the view assembles the points");
+    assert_eq!(
+        cx.world().accessibility(second).unwrap().label.as_deref(),
+        Some("点 2")
+    );
+
+    heights.set(vec![0.1, 0.33, 0.9, 1.0]);
+    cx.flush_reactive().unwrap();
+    assert_eq!(read(&cx).0, vec![0.1, 0.35, 0.9, 1.0]);
+    assert_eq!(
+        cx.world().node(field.stable_id()).unwrap().children.len(),
+        4
+    );
+
+    cx.adjust_curve_point(field, 0, nana_ui_runtime::RangeAdjustment::Increment)
+        .unwrap();
+    cx.flush_reactive().unwrap();
+    assert_eq!(heights.get(), vec![0.15, 0.35, 0.9, 1.0]);
+}
+
 /// A template names a control without drawing a caption for it: `label` on
 /// a select (`aria-label`), `labelled_by` naming the caption's `ref`
 /// (`aria-labelledby`) on any control, and `show_label={false}` on a slider
