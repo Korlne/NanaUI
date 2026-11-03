@@ -144,12 +144,53 @@ pub type NodeSet = HashSet<StableNodeId, BuildIdHasher>;
 
 /// Lists one publish builds every result's slices in, reused node to node so
 /// a result's slices are allocated once, at their final length.
+/// A published layout result, and what a move of its box needs to place it
+/// again without building it.
+#[derive(Debug, Clone)]
+pub(crate) struct RetainedLayoutResult {
+    own: OwnGeometry,
+    /// The node's geometry where its box stands, with its children's: what
+    /// [`UiWorld::layout_result`] answers.
+    pub(crate) placed: Arc<crate::LayoutResult>,
+}
+
+/// What of a result's own geometry -- fragments, parts and baselines
+/// measured from its border-box origin -- its box alone does not give. The
+/// border, padding and content boxes are left out:
+/// [`crate::LayoutResult::from_box`] gives them again from the box's size,
+/// used padding and border, to the bit; so is the content-box part every
+/// result holds, after the text part when there is one.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum OwnGeometry {
+    /// Nothing of its own: a plain container.
+    Empty,
+    /// One plain line of text laid in the content box: its line and run
+    /// fragments and its text part are the content box, at `baseline`.
+    PlainLine { baseline: Option<f32> },
+    /// Anything else. It is not kept: a move builds the result again.
+    Unkept,
+}
+
+/// Where the content-box part goes among a result's own `parts`: after its
+/// text part, when it has one.
+fn content_part_index(parts: &[crate::LayoutPart]) -> usize {
+    usize::from(
+        parts
+            .first()
+            .is_some_and(|part| part.kind == crate::LayoutPartKind::TextContent),
+    )
+}
+
 #[derive(Default)]
 struct ResultScratch {
     parts: Vec<crate::LayoutPart>,
     placements: Vec<crate::LayoutChildPlacement>,
     fragments: Vec<crate::LayoutFragment>,
     dependencies: Vec<StableNodeId>,
+    /// The own fragments and parts at the origin, the content-box part left
+    /// out, for the placement to place.
+    own_fragments: Vec<crate::LayoutFragment>,
+    own_parts: Vec<crate::LayoutPart>,
 }
 
 impl ResultScratch {
@@ -158,6 +199,8 @@ impl ResultScratch {
         self.placements.clear();
         self.fragments.clear();
         self.dependencies.clear();
+        self.own_fragments.clear();
+        self.own_parts.clear();
     }
 }
 
@@ -898,11 +941,14 @@ pub struct UiWorld {
     /// Canonical render/input-facing geometry. `NodeRecord::layout` remains a
     /// compatibility cache for old internal paths; all public geometry reads
     /// go through this table when a result has been published.
-    layout_results: crate::NodeMap<Arc<crate::LayoutResult>>,
+    layout_results: crate::NodeMap<RetainedLayoutResult>,
     /// Results hidden after a typed invalidation until publish confirms them.
     /// The `Arc` stays so a bit-equivalent recompute can keep the same object
     /// and generation; [`Self::layout_result`] reports these as absent.
     layout_results_suppressed: NodeSet,
+    /// Boxes the coming layout publish moved by translation: their results
+    /// are placed again from their own geometry instead of rebuilt.
+    translated_layout: NodeSet,
     /// Set while the frame driver commits a layout pass's box writes: it
     /// publishes the whole pass scope right after, so the commit leaves the
     /// written boxes to that publish: it would build each result only for
@@ -1176,6 +1222,7 @@ impl UiWorld {
             framework_strings: Arc::default(),
             layout_results: crate::NodeMap::default(),
             layout_results_suppressed: NodeSet::default(),
+            translated_layout: NodeSet::default(),
             pass_publishes_written_boxes: false,
             layout_anchor_roots: HashSet::new(),
             cursor_style_dirty: false,
@@ -1555,12 +1602,20 @@ impl UiWorld {
         self.layout_generation
     }
 
+    /// Notes the boxes the coming layout publish moved with a container that
+    /// only moved; see `RuntimeLayoutEngine`'s `take_translated`.
+    pub(crate) fn note_translated_layout(&mut self, ids: Vec<StableNodeId>) {
+        self.translated_layout.extend(ids);
+    }
+
     /// Canonical geometry for `id`, if the node has been laid out.
     pub fn layout_result(&self, id: StableNodeId) -> Option<&crate::LayoutResult> {
         if self.layout_results_suppressed.contains(&id) {
             return None;
         }
-        self.layout_results.get(&id).map(Arc::as_ref)
+        self.layout_results
+            .get(&id)
+            .map(|result| result.placed.as_ref())
     }
 
     pub(crate) fn clear_layout_results_subtree(&mut self, root: StableNodeId) {
@@ -1737,6 +1792,7 @@ impl UiWorld {
         let mut phase = crate::layout_engine::plan_stats::PhaseClock::start();
         let mut built = Vec::with_capacity(unique.len());
         let mut scratch = ResultScratch::default();
+        let translated = std::mem::take(&mut self.translated_layout);
         let mut reused = 0usize;
         let mut children_visited = 0usize;
         for &id in &unique {
@@ -1749,6 +1805,31 @@ impl UiWorld {
             let end = start + covered[start..].partition_point(|&(parent, _)| parent == id);
             let covered = &covered_ids[start..end];
             children_visited = children_visited.saturating_add(covered.len());
+            // A box layout moved with its container keeps its own geometry:
+            // only where it and its children stand is placed again.
+            if translated.contains(&id)
+                && !self.own_parts_read_slots(id)
+                && !self.layout_results_suppressed.contains(&id)
+                && let Some(held) = self.layout_results.get(&id)
+                && let Some(local) = self.moved_local_result(id, held, source, &mut scratch)
+                && let Some(result) = self.place_layout_result(id, local, held.own, &mut scratch)
+            {
+                #[cfg(any(test, feature = "layout-verify"))]
+                {
+                    let fresh = self
+                        .build_layout_result(id, source, &mut ResultScratch::default())
+                        .expect("a moved box has a result");
+                    assert!(
+                        fresh.placed.geometry_eq(&result.placed),
+                        "{id:?}: a moved box's result differs from a rebuilt one: \
+                         {:?} != {:?}",
+                        result.placed,
+                        fresh.placed
+                    );
+                }
+                built.push((id, result));
+                continue;
+            }
             if self.layout_result_geometry_current(id, covered) {
                 self.layout_results_suppressed.remove(&id);
                 reused = reused.saturating_add(1);
@@ -1770,7 +1851,7 @@ impl UiWorld {
             if self
                 .layout_results
                 .get(id)
-                .is_some_and(|previous| previous.geometry_eq(result))
+                .is_some_and(|previous| previous.placed.geometry_eq(&result.placed))
             {
                 self.nodes.note_text_fragments(*id);
                 self.layout_results_suppressed.remove(id);
@@ -1787,7 +1868,8 @@ impl UiWorld {
         self.note_layout_result_publish(reused, changed, 1, children_visited);
         self.layout_generation = self.layout_generation.wrapping_add(1);
         let generation = self.layout_generation;
-        for (id, mut result) in published {
+        for (id, mut retained) in published {
+            let result = Arc::get_mut(&mut retained.placed).expect("a result just built");
             // The menu's growing label slot depends on chrome and its offered
             // box, not on label advance. A changed slot must reach text even
             // when the outer box stays fixed (for example a changed hint).
@@ -1805,25 +1887,24 @@ impl UiWorld {
                             .then_some(part.bounds.width)
                     })
                 };
-                width(previous) != width(&result)
+                width(&previous.placed) != width(result)
             });
             let sticky_changed = self.sticky_nodes.has_dependents(id)
                 && self.layout_results.get(&id).is_none_or(|previous| {
                     (
-                        previous.content_box,
-                        previous.padding_box,
-                        previous.scroll_extent,
+                        previous.placed.content_box,
+                        previous.placed.padding_box,
+                        previous.placed.scroll_extent,
                     ) != (result.content_box, result.padding_box, result.scroll_extent)
                 });
             let project = requested.binary_search(&id).is_ok()
-                && self
-                    .layout_results
-                    .get(&id)
-                    .is_none_or(|previous| layout_result_projects_new_geometry(previous, &result));
+                && self.layout_results.get(&id).is_none_or(|previous| {
+                    layout_result_projects_new_geometry(&previous.placed, result)
+                });
             result.generation = generation;
             result.dependency_generation = generation;
             self.layout_results_suppressed.remove(&id);
-            self.layout_results.insert(id, Arc::new(result));
+            self.layout_results.insert(id, retained);
             self.nodes.note_text_fragments(id);
             if part_budget_changed {
                 self.nodes
@@ -1887,48 +1968,263 @@ impl UiWorld {
             .collect()
     }
 
+    /// Whether `id`'s own parts steer around where its slots stand (a list
+    /// item's leading and trailing slots, a labeled value's action): measured
+    /// from its origin, they move to the bit only when built again.
+    fn own_parts_read_slots(&self, id: StableNodeId) -> bool {
+        matches!(
+            self.standard_visual_ref(id),
+            Some(StandardVisual::ListItem { .. } | StandardVisual::LabeledValue { .. })
+        )
+    }
+
+    /// The result at the origin of a box that only moved, from what its last
+    /// one kept: the boxes again from its size, padding and border, its own
+    /// fragments, parts and baselines as they were, and what names other
+    /// nodes -- anchors, dependencies, context -- from its last result, since
+    /// nothing around it changed. Its scroll offset and metrics are read
+    /// again: a scroll since leaves the result as it was published.
+    fn moved_local_result(
+        &self,
+        id: StableNodeId,
+        held: &RetainedLayoutResult,
+        source: crate::LayoutResultSource,
+        scratch: &mut ResultScratch,
+    ) -> Option<crate::LayoutResult> {
+        let node = self.nodes.get(id)?;
+        let bounds = LayoutBox {
+            x: 0.0,
+            y: 0.0,
+            ..self.component_layout_box(id)?
+        };
+        let previous = held.placed.as_ref();
+        let mut local = crate::LayoutResult::from_box(
+            bounds,
+            self.used_layout_padding(id),
+            node.resolved_layout.resolved_border_edges(),
+        );
+        local.source = source;
+        local.scroll_offset = node.scroll_offset;
+        local.scroll_metrics = self.scroll_metrics(id);
+        local.formatting_context = previous.formatting_context;
+        local.participation = previous.participation;
+        local.clip = previous.clip;
+        local.clip_parent = previous.clip_parent;
+        local.containing_block = previous.containing_block;
+        local.dependencies = Arc::clone(&previous.dependencies);
+        scratch.clear();
+        match held.own {
+            OwnGeometry::Empty => {}
+            OwnGeometry::PlainLine { baseline } => {
+                let text_box = local.content_box;
+                let source = self.text_layout(id).map(|_| 0..node.text.value.len());
+                for kind in [
+                    crate::LayoutFragmentKind::TextLine,
+                    crate::LayoutFragmentKind::TextRun,
+                ] {
+                    let mut fragment = crate::LayoutFragment::new(kind, text_box);
+                    fragment.first_baseline = baseline;
+                    fragment.last_baseline = baseline;
+                    fragment.source = source.clone();
+                    scratch.own_fragments.push(fragment);
+                }
+                scratch.own_parts.push(crate::LayoutPart::new(
+                    crate::LayoutPartKind::TextContent,
+                    text_box,
+                ));
+                local.first_baseline = baseline;
+                local.last_baseline = baseline;
+            }
+            OwnGeometry::Unkept => return None,
+        }
+        Some(local)
+    }
+
     fn build_layout_result(
         &self,
         id: StableNodeId,
         source: crate::LayoutResultSource,
         scratch: &mut ResultScratch,
-    ) -> Option<crate::LayoutResult> {
+    ) -> Option<RetainedLayoutResult> {
+        let (local, own) = self.build_own_layout_result(id, source, scratch)?;
+        self.place_layout_result(id, local, own, scratch)
+    }
+
+    /// `id`'s own geometry with its border box at the origin: the boxes,
+    /// text fragments, parts and baselines it derives from its own box,
+    /// which a move of the box leaves exactly as they were. Nothing here
+    /// reads where another box stands; [`Self::place_layout_result`] joins
+    /// the children.
+    fn build_own_layout_result(
+        &self,
+        id: StableNodeId,
+        source: crate::LayoutResultSource,
+        scratch: &mut ResultScratch,
+    ) -> Option<(crate::LayoutResult, OwnGeometry)> {
         scratch.clear();
         let ResultScratch {
-            parts,
-            placements,
-            fragments,
+            own_parts: parts,
+            own_fragments: fragments,
             dependencies,
+            ..
         } = scratch;
+        let mut plain_line = None;
         let node = self.nodes.get(id)?;
-        let bounds = self.component_layout_box(id)?;
+        let placed = self.component_layout_box(id)?;
+        let bounds = LayoutBox {
+            x: 0.0,
+            y: 0.0,
+            ..placed
+        };
         let padding = self.used_layout_padding(id);
         let border = node.resolved_layout.resolved_border_edges();
         let mut result = crate::LayoutResult::from_box(bounds, padding, border);
-        let component_parts = self.solve_content_parts(id, result.content_box);
+        let component_parts =
+            self.solve_content_parts_in(id, result.content_box, bounds, [placed.x, placed.y]);
         let text_box =
             crate::layout_engine::parts::primary_text_box(&component_parts, result.content_box);
         result.source = source;
         result.scroll_offset = node.scroll_offset;
-
-        let children = node.hierarchy.children.as_ref();
-        let child_kind = child_fragment_kind(node);
         result.formatting_context = established_context(node);
         result.participation = self.layout_node(id).and_then(|node| node.participation);
-        let mut overflow = bounds;
+        let scroll_metrics = self.scroll_metrics(id);
+        if record_has_text(node) && self.needs_native_text_fragments(id) {
+            let (native, first, last) = self.native_text_fragments(id, text_box)?;
+            fragments.extend(native);
+            result.first_baseline = first;
+            result.last_baseline = last;
+            parts.push(crate::LayoutPart::new(
+                crate::LayoutPartKind::TextContent,
+                text_box,
+            ));
+        } else if matches!(node.kind.as_ref(), NodeKind::Text) || !node.text.value.is_empty() {
+            let baseline = self.single_text_baseline(id, text_box);
+            let source = self.text_layout(id).map(|_| 0..node.text.value.len());
+            let mut line =
+                crate::LayoutFragment::new(crate::LayoutFragmentKind::TextLine, text_box);
+            line.first_baseline = baseline;
+            line.last_baseline = baseline;
+            line.source = source.clone();
+            fragments.push(line);
+            let mut run = crate::LayoutFragment::new(crate::LayoutFragmentKind::TextRun, text_box);
+            run.first_baseline = baseline;
+            run.last_baseline = baseline;
+            run.source = source;
+            fragments.push(run);
+            result.first_baseline = baseline;
+            result.last_baseline = baseline;
+            parts.push(crate::LayoutPart::new(
+                crate::LayoutPartKind::TextContent,
+                text_box,
+            ));
+            plain_line = (text_box == result.content_box).then_some(baseline);
+        }
+        // The content-box part follows from the box; the placement puts it
+        // in (`content_part_index`).
+        // Fixed-position branches are viewport overlays in the retained
+        // projection. Keep that semantic part alongside the ordinary
+        // content box so Scene, hit testing and accessibility can share
+        // the same classification without reopening component geometry.
+        if node.resolved_layout.position == nana_ui_core::PositionSpec::Fixed {
+            fragments.push(crate::LayoutFragment::new(
+                crate::LayoutFragmentKind::Overlay,
+                result.bounds,
+            ));
+            parts.push(crate::LayoutPart::new(
+                crate::LayoutPartKind::Overlay,
+                result.bounds,
+            ));
+        }
+        if node.resolved_layout.clips_overflow() {
+            fragments.push(crate::LayoutFragment::new(
+                crate::LayoutFragmentKind::ScrollViewport,
+                result.padding_box,
+            ));
+            parts.push(crate::LayoutPart::new(
+                crate::LayoutPartKind::ScrollViewport,
+                result.padding_box,
+            ));
+        }
+        let anchors = self.layout_anchors(id);
+        dependencies.extend_from_slice(&node.hierarchy.children);
+        if let Some(clip) = anchors.clip {
+            dependencies.push(clip);
+        }
+        if let Some(containing_block) = anchors.containing_block {
+            dependencies.push(containing_block);
+        }
+        dependencies.sort_unstable();
+        dependencies.dedup();
+        parts.extend(
+            component_parts
+                .into_iter()
+                .flatten()
+                .filter(|part| part.kind != crate::LayoutPartKind::TextContent),
+        );
+        let own = match plain_line {
+            _ if fragments.is_empty()
+                && parts.is_empty()
+                && result.first_baseline.is_none()
+                && result.last_baseline.is_none() =>
+            {
+                OwnGeometry::Empty
+            }
+            Some(baseline) if fragments.len() == 2 && parts.len() == 1 => {
+                OwnGeometry::PlainLine { baseline }
+            }
+            _ => OwnGeometry::Unkept,
+        };
+        result.scroll_metrics = scroll_metrics;
+        result.clip = anchors.clip;
+        result.clip_parent = anchors.clip_parent;
+        result.containing_block = anchors.containing_block;
+        result.dependencies = shared_slice(dependencies);
+        Some((result, own))
+    }
+
+    /// `own` placed where `id`'s box stands, joined with where its children
+    /// sit: their placements, fragments and parts first, as published
+    /// before, then its own, and the overflow and scroll extent they make.
+    /// The children's boxes are read as they are, never measured from this
+    /// box's origin, so each placement is its child's box to the bit.
+    fn place_layout_result(
+        &self,
+        id: StableNodeId,
+        local: crate::LayoutResult,
+        own: OwnGeometry,
+        scratch: &mut ResultScratch,
+    ) -> Option<RetainedLayoutResult> {
+        let ResultScratch {
+            parts,
+            placements,
+            fragments,
+            own_fragments,
+            own_parts,
+            ..
+        } = scratch;
+        parts.clear();
+        placements.clear();
+        fragments.clear();
+        let node = self.nodes.get(id)?;
+        let bounds = self.component_layout_box(id)?;
+        let origin = [bounds.x, bounds.y];
+        let mut result = local.placed_frame(origin);
+        let children = node.hierarchy.children.as_ref();
+        let child_kind = child_fragment_kind(node);
+        let mut overflow = result.bounds;
         // A box that clips or scrolls counts in its overflow only the
         // children its clip and scroll reach: not a `fixed` child, nor an
         // `absolute` one whose containing block is above it (#201). The
         // range of the boxes under them is the content index's, which
         // follows the same chain. Elsewhere overflow joins every child.
-        let scroll_metrics = self.scroll_metrics(id);
-        let joins_every_child = !node.resolved_layout.clips_overflow() && scroll_metrics.is_none();
+        let joins_every_child =
+            !node.resolved_layout.clips_overflow() && local.scroll_metrics.is_none();
         let reaches =
             |child: StableNodeId| joins_every_child || self.clip_parent_of(child) == Some(id);
-        if let Some((placements, fragments)) =
+        if let Some((kept_placements, kept_fragments)) =
             self.reusable_child_geometry(id, children, child_kind)
         {
-            for placement in placements.iter() {
+            for placement in kept_placements.iter() {
                 if reaches(placement.node) {
                     overflow = union_layout_boxes(overflow, placement.bounds);
                 }
@@ -1938,12 +2234,9 @@ impl UiWorld {
                     bounds: placement.bounds,
                 });
             }
-            result.child_placements = placements;
-            result.fragments = fragments;
-            parts.push(crate::LayoutPart::new(
-                crate::LayoutPartKind::ComponentContent,
-                result.content_box,
-            ));
+            result.child_placements = kept_placements;
+            // A children-only result has no fragments of its own.
+            result.fragments = kept_fragments;
         } else {
             let atom_sources: NodeMap<_> = self
                 .inline_record(id)
@@ -1978,91 +2271,34 @@ impl UiWorld {
                     overflow = union_layout_boxes(overflow, child_bounds);
                 }
             }
-
-            if record_has_text(node) && self.needs_native_text_fragments(id) {
-                let (native, first, last) = self.native_text_fragments(id, text_box)?;
-                fragments.extend(native);
-                result.first_baseline = first;
-                result.last_baseline = last;
-                parts.push(crate::LayoutPart::new(
-                    crate::LayoutPartKind::TextContent,
-                    text_box,
-                ));
-            } else if matches!(node.kind.as_ref(), NodeKind::Text) || !node.text.value.is_empty() {
-                let baseline = self.single_text_baseline(id, text_box);
-                let source = self.text_layout(id).map(|_| 0..node.text.value.len());
-                let mut line =
-                    crate::LayoutFragment::new(crate::LayoutFragmentKind::TextLine, text_box);
-                line.first_baseline = baseline;
-                line.last_baseline = baseline;
-                line.source = source.clone();
-                fragments.push(line);
-                let mut run =
-                    crate::LayoutFragment::new(crate::LayoutFragmentKind::TextRun, text_box);
-                run.first_baseline = baseline;
-                run.last_baseline = baseline;
-                run.source = source;
-                fragments.push(run);
-                result.first_baseline = baseline;
-                result.last_baseline = baseline;
-                parts.push(crate::LayoutPart::new(
-                    crate::LayoutPartKind::TextContent,
-                    text_box,
-                ));
-            }
-            parts.push(crate::LayoutPart::new(
-                crate::LayoutPartKind::ComponentContent,
-                result.content_box,
-            ));
-            // Fixed-position branches are viewport overlays in the retained
-            // projection. Keep that semantic part alongside the ordinary content
-            // box so Scene, hit testing and accessibility can share the same
-            // classification without reopening component geometry.
-            if node.resolved_layout.position == nana_ui_core::PositionSpec::Fixed {
-                fragments.push(crate::LayoutFragment::new(
-                    crate::LayoutFragmentKind::Overlay,
-                    result.bounds,
-                ));
-                parts.push(crate::LayoutPart::new(
-                    crate::LayoutPartKind::Overlay,
-                    result.bounds,
-                ));
-            }
-            if node.resolved_layout.clips_overflow() {
-                fragments.push(crate::LayoutFragment::new(
-                    crate::LayoutFragmentKind::ScrollViewport,
-                    result.padding_box,
-                ));
-                parts.push(crate::LayoutPart::new(
-                    crate::LayoutPartKind::ScrollViewport,
-                    result.padding_box,
-                ));
-            }
+            fragments.extend(
+                own_fragments
+                    .iter()
+                    .map(|fragment| crate::LayoutResult::place_fragment(origin, fragment)),
+            );
             result.child_placements = shared_slice(placements);
             result.fragments = shared_slice(fragments);
         }
-
-        let anchors = self.layout_anchors(id);
-        dependencies.extend_from_slice(children);
-        if let Some(clip) = anchors.clip {
-            dependencies.push(clip);
-        }
-        if let Some(containing_block) = anchors.containing_block {
-            dependencies.push(containing_block);
-        }
-        dependencies.sort_unstable();
-        dependencies.dedup();
+        let content = content_part_index(own_parts.as_slice());
         parts.extend(
-            component_parts
-                .into_iter()
-                .flatten()
-                .filter(|part| part.kind != crate::LayoutPartKind::TextContent),
+            own_parts[..content]
+                .iter()
+                .map(|part| crate::LayoutResult::place_part(origin, part)),
+        );
+        parts.push(crate::LayoutPart::new(
+            crate::LayoutPartKind::ComponentContent,
+            result.content_box,
+        ));
+        parts.extend(
+            own_parts[content..]
+                .iter()
+                .map(|part| crate::LayoutResult::place_part(origin, part)),
         );
         result.parts = shared_slice(parts);
         // Only scroll containers need the retained descendant index. Avoid
         // materializing that index for ordinary nodes while still publishing
         // the full scroll extent where a consumer can actually use it.
-        if scroll_metrics.is_some() {
+        if local.scroll_metrics.is_some() {
             let content_extent = self.scroll_content_extent(id);
             if content_extent.left.is_finite()
                 && content_extent.top.is_finite()
@@ -2081,7 +2317,7 @@ impl UiWorld {
             }
         }
         result.overflow = overflow;
-        if let Some(metrics) = scroll_metrics {
+        if let Some(metrics) = local.scroll_metrics {
             let scroll_area = LayoutBox {
                 x: result.content_box.x + metrics.origin_x.min(0.0),
                 y: result.content_box.y + metrics.origin_y.min(0.0),
@@ -2092,12 +2328,10 @@ impl UiWorld {
         } else {
             result.scroll_extent = overflow;
         }
-        result.scroll_metrics = scroll_metrics;
-        result.clip = anchors.clip;
-        result.clip_parent = anchors.clip_parent;
-        result.containing_block = anchors.containing_block;
-        result.dependencies = shared_slice(dependencies);
-        Some(result)
+        Some(RetainedLayoutResult {
+            own,
+            placed: Arc::new(result),
+        })
     }
 
     /// The result held for `id` still describes its geometry. `covered` are
@@ -2120,9 +2354,12 @@ impl UiWorld {
         // compatibility write and the pass publishes again as layout, and
         // rebuilding every ancestor for each would copy a wide container's
         // placements twice a frame.
-        let Some(previous) = self.layout_results.get(&id).map(Arc::clone) else {
+        let Some(held) = self.layout_results.get(&id) else {
             return false;
         };
+        // The own geometry is compared where it was built, with the border
+        // box at the origin; the children's where they stand.
+        let previous = &held.placed;
         let Some(facts) = self.layout_result_facts(id) else {
             return false;
         };
@@ -2138,9 +2375,14 @@ impl UiWorld {
         {
             return false;
         }
+        let local = LayoutBox {
+            x: 0.0,
+            y: 0.0,
+            ..bounds
+        };
         let padding = self.used_layout_padding(id);
         let padding_box = crate::layout_result::inset(
-            bounds,
+            local,
             facts.border.top,
             facts.border.right,
             facts.border.bottom,
@@ -2153,7 +2395,10 @@ impl UiWorld {
             padding.bottom,
             padding.left,
         );
-        if previous.padding_box != padding_box || previous.content_box != content_box {
+        let origin = [bounds.x, bounds.y];
+        if previous.padding_box != crate::layout_result::place_box(origin, padding_box)
+            || previous.content_box != crate::layout_result::place_box(origin, content_box)
+        {
             return false;
         }
         if previous.child_placements.len() != facts.child_count {
@@ -2171,8 +2416,19 @@ impl UiWorld {
                 return false;
             }
         }
-        let component_parts = self.solve_content_parts(id, content_box);
+        // Everything below is solved where a rebuild solves it, with the
+        // border box at the origin, and compared placed where the box stands.
+        let component_parts =
+            self.solve_content_parts_in(id, content_box, local, [bounds.x, bounds.y]);
         let text_box = crate::layout_engine::parts::primary_text_box(&component_parts, content_box);
+        let placed_text = crate::layout_result::place_box(origin, text_box);
+        let extra = || {
+            component_parts
+                .iter()
+                .flatten()
+                .filter(|part| part.kind != crate::LayoutPartKind::TextContent)
+                .map(|part| crate::LayoutResult::place_part(origin, part))
+        };
         if facts.text && self.needs_native_text_fragments(id) {
             let current = self
                 .nodes
@@ -2182,11 +2438,7 @@ impl UiWorld {
                 .parts
                 .iter()
                 .find(|part| part.kind == crate::LayoutPartKind::TextContent)
-                .is_some_and(|part| part.bounds == text_box);
-            let extra = component_parts
-                .iter()
-                .flatten()
-                .filter(|part| part.kind != crate::LayoutPartKind::TextContent);
+                .is_some_and(|part| part.bounds == placed_text);
             let parts_current = previous
                 .parts
                 .iter()
@@ -2205,17 +2457,19 @@ impl UiWorld {
                             | crate::LayoutPartKind::Indicator
                     )
                 })
-                .eq(extra);
+                .copied()
+                .eq(extra());
             return current
                 && content_current
                 && parts_current
                 && previous.formatting_context == facts.context
-                && self.layout_anchors(id).recorded_in(&previous);
+                && self.layout_anchors(id).recorded_in(previous);
         }
         let baseline = facts
             .text
             .then(|| self.single_text_baseline(id, text_box))
-            .flatten();
+            .flatten()
+            .map(|baseline| origin[1] + baseline);
         if facts.text {
             let source = self
                 .text_layout(id)
@@ -2236,13 +2490,13 @@ impl UiWorld {
             return false;
         }
         if !retained_projection_current(
-            &previous,
-            content_box,
-            text_box,
+            previous,
+            crate::layout_result::place_box(origin, content_box),
+            placed_text,
             baseline,
             facts.text,
             facts.child_kind,
-            &component_parts,
+            extra,
         ) {
             return false;
         }
@@ -2250,7 +2504,7 @@ impl UiWorld {
         // dependencies are the children plus the two anchors: with the box
         // and every placement where the result recorded them, only the
         // anchors are left to move.
-        self.layout_anchors(id).recorded_in(&previous)
+        self.layout_anchors(id).recorded_in(previous)
     }
 
     fn layout_result_facts(&self, id: StableNodeId) -> Option<LayoutResultFacts> {
@@ -2339,7 +2593,7 @@ impl UiWorld {
                     continue;
                 };
                 if let Some(result) = self.layout_results.get(&id)
-                    && !self.layout_anchors(id).recorded_in(result)
+                    && !self.layout_anchors(id).recorded_in(&result.placed)
                 {
                     moved.push(id);
                 }
@@ -2476,7 +2730,7 @@ impl UiWorld {
         }) {
             return None;
         }
-        let previous = self.layout_results.get(&id)?;
+        let previous = &self.layout_results.get(&id)?.placed;
         let placements = previous.child_placements.as_ref();
         let fragments = previous.fragments.as_ref();
         if placements.len() != children.len() || fragments.len() != children.len() {
@@ -6296,28 +6550,22 @@ fn record_has_text(node: &NodeRecord) -> bool {
 }
 
 /// The held result's fragments and parts still project its placements under
-/// the current content box, baseline and child kind. Each child's fragment
-/// and part are made from its placement with one shared kind, so the kind of
-/// the first one stands for all of them.
-fn retained_projection_current(
+/// the current content box, baseline and child kind, all placed where the box
+/// stands. Each child's fragment and part are made from its placement with
+/// one shared kind, so the kind of the first one stands for all of them.
+fn retained_projection_current<I: Iterator<Item = crate::LayoutPart>>(
     previous: &crate::LayoutResult,
     content_box: LayoutBox,
     text_box: LayoutBox,
     baseline: Option<f32>,
     text: bool,
     child_kind: crate::LayoutFragmentKind,
-    component_parts: &crate::layout_engine::parts::ContentParts,
+    extra_parts: impl Fn() -> I,
 ) -> bool {
     let child_count = previous.child_placements.len();
     let fragments = previous.fragments.as_ref();
     let parts = previous.parts.as_ref();
     let text_fragments = usize::from(text) * 2;
-    let extra_parts = || {
-        component_parts
-            .iter()
-            .flatten()
-            .filter(|part| part.kind != crate::LayoutPartKind::TextContent)
-    };
     if fragments.len() != child_count + text_fragments
         || parts.len() != child_count + 1 + usize::from(text) + extra_parts().count()
     {
@@ -6355,7 +6603,7 @@ fn retained_projection_current(
     tail.kind == crate::LayoutPartKind::ComponentContent
         && tail.node.is_none()
         && tail.bounds == content_box
-        && parts[index + 1..].iter().eq(extra_parts())
+        && parts[index + 1..].iter().copied().eq(extra_parts())
 }
 
 fn union_layout_boxes(left: LayoutBox, right: LayoutBox) -> LayoutBox {

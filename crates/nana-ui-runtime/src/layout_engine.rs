@@ -206,6 +206,7 @@ impl RuntimeLayoutEngine {
         // Reset before the full-layout reuse return, which runs no measure or placement.
         retained.execution_stats = LayoutExecutionStats::default();
         retained.inline_objects.clear();
+        retained.translated.clear();
         retained.last_frontier = LayoutFrontier::default();
         // A viewport the cache was not laid out against: plant the resize's
         // seeds, whichever entry asked for this pass. Memos and plans of boxes
@@ -510,6 +511,7 @@ impl RuntimeLayoutEngine {
         retained.far_start.absorb(&mut nodes.far_start);
         retained.contexts.absorb(&mut nodes.contexts);
         retained.inline_objects.extend(nodes.inline_objects.drain());
+        retained.translated = std::mem::take(&mut nodes.translated);
         retained.placements.absorb(&mut nodes.placements);
         for (id, plan) in nodes.container_plans.drain() {
             match plan {
@@ -955,6 +957,15 @@ impl RetainedLayoutCache {
             .1;
         metrics.last_baseline.or(metrics.first_baseline)
     }
+    /// The boxes the last pass moved with a container that only moved
+    /// (`translate_moved_children`): nothing about them but where they
+    /// stand changed, so their results keep their own geometry.
+    pub(crate) fn take_translated(&mut self, document: DocumentId) -> Vec<StableNodeId> {
+        self.documents
+            .get_mut(&document)
+            .map_or_else(Vec::new, |cache| std::mem::take(&mut cache.translated))
+    }
+
     pub(crate) fn take_inline_objects(
         &mut self,
         document: DocumentId,
@@ -1010,6 +1021,8 @@ impl RetainedIntrinsic {
 #[derive(Default)]
 struct DocumentLayoutCache {
     inline_objects: HashMap<StableNodeId, Arc<[nana_text::InlineObject]>>,
+    /// The last pass's translated boxes, until the frame takes them.
+    translated: Vec<StableNodeId>,
     intrinsics: crate::store::DenseNodeMap<RetainedIntrinsic>,
     /// Content-derived intrinsic facts, independent from retained used sizes.
     intrinsic_metrics: RetainedIntrinsicMetrics,
@@ -2430,6 +2443,8 @@ impl From<LayoutInput> for PassInput {
 /// On-demand `LayoutInput` cache. A miss loads exactly that id from `UiWorld`.
 struct LayoutInputMap<'a> {
     inline_objects: HashMap<StableNodeId, Arc<[nana_text::InlineObject]>>,
+    /// Boxes this pass moved by translation.
+    translated: Vec<StableNodeId>,
     world: &'a UiWorld,
     nodes: crate::store::DenseNodeMap<PassInput>,
     /// Effective styles for nodes this pass never materialized into `nodes`.
@@ -2517,6 +2532,7 @@ impl<'a> LayoutInputMap<'a> {
     fn new(world: &'a UiWorld) -> Self {
         Self {
             inline_objects: HashMap::new(),
+            translated: Vec::new(),
             world,
             nodes: crate::store::DenseNodeMap::default(),
             styles: RefCell::default(),

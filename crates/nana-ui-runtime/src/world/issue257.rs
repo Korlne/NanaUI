@@ -708,12 +708,12 @@ fn equivalent_recompute_does_not_publish_layout_geometry() {
     let section_ptr = world
         .layout_results
         .get(&node(2))
-        .map(Arc::as_ptr)
+        .map(|result| Arc::as_ptr(&result.placed))
         .expect("section result");
     let fixed_ptr = world
         .layout_results
         .get(&node(3))
-        .map(Arc::as_ptr)
+        .map(|result| Arc::as_ptr(&result.placed))
         .expect("fixed result");
 
     // A definite min-width below the used width recomputes the section and
@@ -749,12 +749,18 @@ fn equivalent_recompute_does_not_publish_layout_geometry() {
         "a bit-equivalent recompute must not bump layout generation"
     );
     assert_eq!(
-        world.layout_results.get(&node(2)).map(Arc::as_ptr),
+        world
+            .layout_results
+            .get(&node(2))
+            .map(|result| Arc::as_ptr(&result.placed)),
         Some(section_ptr),
         "the section result object must stay the one already published"
     );
     assert_eq!(
-        world.layout_results.get(&node(3)).map(Arc::as_ptr),
+        world
+            .layout_results
+            .get(&node(3))
+            .map(|result| Arc::as_ptr(&result.placed)),
         Some(fixed_ptr),
         "an untouched fixed-position result must not be republished"
     );
@@ -780,7 +786,10 @@ fn equivalent_recompute_does_not_publish_layout_geometry() {
     let fixed_after = world.last_work_counters();
     assert_eq!(world.layout_generation(), generation);
     assert_eq!(
-        world.layout_results.get(&node(3)).map(Arc::as_ptr),
+        world
+            .layout_results
+            .get(&node(3))
+            .map(|result| Arc::as_ptr(&result.placed)),
         Some(fixed_ptr)
     );
     assert_eq!(

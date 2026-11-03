@@ -230,6 +230,27 @@ impl UiWorld {
         content: LayoutBox,
         bounds: LayoutBox,
     ) -> ContentParts {
+        self.solve_content_parts_in(id, content, bounds, [0.0, 0.0])
+    }
+
+    /// [`Self::solve_content_parts_at`] with `content` and `bounds` measured
+    /// from `origin` on the page: the boxes of the slots a part steers
+    /// around are measured from it too. A result's own geometry is solved
+    /// with the border box at the origin (`build_own_layout_result`).
+    pub(crate) fn solve_content_parts_in(
+        &self,
+        id: StableNodeId,
+        content: LayoutBox,
+        bounds: LayoutBox,
+        origin: [f32; 2],
+    ) -> ContentParts {
+        let slot_box = |slot: StableNodeId| {
+            self.component_layout_box(slot).map(|slot| LayoutBox {
+                x: slot.x - origin[0],
+                y: slot.y - origin[1],
+                ..slot
+            })
+        };
         let Some(visual) = self.standard_visual_ref(id) else {
             return NO_CONTENT_PARTS;
         };
@@ -438,7 +459,7 @@ impl UiWorld {
                     self.node_style(*id)
                         .is_none_or(|style| !style.layout.omits_box())
                 })
-                .and_then(|id| self.component_layout_box(id));
+                .and_then(slot_box);
             let mut area = content;
             if let Some(action) = action {
                 if reverse {
@@ -512,7 +533,7 @@ impl UiWorld {
                 }) else {
                     continue;
                 };
-                let Some(bounds) = self.component_layout_box(slot) else {
+                let Some(bounds) = slot_box(slot) else {
                     continue;
                 };
                 if start != reverse {

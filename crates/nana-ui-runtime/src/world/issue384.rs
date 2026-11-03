@@ -221,7 +221,7 @@ fn issue384_range_drag_steps_record_zero_layout_work() {
     let mut shaper = bundled_face_shaper();
     let (_, _, _, track) = range_geometry(&cx, id);
     let generation = cx.world().layout_generation();
-    let snapshot = Arc::clone(&cx.world().layout_results[&id]);
+    let snapshot = Arc::clone(&cx.world().layout_results[&id].placed);
     let parts = cx.world().layout_result(id).unwrap().parts.clone();
     let mut painted = Vec::new();
     for (step, share) in [0.0_f32, 0.07, 0.5, 0.93, 1.0, 0.31]
@@ -257,7 +257,10 @@ fn issue384_range_drag_steps_record_zero_layout_work() {
         (0, 0)
     );
     assert_eq!(cx.world().layout_generation(), generation);
-    assert!(Arc::ptr_eq(&snapshot, &cx.world().layout_results[&id]));
+    assert!(Arc::ptr_eq(
+        &snapshot,
+        &cx.world().layout_results[&id].placed
+    ));
     assert_eq!(cx.world().layout_result(id).unwrap().parts, parts);
     assert_eq!(painted, ["0", "7", "50", "93", "100", "31"]);
     assert_eq!(cx.read(range, |range| range.value).unwrap(), 31.0);
@@ -689,7 +692,7 @@ fn issue384_progress_parts_follow_changes_like_a_cold_layout_and_value_paints_on
 
     let id = progress.stable_id();
     let generation = cx.world().layout_generation();
-    let snapshot = Arc::clone(&cx.world().layout_results[&id]);
+    let snapshot = Arc::clone(&cx.world().layout_results[&id].placed);
     for value in [55.0, 90.0, 100.0] {
         cx.update_component(progress, |view, _| view.value = value)
             .unwrap();
@@ -715,7 +718,10 @@ fn issue384_progress_parts_follow_changes_like_a_cold_layout_and_value_paints_on
         );
     }
     assert_eq!(cx.world().layout_generation(), generation);
-    assert!(Arc::ptr_eq(&snapshot, &cx.world().layout_results[&id]));
+    assert!(Arc::ptr_eq(
+        &snapshot,
+        &cx.world().layout_results[&id].placed
+    ));
 }
 
 /// A progress bar moved between Grid, Inline and Flex parents keeps its
@@ -1053,7 +1059,7 @@ fn issue384_modal_parts_follow_changes_like_a_cold_layout_and_hover_paints_only(
         let (mut cx, id, action) = modal_page(first, DisplaySpec::Flex, None);
         // Hovering the action (or the card) lays nothing out.
         let generation = cx.world().layout_generation();
-        let snapshot = Arc::clone(&cx.world().layout_results[&id]);
+        let snapshot = Arc::clone(&cx.world().layout_results[&id].placed);
         cx.set_pointer_hover_at(
             document(),
             1,
@@ -1067,7 +1073,10 @@ fn issue384_modal_parts_follow_changes_like_a_cold_layout_and_hover_paints_only(
             (0, 0)
         );
         assert_eq!(cx.world().layout_generation(), generation);
-        assert!(Arc::ptr_eq(&snapshot, &cx.world().layout_results[&id]));
+        assert!(Arc::ptr_eq(
+            &snapshot,
+            &cx.world().layout_results[&id].placed
+        ));
         for (step, case) in edits.into_iter().enumerate() {
             let themed = step == 2;
             if case.confirm {

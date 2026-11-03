@@ -236,7 +236,7 @@ fn issue205_button_chip_menu_parts_follow_content_changes_without_new_entities()
     cx.update_component(button, |button, _| button.loading = false)
         .unwrap();
     product_frame(&mut cx, document, viewport, &mut shaper);
-    let snapshot = Arc::clone(&cx.world().layout_results[&button.stable_id()]);
+    let snapshot = Arc::clone(&cx.world().layout_results[&button.stable_id()].placed);
     cx.set_pointer_hover_at(
         document,
         1,
@@ -251,7 +251,7 @@ fn issue205_button_chip_menu_parts_follow_content_changes_without_new_entities()
     );
     assert!(Arc::ptr_eq(
         &snapshot,
-        &cx.world().layout_results[&button.stable_id()]
+        &cx.world().layout_results[&button.stable_id()].placed
     ));
     let a11y = cx.world().project_accessibility(document);
     assert!(
@@ -1460,7 +1460,7 @@ fn issue205_checkbox_parts_follow_changes_like_a_cold_layout_and_toggle_paints_o
     }
     let id = checkbox.stable_id();
     let generation = cx.world().layout_generation();
-    let snapshot = Arc::clone(&cx.world().layout_results[&id]);
+    let snapshot = Arc::clone(&cx.world().layout_results[&id].placed);
     cx.update_component(checkbox, |view, _| view.checked = true)
         .unwrap();
     let toggled = product_frame(&mut cx, document, viewport, &mut shaper);
@@ -1474,7 +1474,10 @@ fn issue205_checkbox_parts_follow_changes_like_a_cold_layout_and_toggle_paints_o
         );
     }
     assert_eq!(cx.world().layout_generation(), generation);
-    assert!(Arc::ptr_eq(&snapshot, &cx.world().layout_results[&id]));
+    assert!(Arc::ptr_eq(
+        &snapshot,
+        &cx.world().layout_results[&id].placed
+    ));
     let a11y = cx.world().project_accessibility(document);
     let node = a11y.iter().find(|node| node.id == id).unwrap();
     assert_eq!(node.checked, Some(true));
@@ -2061,7 +2064,7 @@ fn issue205_switch_parts_follow_changes_like_a_cold_layout_and_toggle_paints_onl
     );
 
     let generation = cx.world().layout_generation();
-    let snapshot = Arc::clone(&cx.world().layout_results[&id]);
+    let snapshot = Arc::clone(&cx.world().layout_results[&id].placed);
     cx.update_component(switch, |view, _| view.checked = true)
         .unwrap();
     let toggled = product_frame(&mut cx, document, viewport, &mut shaper);
@@ -2078,7 +2081,10 @@ fn issue205_switch_parts_follow_changes_like_a_cold_layout_and_toggle_paints_onl
         );
     }
     assert_eq!(cx.world().layout_generation(), generation);
-    assert!(Arc::ptr_eq(&snapshot, &cx.world().layout_results[&id]));
+    assert!(Arc::ptr_eq(
+        &snapshot,
+        &cx.world().layout_results[&id].placed
+    ));
     let a11y = cx.world().project_accessibility(document);
     let node = a11y.iter().find(|node| node.id == id).unwrap();
     assert_eq!(node.checked, Some(true));
@@ -2492,7 +2498,7 @@ fn issue205_status_dot_parts_follow_changes_like_a_cold_layout() {
         super::reflow_oracle::assert_matches_cold(&mut cx, &mut cold, document);
 
         let generation = cx.world().layout_generation();
-        let snapshot = Arc::clone(&cx.world().layout_results[&id]);
+        let snapshot = Arc::clone(&cx.world().layout_results[&id].placed);
         if kind == 0 {
             let entity = crate::Entity::<crate::StatusBadge>::from_stable_id(id);
             cx.update_component(entity, |view, _| {
@@ -2512,7 +2518,10 @@ fn issue205_status_dot_parts_follow_changes_like_a_cold_layout() {
             (0, 0)
         );
         assert_eq!(cx.world().layout_generation(), generation);
-        assert!(Arc::ptr_eq(&snapshot, &cx.world().layout_results[&id]));
+        assert!(Arc::ptr_eq(
+            &snapshot,
+            &cx.world().layout_results[&id].placed
+        ));
     }
 }
 
@@ -3045,7 +3054,7 @@ fn issue205_selection_option_parts_follow_changes_like_a_cold_layout_and_selecti
 
         let id = option.stable_id();
         let generation = cx.world().layout_generation();
-        let snapshot = Arc::clone(&cx.world().layout_results[&id]);
+        let snapshot = Arc::clone(&cx.world().layout_results[&id].placed);
         cx.update_component(option, |view, _| view.selected = true)
             .unwrap();
         let selected = product_frame(&mut cx, document, viewport, &mut shaper);
@@ -3060,7 +3069,10 @@ fn issue205_selection_option_parts_follow_changes_like_a_cold_layout_and_selecti
             );
         }
         assert_eq!(cx.world().layout_generation(), generation);
-        assert!(Arc::ptr_eq(&snapshot, &cx.world().layout_results[&id]));
+        assert!(Arc::ptr_eq(
+            &snapshot,
+            &cx.world().layout_results[&id].placed
+        ));
         let a11y = cx.world().project_accessibility(document);
         let node = a11y.iter().find(|node| node.id == id).unwrap();
         assert_eq!(node.selected, Some(true));
@@ -3966,7 +3978,7 @@ fn issue205_toast_parts_follow_changes_like_a_cold_layout_and_tone_paints_only()
     );
     let id = toast.stable_id();
     let generation = cx.world().layout_generation();
-    let snapshot = Arc::clone(&cx.world().layout_results[&id]);
+    let snapshot = Arc::clone(&cx.world().layout_results[&id].placed);
     cx.update_component(toast, |view, _| view.tone = crate::ToastTone::Danger)
         .unwrap();
     let toned = product_frame(&mut cx, document, viewport, &mut shaper);
@@ -3980,7 +3992,10 @@ fn issue205_toast_parts_follow_changes_like_a_cold_layout_and_tone_paints_only()
         );
     }
     assert_eq!(cx.world().layout_generation(), generation);
-    assert!(Arc::ptr_eq(&snapshot, &cx.world().layout_results[&id]));
+    assert!(Arc::ptr_eq(
+        &snapshot,
+        &cx.world().layout_results[&id].placed
+    ));
     // An assembled toast under every recipe, reached by a theme change. It
     // hides the description and progress it has none of.
     for theme in toast_themes().into_iter().flatten() {
@@ -4428,7 +4443,7 @@ fn issue205_menu_trigger_parts_follow_changes_like_a_cold_layout_and_hover_paint
 
         let (mut cx, id) = menu_trigger_page(kind, "Menu", None, None, false, None);
         let generation = cx.world().layout_generation();
-        let snapshot = Arc::clone(&cx.world().layout_results[&id]);
+        let snapshot = Arc::clone(&cx.world().layout_results[&id].placed);
         cx.set_pointer_hover_at(document, 1, Some(id), Duration::from_millis(800))
             .unwrap();
         let hovered = product_frame(&mut cx, document, viewport, &mut shaper);
@@ -4437,7 +4452,10 @@ fn issue205_menu_trigger_parts_follow_changes_like_a_cold_layout_and_hover_paint
             (0, 0)
         );
         assert_eq!(cx.world().layout_generation(), generation);
-        assert!(Arc::ptr_eq(&snapshot, &cx.world().layout_results[&id]));
+        assert!(Arc::ptr_eq(
+            &snapshot,
+            &cx.world().layout_results[&id].placed
+        ));
     }
 }
 

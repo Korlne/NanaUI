@@ -55,7 +55,7 @@ fn assert_settled(
     step: &str,
 ) {
     let generation = cx.world().layout_generation();
-    let result = std::sync::Arc::clone(&cx.world().layout_results[&id]);
+    let result = std::sync::Arc::clone(&cx.world().layout_results[&id].placed);
     for frame in 0..8 {
         let work = product_frame(cx, document(), viewport(), shaper);
         let own = cx.world().frame_counters;
@@ -73,7 +73,7 @@ fn assert_settled(
     }
     assert!(std::sync::Arc::ptr_eq(
         &result,
-        &cx.world().layout_results[&id]
+        &cx.world().layout_results[&id].placed
     ));
 }
 

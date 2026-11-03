@@ -521,6 +521,8 @@ impl AppContext {
             // Publish one coherent canonical Result snapshot only after every
             // sibling box in the scope has been committed.
             self.world
+                .note_translated_layout(self.layout_cache.take_translated(document));
+            self.world
                 .publish_layout_results(&scope, crate::LayoutResultSource::RuntimeLayout);
             let inline_objects = self.layout_cache.take_inline_objects(document);
             self.world.sync_inline_metrics(

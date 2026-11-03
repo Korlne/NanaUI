@@ -2130,6 +2130,7 @@ fn translate_moved_children(
         plans.push((id, next));
     }
     intrinsic.note_translation(boxes.len());
+    nodes.translated.extend(boxes.iter().map(|&(id, _)| id));
     output.extend(boxes);
     for (id, plan) in plans {
         nodes.container_plans.insert(id, Some(plan));

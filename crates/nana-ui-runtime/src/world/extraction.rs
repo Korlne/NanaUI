@@ -282,7 +282,7 @@ impl UiWorld {
             layout_result: self
                 .layout_result(id)
                 .and_then(|_| self.layout_results.get(&id))
-                .cloned(),
+                .map(|result| Arc::clone(&result.placed)),
             id,
             kind,
             parent: hierarchy_parent,

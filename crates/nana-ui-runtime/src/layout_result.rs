@@ -381,6 +381,57 @@ impl LayoutResult {
     }
 }
 
+/// `local`, a box of a node's own geometry measured from its border-box
+/// origin, where that origin stands on the page.
+pub(crate) fn place_box(origin: [f32; 2], local: LayoutBox) -> LayoutBox {
+    LayoutBox {
+        x: origin[0] + local.x,
+        y: origin[1] + local.y,
+        ..local
+    }
+}
+
+impl LayoutResult {
+    /// The boxes and baselines of a result built with its border box at the
+    /// origin, placed at `origin`. The fragment, part and child lists are
+    /// left empty: [`Self::place_fragment`] and [`Self::place_part`] place
+    /// the own ones, and the children's come from where the children are.
+    pub(crate) fn placed_frame(&self, origin: [f32; 2]) -> Self {
+        let baseline = |value: Option<f32>| value.map(|value| origin[1] + value);
+        Self {
+            bounds: place_box(origin, self.bounds),
+            border_box: place_box(origin, self.border_box),
+            padding_box: place_box(origin, self.padding_box),
+            content_box: place_box(origin, self.content_box),
+            first_baseline: baseline(self.first_baseline),
+            last_baseline: baseline(self.last_baseline),
+            overflow: place_box(origin, self.overflow),
+            scroll_extent: place_box(origin, self.scroll_extent),
+            child_placements: Arc::default(),
+            fragments: Arc::default(),
+            parts: Arc::default(),
+            ..self.clone()
+        }
+    }
+
+    pub(crate) fn place_fragment(origin: [f32; 2], fragment: &LayoutFragment) -> LayoutFragment {
+        let baseline = |value: Option<f32>| value.map(|value| origin[1] + value);
+        LayoutFragment {
+            bounds: place_box(origin, fragment.bounds),
+            first_baseline: baseline(fragment.first_baseline),
+            last_baseline: baseline(fragment.last_baseline),
+            ..fragment.clone()
+        }
+    }
+
+    pub(crate) fn place_part(origin: [f32; 2], part: &LayoutPart) -> LayoutPart {
+        LayoutPart {
+            bounds: place_box(origin, part.bounds),
+            ..*part
+        }
+    }
+}
+
 pub(crate) fn inset(box_: LayoutBox, top: f32, right: f32, bottom: f32, left: f32) -> LayoutBox {
     let top = top.max(0.0);
     let right = right.max(0.0);
