@@ -162,18 +162,130 @@ pub fn read_glyph_ink(
         .then_some((bounds.x_min, bounds.x_max))
 }
 
-/// Every codepoint the face's best cmap maps, folded into ranges.
+/// Every codepoint the face's best cmap maps to a glyph it can draw,
+/// folded into ranges.
+///
+/// A visible character mapped to an empty outline is left out, so fallback
+/// looks further: some faces map a character they do not draw (macOS's
+/// Songti SC Black maps U+00A5 YEN SIGN to a blank glyph), and taking the
+/// mapping at its word drew a gap where the character belonged.
 pub fn read_coverage(data: &[u8], index: u32) -> CoverageSet {
     let Ok(font) = FontRef::from_index(data, index) else {
         return CoverageSet::default();
     };
+    let blank = blank_outlines(&font);
     let mut codepoints: Vec<u32> = font
         .charmap()
         .mappings()
         .filter(|(_, glyph)| glyph.to_u32() != 0)
+        .filter(|(codepoint, glyph)| {
+            !blank.as_ref().is_some_and(|blank| blank(glyph.to_u32()))
+                || char::from_u32(*codepoint).is_none_or(|ch| !visible(ch))
+        })
         .map(|(codepoint, _)| codepoint)
         .collect();
     codepoints.sort_unstable();
     codepoints.dedup();
     CoverageSet::from_sorted_codepoints(&codepoints)
+}
+
+/// Which glyphs have no outline, for a face drawn from `glyf` outlines
+/// alone: a glyph whose `loca` entry and the next one are equal is empty.
+/// `None` for any other face. A colour or bitmap face may leave a glyph's
+/// outline empty and draw it from its own table, and a CFF face's empty
+/// glyphs cannot be told without running their charstrings.
+fn blank_outlines<'a>(font: &FontRef<'a>) -> Option<impl Fn(u32) -> bool + 'a> {
+    use skrifa::raw::TableProvider;
+    let drawn_elsewhere = [b"COLR", b"sbix", b"CBDT", b"EBDT", b"SVG "]
+        .iter()
+        .any(|tag| font.table_data(Tag::new(tag)).is_some());
+    if drawn_elsewhere || font.table_data(Tag::new(b"glyf")).is_none() {
+        return None;
+    }
+    let loca = font.loca(None).ok()?;
+    Some(move |glyph: u32| {
+        let glyph = glyph as usize;
+        matches!(
+            (loca.get_raw(glyph), loca.get_raw(glyph + 1)),
+            (Some(start), Some(end)) if start == end
+        )
+    })
+}
+
+/// A character that draws ink: not white space, a control or a default
+/// ignorable, whose glyphs are rightly empty.
+fn visible(ch: char) -> bool {
+    !ch.is_whitespace() && !ch.is_control() && !super::unicode::is_default_ignorable(ch)
+}
+
+#[cfg(test)]
+mod blank_glyph_tests {
+    use super::*;
+    use skrifa::raw::TableProvider;
+
+    const KR: &[u8] = include_bytes!("../../fonts/noto-sans-kr.ttf");
+    const COLOR: &[u8] = include_bytes!("../../fonts/nana-test-color.ttf");
+
+    fn mapped(data: &[u8]) -> Vec<(u32, u32)> {
+        FontRef::new(data)
+            .unwrap()
+            .charmap()
+            .mappings()
+            .map(|(c, g)| (c, g.to_u32()))
+            .filter(|(_, g)| *g != 0)
+            .collect()
+    }
+
+    /// `data` with glyph `glyph` emptied: its next `loca` entry made equal
+    /// to its own, as a face that maps a character it does not draw has it.
+    fn emptied(data: &[u8], glyph: u32) -> Vec<u8> {
+        let font = FontRef::new(data).unwrap();
+        let long = font.head().unwrap().index_to_loc_format() == 1;
+        let record = font
+            .table_directory
+            .table_records()
+            .iter()
+            .find(|r| r.tag() == Tag::new(b"loca"))
+            .unwrap();
+        let at = record.offset() as usize;
+        let mut out = data.to_vec();
+        let (size, i) = (if long { 4 } else { 2 }, glyph as usize);
+        let (from, to) = (at + i * size, at + (i + 1) * size);
+        let entry = out[from..from + size].to_vec();
+        out[to..to + size].copy_from_slice(&entry);
+        out
+    }
+
+    #[test]
+    fn a_character_mapped_to_an_empty_outline_is_not_covered() {
+        let font = FontRef::new(KR).unwrap();
+        let loca = font.loca(None).unwrap();
+        let blank = |g: u32| loca.get_raw(g as usize) == loca.get_raw(g as usize + 1);
+        let (ch, glyph) = mapped(KR)
+            .into_iter()
+            .find(|(c, g)| {
+                char::from_u32(*c).is_some_and(visible)
+                    && !blank(*g)
+                    && (*g as usize + 2) < loca.len()
+            })
+            .expect("a drawn character");
+        assert!(read_coverage(KR, 0).contains(ch));
+        let patched = emptied(KR, glyph);
+        assert!(
+            !read_coverage(&patched, 0).contains(ch),
+            "U+{ch:04X} maps to a blank glyph, so fallback must look further"
+        );
+        // White space draws nothing and stays covered.
+        if mapped(KR).iter().any(|(c, _)| *c == 0x20) {
+            assert!(read_coverage(&patched, 0).contains(0x20));
+        }
+    }
+
+    #[test]
+    fn a_colour_face_keeps_every_mapping() {
+        let coverage = read_coverage(COLOR, 0);
+        for (ch, _) in mapped(COLOR) {
+            assert!(coverage.contains(ch), "U+{ch:04X}");
+        }
+    }
 }
