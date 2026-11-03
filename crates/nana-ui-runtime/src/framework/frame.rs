@@ -60,6 +60,14 @@ impl AppContext {
         self.world.record_extract(extracted);
     }
 
+    pub fn record_extract_reusing(
+        &mut self,
+        extracted: &[crate::ExtractedNode],
+        moved: &[crate::ExtractedMove],
+    ) {
+        self.world.record_extract_reusing(extracted, moved);
+    }
+
     /// Open a product-frame profiler and work-counter accumulator.
     pub fn begin_frame_profile(&mut self) {
         self.frame_profiler = FrameProfiler::new();

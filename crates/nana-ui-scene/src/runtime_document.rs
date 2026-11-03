@@ -277,11 +277,15 @@ impl RuntimeDocument {
             }
         } else {
             let started = std::time::Instant::now();
-            let extracted = self
+            // A node layout only moved keeps the record the scene holds.
+            let held = &self.scene;
+            let (extracted, moved) = self
                 .context
                 .world()
-                .extract_nodes(&render_dirty.into_iter().collect::<Vec<_>>());
-            self.context.record_extract(&extracted);
+                .extract_nodes_reusing(&render_dirty.into_iter().collect::<Vec<_>>(), |id| {
+                    held.extracted_node(id)
+                });
+            self.context.record_extract_reusing(&extracted, &moved);
             // Applying the delta to the retained scene is part of Extract, not
             // free: it walks the extracted nodes, rebuilds their primitives,
             // and copy-on-writes the scene when a renderer still holds the
@@ -294,7 +298,7 @@ impl RuntimeDocument {
             let focus_ring = self.context.world().theme_metrics().focus_ring;
             let retained = Arc::make_mut(&mut self.scene);
             retained.set_focus_ring(focus_ring);
-            let scene = retained.apply_delta(extracted, render_removed);
+            let scene = retained.apply_delta_with_moves(extracted, moved, render_removed);
             self.context
                 .time_stage_duration(FrameStage::Extract, started.elapsed());
             scene

@@ -1406,10 +1406,9 @@ impl UiWorld {
         }
         match mutation {
             UiMutation::Create { id, document, kind } => {
-                self.nodes.insert(
-                    *id,
-                    NodeRecord::new(*document, kind, initial_interaction(kind)),
-                );
+                let mut record = NodeRecord::new(*document, kind, initial_interaction(kind));
+                record.render_full_epoch = self.render_epoch.get();
+                self.nodes.insert(*id, record);
                 self.record_topology_invalidation(*id);
                 self.dirty_entities.insert(*id);
                 self.pending_work_revision = self.pending_work_revision.saturating_add(1);
@@ -1730,12 +1729,14 @@ impl UiWorld {
                     self.note_responsive_resize(*id);
                 }
                 // Padding and fragment changes that keep this border box are
-                // scheduled when their result publishes.
-                if resized || moved {
-                    self.mark(
-                        *id,
-                        DirtyMask::INPUT | DirtyMask::RENDER | DirtyMask::ACCESSIBILITY,
-                    );
+                // scheduled when their result publishes. A box that only moved
+                // leaves its record to that publish to say whether anything
+                // but its place changed.
+                let bits = DirtyMask::INPUT | DirtyMask::RENDER | DirtyMask::ACCESSIBILITY;
+                if resized {
+                    self.mark(*id, bits);
+                } else if moved {
+                    self.mark_moved(*id, bits);
                 }
             }
             UiMutation::PatchPlacement { id, top, height } => {

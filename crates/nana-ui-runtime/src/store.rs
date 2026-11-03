@@ -134,6 +134,13 @@ pub(crate) struct NodeRecord {
     pub interaction: InteractionState,
     pub accessibility: AccessibilityState,
     pub dirty: DirtyMask,
+    /// Why the node is marked for render extraction, in the world's
+    /// extraction epochs: the last epoch anything but a move marked it
+    /// (or it was made), and the last one a layout move marked it. Only a
+    /// node a move marked and nothing else did since the epoch began may
+    /// reuse its last extracted record.
+    pub render_full_epoch: u64,
+    pub render_moved_epoch: u64,
 }
 
 impl NodeRecord {
@@ -161,6 +168,8 @@ impl NodeRecord {
             interaction,
             accessibility: AccessibilityState::default(),
             dirty: DirtyMask::all(),
+            render_full_epoch: 0,
+            render_moved_epoch: u64::MAX,
         }
     }
 }

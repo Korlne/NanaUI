@@ -277,6 +277,8 @@ fn nana_edits(rows: usize, cells: usize, edit: &str, runs: usize) -> (f64, f64) 
     let viewport = LayoutViewport::new(1280.0, 800.0);
     runtime.flush(viewport, &mut FixedShaper).unwrap();
     let (mut layout, mut whole) = (f64::INFINITY, f64::INFINITY);
+    // The least time each stage took over the runs, by stage.
+    let mut least: Vec<(FrameStage, f64)> = Vec::new();
     for run in 0..runs {
         let on = run % 2 == 0;
         let cx = runtime.context_mut();
@@ -312,22 +314,20 @@ fn nana_edits(rows: usize, cells: usize, edit: &str, runs: usize) -> (f64, f64) 
             .map(|timing| timing.duration.as_secs_f64() * 1e6)
             .sum();
         layout = layout.min(stage);
+        for timing in &runtime.context().last_frame_profile().stages {
+            let micros = timing.duration.as_secs_f64() * 1e6;
+            match least.iter_mut().find(|(stage, _)| *stage == timing.stage) {
+                Some((_, held)) => *held = held.min(micros),
+                None => least.push((timing.stage, micros)),
+            }
+        }
         if run + 1 == runs && std::env::var_os("PRINT_STAGES").is_some() {
-            let stages: Vec<String> = runtime
-                .context()
-                .last_frame_profile()
-                .stages
+            let stages: Vec<String> = least
                 .iter()
-                .filter(|timing| !timing.duration.is_zero())
-                .map(|timing| {
-                    format!(
-                        "{:?} {:.0}",
-                        timing.stage,
-                        timing.duration.as_secs_f64() * 1e6
-                    )
-                })
+                .filter(|(_, micros)| *micros > 0.0)
+                .map(|(stage, micros)| format!("{stage:?} {micros:.0}"))
                 .collect();
-            eprintln!("{edit}: {} (µs)", stages.join(", "));
+            eprintln!("{edit}: least {} (µs)", stages.join(", "));
         }
         if run + 1 == runs && std::env::var_os("PRINT_COUNTERS").is_some() {
             let w = runtime.context().last_work_counters();

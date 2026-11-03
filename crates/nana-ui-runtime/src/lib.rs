@@ -223,6 +223,7 @@ pub use component_registry::{
     ComponentBindKind, ComponentRegistry, ComponentTypeId, PreparedSemanticBinding,
     RegisterableComponent, SemanticOption, SemanticSpec, normalize_tag,
 };
+pub use components::ExtractedMove;
 pub use components::{
     AccessibilityAction, AccessibilityActionRequest, AccessibilityDelta, AccessibilityLive,
     AccessibilityNode, AccessibilityRole, AccessibilityScrollAxis, AccessibilityScrollDirection,

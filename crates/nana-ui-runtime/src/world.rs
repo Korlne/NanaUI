@@ -55,7 +55,7 @@ use nana_ui_core::{GraphPoint, GraphPortKind, GraphPortSide, GraphRect, GraphSiz
 use crate::{
     AccessibilityDelta, AccessibilityLive, AccessibilityNode, AccessibilityRole,
     AccessibilityState, AnimationFrame, AnimationId, AnimationSpec, ComponentTypeId, ComputedStyle,
-    CustomRenderNode, EventListeners, EventRoute, ExtractedNode, ExtractedTextSpan,
+    CustomRenderNode, EventListeners, EventRoute, ExtractedMove, ExtractedNode, ExtractedTextSpan,
     HighlightRequest, ImeComposition, InteractionState, LayoutBox, LayoutInput, MotionWorkCounters,
     MountState, MutationQueue, NodeStyle, OverlayHostState, PointerCaptureChange, ScrollMetrics,
     ScrollOffset, StandardVisual, TextContent, TextMetrics, TextPresentation, TextPresenter,
@@ -952,6 +952,9 @@ pub struct UiWorld {
     /// The same boxes for the coming hit-index patch: an entry whose geometry
     /// is only its box is moved in place instead of rebuilt.
     translated_hit: NodeSet,
+    /// Counts [`Self::extract_nodes_reusing`] calls: a node's render marks
+    /// (`NodeRecord::render_full_epoch`) say why it is dirty since the last.
+    render_epoch: Cell<u64>,
     /// Set while the frame driver commits a layout pass's box writes: it
     /// publishes the whole pass scope right after, so the commit leaves the
     /// written boxes to that publish: it would build each result only for
@@ -1227,6 +1230,7 @@ impl UiWorld {
             layout_results_suppressed: NodeSet::default(),
             translated_layout: NodeSet::default(),
             translated_hit: NodeSet::default(),
+            render_epoch: Cell::new(0),
             pass_publishes_written_boxes: false,
             layout_anchor_roots: HashSet::new(),
             cursor_style_dirty: false,
@@ -1832,7 +1836,7 @@ impl UiWorld {
                         fresh.placed
                     );
                 }
-                built.push((id, result));
+                built.push((id, result, true));
                 continue;
             }
             if self.layout_result_geometry_current(id, covered) {
@@ -1846,13 +1850,13 @@ impl UiWorld {
                     .map_or(0, |node| node.hierarchy.children.len()),
             );
             if let Some(result) = self.build_layout_result(id, source, &mut scratch) {
-                built.push((id, result));
+                built.push((id, result, false));
             }
         }
         #[cfg(feature = "benchmark")]
         phase.lap(8);
         let mut published = built;
-        published.retain(|(id, result)| {
+        published.retain(|(id, result, _)| {
             if self
                 .layout_results
                 .get(id)
@@ -1873,7 +1877,7 @@ impl UiWorld {
         self.note_layout_result_publish(reused, changed, 1, children_visited);
         self.layout_generation = self.layout_generation.wrapping_add(1);
         let generation = self.layout_generation;
-        for (id, mut retained) in published {
+        for (id, mut retained, moved) in published {
             let result = Arc::get_mut(&mut retained.placed).expect("a result just built");
             // The menu's growing label slot depends on chrome and its offered
             // box, not on label advance. A changed slot must reach text even
@@ -1916,11 +1920,18 @@ impl UiWorld {
                     .invalidate_text(id, crate::text_node::TextDirty::CONSTRAINT);
                 self.mark(id, DirtyMask::TEXT);
             }
+            if moved {
+                // Nothing but where it stands changed: the record extraction
+                // made of it last may be reused with its new box.
+                self.record_mut(id).render_moved_epoch = self.render_epoch.get();
+            }
             if project {
-                self.mark(
-                    id,
-                    DirtyMask::INPUT | DirtyMask::RENDER | DirtyMask::ACCESSIBILITY,
-                );
+                let bits = DirtyMask::INPUT | DirtyMask::RENDER | DirtyMask::ACCESSIBILITY;
+                if moved {
+                    self.mark_moved(id, bits);
+                } else {
+                    self.mark(id, bits);
+                }
             }
             if sticky_changed {
                 self.mark(id, DirtyMask::RENDER);
@@ -2864,13 +2875,25 @@ impl UiWorld {
     /// and GPU upload bytes are omitted; extraction does not measure them.
     pub fn record_extract(&mut self, extracted: &[ExtractedNode]) {
         let spans = extracted.iter().map(|node| node.text_spans.len()).sum();
+        self.record_extracted(extracted.len(), spans);
+    }
+
+    /// [`Self::record_extract`] for what
+    /// [`Self::extract_nodes_reusing`] gave: a move counts as an extracted
+    /// node, and its spans are the ones the renderer already holds.
+    pub fn record_extract_reusing(&mut self, extracted: &[ExtractedNode], moved: &[ExtractedMove]) {
+        let spans = extracted.iter().map(|node| node.text_spans.len()).sum();
+        self.record_extracted(extracted.len() + moved.len(), spans);
+    }
+
+    fn record_extracted(&mut self, nodes: usize, spans: usize) {
         if self.accumulating_frame {
-            self.frame_extracted_nodes = self.frame_extracted_nodes.saturating_add(extracted.len());
+            self.frame_extracted_nodes = self.frame_extracted_nodes.saturating_add(nodes);
             self.frame_extracted_spans = self.frame_extracted_spans.saturating_add(spans);
             self.last_counters.render_nodes_extracted = self.frame_extracted_nodes;
             self.last_counters.extracted_text_spans = self.frame_extracted_spans;
         } else {
-            self.last_counters.render_nodes_extracted = extracted.len();
+            self.last_counters.render_nodes_extracted = nodes;
             self.last_counters.extracted_text_spans = spans;
         }
     }
@@ -3408,12 +3431,16 @@ impl UiWorld {
                 if !self.nodes.contains(id) {
                     continue;
                 };
-                let changed = self
+                let epoch = self.render_epoch.get();
+                let record = self
                     .nodes
                     .get_mut(id)
-                    .map(|n| &mut n.dirty)
-                    .expect("retained node must have dirty state")
-                    .insert(bit);
+                    .expect("retained node must have dirty state");
+                if bit == DirtyMask::RENDER {
+                    // Why it was marked went with the drain.
+                    record.render_full_epoch = epoch;
+                }
+                let changed = record.dirty.insert(bit);
                 if changed {
                     self.dirty_entities.insert(id);
                     self.pending_work_revision = self.pending_work_revision.saturating_add(1);
@@ -5974,6 +6001,25 @@ impl UiWorld {
     /// Layout dirtiness retires full-layout snapshots: text shaping and other
     /// post-layout writers reach layout only through a cause, not a commit.
     fn mark_scroll_compatible(&mut self, id: StableNodeId, bits: u16) -> bool {
+        if bits & DirtyMask::RENDER != 0 {
+            self.record_mut(id).render_full_epoch = self.render_epoch.get();
+        }
+        self.mark_keeping_render_reason(id, bits)
+    }
+
+    /// [`Self::mark`] for a box layout only moved: its render mark does not
+    /// say the rest of its extracted record changed. What does reuse that
+    /// record is still decided by `render_moved_epoch`, which only a result
+    /// placed again from its own geometry sets.
+    fn mark_moved(&mut self, id: StableNodeId, bits: u16) -> bool {
+        debug_assert_eq!(bits & DirtyMask::LAYOUT, 0, "a move is not a layout cause");
+        if bits & DirtyMask::INPUT != 0 {
+            self.non_scroll_hit_dirty.insert(id);
+        }
+        self.mark_keeping_render_reason(id, bits)
+    }
+
+    fn mark_keeping_render_reason(&mut self, id: StableNodeId, bits: u16) -> bool {
         if bits & DirtyMask::LAYOUT != 0 {
             self.note_layout_source_change();
         }

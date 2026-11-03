@@ -28,9 +28,9 @@ use nana_ui_core::{
 };
 use nana_ui_runtime::{
     ComponentElevation, ComponentGeometry, ComponentTextRegion, ContrastRing, CustomRenderNode,
-    ExtractedNode, LayoutBox, NodeKind, NodeMap, NodeSet, StableNodeId, StandardVisual,
-    TextFoldGutter, TextHorizontalAlignment, TextInputScroll, TextShaping, TextVerticalAlignment,
-    TextWhitespaceKind,
+    ExtractedMove, ExtractedNode, LayoutBox, NodeKind, NodeMap, NodeSet, StableNodeId,
+    StandardVisual, TextFoldGutter, TextHorizontalAlignment, TextInputScroll, TextShaping,
+    TextVerticalAlignment, TextWhitespaceKind,
 };
 
 use crate::{
@@ -1901,6 +1901,11 @@ impl UiScene {
         })
     }
 
+    /// The record the scene holds for `id`: the one its last delta gave it.
+    pub fn extracted_node(&self, id: StableNodeId) -> Option<&ExtractedNode> {
+        self.nodes.get(&id).map(Arc::as_ref)
+    }
+
     pub fn node_bounds(&self, id: StableNodeId) -> Option<SceneRect> {
         self.nodes.get(&id).map(|node| SceneRect {
             x: node.layout.x,
@@ -2072,6 +2077,18 @@ impl UiScene {
         extracted: impl IntoIterator<Item = ExtractedNode>,
         removals: impl IntoIterator<Item = StableNodeId>,
     ) -> SceneDelta {
+        self.apply_delta_with_moves(extracted, std::iter::empty(), removals)
+    }
+
+    /// [`Self::apply_delta`] with the nodes layout only moved
+    /// (`UiWorld::extract_nodes_reusing`): each keeps the record the scene
+    /// holds, given its new box and result.
+    pub fn apply_delta_with_moves(
+        &mut self,
+        extracted: impl IntoIterator<Item = ExtractedNode>,
+        moved: impl IntoIterator<Item = ExtractedMove>,
+        removals: impl IntoIterator<Item = StableNodeId>,
+    ) -> SceneDelta {
         let mut delta = SceneDelta::default();
         self.structure_changed = false;
         let mut removed_nodes = 0;
@@ -2124,6 +2141,72 @@ impl UiScene {
         let mut scroll_translations = Vec::new();
         let mut stacking_changed = false;
         let mut inherited_geometry_changed = !inherited_roots.is_empty();
+        // What the loop over extracted nodes below derives, for a record of
+        // which only the box and result changed: each reading that could
+        // differ is taken before and after they are written in place.
+        for moved in moved {
+            let id = moved.id;
+            let Some(old) = self.nodes.get(&id) else {
+                debug_assert!(false, "{id:?} moved, but the scene holds no record of it");
+                continue;
+            };
+            let sticky_facts = |node: &ExtractedNode| {
+                node.layout_result
+                    .as_ref()
+                    .map(|result| (result.content_box, result.padding_box, result.scroll_extent))
+            };
+            let sticky_dependents = self.sticky_nodes.has_dependents(id);
+            let old_sticky = sticky_dependents.then(|| sticky_facts(old));
+            let old_layout = old.layout;
+            let old_clip_link = clip_link(old);
+            let old_order = paint_order_facts(old);
+            let old_opacity = inherited_opacity(&self.nodes, old).to_bits();
+            let was_candidate = may_be_dest_group(old);
+            {
+                let held = self.nodes.get_mut(&id).expect("held above");
+                let node = Arc::make_mut(held);
+                node.layout = moved.layout;
+                node.layout_result = moved.layout_result;
+            }
+            let node = self.nodes.get(&id).expect("held above");
+            let layout_changed = old_layout != node.layout;
+            let sticky_geometry_changed =
+                sticky_dependents && old_sticky != Some(sticky_facts(node));
+            if sticky_geometry_changed || layout_changed {
+                self.attribute_epoch = self.attribute_epoch.wrapping_add(1);
+                inherited_geometry_changed = true;
+                inherited_roots.insert(id);
+            }
+            if layout_changed {
+                delta.transforms.push(id);
+                delta.clips.push(id);
+            }
+            delta.paint.push(id);
+            hierarchy_changed |= old_clip_link != clip_link(node);
+            let escapes = escapes_clip_parent(node);
+            stacking_changed |= old_order != paint_order_facts(node);
+            if old_opacity != inherited_opacity(&self.nodes, node).to_bits() {
+                subtree_rebuild.push(id);
+            }
+            let candidate = may_be_dest_group(node);
+            let paintless = layout_changed
+                && old_layout.width.to_bits() == node.layout.width.to_bits()
+                && old_layout.height.to_bits() == node.layout.height.to_bits()
+                && self.node_primitive_count(id) == 0;
+            if escapes {
+                self.escaped_nodes.insert(id);
+            } else {
+                self.escaped_nodes.remove(&id);
+            }
+            if paintless {
+                paintless_moves.push(id);
+            } else {
+                changed.push(id);
+            }
+            self.dest_group_candidates -= usize::from(was_candidate);
+            self.dest_group_candidates += usize::from(candidate);
+            updated_nodes += 1;
+        }
         for node in extracted {
             let previous = self.nodes.get(&node.id);
             if previous.is_none_or(|old| {

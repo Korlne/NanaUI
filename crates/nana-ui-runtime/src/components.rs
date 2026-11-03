@@ -4835,6 +4835,16 @@ pub struct ExtractedNode {
     pub custom_paint: Option<Arc<crate::PaintRecording>>,
 }
 
+/// A node layout only moved since the renderer's last extraction: its
+/// record is the one the renderer holds, but for its box and layout result
+/// (see [`crate::UiWorld::extract_nodes_reusing`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExtractedMove {
+    pub id: StableNodeId,
+    pub layout: LayoutBox,
+    pub layout_result: Option<Arc<crate::LayoutResult>>,
+}
+
 /// Scene layer promotion hint produced at extract. Empty for layout/paint tracks.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ExtractedCompositor {

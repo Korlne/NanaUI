@@ -700,6 +700,177 @@ impl UiWorld {
         );
         extracted
     }
+
+    /// [`Self::extract_nodes`] for a renderer that keeps what it extracted.
+    ///
+    /// `previous` answers the record the renderer holds for a node: the one
+    /// the last call gave it. A node that layout only moved since the last
+    /// call -- its result placed again from its own geometry, and no other
+    /// render mark -- comes back as a move, its new box and result, and the
+    /// renderer keeps the rest of its record. Anything else, or a node
+    /// `previous` does not know, is extracted in full. The record is not
+    /// read: it is cold, and reading it costs what extracting it does.
+    pub fn extract_nodes_reusing<'a>(
+        &self,
+        ids: &[StableNodeId],
+        previous: impl Fn(StableNodeId) -> Option<&'a ExtractedNode>,
+    ) -> (Vec<ExtractedNode>, Vec<ExtractedMove>) {
+        let epoch = self.render_epoch.get();
+        let mut memo = AncestorMemo::default();
+        let mut extracted = Vec::with_capacity(ids.len());
+        let mut moved = Vec::new();
+        for &id in ids {
+            if self.only_moved_since(id, epoch)
+                && let Some(held) = previous(id)
+            {
+                moved.extend(self.extract_move_memo(id, held, &mut memo));
+            } else {
+                extracted.extend(self.extract_node_memo(id, &mut memo));
+            }
+        }
+        // Marks from here on say why the next call's nodes are dirty.
+        self.render_epoch.set(epoch.wrapping_add(1));
+        (extracted, moved)
+    }
+
+    fn only_moved_since(&self, id: StableNodeId, epoch: u64) -> bool {
+        self.nodes
+            .get(id)
+            .is_some_and(|node| node.render_moved_epoch == epoch && node.render_full_epoch != epoch)
+    }
+
+    /// Where the node's box and result now stand. Whether the node is
+    /// extracted at all is asked again: that is not the node's own.
+    fn extract_move_memo(
+        &self,
+        id: StableNodeId,
+        #[cfg_attr(not(any(test, feature = "layout-verify")), allow(unused_variables))]
+        held: &ExtractedNode,
+        memo: &mut AncestorMemo,
+    ) -> Option<ExtractedMove> {
+        if !self.presence_live_memo(id, memo) {
+            return None;
+        }
+        let moved = ExtractedMove {
+            id,
+            layout: self.component_layout_box(id)?,
+            layout_result: self
+                .layout_result(id)
+                .and_then(|_| self.layout_results.get(&id))
+                .map(|result| Arc::clone(&result.placed)),
+        };
+        #[cfg(any(test, feature = "layout-verify"))]
+        {
+            let mut reused = held.clone();
+            reused.layout = moved.layout;
+            reused.layout_result = moved.layout_result.clone();
+            let full = self
+                .extract_node_memo(id, &mut AncestorMemo::default())
+                .expect("a live node extracts");
+            let differs = extracted_fields_differ(&reused, &full);
+            assert!(
+                differs.is_empty(),
+                "{id:?}: a moved node's reused record differs from a full \
+                 extraction in {differs:?}"
+            );
+        }
+        Some(moved)
+    }
+}
+
+/// The fields of two records that are not equal, by name. Layout boxes
+/// compare to the bit.
+#[cfg(any(test, feature = "layout-verify"))]
+fn extracted_fields_differ(a: &ExtractedNode, b: &ExtractedNode) -> Vec<&'static str> {
+    let ExtractedNode {
+        layout_result,
+        id,
+        kind,
+        parent,
+        children,
+        layout,
+        scroll_offset,
+        source_style,
+        style,
+        text,
+        text_metrics,
+        text_layout,
+        text_preserve_lines,
+        z_index,
+        focused,
+        editable,
+        text_spans,
+        rich_text,
+        rich_editor,
+        glyph_presentation,
+        standard_visual,
+        component_geometry,
+        standard_visual_foreground,
+        chrome_radii,
+        custom_render,
+        drop_hover,
+        document_text_selection,
+        document_text_selection_color,
+        compositor,
+        custom_paint,
+    } = a;
+    let bits =
+        |layout: &LayoutBox| [layout.x, layout.y, layout.width, layout.height].map(f32::to_bits);
+    let mut differ = Vec::new();
+    let mut check = |name: &'static str, equal: bool| {
+        if !equal {
+            differ.push(name);
+        }
+    };
+    check("layout_result", *layout_result == b.layout_result);
+    check("id", *id == b.id);
+    check("kind", *kind == b.kind);
+    check("parent", *parent == b.parent);
+    check("children", *children == b.children);
+    check("layout", bits(layout) == bits(&b.layout));
+    check("scroll_offset", *scroll_offset == b.scroll_offset);
+    check("source_style", *source_style == b.source_style);
+    check("style", *style == b.style);
+    check("text", *text == b.text);
+    check("text_metrics", *text_metrics == b.text_metrics);
+    check("text_layout", *text_layout == b.text_layout);
+    check(
+        "text_preserve_lines",
+        *text_preserve_lines == b.text_preserve_lines,
+    );
+    check("z_index", *z_index == b.z_index);
+    check("focused", *focused == b.focused);
+    check("editable", *editable == b.editable);
+    check("text_spans", *text_spans == b.text_spans);
+    check("rich_text", *rich_text == b.rich_text);
+    check("rich_editor", *rich_editor == b.rich_editor);
+    check(
+        "glyph_presentation",
+        *glyph_presentation == b.glyph_presentation,
+    );
+    check("standard_visual", *standard_visual == b.standard_visual);
+    check(
+        "component_geometry",
+        *component_geometry == b.component_geometry,
+    );
+    check(
+        "standard_visual_foreground",
+        *standard_visual_foreground == b.standard_visual_foreground,
+    );
+    check("chrome_radii", *chrome_radii == b.chrome_radii);
+    check("custom_render", *custom_render == b.custom_render);
+    check("drop_hover", *drop_hover == b.drop_hover);
+    check(
+        "document_text_selection",
+        *document_text_selection == b.document_text_selection,
+    );
+    check(
+        "document_text_selection_color",
+        *document_text_selection_color == b.document_text_selection_color,
+    );
+    check("compositor", *compositor == b.compositor);
+    check("custom_paint", *custom_paint == b.custom_paint);
+    differ
 }
 
 impl UiWorld {
