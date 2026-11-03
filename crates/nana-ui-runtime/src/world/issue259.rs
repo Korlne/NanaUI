@@ -586,6 +586,8 @@ struct Cost {
     /// resolving their own style.
     measured: usize,
     placed: usize,
+    /// Boxes a container that only moved took along without placing them.
+    translated: usize,
     origin_only: usize,
     children_walked: usize,
     /// Children result publication checked or rebuilt.
@@ -611,6 +613,7 @@ impl From<WorkCounters> for Cost {
             edges: counters.layout_dependency_edges_visited,
             measured: counters.layout_measure_nodes,
             placed: counters.layout_placement_nodes,
+            translated: counters.layout_translated_nodes,
             origin_only: counters.layout_origin_only_updates,
             children_walked: counters.layout_children_measured,
             result_children: counters.layout_result_children_visited,
@@ -719,19 +722,23 @@ fn check_case(
             assert_eq!(case.moved, 0, "{label}");
             continue;
         }
-        // Placement pays for the boxes that moved and for the way down to
-        // the edit, and for nothing else.
+        // Placement pays for the boxes that moved, placed or taken along by
+        // a container that only moved, and for the way down to the edit, and
+        // for nothing else.
+        let reached = cost.placed + cost.translated;
         assert!(
-            cost.placed >= case.moved,
-            "{label}: {} boxes moved, {} placed",
+            reached >= case.moved,
+            "{label}: {} boxes moved, {} placed, {} translated",
             case.moved,
-            cost.placed
+            cost.placed,
+            cost.translated
         );
         assert!(
-            cost.placed <= case.moved + cost.frontier_placement + path,
-            "{label}: {} boxes moved, {} placed: {cost:?}",
+            reached <= case.moved + cost.frontier_placement + path,
+            "{label}: {} boxes moved, {} placed, {} translated: {cost:?}",
             case.moved,
-            cost.placed
+            cost.placed,
+            cost.translated
         );
     }
     if scenario == Scenario::PaintOnly {
@@ -752,12 +759,13 @@ fn check_case(
             small_cost.suffixes_replayed, large_cost.suffixes_replayed,
             "{label}"
         );
-        // Boxes are placed in page coordinates, so every box in a group that
-        // moves is written again; but the group takes its plans along, and
-        // only the edited containers miss or record theirs again: the same
-        // number at every size, and never more than boxes moved. (A context
-        // that records no plan, the inline one, still walks its children
-        // when it moves.)
+        // Boxes are in page coordinates, so every box in a group that moves
+        // is written again -- inside a group that only moved, by translation
+        // rather than placement (`translate_moved_children`); the group takes
+        // its plans along, and only the edited containers miss or record
+        // theirs again: the same number at every size, and never more than
+        // boxes moved. (A context that records no plan, the inline one,
+        // still walks its children when it moves.)
         assert_eq!(
             (small_cost.plan_misses, small_cost.plan_rebuilds),
             (large_cost.plan_misses, large_cost.plan_rebuilds),
@@ -1620,10 +1628,17 @@ fn issue259_a_label_costs_its_column_not_the_groups_after_it() {
             if grows {
                 // Every group moved, and only once.
                 assert!(moved[groups..].iter().all(|moved| *moved), "{label_case}");
-                assert_eq!(cost.origin_only, order.len() - groups, "{label_case}");
+                // A group placed only by moving takes what it holds along
+                // without placing it (`translate_moved_children`).
+                assert_eq!(
+                    cost.origin_only + cost.translated,
+                    order.len() - groups,
+                    "{label_case}"
+                );
                 let moved = moved.iter().filter(|moved| **moved).count();
+                let reached = cost.placed + cost.translated;
                 assert!(
-                    cost.placed >= moved && cost.placed <= moved + cost.frontier_placement,
+                    reached >= moved && reached <= moved + cost.frontier_placement,
                     "{label_case}: {moved} boxes moved, {} placed: {cost:?}",
                     cost.placed
                 );
@@ -1771,10 +1786,11 @@ fn issue259_a_child_list_edit_costs_its_parent_not_the_groups_after_it() {
                 );
                 let cost = Cost::from(counters);
                 let shifted = if grows { order.len() - moving } else { 0 };
-                assert_eq!(cost.origin_only, shifted, "{case}");
+                assert_eq!(cost.origin_only + cost.translated, shifted, "{case}");
                 let moved = moved.iter().filter(|moved| **moved).count();
+                let reached = cost.placed + cost.translated;
                 assert!(
-                    cost.placed >= moved && cost.placed <= moved + cost.frontier_placement,
+                    reached >= moved && reached <= moved + cost.frontier_placement,
                     "{case}: {moved} boxes moved, {} placed: {cost:?}",
                     cost.placed
                 );
@@ -1913,10 +1929,11 @@ fn issue259_a_child_list_edit_in_the_page_measures_the_edit_not_the_page() {
                 );
                 let cost = Cost::from(counters);
                 let shifted = if head { order.len() - after } else { 0 };
-                assert_eq!(cost.origin_only, shifted, "{label}");
+                assert_eq!(cost.origin_only + cost.translated, shifted, "{label}");
                 let moved = moved.iter().filter(|moved| **moved).count();
+                let reached = cost.placed + cost.translated;
                 assert!(
-                    cost.placed >= moved && cost.placed <= moved + cost.frontier_placement,
+                    reached >= moved && reached <= moved + cost.frontier_placement,
                     "{label}: {moved} boxes moved, {} placed: {cost:?}",
                     cost.placed
                 );

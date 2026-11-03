@@ -130,6 +130,11 @@ pub struct WorkCounters {
     pub layout_result_changed: usize,
     /// Placement writes that moved the origin and kept the measured size.
     pub layout_origin_only_updates: usize,
+    /// Subtrees that only moved, handed on as one translation each instead
+    /// of being placed box by box.
+    pub layout_translations: usize,
+    /// Boxes inside those subtrees: moved by the translation, not placed.
+    pub layout_translated_nodes: usize,
     /// Most stack, in bytes, one level of the measure recursion took: the
     /// cost a deeper tree pays per level. 0 where the platform cannot tell.
     /// A frame keeps the largest of its passes.
@@ -651,6 +656,7 @@ accumulate_counters! {
             layout_local_subtree_fallbacks, layout_full_document_fallbacks, layout_measure_nodes,
             layout_measure_cache_hits, layout_measure_cache_misses, layout_placement_nodes,
             layout_result_reused, layout_result_changed, layout_origin_only_updates,
+            layout_translations, layout_translated_nodes,
             layout_delta_commits, layout_result_children_visited, layout_context_transitions,
             layout_placement_boundaries,
             layout_invalidations_created,
@@ -941,6 +947,13 @@ impl WorkCounters {
         self.layout_origin_only_updates = self
             .layout_origin_only_updates
             .saturating_add(origin_only_updates);
+    }
+
+    pub fn record_layout_translations(&mut self, translations: usize, translated_nodes: usize) {
+        self.layout_translations = self.layout_translations.saturating_add(translations);
+        self.layout_translated_nodes = self
+            .layout_translated_nodes
+            .saturating_add(translated_nodes);
     }
 
     /// Keep the most stack one level of each layout recursion took.

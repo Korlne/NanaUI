@@ -2792,6 +2792,7 @@ impl UiWorld {
                 stats.placement_nodes,
                 stats.origin_only_updates,
             );
+            counters.record_layout_translations(stats.translations, stats.translated_nodes);
             counters.record_layout_stack_per_level(
                 stats.measure_stack_per_level,
                 stats.placement_stack_per_level,

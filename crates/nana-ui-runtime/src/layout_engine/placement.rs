@@ -1973,16 +1973,18 @@ fn place_moved_container(
         && triggered_menu_overlay(nodes.world, id).is_none()
         && let Some(moved) = plan.moved_to(origin, content_origin)
     {
-        place_moved_children(
-            &moved,
-            content_origin,
-            content,
-            viewport,
-            nodes,
-            intrinsic,
-            output,
-            scope,
-        )?;
+        if !translate_moved_children(plan, &moved, viewport, nodes, intrinsic, output, scope) {
+            place_moved_children(
+                &moved,
+                content_origin,
+                content,
+                viewport,
+                nodes,
+                intrinsic,
+                output,
+                scope,
+            )?;
+        }
         if moved.overlay.is_empty() {
             nodes.container_plans.insert(id, Some(moved));
         } else {
@@ -2008,6 +2010,131 @@ fn place_moved_container(
         return Ok(true);
     }
     Ok(false)
+}
+
+/// The subtrees under a container that only moved, moved with it without
+/// placing a box again. Each box goes where a fresh pass would put it: its
+/// parent's new content origin plus the offset the parent's plan recorded,
+/// and a container's content origin is its new origin plus its border, used
+/// padding and leading parts, summed in the order placement sums them. So
+/// the boxes match a fresh layout to the bit, as `place_moved_children`
+/// does, at a fraction of the work: no style resolution, facts or
+/// formatting context per box.
+///
+/// Nothing is written unless every box qualifies: one that the walk cannot
+/// move -- without a retained box, a plan that holds positioned children or
+/// lost its offsets, a dynamic line, an island, a box no longer where its
+/// plan says -- sends the whole container down `place_moved_children`.
+/// Returns whether the subtrees moved.
+fn translate_moved_children(
+    previous: &ContainerPlan,
+    moved: &ContainerPlan,
+    viewport: LayoutViewport,
+    nodes: &mut LayoutInputMap<'_>,
+    intrinsic: &mut PassIntrinsicCache,
+    output: &mut HashMap<StableNodeId, LayoutBox>,
+    scope: &ScopeContext<'_>,
+) -> bool {
+    if !moved.overlay.is_empty() {
+        return false;
+    }
+    let retained = scope.retained;
+    let world = nodes.world;
+    let content_origin_at = |id: StableNodeId, origin: Point| -> Option<Point> {
+        let style = world.layout_style(id)?;
+        let border = style.resolved_border_edges();
+        let padding = retained.used_padding.get(&id)?;
+        let lead = world
+            .leading_parts(id)
+            .map_or(Size::default(), |lead| lead.offset());
+        Some(Point {
+            x: origin.x + border.left + padding.left + lead.width,
+            y: origin.y + border.top + padding.top + lead.height,
+        })
+    };
+    // (node, where it stood, where it goes)
+    let mut open: Vec<(StableNodeId, Point, Point)> = previous
+        .entries
+        .borrow()
+        .iter()
+        .zip(moved.entries.borrow().iter())
+        .map(|(was, now)| (now.child, was.origin, now.origin))
+        .collect();
+    let mut boxes: Vec<(StableNodeId, LayoutBox)> = Vec::new();
+    let mut plans: Vec<(StableNodeId, ContainerPlan)> = Vec::new();
+    while let Some((id, was, now)) = open.pop() {
+        let Some(&kept) = retained.boxes.get(&id) else {
+            return false;
+        };
+        if kept.x.to_bits() != was.x.to_bits()
+            || kept.y.to_bits() != was.y.to_bits()
+            || output.contains_key(&id)
+            || nodes.container_plans.contains_key(&id)
+            || retained.placements.contains_key(&id)
+            || retained.remote_overlays.contains(&id)
+            || retained.envelopes.contains_key(&id)
+            || retained.line_solves.contains_key(&id)
+            || retained.applied_adjustments.contains_key(&id)
+            || world.inline_record(id).is_some()
+        {
+            return false;
+        }
+        boxes.push((
+            id,
+            LayoutBox {
+                x: now.x,
+                y: now.y,
+                ..kept
+            },
+        ));
+        let children = world.child_ids(id);
+        if children.is_empty() {
+            continue;
+        }
+        let Some(plan) = retained.container_plans.get(&id) else {
+            return false;
+        };
+        if !plan.overlay.is_empty()
+            || plan.viewport != viewport
+            || plan.origin.x.to_bits() != was.x.to_bits()
+            || plan.origin.y.to_bits() != was.y.to_bits()
+            || plan.children.as_slice() != children
+            || !world.children_layout_style_is_local(id)
+            || triggered_menu_overlay(world, id).is_some()
+        {
+            return false;
+        }
+        // The plan's content origin must be the sum this walk takes, or the
+        // walk would place the children somewhere a fresh pass does not.
+        let Some(stood) = content_origin_at(id, was) else {
+            return false;
+        };
+        if stood.x.to_bits() != plan.content_origin.x.to_bits()
+            || stood.y.to_bits() != plan.content_origin.y.to_bits()
+        {
+            return false;
+        }
+        let Some(content_origin) = content_origin_at(id, now) else {
+            return false;
+        };
+        let Some(next) = plan.moved_to(now, content_origin) else {
+            return false;
+        };
+        open.extend(
+            plan.entries
+                .borrow()
+                .iter()
+                .zip(next.entries.borrow().iter())
+                .map(|(was, now)| (now.child, was.origin, now.origin)),
+        );
+        plans.push((id, next));
+    }
+    intrinsic.note_translation(boxes.len());
+    output.extend(boxes);
+    for (id, plan) in plans {
+        nodes.container_plans.insert(id, Some(plan));
+    }
+    true
 }
 
 /// A sequential container with a new child list, placed by replaying its

@@ -3209,6 +3209,10 @@ pub(crate) struct LayoutExecutionStats {
     pub measure_cache_misses: usize,
     pub placement_nodes: usize,
     pub origin_only_updates: usize,
+    /// Subtrees under a container that only moved, moved without placing
+    /// them again, and the boxes in them.
+    pub translations: usize,
+    pub translated_nodes: usize,
     /// Containers placed from their retained [`ContainerPlan`].
     pub placement_plans_reused: usize,
     /// Containers measured from a retained [`MeasurePlan`], without a walk of
@@ -3398,6 +3402,12 @@ impl PassIntrinsicCache {
     fn note_placement_node(&mut self) {
         self.execution_stats.placement_nodes =
             self.execution_stats.placement_nodes.saturating_add(1);
+    }
+
+    fn note_translation(&mut self, nodes: usize) {
+        self.execution_stats.translations = self.execution_stats.translations.saturating_add(1);
+        self.execution_stats.translated_nodes =
+            self.execution_stats.translated_nodes.saturating_add(nodes);
     }
 
     fn note_origin_only(&mut self) {
