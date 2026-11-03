@@ -312,6 +312,23 @@ fn nana_edits(rows: usize, cells: usize, edit: &str, runs: usize) -> (f64, f64) 
             .map(|timing| timing.duration.as_secs_f64() * 1e6)
             .sum();
         layout = layout.min(stage);
+        if run + 1 == runs && std::env::var_os("PRINT_STAGES").is_some() {
+            let stages: Vec<String> = runtime
+                .context()
+                .last_frame_profile()
+                .stages
+                .iter()
+                .filter(|timing| !timing.duration.is_zero())
+                .map(|timing| {
+                    format!(
+                        "{:?} {:.0}",
+                        timing.stage,
+                        timing.duration.as_secs_f64() * 1e6
+                    )
+                })
+                .collect();
+            eprintln!("{edit}: {} (µs)", stages.join(", "));
+        }
         if run + 1 == runs && std::env::var_os("PRINT_COUNTERS").is_some() {
             let w = runtime.context().last_work_counters();
             eprintln!(
