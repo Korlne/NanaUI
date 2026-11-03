@@ -163,8 +163,18 @@ impl UiWorld {
             body_text.as_ref().and_then(|_| {
                 part(
                     crate::LayoutPartKind::Note,
+                    // Copy taller than the capped card stops at its body,
+                    // clear of the actions below. The body is the card less
+                    // its chrome, so copy that fits can come out a rounding
+                    // step over it; that copy keeps its own height.
                     LayoutBox {
-                        height: frame.presentation.body.unwrap_or_default().height,
+                        height: frame.presentation.body.map_or(0.0, |copy| {
+                            if copy.height > body.height + 0.5 {
+                                body.height
+                            } else {
+                                copy.height
+                            }
+                        }),
                         ..body
                     },
                 )

@@ -4571,15 +4571,23 @@ fn component_text_primitive(
     } else {
         (ellipsis, None)
     };
-    let intrinsic_multiline = matches!(
+    // A modal's and an empty state's own copy is measured at the font's
+    // natural line height whatever the node inherits (`shape_modal_text`,
+    // `shape_empty_state_text`); painting it at another line height runs it
+    // past the part layout sized for it, and the last line is elided.
+    let intrinsic_copy = matches!(
         node.standard_visual,
         Some(StandardVisual::EmptyState { .. } | StandardVisual::ModalFrame { .. })
-    ) || matches!(
-        node.component_geometry.as_deref(),
-        Some(
-            ComponentGeometry::NativeMarkdown { .. } | ComponentGeometry::SelectableRichText { .. }
+    );
+    let intrinsic_multiline = intrinsic_copy
+        || matches!(
+            node.component_geometry.as_deref(),
+            Some(
+                ComponentGeometry::NativeMarkdown { .. }
+                    | ComponentGeometry::SelectableRichText { .. }
+            )
         )
-    ) || (validation && node.source_style.layout.text_wraps());
+        || (validation && node.source_style.layout.text_wraps());
     let advanced_content = slot == 2
         && matches!(
             node.standard_visual,
@@ -4655,6 +4663,8 @@ fn component_text_primitive(
                     Some(ComponentGeometry::Switch { .. } | ComponentGeometry::ListItem { .. })
                 ) {
                 Some(LineHeightSpec::Absolute(region.bounds.height))
+            } else if intrinsic_copy {
+                None
             } else {
                 node.style.line_height
             },
