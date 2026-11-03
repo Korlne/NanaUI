@@ -264,48 +264,7 @@ impl SettingsRow {
             })
     }
 
-    /// Whether the row puts its control on the name's line rather than in
-    /// the middle of its copy: an inline settings row (no label column)
-    /// whose copy has a second line under the name, a hint or an error.
-    /// Centred on both lines, the control would sit below the name it
-    /// belongs to.
-    pub(crate) fn aligns_to_name_line(&self) -> bool {
-        self.label_column.is_none()
-            && !self.label.is_empty()
-            && (self.hint.is_some() || self.error.is_some())
-    }
-
-    /// How far the copy of a row that [aligns to its name's
-    /// line](Self::aligns_to_name_line) stands below the control's top: half
-    /// of what the control is taller than the name's line, from their last
-    /// layouts, so the name and the control share their centre and the hint
-    /// stays right under the name. The name then sits where it does on a
-    /// row without a hint. `None` while the row is stacked, has nothing to
-    /// align, or has not been laid out yet; the row then centres its control
-    /// as any other row does. Neither the control nor the name's line
-    /// follows from the copy's position, so this does not feed back.
-    fn name_line(&self, world: &UiWorld, stacked: bool) -> Option<f32> {
-        if stacked || !self.aligns_to_name_line() {
-            return None;
-        }
-        let height = |node: StableNodeId| {
-            world
-                .component_layout_box(node)
-                .map(|bounds| bounds.height)
-                .filter(|height| height.is_finite() && *height >= 0.0)
-        };
-        let control = height(self.control_slot.or(self.control)?).filter(|height| *height > 0.0)?;
-        let line = height(self.name_line_node()?)?;
-        Some(((control - line) / 2.0).max(0.0))
-    }
-
-    /// The node that stands on the name's line: the line holding the label
-    /// and its accessory, or the label itself.
-    fn name_line_node(&self) -> Option<StableNodeId> {
-        self.label_line_slot.or(self.label_slot)
-    }
-
-    fn effective_style(&self, stacked: bool, name_line: bool) -> NodeStyle {
+    fn effective_style(&self, stacked: bool) -> NodeStyle {
         let mut style = self.style.clone();
         style.foreground = Some(SemanticColorRole::Text);
         style.background = None;
@@ -327,12 +286,10 @@ impl SettingsRow {
         } else {
             FlexDirection::Row
         });
-        // The control on top, the copy lowered to put the name on its
-        // centre (see `name_line`).
+        // Centred on the whole copy, hint included: the control balances
+        // the block it sits beside, not just the name's line.
         layout.align_items = if stacked {
             AlignSpec::Stretch
-        } else if name_line {
-            AlignSpec::Start
         } else {
             AlignSpec::Center
         };
@@ -456,12 +413,11 @@ impl ComponentView for SettingsRow {
             mutations.set_standard_visual(id, None);
         }
         let stacked = self.effective_stacked(id, world);
-        let name_line = self.name_line(world, stacked);
         project_common(
             id,
             world,
             mutations,
-            &self.effective_style(stacked, name_line.is_some()),
+            &self.effective_style(stacked),
             InteractionState {
                 pointer_events: false,
                 focusable: false,
@@ -474,23 +430,16 @@ impl ComponentView for SettingsRow {
                 ..AccessibilityState::default()
             },
         );
-        self.project_slots(world, mutations, stacked, name_line);
+        self.project_slots(world, mutations, stacked);
     }
 }
 
 impl SettingsRow {
-    fn project_slots(
-        &self,
-        world: &UiWorld,
-        mutations: &mut MutationQueue,
-        stacked: bool,
-        name_line: Option<f32>,
-    ) {
+    fn project_slots(&self, world: &UiWorld, mutations: &mut MutationQueue, stacked: bool) {
         if let Some(copy) = self.copy_slot {
             SettingsRowCopy {
                 stacked,
                 column: self.label_column,
-                offset: name_line,
             }
             .project(copy, world, mutations);
         }
@@ -630,9 +579,6 @@ struct SettingsRowCopy {
     stacked: bool,
     /// The row's label column, see [`SettingsRow::label_column`].
     column: Option<f32>,
-    /// How far below the control's top it starts; see
-    /// [`SettingsRow::name_line`].
-    offset: Option<f32>,
 }
 
 impl SettingsRowCopy {
@@ -647,7 +593,6 @@ impl SettingsRowCopy {
         layout.flex_grow = Some(if self.stacked { 0.0 } else { 1.0 });
         layout.flex_shrink = Some(1.0);
         layout.min_width = Some(LengthSpec::Px(0.0));
-        layout.margin_top = self.offset.map(LengthSpec::Px);
         if let (Some(width), false) = (self.column, self.stacked) {
             // the column keeps its width; the control takes the rest
             layout.width = Some(LengthSpec::Px(width));
@@ -2492,7 +2437,6 @@ fn mount_settings_row(
             SettingsRowCopy {
                 stacked: false,
                 column: None,
-                offset: None,
             },
         )?;
         copy_slot = Some(entity.stable_id());
@@ -2795,24 +2739,14 @@ impl AppContext {
         let row = Entity::<SettingsRow>::from_stable_id(id);
         let needs_projection = self
             .read(row, |row| {
-                let world = self.world();
-                let stacked = row.effective_stacked(id, world);
-                let direction = if stacked {
+                let direction = if row.effective_stacked(id, self.world()) {
                     FlexDirection::Column
                 } else {
                     FlexDirection::Row
                 };
-                // The copy's offset follows the control's and the name's
-                // heights, which only this pass has measured.
-                let offset = row.name_line(world, stacked).map(LengthSpec::Px);
-                let line_moved = row
-                    .copy_slot
-                    .and_then(|copy| world.node_style(copy))
-                    .is_some_and(|style| style.layout.margin_top != offset);
-                line_moved
-                    || world
-                        .node_style(id)
-                        .is_some_and(|style| style.layout.direction != Some(direction))
+                self.world()
+                    .node_style(id)
+                    .is_some_and(|style| style.layout.direction != Some(direction))
             })
             .unwrap_or(false);
         if needs_projection {
@@ -2931,7 +2865,6 @@ impl AppContext {
                     SettingsRowCopy {
                         stacked: false,
                         column: None,
-                        offset: None,
                     },
                 )?
                 .stable_id()
@@ -4122,10 +4055,10 @@ mod tests {
         vec![("switch", switch), ("select", select), ("field", field)]
     }
 
-    /// A hint under the name would centre the control on both lines, below
-    /// the name it belongs to: the control stays on the name's line.
+    /// A hint under the name lowers nothing: the control stays centred on
+    /// the whole copy, so the row's two sides share one middle.
     #[test]
-    fn an_inline_row_with_a_hint_aligns_its_control_to_the_name_line() {
+    fn an_inline_row_with_a_hint_centres_its_control_on_the_copy() {
         let mut context = AppContext::new();
         for (kind, control) in row_controls(&mut context) {
             let (row, label) = laid_out_row(
@@ -4134,7 +4067,10 @@ mod tests {
                 Some("What this preference changes"),
                 |_| {},
             );
-            let offset = middle(&context, control) - middle(&context, label);
+            let style = context.world().node_style(row.stable_id()).unwrap();
+            assert_eq!(style.layout.align_items, AlignSpec::Center, "{kind}");
+            let copy = context.read(row, |row| row.copy_slot).unwrap().unwrap();
+            let offset = middle(&context, control) - middle(&context, copy);
             assert!(offset.abs() <= 1.0, "{kind}: {offset}");
             // the hint stays right under the name, the copy's own gap away
             let hint = hint_slot_of(&context, row.stable_id()).unwrap();
@@ -4143,48 +4079,21 @@ mod tests {
             let gap = hint_box.y - (label_box.y + label_box.height);
             assert!((gap - ROW_COPY_GAP).abs() <= 1.0, "{kind}: {gap}");
         }
-        // the name stands where it does on a row without a hint
-        for ((kind, with), (_, without)) in row_controls(&mut context)
-            .into_iter()
-            .zip(row_controls(&mut context))
-        {
-            let name_drop = |context: &mut AppContext, control, hint| {
-                let (row, label) = laid_out_row(context, control, hint, |_| {});
-                let world = context.world();
-                world.canonical_layout_box(label).unwrap().y
-                    - world.canonical_layout_box(row.stable_id()).unwrap().y
-            };
-            let hinted = name_drop(&mut context, with, Some("Hint"));
-            let plain = name_drop(&mut context, without, None);
-            assert!((hinted - plain).abs() <= 1.0, "{kind}: {hinted} vs {plain}");
-        }
-        // an error in the hint's place keeps the control there too
-        let control = row_controls(&mut context)[2].1;
-        let (_, label) = laid_out_row(&mut context, control, None, |row| {
-            row.error = Some(Arc::from("Required"));
-        });
-        assert!((middle(&context, control) - middle(&context, label)).abs() <= 1.0);
-        // and so does a name with an accessory beside it
-        let control = row_controls(&mut context)[1].1;
-        let badge = context
-            .create_detached_component(document(), Text::new("New"))
-            .unwrap()
-            .stable_id();
-        let (row, label) = laid_out_row(&mut context, control, Some("Hint"), |row| {
-            row.label_accessory = Some(badge);
-        });
-        let line = context.read(row, |row| row.label_line_slot).unwrap();
-        assert!(line.is_some());
-        assert!((middle(&context, control) - middle(&context, label)).abs() <= 1.0);
     }
 
-    /// Rows with one line of copy, stacked rows and label-column rows lay
-    /// out as they did: centred, stretched, centred, with no name line.
+    /// One line of copy, an error and label-column rows centre their
+    /// control; stacked rows stretch it.
     #[test]
-    fn rows_without_a_second_line_or_inline_copy_keep_their_alignment() {
+    fn rows_keep_their_alignment_whatever_the_copy() {
         let mut context = AppContext::new();
-        let cases: [(&str, Option<&str>, fn(&mut SettingsRow), AlignSpec); 3] = [
+        let cases: [(&str, Option<&str>, fn(&mut SettingsRow), AlignSpec); 4] = [
             ("no hint", None, |_| {}, AlignSpec::Center),
+            (
+                "error",
+                None,
+                |row| row.error = Some(Arc::from("Required")),
+                AlignSpec::Center,
+            ),
             (
                 "stacked",
                 Some("Hint"),
@@ -4203,33 +4112,12 @@ mod tests {
                 let (row, _) = laid_out_row(&mut context, control, hint, edit);
                 let style = context.world().node_style(row.stable_id()).unwrap();
                 assert_eq!(style.layout.align_items, align, "{case}, {kind}");
-                let copy = context.read(row, |row| row.copy_slot).unwrap().unwrap();
-                let copy_style = context.world().node_style(copy).unwrap();
-                assert_eq!(copy_style.layout.margin_top, None, "{case}, {kind}");
             }
         }
         // a one-line row centres its control on the name, as it always has
         let control = row_controls(&mut context)[0].1;
         let (_, label) = laid_out_row(&mut context, control, None, |_| {});
         assert!((middle(&context, control) - middle(&context, label)).abs() <= 1.0);
-    }
-
-    /// The name line follows the copy: a hint that clears takes it away.
-    #[test]
-    fn a_row_whose_hint_clears_centres_its_control_again() {
-        let mut context = AppContext::new();
-        let control = row_controls(&mut context)[1].1;
-        let (row, _) = laid_out_row(&mut context, control, Some("Hint"), |_| {});
-        let copy = context.read(row, |row| row.copy_slot).unwrap().unwrap();
-        let margin =
-            |context: &AppContext| context.world().node_style(copy).unwrap().layout.margin_top;
-        assert!(margin(&context).is_some());
-        context
-            .update_component(row, |row, _| row.hint = None)
-            .unwrap();
-        let style = context.world().node_style(row.stable_id()).unwrap();
-        assert_eq!(style.layout.align_items, AlignSpec::Center);
-        assert_eq!(margin(&context), None);
     }
 
     #[test]

@@ -511,9 +511,7 @@ impl AppContext {
                     terminal_sizes.push(*id);
                 } else if view
                     .downcast_ref::<crate::SettingsRow>()
-                    .is_some_and(|row| {
-                        !row.stacked && (row.stack_below.is_some() || row.aligns_to_name_line())
-                    })
+                    .is_some_and(|row| row.stack_below.is_some() && !row.stacked)
                 {
                     settings_rows.push(*id);
                 }
