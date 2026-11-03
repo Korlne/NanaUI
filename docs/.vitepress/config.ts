@@ -313,6 +313,7 @@ export default defineConfig({
             { text: "布局（CSS 子集）", link: "/reference/layout" },
             { text: "布局（Rust）", link: "/reference/rust-layout" },
             { text: "布局结果合同", link: "/reference/layout-result" },
+            { text: "相对几何", link: "/reference/relative-geometry" },
             { text: "控件", link: "/reference/components" },
             { text: "工作区", link: "/reference/workspace" },
             { text: "视觉", link: "/reference/look" },
