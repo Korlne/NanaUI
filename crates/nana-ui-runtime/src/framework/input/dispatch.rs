@@ -360,6 +360,7 @@ impl AppContext {
                             .accessibility(target)
                             .is_some_and(|a| !a.disabled)
                     {
+                        let unfocused = self.world().focused(document) != Some(target);
                         self.focus_node(document, target)?;
                         if self
                             .world()
@@ -367,7 +368,8 @@ impl AppContext {
                             .is_some_and(|s| s.selection.range().is_empty())
                             && let Some(shaper) = reborrow_text_shaper(&mut text_shaper)
                         {
-                            self.text_editor_pointer_press(
+                            self.text_edit.unfocused_press = unfocused.then_some(target);
+                            let pressed = self.text_editor_pointer_press(
                                 document,
                                 target,
                                 *pointer_id,
@@ -377,7 +379,9 @@ impl AppContext {
                                 false,
                                 now,
                                 shaper,
-                            )?;
+                            );
+                            self.text_edit.unfocused_press = None;
+                            pressed?;
                             self.text_editor_pointer_release(*pointer_id);
                         }
                     }
@@ -434,6 +438,8 @@ impl AppContext {
                     });
                 let hit = dock_handle.or(split_handle).or(workspace_handle).or(target);
                 let focus_target = hit.and_then(|id| nearest_focusable(self, id));
+                let unfocused =
+                    focus_target.filter(|id| self.world().focused(document) != Some(*id));
                 // A toast above an open modal takes the press; focus stays in
                 // the modal, as Tab does.
                 if !hit.is_some_and(|id| {
@@ -454,7 +460,8 @@ impl AppContext {
                     && let Some(shaper) = reborrow_text_shaper(&mut text_shaper)
                 {
                     let editor = if let Some(focus) = focus_target {
-                        self.text_editor_pointer_press(
+                        self.text_edit.unfocused_press = unfocused;
+                        let pressed = self.text_editor_pointer_press(
                             document,
                             focus,
                             *pointer_id,
@@ -464,7 +471,9 @@ impl AppContext {
                             modifiers.alt,
                             now,
                             shaper,
-                        )?
+                        );
+                        self.text_edit.unfocused_press = None;
+                        pressed?
                     } else {
                         false
                     };

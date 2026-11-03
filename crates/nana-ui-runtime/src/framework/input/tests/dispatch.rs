@@ -7000,3 +7000,79 @@ fn composer_enter_submits_shift_enter_wraps_and_ime_confirmation_does_not_submit
         .unwrap();
     assert_eq!(submitted.lock().unwrap().len(), 1);
 }
+
+/// An unfocused single-line field longer than its box shows its start, as a
+/// browser's does, not the end its caret was left at; focused, it follows
+/// the caret. The press that focuses it lands on the character the user
+/// saw there, not on one of the hidden tail's.
+#[test]
+fn an_unfocused_field_shows_its_start_and_its_focusing_click_lands_there() {
+    let mut context = AppContext::new();
+    let document = DocumentId::new(1).unwrap();
+    let value = "abcdefghijklmnopqrstuvwxyz0123456789";
+    let input = context
+        .create_component(
+            document,
+            TextInput::new(value).style(crate::NodeStyle {
+                layout: std::sync::Arc::new(nana_ui_core::LayoutStyle {
+                    padding: Some(nana_ui_core::LengthSpec::Px(0.0)),
+                    font_size: Some(10.0),
+                    line_height: Some(nana_ui_core::LineHeightSpec::Absolute(12.0)),
+                    ..nana_ui_core::LayoutStyle::default()
+                }),
+                ..crate::NodeStyle::default()
+            }),
+        )
+        .unwrap();
+    let node = input.stable_id();
+    let mut layout = MutationQueue::new();
+    layout.write_layout(
+        node,
+        LayoutBox {
+            x: 0.0,
+            y: 0.0,
+            width: 60.0,
+            height: 20.0,
+        },
+    );
+    context.commit_mutations(layout).unwrap();
+    context.take_system_work();
+    context.rebuild_hit_test(document);
+    let mut shaper = MeasureTextShaper;
+    let mut text_x = |context: &mut AppContext| {
+        context.resolve_styles(&[node]).unwrap();
+        context.shape_text(&[node], &mut shaper).unwrap();
+        let Some(ComponentGeometry::TextInput { text, .. }) =
+            context.world().component_geometry(node)
+        else {
+            panic!("no field geometry");
+        };
+        text.bounds.x
+    };
+    let start = text_x(&mut context);
+    assert_eq!(
+        context.world().text_input(node).unwrap().selection.focus,
+        value.len(),
+        "the caret is left at the end"
+    );
+    assert!(context.focus_node(document, node).unwrap());
+    assert!(text_x(&mut context) < start, "focused, it shows the caret at the end");
+    assert!(context.clear_focus(document).unwrap());
+    assert_eq!(text_x(&mut context), start, "unfocused, it shows its start again");
+
+    let mut adapter = TestInput::default();
+    for (gesture, at) in [(pointer_down(3.0, 10.0), 1_000), (pointer_up(3.0, 10.0), 1_010)] {
+        adapter
+            .dispatch_with_shaper(
+                &mut context,
+                document,
+                &gesture,
+                Duration::from_millis(at),
+                Some(&mut shaper),
+            )
+            .unwrap();
+    }
+    assert_eq!(context.world().focused(document), Some(node));
+    let caret = context.world().text_input(node).unwrap().selection.focus;
+    assert!(caret <= 1, "the click lands at the start it saw, not at {caret}");
+}

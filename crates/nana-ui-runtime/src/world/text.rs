@@ -6612,6 +6612,14 @@ impl UiWorld {
     /// from the offset it was left at (unless a minimap navigation pinned the
     /// viewport), a single-line field follows its caret along the line.
     pub(crate) fn editor_frame(&self, id: StableNodeId) -> Option<EditorFrame> {
+        let focused = self.input.focused.get(&self.record(id).document) == Some(&id);
+        self.editor_frame_as(id, focused)
+    }
+
+    /// [`Self::editor_frame`] as it is drawn while `focused` holds or not,
+    /// whatever the focus is now: a press that focuses a field lands in the
+    /// frame the field was shown in.
+    pub(crate) fn editor_frame_as(&self, id: StableNodeId, focused: bool) -> Option<EditorFrame> {
         let writing = self.computed_style(id)?.writing_context();
         let Some(StandardVisual::TextInput { size, .. }) = self.nodes.visual(id) else {
             return None;
@@ -6641,7 +6649,6 @@ impl UiWorld {
             .nodes
             .get(id)
             .is_some_and(|node| node.accessibility.multiline);
-        let focused = self.input.focused.get(&self.record(id).document) == Some(&id);
         let (content_inline, content_block) = if vertical {
             (content.height, content.width)
         } else {
@@ -6699,12 +6706,23 @@ impl UiWorld {
             // the field is a negative scroll, and a longer one shows its far end
             // until the caret heads off the near one. Both are the LTR rule
             // mirrored, so neither keeps any state beyond the caret.
+            //
+            // Unfocused, there is no caret to show, so the field shows its
+            // start, as a browser's does once it loses focus: a value longer
+            // than the field reads from its beginning, not from the end its
+            // caret was left at.
             let inline = if !writing.inline_reversed() {
-                (caret_inline - content_inline + 1.0).clamp(0.0, max_inline)
+                if focused {
+                    (caret_inline - content_inline + 1.0).clamp(0.0, max_inline)
+                } else {
+                    0.0
+                }
             } else if inline_extent <= content_inline {
                 -(content_inline - inline_extent)
-            } else {
+            } else if focused {
                 caret_inline.clamp(0.0, max_inline)
+            } else {
+                max_inline
             };
             (inline, -(content_block - line) * 0.5)
         };

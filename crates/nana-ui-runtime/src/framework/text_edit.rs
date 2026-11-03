@@ -2572,7 +2572,15 @@ impl AppContext {
         y: f32,
         shaper: &mut dyn crate::TextShaper,
     ) -> Result<Option<crate::TextHit>, FrameworkError> {
-        let Some(frame) = self.world.editor_frame(node) else {
+        // The press that focused the field lands where the user saw the
+        // text: unfocused, a single-line field shows its start, not the end
+        // its caret was left at.
+        let frame = if self.text_edit.unfocused_press == Some(node) {
+            self.world.editor_frame_as(node, false)
+        } else {
+            self.world.editor_frame(node)
+        };
+        let Some(frame) = frame else {
             return Ok(None);
         };
         let Some((style, constraints)) = self.world.text_input_shape_context(node) else {
@@ -5547,6 +5555,9 @@ pub(super) struct TextEditSession {
     pub(super) text_selection_drag: Option<crate::framework::text_edit::TextSelectionDrag>,
     /// Last press inside a text editor for double/triple click counting.
     pub(super) text_pointer_click: Option<super::TextPointerClick>,
+    /// The editor a press is focusing, for that press only: it hits the
+    /// text as drawn before the focus moved.
+    pub(super) unfocused_press: Option<StableNodeId>,
     /// Horizontal goal column retained across chained vertical moves.
     pub(super) caret_goal_x: Option<(StableNodeId, f32)>,
     /// Expand/shrink selection record: prior selection sets per node, valid
