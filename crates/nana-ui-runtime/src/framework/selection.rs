@@ -408,6 +408,7 @@ impl AppContext {
         for option in options {
             let mut next = self.read(option, Clone::clone)?;
             next.selected = Some(option.id) == selected_id;
+            next.track = Some(control.id);
             next.synchronize_surface(size, chrome, fill);
             next.apply_wrap(wrap);
             next.project(option.id, &self.world, &mut mutations);

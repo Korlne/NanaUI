@@ -7766,6 +7766,7 @@ fn an_installed_shape_recipe_reaches_shaped_controls_already_on_screen() {
         button: RadiusTier::Full,
         icon_button: RadiusTier::Full,
         tag: RadiusTier::Lg,
+        ..ShapeRecipe::DEFAULT
     });
     assert!(context.set_theme_definition(&pills).unwrap());
     assert_eq!(radius(&context, button.stable_id()), Some(FULL_RADIUS));
@@ -7866,6 +7867,271 @@ fn a_radius_the_caller_names_wins_over_the_shape_recipe() {
             Some(UI_METRICS.radius_xs)
         );
         assert_eq!(radius(&context, square.stable_id()), None);
+    }
+}
+
+/// The shaped controls beyond buttons and tags: text fields and the
+/// composite fields built on them, list rows, a select's trigger, a
+/// segmented track and its pill, a popover trigger and a menu row, plus the
+/// dropdown rows and menu search field the scene paints from chrome radii.
+struct ShapedControls {
+    corners: Vec<(&'static str, StableNodeId)>,
+    track: StableNodeId,
+    pill: StableNodeId,
+}
+
+fn mount_shaped_controls(context: &mut AppContext, document: DocumentId) -> ShapedControls {
+    let mut corners = Vec::new();
+    let mut add = |name: &'static str, id: StableNodeId| corners.push((name, id));
+    add(
+        "text input",
+        context
+            .create_component(document, crate::TextInput::new("x"))
+            .unwrap()
+            .stable_id(),
+    );
+    add(
+        "number input",
+        context
+            .create_component(document, crate::NumberInput::new(1.0))
+            .unwrap()
+            .stable_id(),
+    );
+    add(
+        "text area",
+        context
+            .create_component(document, crate::TextArea::new("x"))
+            .unwrap()
+            .stable_id(),
+    );
+    add(
+        "color field",
+        context
+            .create_component(document, crate::ColorField::new([1.0, 0.0, 0.0, 1.0]))
+            .unwrap()
+            .stable_id(),
+    );
+    add(
+        "size field",
+        context
+            .create_component(document, crate::SizeField::new([1.0, 2.0]))
+            .unwrap()
+            .stable_id(),
+    );
+    add(
+        "scrub field",
+        context
+            .create_component(document, crate::ScrubField::new(1.0))
+            .unwrap()
+            .stable_id(),
+    );
+    add(
+        "path field",
+        context
+            .create_component(document, crate::PathField::new("/tmp"))
+            .unwrap()
+            .stable_id(),
+    );
+    add(
+        "list item",
+        context
+            .create_component(document, crate::ListItem::new("Row"))
+            .unwrap()
+            .stable_id(),
+    );
+    add(
+        "select",
+        context
+            .create_component(
+                document,
+                crate::Select::new(Some("a")).options([crate::SelectOption::new("a", "A")]),
+            )
+            .unwrap()
+            .stable_id(),
+    );
+    add(
+        "popover trigger",
+        context
+            .create_component(document, crate::Popover::new().trigger("Actions"))
+            .unwrap()
+            .stable_id(),
+    );
+    add(
+        "menu row",
+        context
+            .create_component(document, crate::ActionMenuItem::new("Open"))
+            .unwrap()
+            .stable_id(),
+    );
+    let control = context
+        .create_component(document, SegmentedControl::new())
+        .unwrap();
+    let first = context
+        .create_detached_component(document, SegmentedOption::new("Code"))
+        .unwrap();
+    let second = context
+        .create_detached_component(document, SegmentedOption::new("Preview"))
+        .unwrap();
+    context
+        .set_segmented_options(control, vec![first, second], Some(first))
+        .unwrap();
+    corners.push(("segmented track", control.stable_id()));
+    ShapedControls {
+        corners,
+        track: control.stable_id(),
+        pill: first.stable_id(),
+    }
+}
+
+fn extracted_radius(context: &AppContext, id: StableNodeId) -> Option<f32> {
+    context.world().extract_nodes(&[id])[0]
+        .source_style
+        .layout
+        .border_radius
+}
+
+/// How far a segmented pill sits inside its track, as the built-in theme
+/// spells it: the track's padding and its rule.
+const PILL_INSET: f32 = nana_ui_core::space::XXS + nana_ui_core::HAIRLINE;
+
+#[test]
+fn a_shape_recipe_left_alone_keeps_every_control_corner_where_it_was() {
+    use nana_ui_core::{ThemeDefinition, UI_METRICS};
+    let mut context = AppContext::new();
+    let document = DocumentId::new(1).unwrap();
+    let controls = mount_shaped_controls(&mut context, document);
+    for definition in [ThemeDefinition::NANA_DARK, ThemeDefinition::NANA_LIGHT] {
+        context.set_theme_definition(&definition).unwrap();
+        for (name, id) in &controls.corners {
+            assert_eq!(
+                extracted_radius(&context, *id),
+                Some(UI_METRICS.radius_sm),
+                "{name}"
+            );
+        }
+        // The pill stays concentric with the track.
+        assert_eq!(
+            extracted_radius(&context, controls.pill),
+            Some(UI_METRICS.radius_sm - PILL_INSET)
+        );
+        let chrome = context.world().extract_nodes(&[controls.track])[0].chrome_radii;
+        assert_eq!(chrome.menu_row, UI_METRICS.radius_sm);
+        assert_eq!(chrome.field, UI_METRICS.radius_sm);
+    }
+}
+
+#[test]
+fn an_installed_shape_recipe_reaches_every_shaped_control_on_screen() {
+    use nana_ui_core::{RadiusTier, ShapeRecipe, ThemeDefinition, UI_METRICS};
+    let mut context = AppContext::new();
+    let document = DocumentId::new(1).unwrap();
+    let controls = mount_shaped_controls(&mut context, document);
+
+    let rounder = ThemeDefinition::NANA_DARK.with_shape(ShapeRecipe::uniform(RadiusTier::Lg));
+    assert!(context.set_theme_definition(&rounder).unwrap());
+    for (name, id) in &controls.corners {
+        assert_eq!(
+            extracted_radius(&context, *id),
+            Some(UI_METRICS.radius_lg),
+            "{name}"
+        );
+    }
+    assert_eq!(
+        extracted_radius(&context, controls.pill),
+        Some(UI_METRICS.radius_lg - PILL_INSET),
+        "the pill is cut from the track's new corner"
+    );
+    let chrome = context.world().extract_nodes(&[controls.track])[0].chrome_radii;
+    assert_eq!(chrome.menu_row, UI_METRICS.radius_lg);
+    assert_eq!(chrome.field, UI_METRICS.radius_lg);
+    // Unshaped chrome keeps its steps.
+    assert_eq!(chrome.sm, UI_METRICS.radius_sm);
+
+    // Only the segmented role moving still reaches the pill.
+    let segmented_only = ThemeDefinition::NANA_DARK
+        .with_shape(ShapeRecipe::DEFAULT.with(nana_ui_core::ShapeRole::Segmented, RadiusTier::Md));
+    assert!(context.set_theme_definition(&segmented_only).unwrap());
+    assert_eq!(
+        extracted_radius(&context, controls.track),
+        Some(UI_METRICS.radius_md)
+    );
+    assert_eq!(
+        extracted_radius(&context, controls.pill),
+        Some(UI_METRICS.radius_md - PILL_INSET)
+    );
+
+    assert!(
+        context
+            .set_theme_definition(&ThemeDefinition::NANA_LIGHT)
+            .unwrap()
+    );
+    for (name, id) in &controls.corners {
+        assert_eq!(
+            extracted_radius(&context, *id),
+            Some(UI_METRICS.radius_sm),
+            "{name}"
+        );
+    }
+    assert_eq!(
+        extracted_radius(&context, controls.pill),
+        Some(UI_METRICS.radius_sm - PILL_INSET)
+    );
+}
+
+#[test]
+fn a_corner_the_caller_names_or_clears_wins_over_the_control_shapes() {
+    use nana_ui_core::{RadiusTier, ShapeRecipe, ThemeDefinition, UI_METRICS};
+    let mut context = AppContext::new();
+    let document = DocumentId::new(1).unwrap();
+    let mut stepped_input = crate::TextInput::new("x");
+    stepped_input.style.radius = Some(RadiusTier::Xs);
+    let stepped_input = context.create_component(document, stepped_input).unwrap();
+    let mut square_row = crate::ListItem::new("Row");
+    square_row.style.clear_corners();
+    let square_row = context.create_component(document, square_row).unwrap();
+    let boxed_input = context
+        .create_component(
+            document,
+            crate::TextInput::new("x").layout(Arc::new(nana_ui_core::LayoutStyle::default())),
+        )
+        .unwrap();
+    let mut stepped_select = crate::Select::new(Some("a"));
+    stepped_select.style.radius = Some(RadiusTier::Md);
+    let stepped_select = context.create_component(document, stepped_select).unwrap();
+    let mut stepped_track = SegmentedControl::new();
+    stepped_track.style.radius = Some(RadiusTier::Md);
+    let track = context.create_component(document, stepped_track).unwrap();
+    let pill = context
+        .create_detached_component(document, SegmentedOption::new("Code"))
+        .unwrap();
+    context
+        .set_segmented_options(track, vec![pill], Some(pill))
+        .unwrap();
+
+    for definition in [
+        ThemeDefinition::NANA_DARK,
+        ThemeDefinition::NANA_DARK.with_shape(ShapeRecipe::uniform(RadiusTier::Full)),
+    ] {
+        context.set_theme_definition(&definition).unwrap();
+        assert_eq!(
+            extracted_radius(&context, stepped_input.stable_id()),
+            Some(UI_METRICS.radius_xs)
+        );
+        assert_eq!(extracted_radius(&context, square_row.stable_id()), None);
+        assert_eq!(extracted_radius(&context, boxed_input.stable_id()), None);
+        assert_eq!(
+            extracted_radius(&context, stepped_select.stable_id()),
+            Some(UI_METRICS.radius_md)
+        );
+        assert_eq!(
+            extracted_radius(&context, track.stable_id()),
+            Some(UI_METRICS.radius_md)
+        );
+        // The pill follows the track the application rounded, not the recipe.
+        assert_eq!(
+            extracted_radius(&context, pill.stable_id()),
+            Some(UI_METRICS.radius_md - PILL_INSET)
+        );
     }
 }
 

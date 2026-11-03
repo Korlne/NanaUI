@@ -680,7 +680,7 @@ pub(crate) fn trigger_button_style() -> NodeStyle {
         background: Some(SemanticColorRole::Subtle),
         border: Some(SemanticColorRole::BorderSoft),
         foreground: Some(SemanticColorRole::Text),
-        radius: Some(nana_ui_core::RadiusTier::Sm),
+        shape: Some(nana_ui_core::ShapeRole::Button),
         control_height: Some(nana_ui_core::ControlHeight::Exact(
             nana_ui_core::ControlSize::Small,
         )),

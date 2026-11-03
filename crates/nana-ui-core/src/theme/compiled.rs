@@ -148,9 +148,10 @@ impl CompiledTheme {
         &self.recipes
     }
 
-    /// The four radius steps, resolved, for the renderer to consume.
+    /// The radius steps and the shaped chrome, resolved, for the renderer
+    /// to consume.
     pub fn chrome_radii(&self) -> ChromeRadii {
-        ChromeRadii::from(self.metrics())
+        ChromeRadii::resolve(self.metrics(), self.recipes().shape())
     }
 
     pub const fn duration(&self, role: MotionRole) -> Duration {

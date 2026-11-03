@@ -362,7 +362,13 @@ impl Select {
         };
         let has_explicit_height = style.layout.height.is_some();
         let needs_height = style.control_height.is_none() && !has_explicit_height;
-        let needs_radius = style.layout.border_radius.is_none();
+        // The trigger's corner is the recipe's unless the application
+        // named a step or wrote a number of its own.
+        let needs_radius = style.layout.border_radius.is_none()
+            && style.layout.paint.border_radii.is_none()
+            && style.radius.is_none()
+            && style.corner_radii.is_none()
+            && style.shape.is_none();
         {
             let layout = Arc::make_mut(&mut style.layout);
             if layout.width.is_none() {
@@ -376,7 +382,7 @@ impl Select {
             layout.white_space_nowrap = true;
         }
         if needs_radius {
-            style.radius = Some(nana_ui_core::RadiusTier::Sm);
+            style.shape = Some(nana_ui_core::ShapeRole::Select);
         }
         if has_explicit_height {
             // A CSS/host box is a spent number; don't let the size step
@@ -1095,7 +1101,7 @@ pub(crate) fn field_style_for_size(size: ControlSize) -> NodeStyle {
             white_space_nowrap: true,
             ..nana_ui_core::LayoutStyle::default()
         }),
-        radius: Some(nana_ui_core::RadiusTier::Sm),
+        shape: Some(nana_ui_core::ShapeRole::Select),
         control_height: Some(nana_ui_core::ControlHeight::Exact(size)),
         control_padding_x: Some(size.into()),
         foreground: Some(SemanticColorRole::Text),
@@ -1355,7 +1361,7 @@ mod tests {
         assert_eq!(style.border, Some(SemanticColorRole::Border));
         // The field names the radius step; the number is produced at extract
         // against the installed metrics (Issue #101 F1).
-        assert_eq!(style.radius, Some(nana_ui_core::RadiusTier::Sm));
+        assert_eq!(style.shape, Some(nana_ui_core::ShapeRole::Select));
         assert_eq!(
             context.world().extract_nodes(&[id])[0]
                 .source_style

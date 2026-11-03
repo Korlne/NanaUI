@@ -615,16 +615,33 @@ pub struct ChromeRadii {
     pub sm: f32,
     pub md: f32,
     pub lg: f32,
+    /// A dropdown's option rows, at the step the installed
+    /// [`ShapeRecipe`] gives [`ShapeRole::MenuRow`].
+    pub menu_row: f32,
+    /// A search field a menu surface paints, at the step the installed
+    /// [`ShapeRecipe`] gives [`ShapeRole::Field`].
+    pub field: f32,
 }
 
-impl From<ThemeMetrics> for ChromeRadii {
-    fn from(metrics: ThemeMetrics) -> Self {
+impl ChromeRadii {
+    /// The steps under `metrics`, with the shaped chrome at the steps
+    /// `shape` gives it.
+    pub const fn resolve(metrics: ThemeMetrics, shape: ShapeRecipe) -> Self {
         Self {
             xs: metrics.radius_xs,
             sm: metrics.radius_sm,
             md: metrics.radius_md,
             lg: metrics.radius_lg,
+            menu_row: shape.resolve(ShapeRole::MenuRow, metrics),
+            field: shape.resolve(ShapeRole::Field, metrics),
         }
+    }
+}
+
+/// The steps under `metrics` and the built-in [`ShapeRecipe`].
+impl From<ThemeMetrics> for ChromeRadii {
+    fn from(metrics: ThemeMetrics) -> Self {
+        Self::resolve(metrics, ShapeRecipe::DEFAULT)
     }
 }
 

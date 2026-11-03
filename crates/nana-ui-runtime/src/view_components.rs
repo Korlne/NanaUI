@@ -111,7 +111,7 @@ fn text_field_style(multiline: bool) -> NodeStyle {
         layout: Arc::new(layout),
         background: Some(nana_ui_core::SemanticColorRole::Background),
         border: Some(nana_ui_core::SemanticColorRole::Border),
-        radius: Some(nana_ui_core::RadiusTier::Sm),
+        shape: Some(nana_ui_core::ShapeRole::Field),
         control_height: (!multiline).then_some(nana_ui_core::ControlHeight::Min(
             nana_ui_core::ControlSize::Medium,
         )),
@@ -794,9 +794,7 @@ impl Button {
         self.style.layout = layout;
         self.style.control_height = None;
         self.style.control_padding_x = None;
-        self.style.radius = None;
-        self.style.corner_radii = None;
-        self.style.shape = None;
+        self.style.clear_corners();
         self
     }
 
@@ -1867,7 +1865,7 @@ impl ListItem {
             style: NodeStyle {
                 layout: Arc::new(layout),
                 background: None,
-                radius: Some(nana_ui_core::RadiusTier::Sm),
+                shape: Some(nana_ui_core::ShapeRole::ListItem),
                 control_height: Some(nana_ui_core::ControlHeight::Min(
                     nana_ui_core::ControlSize::Large,
                 )),
@@ -2652,15 +2650,15 @@ impl TextInput {
     /// Replace host-owned outer layout while retaining TextInput semantic
     /// paint and interaction states.
     /// Supply the whole box. Design intent that writes into the box
-    /// (`control_height`, `control_padding_x`, `radius`) is dropped: replacing
-    /// the layout used to wipe those defaults when they were baked into it, and
-    /// a caller who hands over a complete box owns its height, inset and corners.
+    /// (`control_height`, `control_padding_x`, `radius`, `shape`) is dropped:
+    /// replacing the layout used to wipe those defaults when they were baked
+    /// into it, and a caller who hands over a complete box owns its height,
+    /// inset and corners.
     pub fn layout(mut self, layout: Arc<nana_ui_core::LayoutStyle>) -> Self {
         self.style.layout = layout;
         self.style.control_height = None;
         self.style.control_padding_x = None;
-        self.style.radius = None;
-        self.style.corner_radii = None;
+        self.style.clear_corners();
         self
     }
 

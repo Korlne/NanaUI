@@ -2438,6 +2438,16 @@ impl NodeStyle {
         self
     }
 
+    /// Drop every corner intent — [`Self::radius`], [`Self::corner_radii`]
+    /// and [`Self::shape`] — so the box is square unless its layout writes a
+    /// radius. Clearing `radius` alone leaves a component's shape role
+    /// rounding it.
+    pub fn clear_corners(&mut self) {
+        self.radius = None;
+        self.corner_radii = None;
+        self.shape = None;
+    }
+
     /// Name a radius step per corner. See [`Self::corner_radii`].
     pub fn corner_radii(mut self, tiers: [Option<nana_ui_core::RadiusTier>; 4]) -> Self {
         self.corner_radii = Some(tiers);

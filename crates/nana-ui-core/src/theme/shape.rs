@@ -8,6 +8,9 @@
 //! names its [`ShapeRole`] on the node (`NodeStyle::shape`); the installed
 //! theme's recipe picks the step and its metrics the pixels, both at style
 //! resolution, so a theme installed later reaches buttons already on screen.
+//! Rows a scene painter draws without a node of their own (dropdown option
+//! rows, a menu's search field) read the same recipe through
+//! [`super::ChromeRadii`], resolved at every extract.
 //!
 //! A step a node names itself (`NodeStyle::radius`, `corner_radii`) or a
 //! number it writes over the component's style still wins: the recipe only
@@ -24,10 +27,33 @@ pub enum ShapeRole {
     IconButton,
     /// The quiet label `tag` / `tag_frame` draws.
     Tag,
+    /// Text fields: `TextInput`, `NumberInput`, `TextArea`, and the frames
+    /// of the composite fields built on them (colour, size, scrub, path),
+    /// plus the search field a menu surface paints.
+    Field,
+    /// A `Select`'s trigger.
+    Select,
+    /// A `ListItem` row: its hover, press and selected fill.
+    ListItem,
+    /// A segmented control's track. The selected option's pill is cut from
+    /// the track's resolved corner, so it stays concentric with it.
+    Segmented,
+    /// An option row in a dropdown: a `Select`'s list and the rows of a
+    /// menu surface (action, context and popover menus).
+    MenuRow,
 }
 
 impl ShapeRole {
-    pub const ALL: [Self; 3] = [Self::Button, Self::IconButton, Self::Tag];
+    pub const ALL: [Self; 8] = [
+        Self::Button,
+        Self::IconButton,
+        Self::Tag,
+        Self::Field,
+        Self::Select,
+        Self::ListItem,
+        Self::Segmented,
+        Self::MenuRow,
+    ];
 }
 
 /// The radius step each [`ShapeRole`] takes. The built-in value is what the
@@ -38,6 +64,11 @@ pub struct ShapeRecipe {
     pub button: RadiusTier,
     pub icon_button: RadiusTier,
     pub tag: RadiusTier,
+    pub field: RadiusTier,
+    pub select: RadiusTier,
+    pub list_item: RadiusTier,
+    pub segmented: RadiusTier,
+    pub menu_row: RadiusTier,
 }
 
 impl ShapeRecipe {
@@ -45,16 +76,42 @@ impl ShapeRecipe {
         button: RadiusTier::Sm,
         icon_button: RadiusTier::Sm,
         tag: RadiusTier::Sm,
+        field: RadiusTier::Sm,
+        select: RadiusTier::Sm,
+        list_item: RadiusTier::Sm,
+        segmented: RadiusTier::Sm,
+        menu_row: RadiusTier::Sm,
     };
 
     /// Every role on `tier`: `ShapeRecipe::uniform(RadiusTier::Full)` makes
-    /// buttons, icon buttons and tags pills.
+    /// every shaped component a pill — fields, list rows and menu rows too.
+    /// To move only some, start from [`Self::DEFAULT`] and [`Self::with`].
     pub const fn uniform(tier: RadiusTier) -> Self {
         Self {
             button: tier,
             icon_button: tier,
             tag: tier,
+            field: tier,
+            select: tier,
+            list_item: tier,
+            segmented: tier,
+            menu_row: tier,
         }
+    }
+
+    /// This recipe with `role` on `tier`.
+    pub const fn with(mut self, role: ShapeRole, tier: RadiusTier) -> Self {
+        match role {
+            ShapeRole::Button => self.button = tier,
+            ShapeRole::IconButton => self.icon_button = tier,
+            ShapeRole::Tag => self.tag = tier,
+            ShapeRole::Field => self.field = tier,
+            ShapeRole::Select => self.select = tier,
+            ShapeRole::ListItem => self.list_item = tier,
+            ShapeRole::Segmented => self.segmented = tier,
+            ShapeRole::MenuRow => self.menu_row = tier,
+        }
+        self
     }
 
     /// The step `role` takes.
@@ -63,6 +120,11 @@ impl ShapeRecipe {
             ShapeRole::Button => self.button,
             ShapeRole::IconButton => self.icon_button,
             ShapeRole::Tag => self.tag,
+            ShapeRole::Field => self.field,
+            ShapeRole::Select => self.select,
+            ShapeRole::ListItem => self.list_item,
+            ShapeRole::Segmented => self.segmented,
+            ShapeRole::MenuRow => self.menu_row,
         }
     }
 
@@ -86,6 +148,19 @@ mod tests {
     fn the_built_in_shape_is_the_step_each_component_named_before() {
         for role in ShapeRole::ALL {
             assert_eq!(ShapeRecipe::DEFAULT.tier(role), RadiusTier::Sm);
+        }
+    }
+
+    #[test]
+    fn with_moves_one_role_and_leaves_the_rest() {
+        let recipe = ShapeRecipe::DEFAULT.with(ShapeRole::Field, RadiusTier::Full);
+        for role in ShapeRole::ALL {
+            let expected = if role == ShapeRole::Field {
+                RadiusTier::Full
+            } else {
+                RadiusTier::Sm
+            };
+            assert_eq!(recipe.tier(role), expected, "{role:?}");
         }
     }
 

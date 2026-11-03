@@ -693,7 +693,7 @@ pub(super) fn build(context: &GeometryPaintContext<'_>, emit: &mut impl FnMut(Sc
                                 background: Some(background),
                                 border_color: None,
                                 border_width: 0.0,
-                                corner_radius: corner_radii(node.chrome_radii.sm),
+                                corner_radius: corner_radii(node.chrome_radii.menu_row),
                             },
                             matching_paint_color(
                                 node.style.paint_colors.background,

@@ -1248,7 +1248,7 @@ fn item_style(size: ControlSize) -> NodeStyle {
             line_height: Some(LineHeightSpec::Absolute(size.line_height())),
             ..nana_ui_core::LayoutStyle::default()
         }),
-        radius: Some(nana_ui_core::RadiusTier::Sm),
+        shape: Some(nana_ui_core::ShapeRole::MenuRow),
         control_height: Some(nana_ui_core::ControlHeight::Exact(size)),
         control_padding_x: Some(size.into()),
         foreground: Some(SemanticColorRole::Text),

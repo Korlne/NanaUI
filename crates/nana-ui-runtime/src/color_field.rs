@@ -433,7 +433,7 @@ fn field_style(size: ControlSize) -> NodeStyle {
         layout.padding_right = Some(LengthSpec::Px(0.0));
         layout.border_width = Some(nana_ui_core::HAIRLINE);
     }
-    style.radius = Some(nana_ui_core::RadiusTier::Sm);
+    style.shape = Some(nana_ui_core::ShapeRole::Field);
     style.control_height = Some(nana_ui_core::ControlHeight::Min(size));
     style
 }
@@ -449,8 +449,7 @@ fn hex_input(field: &ColorField) -> TextInput {
     let mut input = TextInput::new(format_hex(field.value)).size(field.size);
     input.style.background = None;
     input.style.border = None;
-    input.style.radius = None;
-    input.style.corner_radii = None;
+    input.style.clear_corners();
     input.style.control_height = None;
     input.style.interaction = crate::InteractionStyle {
         disabled: crate::SemanticPaint {

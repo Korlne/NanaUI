@@ -46,7 +46,7 @@ CSS 的单层 `box-shadow`（支持 outset 与 inset）与 `text-shadow`（仅 o
 
 - **自定义整套主题**：构造一份 `ThemeDefinition`（可从 `ThemeDefinition::NANA_DARK` 或 `NANA_LIGHT` 派生，只修改需要定制的档位，但必须填齐所有组件配方槽位），调用 `nana_ui::theme::install_theme_definition(&mut context, &definition)` 或交由宿主的 `ThemeRegistry` 注册。它会一次性替换颜色、尺寸、排版、动效时长、阴影与组件配方。
 - **系统高对比度**：当操作系统开启高对比度模式时，原生宿主调用 `AppContext::set_high_contrast(true)`。此时已安装的深色主题自动改用 `SemanticPalette::high_contrast()`（黑底、白字、黄强调、青高亮），浅色主题改用 `SemanticPalette::high_contrast_light()`（白底、黑字、深蓝强调）；`muted` 与 `faint` 保持与正文可区分的灰度，避免禁用态文字看起来像可用状态。高对比度是渲染期的策略覆盖（policy overlay），不改写已安装主题本身——关闭高对比度即可原样恢复，期间新安装的主题也会自动套用高对比度覆盖。高对比度主题要加粗键盘焦点环时，用 `ThemeDefinition::with_metrics(ThemeMetrics { focus_ring: FocusRingMetrics { width: 3.0, offset: 2.0 }, ..UI_METRICS })`：环只画不排，换主题不重排。
-- **公共导出面**：`nana_ui::theme` 导出了构成主题定义的全部 token 与配方类型，包括 `ThemeMetrics`、`SwitchMetrics`、`TreeMetrics`、`KeycapMetrics`、`TypographyTokens`、`MotionTokens`、`EffectTokens`、`SpacingTokens`、`BorderTokens`、`OpacityTokens`、`SurfaceTokens`、`AccentRamp`、`ComponentThemeRegistry`、各类 recipe draft（如 `ButtonVariantDraft`）、组件配方（如 `DialogRecipe`、`ToastRecipe` 及其 `ToastIndicator` / `ToastGlyphs` / `ToastProgressRecipe` / `ToastMotion`、`ShapeRecipe` 及其 `ShapeRole`），以及 `ThemeId`、`ThemeSchemaVersion`、`ThemeGeneration`。节点级命名尺寸使用的 `RadiusTier`、`ControlHeight`、`ControlPadding`、`SurfacePadding`、`SquareSize` 与 `SemanticColorMix` 同样从这里导入，应用无需直接依赖 `nana-ui-core`。
+- **公共导出面**：`nana_ui::theme` 导出了构成主题定义的全部 token 与配方类型，包括 `ThemeMetrics`、`SwitchMetrics`、`TreeMetrics`、`KeycapMetrics`、`TypographyTokens`、`MotionTokens`、`EffectTokens`、`SpacingTokens`、`BorderTokens`、`OpacityTokens`、`SurfaceTokens`、`AccentRamp`、`ComponentThemeRegistry`、各类 recipe draft（如 `ButtonVariantDraft`）、组件配方（如 `DialogRecipe`、`ToastRecipe` 及其 `ToastIndicator` / `ToastGlyphs` / `ToastProgressRecipe` / `ToastMotion`、`ShapeRecipe` 及其 `ShapeRole`、`ChromeRadii`），以及 `ThemeId`、`ThemeSchemaVersion`、`ThemeGeneration`。节点级命名尺寸使用的 `RadiusTier`、`ControlHeight`、`ControlPadding`、`SurfacePadding`、`SquareSize` 与 `SemanticColorMix` 同样从这里导入，应用无需直接依赖 `nana-ui-core`。
 
 > 如果你要修改框架自身的主题架构或审计组件硬编码，请先阅读维护者文档 [主题审计记录](theme.md)。
 
@@ -89,17 +89,34 @@ CSS 的单层 `box-shadow`（支持 outset 与 inset）与 `text-shadow`（仅 o
 
 ### 组件取哪一档圆角：`ShapeRecipe`
 
-按钮（各种 `ButtonKind`）、图标按钮（含 `IconButton::tool`）和 `tag` / `tag_frame` 不自己点名圆角档位，而是在节点上写 `NodeStyle::shape`（`ShapeRole::Button` / `IconButton` / `Tag`），由安装主题的 `ShapeRecipe` 决定取哪一档。内置配方三项都是 `RadiusTier::Sm`，与引入配方之前一致。设计系统要让它们都是胶囊时，在自己的主题定义上改配方，而不是逐个改写组件：
+内置控件不自己点名圆角档位，而是在节点上写 `NodeStyle::shape`（一个 `ShapeRole`），由安装主题的 `ShapeRecipe` 决定取哪一档：
+
+| `ShapeRole` | 配方字段 | 谁用 |
+| --- | --- | --- |
+| `Button` | `button` | `Button`（各种 `ButtonKind`）、`Popover` 的触发按钮 |
+| `IconButton` | `icon_button` | `IconButton`（含 `IconButton::tool`） |
+| `Tag` | `tag` | `tag` / `tag_frame` |
+| `Field` | `field` | `TextInput`、`NumberInput`、`TextArea`，颜色、尺寸、拖动数值与路径字段的外框，菜单面板里的搜索框 |
+| `Select` | `select` | `Select`（以及共用其样式的 `Dropdown`、`SearchDropdown`）的触发框 |
+| `ListItem` | `list_item` | `ListItem` 行的悬停、按下与选中底 |
+| `Segmented` | `segmented` | 分段控件的轨道；选中的药丸按轨道解析出的圆角减去内缩，始终同心 |
+| `MenuRow` | `menu_row` | 下拉选项行：`Select` 的列表、菜单面板的选项行与 `ActionMenuItem` |
+
+内置配方每项都是 `RadiusTier::Sm`，与引入配方之前一致。设计系统要改时，在自己的主题定义上改配方，而不是逐个改写组件：
 
 ```rust
+// 只让按钮、图标按钮和标签成为胶囊
 let halo = ThemeDefinition::NANA_DARK.with_shape(ShapeRecipe {
     button: RadiusTier::Full,
     icon_button: RadiusTier::Full,
     tag: RadiusTier::Full,
-}); // 或 ShapeRecipe::uniform(RadiusTier::Full)
+    ..ShapeRecipe::DEFAULT
+});
+// 单独改一项：ShapeRecipe::DEFAULT.with(ShapeRole::Field, RadiusTier::Full)
+// 全部改：ShapeRecipe::uniform(RadiusTier::Full)——字段、列表行、菜单行也会一起变
 ```
 
-配方在样式解析时读安装的主题，换主题后已在屏的按钮和标签原地跟上；焦点环与悬停底色跟随节点解析出的圆角。节点自己写的 `radius` / `corner_radii` 档位，或调用方样式写的圆角数字，仍然优先。只清 `radius` 不会去掉 `shape`，要直角需把两者都设为 `None`。
+配方在样式解析时读安装的主题，换主题后已在屏的控件原地跟上；下拉选项行与菜单搜索框由场景绘制，经 `ChromeRadii::menu_row` / `field` 每次提取时读配方。焦点环与悬停底色跟随节点解析出的圆角。节点自己写的 `radius` / `corner_radii` 档位，或调用方样式写的圆角数字，仍然优先。**只清 `radius` 不会去掉 `shape`**：要直角用 `NodeStyle::clear_corners()`，它同时清掉 `radius`、`corner_radii` 与 `shape`；在 `paint.border_radii` 写了自己的圆角时，那组数字照旧在绘制时优先。
 
 当两个块拼接成一个整体时，用 `corner_radii` 按「左上、右上、右下、左下」分别指定四个角的档位（`None` 表示直角）：外侧保留圆角，**接缝处必须设为直角（`None`）**——哪怕给接缝处留了极小的 `Xs` 圆角，两段圆弧交界处也会露出缺口。
 

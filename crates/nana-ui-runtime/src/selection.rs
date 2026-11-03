@@ -357,6 +357,10 @@ pub struct SegmentedOption {
     pub(crate) chrome: SelectionChrome,
     pub(crate) fill: bool,
     pub(crate) wrap: bool,
+    /// The control that is placing this option, for the projection that
+    /// runs before the option is attached to it (see
+    /// [`segmented_track_radius`]).
+    pub(crate) track: Option<StableNodeId>,
     pub style: NodeStyle,
 }
 
@@ -371,6 +375,7 @@ impl SegmentedOption {
             chrome: SelectionChrome::Segmented,
             fill: false,
             wrap: false,
+            track: None,
             style: segmented_option_style(ControlSize::Medium, SelectionChrome::Segmented, false),
         }
     }
@@ -468,6 +473,29 @@ fn segmented_pill_inset(world: &UiWorld) -> f32 {
     world.theme().spacing().xxs + world.theme().border().hairline
 }
 
+/// The corner of the track `option` sits in, as the track resolved it: the
+/// shape recipe's step, or whatever step or number the application gave the
+/// track. An option being placed is projected before it is attached, so the
+/// control placing it (`placing`) stands in for its parent; with neither,
+/// the recipe's step.
+fn segmented_track_radius(
+    option: StableNodeId,
+    placing: Option<StableNodeId>,
+    world: &UiWorld,
+) -> f32 {
+    world
+        .parent_id(option)
+        .or(placing)
+        .and_then(|track| world.resolved_border_radius(track))
+        .unwrap_or_else(|| {
+            world
+                .theme()
+                .recipes()
+                .shape()
+                .resolve(nana_ui_core::ShapeRole::Segmented, world.theme_metrics())
+        })
+}
+
 #[cfg(test)]
 mod wrap_tests;
 
@@ -528,11 +556,11 @@ pub(crate) fn selection_chrome_style(
         background,
         border,
         control_height: (!vertical).then_some(nana_ui_core::ControlHeight::Exact(size)),
-        // A segmented control is a control, so it takes the controls' step
-        // like Button and TextInput; `Md` is the card and panel step, which
-        // on a compact track reads as a pill beside square-cornered buttons.
-        radius: matches!(chrome, SelectionChrome::Segmented)
-            .then_some(nana_ui_core::RadiusTier::Sm),
+        // A segmented control is a control, so by default it takes the
+        // controls' step like Button and TextInput; the theme's shape recipe
+        // decides (`ShapeRole::Segmented`).
+        shape: matches!(chrome, SelectionChrome::Segmented)
+            .then_some(nana_ui_core::ShapeRole::Segmented),
         ..NodeStyle::default()
     }
 }
@@ -679,6 +707,12 @@ impl ComponentView for SegmentedOption {
         true
     }
 
+    /// A segmented pill is cut from its track's corner, which the shape
+    /// recipe decides.
+    fn wants_recipe_reproject() -> bool {
+        true
+    }
+
     fn project(&self, id: StableNodeId, world: &UiWorld, mutations: &mut MutationQueue) {
         if world.text(id) != Some(self.label.as_ref()) {
             mutations.set_text(
@@ -703,9 +737,9 @@ impl ComponentView for SegmentedOption {
         let mut effective_style = self.style.clone();
         let metrics = world.theme_metrics();
         let radius = match self.chrome {
-            SelectionChrome::Segmented => {
-                (metrics.radius_sm - segmented_pill_inset(world)).max(0.0)
-            }
+            SelectionChrome::Segmented => (segmented_track_radius(id, self.track, world)
+                - segmented_pill_inset(world))
+            .max(0.0),
             SelectionChrome::Tabs | SelectionChrome::Radio => metrics.radius_sm,
         };
         {
@@ -831,7 +865,10 @@ mod tests {
                 SegmentedControl::new().size(size).style.control_height,
                 Some(nana_ui_core::ControlHeight::Min(size))
             );
-            assert_eq!(control.style.radius, Some(nana_ui_core::RadiusTier::Sm));
+            assert_eq!(
+                control.style.shape,
+                Some(nana_ui_core::ShapeRole::Segmented)
+            );
             assert_eq!(control.style.layout.border_width, Some(1.0));
             assert!(control.style.layout.border_radius.is_none());
             assert_eq!(control.style.layout.width, Some(LengthSpec::Shrink));

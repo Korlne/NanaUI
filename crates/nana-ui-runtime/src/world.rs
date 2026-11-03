@@ -4358,6 +4358,15 @@ impl UiWorld {
             .map_or_else(Default::default, record_containing_writing)
     }
 
+    /// The corner radius `id`'s resolved layout carries: its design intent
+    /// resolved against the installed theme, or the number it wrote.
+    pub(crate) fn resolved_border_radius(&self, id: StableNodeId) -> Option<f32> {
+        if !self.contains(id) {
+            return None;
+        }
+        self.record(id).resolved_layout.border_radius
+    }
+
     /// The node's parent, without copying the node as [`Self::node`] does.
     pub fn parent_id(&self, id: StableNodeId) -> Option<StableNodeId> {
         self.nodes.get(id)?.hierarchy.parent

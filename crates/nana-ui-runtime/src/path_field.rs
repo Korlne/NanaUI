@@ -259,7 +259,7 @@ fn field_style(size: ControlSize) -> NodeStyle {
         layout.width = Some(LengthSpec::Fill);
     }
     style.control_height = Some(nana_ui_core::ControlHeight::Min(size));
-    style.radius = Some(nana_ui_core::RadiusTier::Sm);
+    style.shape = Some(nana_ui_core::ShapeRole::Field);
     style
 }
 

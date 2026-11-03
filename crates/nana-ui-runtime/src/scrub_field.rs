@@ -295,7 +295,7 @@ fn field_style(size: ControlSize) -> NodeStyle {
         layout.border_width = Some(nana_ui_core::HAIRLINE);
         layout.width = Some(LengthSpec::Fill);
     }
-    style.radius = Some(nana_ui_core::RadiusTier::Sm);
+    style.shape = Some(nana_ui_core::ShapeRole::Field);
     style.control_height = Some(nana_ui_core::ControlHeight::Min(size));
     // the text fields' states (hover border, keyboard focus border, disabled)
     style.interaction = crate::InteractionStyle {

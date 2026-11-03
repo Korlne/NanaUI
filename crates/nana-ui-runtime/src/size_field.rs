@@ -375,7 +375,7 @@ fn field_style(size: ControlSize) -> NodeStyle {
     let mut style = NodeStyle::default();
     style.background = Some(SemanticColorRole::Background);
     style.border = Some(SemanticColorRole::Border);
-    style.radius = Some(nana_ui_core::RadiusTier::Sm);
+    style.shape = Some(nana_ui_core::ShapeRole::Field);
     style.control_height = Some(nana_ui_core::ControlHeight::Min(size));
     let layout = Arc::make_mut(&mut style.layout);
     layout.width = Some(LengthSpec::Fill);
@@ -394,8 +394,7 @@ fn number(field: &SizeField, axis: usize) -> NumberInput {
     input.assign(field.value[axis]);
     input.style.background = None;
     input.style.border = None;
-    input.style.radius = None;
-    input.style.corner_radii = None;
+    input.style.clear_corners();
     input.style.control_height = None;
     input.style.interaction = crate::InteractionStyle {
         disabled: crate::SemanticPaint {

@@ -329,7 +329,10 @@ impl UiWorld {
             standard_visual,
             component_geometry,
             standard_visual_foreground,
-            chrome_radii: self.style_model.metrics.into(),
+            chrome_radii: nana_ui_core::ChromeRadii::resolve(
+                self.style_model.metrics,
+                self.theme.recipes().shape(),
+            ),
             custom_render: self
                 .nodes
                 .has_custom_render()
