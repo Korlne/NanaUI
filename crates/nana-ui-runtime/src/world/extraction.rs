@@ -720,8 +720,12 @@ impl UiWorld {
         let mut extracted = Vec::with_capacity(ids.len());
         let mut moved = Vec::new();
         for &id in ids {
+            // A component's geometry (a button's label region, a field's
+            // caret) is derived in page space, so a moved one is extracted
+            // again rather than kept.
             if self.only_moved_since(id, epoch)
                 && let Some(held) = previous(id)
+                && held.component_geometry.is_none()
             {
                 moved.extend(self.extract_move_memo(id, held, &mut memo));
             } else {

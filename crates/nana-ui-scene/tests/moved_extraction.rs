@@ -200,3 +200,59 @@ fn a_moved_node_changed_in_the_same_frame_reaches_the_scene() {
         }
     }
 }
+
+/// A button below a list moves when a row is inserted above it: its label
+/// must move with its plate.
+#[test]
+fn a_button_moved_by_an_inserted_row_paints_like_a_cold_scene() {
+    use nana_ui_runtime::Button;
+    let document = DocumentId::new(1).unwrap();
+    let mut runtime = self::document();
+    let button = runtime
+        .context_mut()
+        .create_detached_component(document, Button::new("选择范围"))
+        .unwrap()
+        .stable_id();
+    // `actions_side_by_side`: a wrapping row of filling width, inside another.
+    let wrap_row = || NodeStyle {
+        layout: Arc::new(LayoutStyle {
+            width: Some(LengthSpec::Fill),
+            direction: Some(FlexDirection::Row),
+            flex_wrap: nana_ui_core::FlexWrap::Wrap,
+            align_items: nana_ui_core::AlignSpec::Center,
+            ..LayoutStyle::default()
+        }),
+        ..NodeStyle::default()
+    };
+    let mut queue = MutationQueue::new();
+    for (bar, parent) in [(id(800), id(COLUMN)), (id(801), id(800))] {
+        queue.create(bar, document, NodeKind::Element { tag: "div".into() });
+        queue.insert(parent, bar, None);
+        queue.set_style(bar, wrap_row());
+    }
+    queue.insert(id(801), button, None);
+    runtime.context_mut().commit_mutations(queue).unwrap();
+    flush(&mut runtime);
+    assert_scene_is_cold(&runtime, "first frame");
+    for extra in 0..3u64 {
+        let row = id(900 + extra);
+        let mut queue = MutationQueue::new();
+        queue.create(row, document, NodeKind::Element { tag: "div".into() });
+        queue.insert(id(COLUMN), row, Some(row_id(0)));
+        queue.set_style(
+            row,
+            NodeStyle {
+                layout: Arc::new(LayoutStyle {
+                    width: Some(LengthSpec::Px(300.0)),
+                    height: Some(LengthSpec::Px(20.0)),
+                    ..LayoutStyle::default()
+                }),
+                background: Some(SemanticColorRole::Accent),
+                ..NodeStyle::default()
+            },
+        );
+        runtime.context_mut().commit_mutations(queue).unwrap();
+        flush(&mut runtime);
+        assert_scene_is_cold(&runtime, "row inserted");
+    }
+}
