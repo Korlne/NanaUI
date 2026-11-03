@@ -1783,7 +1783,10 @@ impl UiWorld {
         };
         let ids = ids.as_slice();
         let mut seen: NodeSet = ids.iter().copied().collect();
-        let mut unique: Vec<StableNodeId> = seen.iter().copied().collect();
+        // The batch as it came, which a pass hands over sorted: the stable
+        // sort below takes that run whole and merges the ancestors in,
+        // where the set's order would be sorted from scratch.
+        let mut unique: Vec<StableNodeId> = ids.to_vec();
         for &id in ids {
             let mut ancestor = self.parent_id(id);
             while let Some(parent) = ancestor {
@@ -1794,7 +1797,8 @@ impl UiWorld {
                 ancestor = self.parent_id(parent);
             }
         }
-        unique.sort_unstable();
+        unique.sort();
+        unique.dedup();
         let boxless = self.boxless_nodes(&unique);
         // Ancestors are republished with the batch. Downstream geometry is
         // scheduled only for a caller node whose own box, padding, fragment
@@ -1899,43 +1903,53 @@ impl UiWorld {
         self.note_layout_result_publish(reused, changed, 1, children_visited);
         self.layout_generation = self.layout_generation.wrapping_add(1);
         let generation = self.layout_generation;
+        // `published` and `requested` are both sorted: one cursor walks
+        // the second as the first goes.
+        let mut requested = requested.iter().peekable();
         for (at, (id, mut retained, moved)) in published.into_iter().enumerate() {
             let result = Arc::get_mut(&mut retained.placed).expect("a result just built");
+            while requested.next_if(|requested| **requested < id).is_some() {}
+            let requested_here = requested.peek() == Some(&&id);
+            // One lookup for the held result: read it, then replace it.
+            let held = self.layout_results.entry(id);
+            let previous = match &held {
+                std::collections::hash_map::Entry::Occupied(held) => Some(&*held.get().placed),
+                std::collections::hash_map::Entry::Vacant(_) => None,
+            };
             // The menu's growing label slot depends on chrome and its offered
             // box, not on label advance. A changed slot must reach text even
             // when the outer box stays fixed (for example a changed hint).
             let part_budget_changed = matches!(
-                self.standard_visual_ref(id),
+                self.nodes.visual(id),
                 Some(
                     StandardVisual::ActionMenuItem { .. }
                         | StandardVisual::ListItem { content: None, .. }
                         | StandardVisual::Card { .. }
                 )
-            ) && self.layout_results.get(&id).is_none_or(|previous| {
+            ) && previous.is_none_or(|previous| {
                 let width = |result: &crate::LayoutResult| {
                     result.parts.iter().find_map(|part| {
                         (part.kind == crate::LayoutPartKind::TextContent)
                             .then_some(part.bounds.width)
                     })
                 };
-                width(&previous.placed) != width(result)
+                width(previous) != width(result)
             });
             let sticky_changed = self.sticky_nodes.has_dependents(id)
-                && self.layout_results.get(&id).is_none_or(|previous| {
+                && previous.is_none_or(|previous| {
                     (
-                        previous.placed.content_box,
-                        previous.placed.padding_box,
-                        previous.placed.scroll_extent,
+                        previous.content_box,
+                        previous.padding_box,
+                        previous.scroll_extent,
                     ) != (result.content_box, result.padding_box, result.scroll_extent)
                 });
-            let project = requested.binary_search(&id).is_ok()
-                && self.layout_results.get(&id).is_none_or(|previous| {
-                    layout_result_projects_new_geometry(&previous.placed, result)
-                });
+            let project = requested_here
+                && previous
+                    .is_none_or(|previous| layout_result_projects_new_geometry(previous, result));
             result.generation = generation;
             result.dependency_generation = generation;
+            held.insert_entry(retained);
             self.layout_results_suppressed.remove(&id);
-            self.layout_results.insert(id, retained);
             self.nodes.note_text_fragments(id);
             if part_budget_changed {
                 self.nodes
@@ -2361,6 +2375,7 @@ impl UiWorld {
         let node = self.nodes.get(id)?;
         let bounds = self.component_layout_box(id)?;
         let origin = [bounds.x, bounds.y];
+        let local_scroll_metrics = local.scroll_metrics;
         let mut result = local.placed_frame(origin);
         let children = node.hierarchy.children.as_ref();
         let child_kind = child_fragment_kind(node);
@@ -2371,7 +2386,7 @@ impl UiWorld {
         // range of the boxes under them is the content index's, which
         // follows the same chain. Elsewhere overflow joins every child.
         let joins_every_child =
-            !node.resolved_layout.clips_overflow() && local.scroll_metrics.is_none();
+            !node.resolved_layout.clips_overflow() && local_scroll_metrics.is_none();
         let reaches =
             |child: StableNodeId| joins_every_child || self.clip_parent_of(child) == Some(id);
         if let Some((kept_placements, kept_fragments)) =
@@ -2451,7 +2466,7 @@ impl UiWorld {
         // Only scroll containers need the retained descendant index. Avoid
         // materializing that index for ordinary nodes while still publishing
         // the full scroll extent where a consumer can actually use it.
-        if local.scroll_metrics.is_some() {
+        if local_scroll_metrics.is_some() {
             let content_extent = self.scroll_content_extent(id);
             if content_extent.left.is_finite()
                 && content_extent.top.is_finite()
@@ -2470,7 +2485,7 @@ impl UiWorld {
             }
         }
         result.overflow = overflow;
-        if let Some(metrics) = local.scroll_metrics {
+        if let Some(metrics) = local_scroll_metrics {
             let scroll_area = LayoutBox {
                 x: result.content_box.x + metrics.origin_x.min(0.0),
                 y: result.content_box.y + metrics.origin_y.min(0.0),
@@ -6896,24 +6911,31 @@ fn layout_result_projects_new_geometry(
     previous: &crate::LayoutResult,
     next: &crate::LayoutResult,
 ) -> bool {
-    let mut previous = previous.clone();
-    previous.child_placements = std::sync::Arc::clone(&next.child_placements);
-    previous.containing_block = next.containing_block;
-    previous.dependencies = std::sync::Arc::clone(&next.dependencies);
+    // `geometry_eq` with the child placements, containing block and
+    // dependencies left out, field by field so a box that moved answers
+    // before any list is compared.
+    let own_changed = previous.bounds != next.bounds
+        || previous.border_box != next.border_box
+        || previous.padding_box != next.padding_box
+        || previous.content_box != next.content_box
+        || previous.first_baseline != next.first_baseline
+        || previous.last_baseline != next.last_baseline
+        || previous.overflow != next.overflow
+        || previous.scroll_extent != next.scroll_extent
+        || previous.scroll_metrics != next.scroll_metrics
+        || previous.clip != next.clip
+        || previous.clip_parent != next.clip_parent
+        || previous.formatting_context != next.formatting_context
+        || previous.participation != next.participation;
     // A container's record of where its children sit projects nothing of
     // its own: a child whose box moved publishes and projects itself. Kept
     // in the comparison, one child resized marks its parent, and the hit
     // index then patches the parent's whole subtree -- the document, for a
     // row of the root.
-    if previous.fragments != next.fragments
-        && own_fragments(&previous.fragments).eq(own_fragments(&next.fragments))
-    {
-        previous.fragments = next.fragments.clone();
-    }
-    if previous.parts != next.parts && own_parts(&previous.parts).eq(own_parts(&next.parts)) {
-        previous.parts = next.parts.clone();
-    }
-    !previous.geometry_eq(next)
+    own_changed
+        || (previous.fragments != next.fragments
+            && !own_fragments(&previous.fragments).eq(own_fragments(&next.fragments)))
+        || (previous.parts != next.parts && !own_parts(&previous.parts).eq(own_parts(&next.parts)))
 }
 
 /// The fragments of a result other than its children's placements.

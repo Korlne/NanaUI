@@ -2440,11 +2440,23 @@ impl From<LayoutInput> for PassInput {
     }
 }
 
+/// The work lists of `translate_moved_children`: what is left to move
+/// (node, where it stood, where it goes), and the boxes and plans it moved.
+#[derive(Default)]
+struct TranslateScratch {
+    open: Vec<(StableNodeId, Point, Point)>,
+    boxes: Vec<(StableNodeId, LayoutBox)>,
+    plans: Vec<(StableNodeId, ContainerPlan)>,
+}
+
 /// On-demand `LayoutInput` cache. A miss loads exactly that id from `UiWorld`.
 struct LayoutInputMap<'a> {
     inline_objects: HashMap<StableNodeId, Arc<[nana_text::InlineObject]>>,
     /// Boxes this pass moved by translation.
     translated: Vec<StableNodeId>,
+    /// The buffers `translate_moved_children` walks with, kept across the
+    /// containers a pass moves.
+    translate_scratch: TranslateScratch,
     world: &'a UiWorld,
     nodes: crate::store::DenseNodeMap<PassInput>,
     /// Effective styles for nodes this pass never materialized into `nodes`.
@@ -2533,6 +2545,7 @@ impl<'a> LayoutInputMap<'a> {
         Self {
             inline_objects: HashMap::new(),
             translated: Vec::new(),
+            translate_scratch: TranslateScratch::default(),
             world,
             nodes: crate::store::DenseNodeMap::default(),
             styles: RefCell::default(),
@@ -4023,7 +4036,19 @@ fn cross_margin(margin: nana_ui_core::PaddingSpec, direction: FlexDirection) -> 
 /// Drop a repeated child row. Plans store one entry per direct participant;
 /// a later record for the same child replaces the stale one.
 fn dedupe_plan_rows<T: Clone>(rows: &mut Vec<T>, child_of: impl Fn(&T) -> StableNodeId) {
-    let mut seen = HashSet::with_capacity(rows.len());
+    // Most plans hold a few children, and a plan moved with its container
+    // holds the ones it was recorded with: compare those in place rather
+    // than hash them into a set built for the purpose.
+    if rows.len() <= 16
+        && rows.iter().enumerate().all(|(at, row)| {
+            rows[..at]
+                .iter()
+                .all(|kept| child_of(kept) != child_of(row))
+        })
+    {
+        return;
+    }
+    let mut seen = crate::NodeSet::with_capacity_and_hasher(rows.len(), Default::default());
     if rows.iter().all(|row| seen.insert(child_of(row))) {
         return;
     }

@@ -2045,30 +2045,81 @@ fn translate_moved_children(
     if !moved.overlay.is_empty() {
         return false;
     }
+    let mut scratch = std::mem::take(&mut nodes.translate_scratch);
+    let walked = walk_moved_children(
+        previous,
+        moved,
+        viewport,
+        nodes,
+        output,
+        scope,
+        &mut scratch,
+    );
+    if walked {
+        let TranslateScratch { boxes, plans, .. } = &mut scratch;
+        intrinsic.note_translation(boxes.len());
+        nodes.translated.extend(boxes.iter().map(|&(id, _)| id));
+        output.extend(boxes.drain(..));
+        for (id, plan) in plans.drain(..) {
+            nodes.container_plans.insert(id, Some(plan));
+        }
+    }
+    scratch.open.clear();
+    scratch.boxes.clear();
+    scratch.plans.clear();
+    nodes.translate_scratch = scratch;
+    walked
+}
+
+/// The walk of [`translate_moved_children`]: fills `scratch` with every box
+/// and plan under `moved` at where it goes, or returns false at the first
+/// one that cannot only move.
+fn walk_moved_children(
+    previous: &ContainerPlan,
+    moved: &ContainerPlan,
+    viewport: LayoutViewport,
+    nodes: &LayoutInputMap<'_>,
+    output: &HashMap<StableNodeId, LayoutBox>,
+    scope: &ScopeContext<'_>,
+    scratch: &mut TranslateScratch,
+) -> bool {
     let retained = scope.retained;
     let world = nodes.world;
-    let content_origin_at = |id: StableNodeId, origin: Point| -> Option<Point> {
+    // What a container adds to its origin to reach its content origin: its
+    // border, used padding and leading parts. One container's are read once
+    // for where it stood and where it goes.
+    let content_inset = |id: StableNodeId| -> Option<(
+        nana_ui_core::PaddingSpec,
+        nana_ui_core::PaddingSpec,
+        Size,
+    )> {
         let style = world.layout_style(id)?;
         let border = style.resolved_border_edges();
-        let padding = retained.used_padding.get(&id)?;
+        let padding = *retained.used_padding.get(&id)?;
         let lead = world
             .leading_parts(id)
             .map_or(Size::default(), |lead| lead.offset());
-        Some(Point {
-            x: origin.x + border.left + padding.left + lead.width,
-            y: origin.y + border.top + padding.top + lead.height,
-        })
+        Some((border, padding, lead))
     };
-    // (node, where it stood, where it goes)
-    let mut open: Vec<(StableNodeId, Point, Point)> = previous
-        .entries
-        .borrow()
-        .iter()
-        .zip(moved.entries.borrow().iter())
-        .map(|(was, now)| (now.child, was.origin, now.origin))
-        .collect();
-    let mut boxes: Vec<(StableNodeId, LayoutBox)> = Vec::new();
-    let mut plans: Vec<(StableNodeId, ContainerPlan)> = Vec::new();
+    // Summed in the order placement sums them.
+    let content_origin_at = |origin: Point,
+                             (border, padding, lead): (
+        nana_ui_core::PaddingSpec,
+        nana_ui_core::PaddingSpec,
+        Size,
+    )| Point {
+        x: origin.x + border.left + padding.left + lead.width,
+        y: origin.y + border.top + padding.top + lead.height,
+    };
+    let TranslateScratch { open, boxes, plans } = scratch;
+    open.extend(
+        previous
+            .entries
+            .borrow()
+            .iter()
+            .zip(moved.entries.borrow().iter())
+            .map(|(was, now)| (now.child, was.origin, now.origin)),
+    );
     while let Some((id, was, now)) = open.pop() {
         let Some(&kept) = retained.boxes.get(&id) else {
             return false;
@@ -2113,18 +2164,16 @@ fn translate_moved_children(
         }
         // The plan's content origin must be the sum this walk takes, or the
         // walk would place the children somewhere a fresh pass does not.
-        let Some(stood) = content_origin_at(id, was) else {
+        let Some(inset) = content_inset(id) else {
             return false;
         };
+        let stood = content_origin_at(was, inset);
         if stood.x.to_bits() != plan.content_origin.x.to_bits()
             || stood.y.to_bits() != plan.content_origin.y.to_bits()
         {
             return false;
         }
-        let Some(content_origin) = content_origin_at(id, now) else {
-            return false;
-        };
-        let Some(next) = plan.moved_to(now, content_origin) else {
+        let Some(next) = plan.moved_to(now, content_origin_at(now, inset)) else {
             return false;
         };
         open.extend(
@@ -2135,12 +2184,6 @@ fn translate_moved_children(
                 .map(|(was, now)| (now.child, was.origin, now.origin)),
         );
         plans.push((id, next));
-    }
-    intrinsic.note_translation(boxes.len());
-    nodes.translated.extend(boxes.iter().map(|&(id, _)| id));
-    output.extend(boxes);
-    for (id, plan) in plans {
-        nodes.container_plans.insert(id, Some(plan));
     }
     true
 }

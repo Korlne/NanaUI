@@ -396,22 +396,30 @@ impl LayoutResult {
     /// origin, placed at `origin`. The fragment, part and child lists are
     /// left empty: [`Self::place_fragment`] and [`Self::place_part`] place
     /// the own ones, and the children's come from where the children are.
-    pub(crate) fn placed_frame(&self, origin: [f32; 2]) -> Self {
+    ///
+    /// Takes the result rather than cloning it: every field it keeps moves
+    /// over, and the lists, empty on a result built at the origin, are not
+    /// touched again.
+    pub(crate) fn placed_frame(mut self, origin: [f32; 2]) -> Self {
         let baseline = |value: Option<f32>| value.map(|value| origin[1] + value);
-        Self {
-            bounds: place_box(origin, self.bounds),
-            border_box: place_box(origin, self.border_box),
-            padding_box: place_box(origin, self.padding_box),
-            content_box: place_box(origin, self.content_box),
-            first_baseline: baseline(self.first_baseline),
-            last_baseline: baseline(self.last_baseline),
-            overflow: place_box(origin, self.overflow),
-            scroll_extent: place_box(origin, self.scroll_extent),
-            child_placements: Arc::default(),
-            fragments: Arc::default(),
-            parts: Arc::default(),
-            ..self.clone()
+        self.bounds = place_box(origin, self.bounds);
+        self.border_box = place_box(origin, self.border_box);
+        self.padding_box = place_box(origin, self.padding_box);
+        self.content_box = place_box(origin, self.content_box);
+        self.first_baseline = baseline(self.first_baseline);
+        self.last_baseline = baseline(self.last_baseline);
+        self.overflow = place_box(origin, self.overflow);
+        self.scroll_extent = place_box(origin, self.scroll_extent);
+        if !self.child_placements.is_empty() {
+            self.child_placements = Arc::default();
         }
+        if !self.fragments.is_empty() {
+            self.fragments = Arc::default();
+        }
+        if !self.parts.is_empty() {
+            self.parts = Arc::default();
+        }
+        self
     }
 
     pub(crate) fn place_fragment(origin: [f32; 2], fragment: &LayoutFragment) -> LayoutFragment {
