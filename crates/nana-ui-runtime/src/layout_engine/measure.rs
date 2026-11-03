@@ -1724,16 +1724,22 @@ fn measure_node_level(
     // A plain leaf has no children for a plan to replay: its memo answers
     // the same query, and the first frame's shortcut records none.
     if unforced && cache.records_measure_plans && !plain_leaf {
+        // `auto` and `shrink` resolve to no length (`resolve_axis`): the
+        // main size is the children's sum either way, which a `Stack` hugging
+        // its content (its default `Shrink`) is.
+        let hugs = |spec: Option<LengthSpec>| {
+            spec.is_none_or(|spec| matches!(spec, LengthSpec::Auto | LengthSpec::Shrink))
+        };
         // The plain in-flow path and a 2D grid are cacheable. One-axis grid
         // tracks stay out: `auto_track_contributions` measures children
         // against constraints other than `content_available`. A subgrid is
         // not recorded above, so it keeps measuring its own formatting context.
         let plain_main = match direction {
             FlexDirection::Column => {
-                style.height.is_none() && style.min_height.is_none() && style.max_height.is_none()
+                hugs(style.height) && style.min_height.is_none() && style.max_height.is_none()
             }
             FlexDirection::Row => {
-                style.width.is_none() && style.min_width.is_none() && style.max_width.is_none()
+                hugs(style.width) && style.min_width.is_none() && style.max_width.is_none()
             }
         };
         // A simple horizontal IFC of atomic inline children records the same

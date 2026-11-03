@@ -5207,7 +5207,7 @@ fn reversed_axes_keep_the_sequential_replay() {
             write_changed_boxes(&mut world, &emitted);
             let _ = world.take_system_work();
             let expected = full_boxes(&world, document, viewport);
-            let cached = &retained.documents[&document].page_boxes(world);
+            let cached = &retained.documents[&document].page_boxes(&world);
             for (node, box_) in &expected {
                 assert_eq!(
                     cached.get(node).copied().unwrap_or_default(),
@@ -5831,7 +5831,7 @@ fn a_plan_a_pass_skipped_while_a_child_changed_is_not_reused() {
 /// subtree would notice.
 #[test]
 fn content_growth_under_a_child_moves_its_siblings() {
-    content_growth_under_a_child_moves_its_siblings_with(Some(LengthSpec::Px(600.0)));
+    let _ = content_growth_under_a_child_moves_its_siblings_with(Some(LengthSpec::Px(600.0)));
 }
 
 /// The same case one level harder: the container is CONTENT-SIZED, so the
@@ -5844,10 +5844,28 @@ fn content_growth_under_a_child_moves_its_siblings() {
 /// optimizer decided not to touch.
 #[test]
 fn content_growth_under_a_child_moves_its_siblings_when_the_container_hugs() {
-    content_growth_under_a_child_moves_its_siblings_with(None);
+    let _ = content_growth_under_a_child_moves_its_siblings_with(None);
 }
 
-fn content_growth_under_a_child_moves_its_siblings_with(container_height: Option<LengthSpec>) {
+/// `auto` and `shrink` heights resolve to no length, as no height does: the
+/// container hugs its rows the same way and patches its measure plan with the
+/// grown row instead of measuring every row again.
+#[test]
+fn content_growth_under_a_child_moves_its_siblings_when_the_container_shrinks() {
+    let hugging = content_growth_under_a_child_moves_its_siblings_with(None);
+    for height in [LengthSpec::Shrink, LengthSpec::Auto] {
+        let step = content_growth_under_a_child_moves_its_siblings_with(Some(height));
+        assert_eq!(
+            step.children_measured, hugging.children_measured,
+            "a {height:?} column must take the grown row from its plan as one with \
+             no height does, not measure all 12 rows again"
+        );
+    }
+}
+
+fn content_growth_under_a_child_moves_its_siblings_with(
+    container_height: Option<LengthSpec>,
+) -> ScopedStep {
     let viewport = LayoutViewport::new(320.0, 600.0);
     let document = DocumentId::new(1).unwrap();
     let mut world = UiWorld::new();
@@ -5959,7 +5977,9 @@ fn content_growth_under_a_child_moves_its_siblings_with(container_height: Option
         &mut retained,
         "text growth under a content-sized row",
     );
-    if container_height.is_some() {
+    if container_height
+        .is_some_and(|height| !matches!(height, LengthSpec::Auto | LengthSpec::Shrink))
+    {
         assert!(
             step.plans_reused > 0,
             "the container plan must be reached here, or the intrinsic check \
@@ -5978,6 +5998,7 @@ fn content_growth_under_a_child_moves_its_siblings_with(container_height: Option
              or the check this test exists to guard is never reached"
         );
     }
+    step
 }
 
 /// A container that only moves takes its children along (see
