@@ -435,7 +435,7 @@ impl UiWorld {
                 node.resolved.0.box_visible,
                 node.resolved.0.writing_context(),
                 node.style.layout.overflow_x.scrolls() || node.style.layout.overflow_y.scrolls(),
-                node.layout,
+                self.record_layout_box(node),
             )
         };
         // Keep a neutral structural container so visible descendants never
@@ -1089,9 +1089,7 @@ impl UiWorld {
             };
             let origin = if index == 0 {
                 if plain && self.layout_results.is_empty() {
-                    self.nodes
-                        .get(parent)
-                        .map(|node| (node.layout.x, node.layout.y))
+                    self.layout_origin(parent).map(|[x, y]| (x, y))
                 } else {
                     self.accessible_viewport_bounds(parent, plain, memo)
                         .map(|bounds| (bounds.x, bounds.y))

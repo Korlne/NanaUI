@@ -4770,8 +4770,11 @@ pub struct RichEditorMarks {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExtractedNode {
-    /// Shared canonical geometry, including content/viewport/scroll extents.
-    /// Scrolling keeps the logical layout snapshot and its generation intact.
+    /// Shared canonical geometry, including content/viewport/scroll extents,
+    /// in the node's own coordinates: its border box at the origin, as
+    /// [`crate::UiWorld::local_layout_result`] keeps it, so a node that only
+    /// moved keeps it. [`Self::layout`] is where it stands. Scrolling keeps
+    /// the logical layout snapshot and its generation intact.
     pub layout_result: Option<Arc<crate::LayoutResult>>,
     pub id: StableNodeId,
     /// Shared with `UiWorld` so idle extract is an Arc bump, not a `NodeKind` clone.

@@ -392,10 +392,24 @@ pub(super) fn assert_matches_cold(
     let order = ours.document_order(document);
     assert_eq!(order, theirs.document_order(document));
     for id in order {
+        // As kept, from each box's frame, and on the page.
+        assert_eq!(
+            (ours.local_layout_box(id), ours.layout_frame(id)),
+            (theirs.local_layout_box(id), theirs.layout_frame(id)),
+            "local box of {id:?}"
+        );
         assert_eq!(ours.layout_box(id), theirs.layout_box(id), "box of {id:?}");
-        match (ours.layout_result(id), theirs.layout_result(id)) {
+        match (ours.local_layout_result(id), theirs.local_layout_result(id)) {
             (Some(ours), Some(theirs)) => assert!(
                 ours.geometry_eq(theirs),
+                "local result of {id:?}: {ours:?} != {theirs:?}"
+            ),
+            (None, None) => {}
+            (ours, theirs) => panic!("local result of {id:?}: {ours:?} != {theirs:?}"),
+        }
+        match (ours.layout_result(id), theirs.layout_result(id)) {
+            (Some(ours), Some(theirs)) => assert!(
+                ours.geometry_eq(&theirs),
                 "result of {id:?}: {ours:?} != {theirs:?}"
             ),
             (None, None) => {}

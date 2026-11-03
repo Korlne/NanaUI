@@ -215,7 +215,8 @@ fn a_frame_that_moves_every_label_without_resizing_one_does_zero_text_work() {
         .collect();
 
     // Column padding moves every row, and so every label, without changing a
-    // single label's size: every label is a layout candidate, none has work.
+    // single label's size: each label's box is measured from its row's, so
+    // none is even a layout candidate, and none has work.
     for frame in 0..3 {
         commit(&mut runtime, |queue| {
             queue.set_style(
@@ -234,10 +235,9 @@ fn a_frame_that_moves_every_label_without_resizing_one_does_zero_text_work() {
         let work = text_work(&runtime);
         assert_no_text_work(work, "moved frame");
         assert_eq!(
-            work.text_nodes_considered, rows,
-            "every label was a candidate"
+            work.text_nodes_considered, 0,
+            "every label moved with its row"
         );
-        assert_eq!(work.text_nodes_revision_skipped, rows);
     }
     for (row, handle) in handles.iter().enumerate() {
         assert_eq!(
@@ -669,7 +669,7 @@ fn identical_labels_share_one_layout_however_many_there_are() {
 /// layout-scoped text pass visits every label that moved. What it may not do
 /// is pay for any of them beyond an O(1) revision check.
 fn head_dirty_counters(rows: usize, shaper: &mut impl TextShaper) -> TextWorkCounters {
-    let (mut runtime, rows) = document(numbered(rows));
+    let (mut runtime, _) = document(numbered(rows));
     settle(&mut runtime, shaper);
     let mut total = TextWorkCounters::default();
     for frame in 0..6 {
@@ -690,12 +690,13 @@ fn head_dirty_counters(rows: usize, shaper: &mut impl TextShaper) -> TextWorkCou
             work.text_nodes_revision_skipped, work.text_nodes_considered,
             "every candidate is decided on revision"
         );
-        // Every label below the first row moved. The first row grew on the
-        // block axis only, which its label does not read: its box held, so
-        // the pass does not visit it.
+        // Every label below the first row moved with its row: its box is
+        // measured from the row's, so the pass does not visit it. The first
+        // row grew on the block axis only, which its label does not read:
+        // its box held too.
         assert!(
-            work.text_nodes_revision_skipped >= rows - 1,
-            "the scope covers every label that moved"
+            work.text_nodes_considered <= 1,
+            "the scope leaves out every label that only moved: {work:?}"
         );
         total.accumulate(work);
     }
@@ -712,11 +713,14 @@ fn the_head_dirty_workload_skips_every_label_on_revision_with_either_backend() {
             engine.text_nodes_revision_skipped
         );
     }
-    // Each of the six frames visits every label that moved once: linear in
-    // the document, never quadratic.
+    // No frame visits a label that only moved with its row: what text work
+    // the head edit asks for does not grow with the document.
     for rows in [400, 800] {
         let considered = head_dirty_counters(rows, &mut MeasureTextShaper).text_nodes_considered;
-        assert_eq!(considered, 6 * (rows - 1));
+        assert!(
+            considered <= 6,
+            "{considered} labels considered over {rows} rows"
+        );
     }
 }
 

@@ -26,8 +26,7 @@ struct Page {
     /// The rows, each a row holding a cell holding a leaf.
     rows: Vec<[StableNodeId; 3]>,
     /// A fixed box, and an absolute one, in the last row's cell, when asked
-    /// for. The engine then places the moved rows again instead of
-    /// translating them.
+    /// for.
     hanging: Option<[StableNodeId; 2]>,
     /// The column the rows stand in.
     list: StableNodeId,
@@ -194,8 +193,9 @@ fn a_grown_row_projects_the_rows_it_moves_but_not_what_they_hold() {
     assert_eq!((after.x, after.y), (before.x, before.y + 6.0));
 }
 
-/// A fixed box the viewport holds still while the cell it is in moves, and
-/// an absolute one that moves with it.
+/// A fixed box the viewport holds still while the cell it is in moves, so
+/// its offset from the cell changes, and an absolute one that moves with the
+/// cell and keeps it.
 #[test]
 fn boxes_hanging_from_a_moved_row_match_a_full_projection() {
     let mut page = page(12, false, true);
@@ -207,7 +207,7 @@ fn boxes_hanging_from_a_moved_row_match_a_full_projection() {
         row_height(&mut queue, page.rows[0][0], height);
         let updated = edit(&mut page, &mut retained, queue, at);
         assert!(updated.contains(&fixed_box), "{at}: its offset changed");
-        assert!(updated.contains(&absolute), "{at}");
+        assert!(!updated.contains(&absolute), "{at}: its offset held");
     }
     assert_eq!(viewport_bounds(&page.context, fixed_box), before);
 }

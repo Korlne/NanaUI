@@ -55,6 +55,9 @@ impl StickyDependencies {
 pub struct StickyAncestor<'a> {
     pub style: &'a LayoutStyle,
     pub bounds: LayoutBox,
+    /// The ancestor's result in its own coordinates, its border box at the
+    /// origin, as [`crate::UiWorld::local_layout_result`] keeps it: placed
+    /// at `bounds`' origin here.
     pub result: Option<&'a LayoutResult>,
     pub scroll: ScrollOffset,
     pub font_size: f32,
@@ -88,7 +91,9 @@ pub fn sticky_translation<'a>(
     let Some(root) = chain.pop() else {
         return [0.0; 2];
     };
-    let viewport = root.result.map_or(root.bounds, |result| result.padding_box);
+    let viewport = root
+        .result
+        .map_or(root.bounds, |result| at_bounds(&root, result.padding_box));
     let mut containing = sticky_containing_box(&root);
     let mut writing = root.writing;
     let mut scroll = [root.scroll.x, root.scroll.y];
@@ -132,12 +137,20 @@ pub fn sticky_translation<'a>(
 
 fn sticky_containing_box(ancestor: &StickyAncestor<'_>) -> LayoutBox {
     ancestor.result.map_or(ancestor.bounds, |result| {
-        if ancestor.style.overflow_x.clips() || ancestor.style.overflow_y.clips() {
-            result.scroll_extent
-        } else {
-            result.content_box
-        }
+        at_bounds(
+            ancestor,
+            if ancestor.style.overflow_x.clips() || ancestor.style.overflow_y.clips() {
+                result.scroll_extent
+            } else {
+                result.content_box
+            },
+        )
     })
+}
+
+/// `local`, a box of `ancestor`'s result, where the ancestor's box stands.
+fn at_bounds(ancestor: &StickyAncestor<'_>, local: LayoutBox) -> LayoutBox {
+    crate::layout_result::place_box([ancestor.bounds.x, ancestor.bounds.y], local)
 }
 
 fn project_sticky(

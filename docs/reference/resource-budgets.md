@@ -258,6 +258,22 @@ Scene（2026-11-03）：图元是用绝对坐标的布局盒（加祖先变换�
 
 剩下的里面，必须改坐标表示才能去掉的：构建结果（约 4 ms，每个移动节点四次分配，存储时再释放旧的四块）、写回与提交（约 1.75 ms）、存储里的标脏（约 1 ms，每个节点在提交和发布各标一次 INPUT/RENDER，每次两次集合插入）、保持偏移判定（0.65 ms）——它们都按「坐标变了的盒子」逐个做，盒子存相对父节点的偏移后，平移子树只改根偏移，这些都不再发生。不改架构还能收的候选：平移计划就地更新（本轮只记「这份计划移到哪」，在尾段对保留表 `get_mut` 改原点，免掉 `moved_to` 的克隆、本轮表的插入和旧计划的释放；要让读 `nodes.container_plans` 的十几处认得这种状态，估计 ≤1 ms）；`scoped_scroll_retention_targets` 在文档里没有 `ScrollView` 时跳过（约 0.5 ms，需要维护一个计数）；根列重新测量每行约 0.7 µs 的缓存命中路径（与移动的盒子数无关，与行数成正比）。
 
+相对几何第 1 阶段（2026-11-03，设计见 [relative-geometry.md](relative-geometry.md)）：布局盒改为相对参照系（父节点、包含块或页面）的偏移，`NodeRecord`、引擎的保留盒子与计划原点、`LayoutResult` 都按本地存；`translate_moved_children` 删除，只挪了位置的容器父节点只写它自己的偏移，子孙一个也不碰，结果不重建也不重发布。对外的 `layout_box` 等沿参照系链从上往下累加得到绝对值。命中索引和 Scene 仍读绝对盒子，过渡期由提交时的 `spread_layout_moves` 把平移子树的后代标成「只是移动」。42 001 盒（与 275f9229c 交替 8 轮读最小值，负载 5.5–7.1，µs）：
+
+| 编辑 | 阶段 | 275f9229c | 第 1 阶段 |
+| --- | --- | ---: | ---: |
+| height | 布局 | 16 391 | 3 911 |
+| height | 命中 | 2 917 | 3 793 |
+| height | 无障碍 | 3 392 | 3 379 |
+| height | 提取 | 4 274 | 3 896 |
+| height | 整帧 | 29 928 | 17 794 |
+| width | 布局 / 整帧 | 780 / 800 | 771 / 787 |
+| 控件页 text | 布局 / 整帧 | 11 / 23 | 11 / 23 |
+
+每次编辑的指令（`RUNS=240` 与 `RUNS=40` 两次 `time -l` 之差除以 200，两轮）：height 295.7–295.9 M → 166.4 M（−44%），width 15.3–15.4 M 持平，控件页改文字 0.27–0.36 M → 0.40–0.47 M（多约 10 万条）。整次运行（`RUNS=40`，含建树与首帧）height 17.49 → 12.23 G、width 6.26–6.28 → 6.28 G（+0.3%）、控件页 8.77–8.80 → 8.84–8.85 G（+0.7%）：冷路径上多出来的是各处推导绝对盒子的 O(深度) 求和。命中阶段多约 0.9 ms：它挪动的 2 万个条目每个都要推导一次绝对盒子，被写回的 1 000 行也各重建自己那一条（写回只挪了位置的盒子不能原地移动条目：同一次提交里可能有兄弟增删，条目的顺序跟着变，`layout-verify` 抓到过），第 2 阶段改成本地条目后消失。`node_memory` 不变：运行时内部读结果都读本地的，按页放置的结果只在外部调用 `layout_result` 时缓存，提取也直接共享本地结果。
+
+公开接口变化：`UiWorld::layout_result` 返回 `Option<Arc<LayoutResult>>`（原来是 `Option<&LayoutResult>`）；新增 `LayoutFrame`、`local_layout_box`、`layout_frame`、`local_layout_result`；`ExtractedNode::layout_result`、`ExtractedMove::layout_result` 与 `StickyAncestor::result` 改为节点自身坐标里的结果；`UiMutation::PlaceLayout`（隐藏，引擎写回用）。`MutationQueue::write_layout` 仍收文档坐标，提交结束时按深度换成本地值，没写的子节点随父节点平移（以前保持原位）。
+
 `component-gallery` 的语义快照另有 8 个与此无关的差异（对话框、空状态等文字的 `line_height` 由 `Relative` 变为 `normal`），来自 b1bc92819，不含这些改动的树上同样出现，基线没有重录。
 
 已做的（2026-11-02）：发布阶段每个结果的四个切片在复用的暂存表里建好、按最终长度一次分配，空切片不分配（`Arc::<[T]>::default()`），按父分组的子集改为一张排序表，不再每个父节点一个 `Vec`；意图缓存键的环境哈希从 SipHash 换成固定种子的 foldhash，`seeded_intrinsic` 换成 hashbrown；`ConstraintClass` 的相等与哈希一趟读出归一化后的标签与值，不再各自归一化两遍；`RetainedIntrinsicMetrics` 每个内容的变体表按一增长（首个 push 原本预留 4 个，320 B 只用 80 B）；`MeasurePlanSlots` 的两个槽装箱（原本每个容器 528 B 内联在表里，通常只用一个槽）；整页 pass 按节点数和容器数预先给各表留好容量；锚点记忆表在父节点已结算时不再分配。

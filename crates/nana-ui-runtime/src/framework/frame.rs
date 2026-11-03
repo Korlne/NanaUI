@@ -419,7 +419,7 @@ impl AppContext {
         let result = (|| {
             self.position_open_tooltips(document)?;
             completed(0);
-            let layouts = crate::RuntimeLayoutEngine.layout_document_with_frontier(
+            let layouts = crate::RuntimeLayoutEngine.layout_document_with_frontier_local(
                 &self.world,
                 document,
                 viewport,
@@ -473,11 +473,13 @@ impl AppContext {
                 ) {
                     context_children.extend_from_slice(self.world.child_ids(id));
                 }
+                let frame = self.layout_cache.frame(document, id);
                 if padding_changed
                     || far_start_changed
-                    || self.world.component_layout_box(id) != Some(layout)
+                    || self.world.local_layout_box(id) != Some(layout)
+                    || self.world.layout_frame(id) != Some(frame)
                 {
-                    mutations.write_layout(id, layout);
+                    mutations.place_layout(id, layout, frame);
                 }
             }
             #[cfg(feature = "benchmark")]
@@ -528,8 +530,6 @@ impl AppContext {
             phase.lap(12);
             // Publish one coherent canonical Result snapshot only after every
             // sibling box in the scope has been committed.
-            self.world
-                .note_translated_layout(self.layout_cache.take_translated(document));
             self.world
                 .publish_layout_results(&scope, crate::LayoutResultSource::RuntimeLayout);
             let inline_objects = self.layout_cache.take_inline_objects(document);

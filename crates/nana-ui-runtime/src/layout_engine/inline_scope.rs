@@ -122,7 +122,7 @@ fn scoped(
     let expected = RuntimeLayoutEngine
         .layout_document(world, document, viewport)
         .unwrap();
-    let cached = &retained.documents[&document].boxes;
+    let cached = &retained.documents[&document].page_boxes(world);
     for (node, box_) in &expected {
         assert_eq!(
             cached.get(node).copied().unwrap_or_default(),

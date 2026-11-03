@@ -335,7 +335,8 @@ impl<'a> ValidationPlan<'a> {
                         return Err(UiWorldError::InvalidReplacedMetadata);
                     }
                 }
-                UiMutation::WriteLayout { id, layout } => {
+                UiMutation::WriteLayout { id, layout }
+                | UiMutation::PlaceLayout { id, layout, .. } => {
                     self.require_exists(*id)?;
                     if !layout.x.is_finite()
                         || !layout.y.is_finite()
@@ -1369,7 +1370,7 @@ impl UiWorld {
         // Invalidate before topology writes so old ancestors also lose stale
         // maxima. Insert's new parent is invalidated independently below.
         match mutation {
-            UiMutation::WriteLayout { id, .. } => {
+            UiMutation::WriteLayout { id, .. } | UiMutation::PlaceLayout { id, .. } => {
                 // Marked with the commit's other writes when it ends.
                 self.defer_scroll_content(*id);
                 self.scroll_layout_touched = true;
@@ -1690,59 +1691,10 @@ impl UiWorld {
                 }
             }
             UiMutation::WriteLayout { id, layout } => {
-                let record = self.record_mut(*id);
-                // A box that only moved leaves its text's constraints alone;
-                // one that changed size is a new container for it.
-                let resized = record.layout.width.to_bits() != layout.width.to_bits()
-                    || record.layout.height.to_bits() != layout.height.to_bits();
-                let moved = record.layout.x.to_bits() != layout.x.to_bits()
-                    || record.layout.y.to_bits() != layout.y.to_bits();
-                let omission_changed = (record.layout.width <= 0.0 || record.layout.height <= 0.0)
-                    != (layout.width <= 0.0 || layout.height <= 0.0);
-                record.layout = *layout;
-                if omission_changed && self.inline_parent(*id).is_some() {
-                    self.mark_subtree(
-                        *id,
-                        DirtyMask::RENDER | DirtyMask::ACCESSIBILITY | DirtyMask::INPUT,
-                    );
-                }
-
-                // A parent that sizes its surface from this box (a modal
-                // frame's body, a popover's items): when the box changes, the
-                // parent's clip, hit area and paint change with it although
-                // its own box did not.
-                if (resized || moved)
-                    && let Some(parent) = self.parent_id(*id)
-                    && self
-                        .nodes
-                        .visual(parent)
-                        .is_some_and(|visual| visual.paint_depends_on_child(*id))
-                {
-                    self.mark(
-                        parent,
-                        DirtyMask::INPUT | DirtyMask::RENDER | DirtyMask::ACCESSIBILITY,
-                    );
-                }
-                if resized {
-                    self.nodes
-                        .invalidate_text(*id, crate::text_node::TextDirty::CONSTRAINT);
-                    self.note_responsive_resize(*id);
-                }
-                // Padding and fragment changes that keep this border box are
-                // scheduled when their result publishes. A box that only moved
-                // leaves its record to that publish to say whether anything
-                // but its place changed, and, when a pass moved it, whether
-                // it kept its offset from its parent and with it its
-                // accessible bounds.
-                let bits = DirtyMask::INPUT | DirtyMask::RENDER | DirtyMask::ACCESSIBILITY;
-                if resized {
-                    self.mark_moved_by_layout(*id, bits, false);
-                } else if moved && !omission_changed && self.pass_publishes_written_boxes() {
-                    self.mark_moved_by_layout(*id, DirtyMask::INPUT | DirtyMask::RENDER, true);
-                    self.defer_moved_accessibility(*id);
-                } else if moved {
-                    self.mark_moved_by_layout(*id, bits, true);
-                }
+                self.pending_document_layouts.push((*id, *layout));
+            }
+            UiMutation::PlaceLayout { id, layout, frame } => {
+                self.write_local_layout(*id, *layout, *frame);
             }
             UiMutation::PatchPlacement { id, top, height } => {
                 let Some(current) = self.node_style(*id).cloned() else {
@@ -3204,12 +3156,20 @@ impl UiWorld {
                 self.generation = self.generation.wrapping_add(1);
                 report.generation = self.generation;
             }
-            if !matches!(mutation, UiMutation::WriteLayout { .. }) {
+            if !matches!(
+                mutation,
+                UiMutation::WriteLayout { .. } | UiMutation::PlaceLayout { .. }
+            ) {
                 layout_inputs_changed = true;
             }
             let layout_result_id = match mutation {
-                UiMutation::WriteLayout { .. } if self.pass_publishes_written_boxes() => None,
+                UiMutation::WriteLayout { .. } | UiMutation::PlaceLayout { .. }
+                    if self.pass_publishes_written_boxes() =>
+                {
+                    None
+                }
                 UiMutation::WriteLayout { id, .. }
+                | UiMutation::PlaceLayout { id, .. }
                 | UiMutation::SetScrollOffset { id, .. }
                 | UiMutation::SetScrollOverscroll { id, .. }
                 | UiMutation::SetScrollMetrics { id, .. } => Some(*id),
@@ -3243,6 +3203,8 @@ impl UiWorld {
         if !applied {
             return Ok(report);
         }
+        self.reframe_layouts();
+        self.place_document_layouts();
         self.flush_scroll_content();
         self.remeasure_scroll_containers();
         for (id, offset) in std::mem::take(&mut self.scroll_requested) {
@@ -3253,6 +3215,7 @@ impl UiWorld {
         // Containers this commit resized read their rules now: a variant
         // that changed is a style change the frame's next round lays out.
         self.evaluate_responsive();
+        self.spread_layout_moves();
         self.publish_layout_results(
             &layout_result_ids,
             crate::LayoutResultSource::CompatibilityWrite,
@@ -3575,6 +3538,207 @@ impl UiWorld {
 /// A scroll container's viewport size, `None` while it has no metrics.
 fn scroll_viewport_size(metrics: Option<ScrollMetrics>) -> Option<(f32, f32)> {
     metrics.map(|metrics| (metrics.viewport_width, metrics.viewport_height))
+}
+
+impl UiWorld {
+    /// The document boxes the commit wrote (`WriteLayout`), each kept
+    /// measured from its node's frame once the commit's tree is in place:
+    /// parents first, so a box under one written with it is measured from
+    /// where that one now stands, whatever order they were written in. A box
+    /// not written moves with its parent.
+    fn place_document_layouts(&mut self) {
+        let mut written = std::mem::take(&mut self.pending_document_layouts);
+        if written.is_empty() {
+            return;
+        }
+        // The last write of a box wins.
+        let mut seen = NodeSet::default();
+        written.reverse();
+        written.retain(|(id, _)| seen.insert(*id) && self.nodes.contains(*id));
+        let depth = |world: &Self, id: StableNodeId| {
+            std::iter::successors(world.parent_id(id), |id| world.parent_id(*id)).count()
+        };
+        let mut ordered: Vec<(usize, StableNodeId, LayoutBox)> = written
+            .into_iter()
+            .map(|(id, layout)| (depth(self, id), id, layout))
+            .collect();
+        ordered.sort_by_key(|&(depth, id, _)| (depth, id));
+        for (_, id, layout) in ordered {
+            let frame = self.layout_frame_from_styles(id);
+            let [x, y] = self.frame_origin_of(self.record(id), frame);
+            let local = LayoutBox {
+                x: layout.x - x,
+                y: layout.y - y,
+                ..layout
+            };
+            self.write_local_layout(id, local, frame);
+        }
+    }
+
+    /// Every box under a node whose position changed, measured from the
+    /// frame its styles now give it, where it stands on the page: what a box
+    /// is measured from follows its styles even before layout runs again.
+    fn reframe_layouts(&mut self) {
+        let roots = std::mem::take(&mut self.layout_reframe_roots);
+        let mut seen = NodeSet::default();
+        let mut open = roots;
+        while let Some(id) = open.pop() {
+            if !seen.insert(id) || !self.nodes.contains(id) {
+                continue;
+            }
+            open.extend(self.child_ids(id).iter().copied());
+            let frame = self.layout_frame_from_styles(id);
+            if self.record(id).layout_frame == frame {
+                continue;
+            }
+            let [x, y] = self.layout_origin(id).unwrap_or_default();
+            let [frame_x, frame_y] = self.frame_origin_of(self.record(id), frame);
+            let record = self.record_mut(id);
+            record.layout_frame = frame;
+            record.local_layout.x = x - frame_x;
+            record.local_layout.y = y - frame_y;
+            self.defer_scroll_content(id);
+        }
+    }
+
+    /// Write `id`'s box, `layout` measured from `frame`'s origin, and mark
+    /// what reads it.
+    pub(super) fn write_local_layout(
+        &mut self,
+        id: StableNodeId,
+        layout: LayoutBox,
+        frame: crate::LayoutFrame,
+    ) {
+        let record = self.record_mut(id);
+        // A box that only moved leaves its text's constraints alone; one
+        // that changed size is a new container for it.
+        let resized = record.local_layout.width.to_bits() != layout.width.to_bits()
+            || record.local_layout.height.to_bits() != layout.height.to_bits();
+        let moved = record.local_layout.x.to_bits() != layout.x.to_bits()
+            || record.local_layout.y.to_bits() != layout.y.to_bits()
+            || record.layout_frame != frame;
+        let omission_changed = (record.local_layout.width <= 0.0
+            || record.local_layout.height <= 0.0)
+            != (layout.width <= 0.0 || layout.height <= 0.0);
+        record.local_layout = layout;
+        record.layout_frame = frame;
+        if omission_changed && self.inline_parent(id).is_some() {
+            self.mark_subtree(
+                id,
+                DirtyMask::RENDER | DirtyMask::ACCESSIBILITY | DirtyMask::INPUT,
+            );
+        }
+
+        // A parent that sizes its surface from this box (a modal frame's
+        // body, a popover's items): when the box changes, the parent's clip,
+        // hit area and paint change with it although its own box did not.
+        if (resized || moved)
+            && let Some(parent) = self.parent_id(id)
+            && self
+                .nodes
+                .visual(parent)
+                .is_some_and(|visual| visual.paint_depends_on_child(id))
+        {
+            self.mark(
+                parent,
+                DirtyMask::INPUT | DirtyMask::RENDER | DirtyMask::ACCESSIBILITY,
+            );
+        }
+        if resized {
+            self.nodes
+                .invalidate_text(id, crate::text_node::TextDirty::CONSTRAINT);
+            self.note_responsive_resize(id);
+        }
+        // Padding and fragment changes that keep this border box are
+        // scheduled when their result publishes. Accessible bounds are the
+        // offset from the parent's: a box that moved changed them.
+        let bits = DirtyMask::INPUT | DirtyMask::RENDER | DirtyMask::ACCESSIBILITY;
+        if resized || moved {
+            self.layout_written.insert(id);
+        }
+        if resized {
+            self.mark_moved_by_layout(id, bits, false);
+        } else if moved {
+            // Its hit entry is built again: the write that moved it may have
+            // come with a sibling coming or going, which its entry reads.
+            self.mark_moved_by_layout(id, bits, true);
+        }
+        if moved {
+            self.layout_moved_roots.push((id, !resized));
+        }
+    }
+
+    /// The boxes under the ones the commit moved stand elsewhere on the page
+    /// although none of them was written: their local boxes, results and
+    /// content extents hold, but the hit index and the scene still read
+    /// document boxes. Each is marked as moved; one whose nearest clip
+    /// container moved with it has a new accessible clip too. A box hung
+    /// from a frame that did not move stays where it is on the page, and its
+    /// offset from its parent, which its accessible bounds are, changed.
+    pub(super) fn spread_layout_moves(&mut self) {
+        let written = std::mem::take(&mut self.layout_written);
+        let roots = std::mem::take(&mut self.layout_moved_roots);
+        if roots.is_empty() {
+            return;
+        }
+        let epoch = self.render_epoch.get();
+        let mut moved: NodeSet = roots.iter().map(|&(root, _)| root).collect();
+        let mut open: Vec<StableNodeId> = Vec::new();
+        for &(root, only_moved) in &roots {
+            if !written.contains(&root) || !self.nodes.contains(root) {
+                continue;
+            }
+            // Nothing but where it stands changed: the record extraction
+            // made of it last may be reused with its new box.
+            if only_moved {
+                self.record_mut(root).render_moved_epoch = epoch;
+            }
+            open.extend(self.record(root).hierarchy.children.iter().copied());
+        }
+        let mut spread = 0usize;
+        while let Some(id) = open.pop() {
+            let Some(record) = self.nodes.get(id) else {
+                continue;
+            };
+            let follows = match record.layout_frame {
+                crate::LayoutFrame::Parent => true,
+                crate::LayoutFrame::Block(block) => moved.contains(&block),
+                crate::LayoutFrame::Page => false,
+            };
+            if !follows {
+                self.mark(id, DirtyMask::ACCESSIBILITY);
+                continue;
+            }
+            if !moved.insert(id) {
+                continue;
+            }
+            open.extend(record.hierarchy.children.iter().copied());
+            if written.contains(&id) {
+                continue;
+            }
+            let clip_moved = self
+                .layout_results
+                .get(&id)
+                .and_then(|held| held.local.clip)
+                .is_some_and(|clip| moved.contains(&clip));
+            let accessibility = if clip_moved {
+                DirtyMask::ACCESSIBILITY
+            } else {
+                0
+            };
+            self.translated_hit.insert(id);
+            self.mark_moved_by_layout(
+                id,
+                DirtyMask::INPUT | DirtyMask::RENDER | accessibility,
+                true,
+            );
+            self.record_mut(id).render_moved_epoch = epoch;
+            spread += 1;
+        }
+        self.bump_last_counters(|counters| {
+            counters.record_layout_translations(roots.len(), spread);
+        });
+    }
 }
 
 fn placement_already(style: &nana_ui_core::LayoutStyle, top: f32, height: Option<f32>) -> bool {

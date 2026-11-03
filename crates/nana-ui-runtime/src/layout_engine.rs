@@ -104,12 +104,30 @@ pub struct StyleLayoutNode {
 }
 
 impl RuntimeLayoutEngine {
+    /// Every box of `document`, laid out from nothing, on the page.
     pub fn layout_document(
         self,
         world: &UiWorld,
         document: DocumentId,
         viewport: LayoutViewport,
     ) -> Result<Vec<(StableNodeId, LayoutBox)>, UiWorldError> {
+        let local = self.layout_document_local(world, document, viewport)?;
+        let frames: crate::NodeMap<_> = local
+            .iter()
+            .map(|&(id, layout, frame)| (id, (layout, frame)))
+            .collect();
+        let ids: Vec<_> = local.iter().map(|&(id, ..)| id).collect();
+        Ok(page_boxes(world, &ids, |id| frames.get(&id).copied()))
+    }
+
+    /// [`Self::layout_document`] with each box measured from its frame's
+    /// origin (see [`crate::LayoutFrame`]).
+    pub(crate) fn layout_document_local(
+        self,
+        world: &UiWorld,
+        document: DocumentId,
+        viewport: LayoutViewport,
+    ) -> Result<Vec<(StableNodeId, LayoutBox, crate::LayoutFrame)>, UiWorldError> {
         let order = world.document_order(document);
         let mut nodes = LayoutInputMap::new(world);
         nodes.prefetch(&order)?;
@@ -141,16 +159,51 @@ impl RuntimeLayoutEngine {
         }
         Ok(order
             .into_iter()
-            .map(|id| (id, output.remove(&id).unwrap_or_default()))
+            .map(|id| {
+                let frame = nodes.frames.get(&id).copied().unwrap_or_default();
+                (id, output.remove(&id).unwrap_or_default(), frame)
+            })
             .collect())
     }
 
-    /// Incremental retained layout driven by typed invalidation seeds.
+    /// Incremental retained layout driven by typed invalidation seeds: the
+    /// boxes the pass wrote, on the page.
     ///
     /// `force_full` disables pruning (viewport semantics changed) and
     /// rebuilds the retained cache. Otherwise the dependency graph expands
     /// each typed seed only across edges whose footprint consumes its metric.
     pub fn layout_document_with_frontier(
+        self,
+        world: &UiWorld,
+        document: DocumentId,
+        viewport: LayoutViewport,
+        typed_seeds: &[LayoutFrontierSeed],
+        retained: &mut RetainedLayoutCache,
+        force_full: bool,
+    ) -> Result<Vec<(StableNodeId, LayoutBox)>, UiWorldError> {
+        let emitted = self.layout_document_with_frontier_local(
+            world,
+            document,
+            viewport,
+            typed_seeds,
+            retained,
+            force_full,
+        )?;
+        let ids: Vec<_> = emitted.iter().map(|&(id, _)| id).collect();
+        let cache = retained.documents.get(&document);
+        Ok(page_boxes(world, &ids, |id| {
+            let cache = cache?;
+            Some((
+                cache.boxes.get(&id).copied()?,
+                cache.frames.get(&id).copied().unwrap_or_default(),
+            ))
+        }))
+    }
+
+    /// [`Self::layout_document_with_frontier`] with each box measured from
+    /// its frame's origin, as the retained cache keeps it: what the frame
+    /// writes back.
+    pub(crate) fn layout_document_with_frontier_local(
         self,
         world: &UiWorld,
         document: DocumentId,
@@ -206,7 +259,6 @@ impl RuntimeLayoutEngine {
         // Reset before the full-layout reuse return, which runs no measure or placement.
         retained.execution_stats = LayoutExecutionStats::default();
         retained.inline_objects.clear();
-        retained.translated.clear();
         retained.last_frontier = LayoutFrontier::default();
         // A viewport the cache was not laid out against: plant the resize's
         // seeds, whichever entry asked for this pass. Memos and plans of boxes
@@ -239,12 +291,14 @@ impl RuntimeLayoutEngine {
                             snapshot.used_padding.clone(),
                             snapshot.far_start.clone(),
                             snapshot.contexts.clone(),
+                            snapshot.frames.clone(),
                         )
                     })
             });
-            if let Some((emitted, used_padding, far_start, contexts)) = reused {
+            if let Some((emitted, used_padding, far_start, contexts, frames)) = reused {
                 retained.boxes.clear();
                 retained.boxes.extend(emitted.iter().copied());
+                retained.frames = frames;
                 retained.used_padding = used_padding;
                 retained.far_start = far_start;
                 retained.contexts = contexts;
@@ -511,7 +565,13 @@ impl RuntimeLayoutEngine {
         retained.far_start.absorb(&mut nodes.far_start);
         retained.contexts.absorb(&mut nodes.contexts);
         retained.inline_objects.extend(nodes.inline_objects.drain());
-        retained.translated = std::mem::take(&mut nodes.translated);
+        for (id, frame) in nodes.frames.drain() {
+            if frame == crate::LayoutFrame::Parent {
+                retained.frames.remove(&id);
+            } else {
+                retained.frames.insert(id, frame);
+            }
+        }
         retained.placements.absorb(&mut nodes.placements);
         for (id, plan) in nodes.container_plans.drain() {
             match plan {
@@ -648,6 +708,7 @@ impl RuntimeLayoutEngine {
             retained.execution_stats.retain_sweeps =
                 retained.execution_stats.retain_sweeps.saturating_add(1);
             retained.boxes.retain(|id, _| world.contains(*id));
+            retained.frames.retain(|id, _| world.contains(*id));
             retained.placements.retain(|id, _| world.contains(*id));
             retained.used_padding.retain(|id, _| world.contains(*id));
             retained.far_start.retain(|id, _| world.contains(*id));
@@ -681,6 +742,7 @@ impl RuntimeLayoutEngine {
                 used_padding: retained.used_padding.clone(),
                 far_start: retained.far_start.clone(),
                 contexts: retained.contexts.clone(),
+                frames: retained.frames.clone(),
             };
             retained.full_snapshots[1] = retained.full_snapshots[0].take();
             retained.full_snapshots[0] = Some(snapshot);
@@ -794,6 +856,68 @@ impl RuntimeLayoutEngine {
     }
 }
 
+/// `ids`' boxes on the page, from what `local` reads for each box: its
+/// local box and frame. Each origin is its frame's plus its local one,
+/// summed down from the top as [`UiWorld::layout_box`] sums them, and
+/// summed once for every box below it.
+fn page_boxes(
+    world: &UiWorld,
+    ids: &[StableNodeId],
+    local: impl Fn(StableNodeId) -> Option<(LayoutBox, crate::LayoutFrame)>,
+) -> Vec<(StableNodeId, LayoutBox)> {
+    let mut origins: crate::NodeMap<[f32; 2]> = crate::NodeMap::default();
+    let mut chain: Vec<(StableNodeId, [f32; 2])> = Vec::new();
+    let mut origin_of = |id: StableNodeId| -> [f32; 2] {
+        if let Some(origin) = origins.get(&id) {
+            return *origin;
+        }
+        chain.clear();
+        let mut base = None;
+        let mut cursor = Some(id);
+        while let Some(node) = cursor {
+            if world.is_document_node(node) {
+                break;
+            }
+            if let Some(origin) = origins.get(&node) {
+                base = Some(*origin);
+                break;
+            }
+            let (layout, frame) = local(node).unwrap_or_else(|| {
+                (
+                    world.local_layout_box(node).unwrap_or_default(),
+                    world.layout_frame(node).unwrap_or_default(),
+                )
+            });
+            chain.push((node, [layout.x, layout.y]));
+            cursor = match frame {
+                crate::LayoutFrame::Parent => world.parent_id(node),
+                crate::LayoutFrame::Block(block) => Some(block),
+                crate::LayoutFrame::Page => None,
+            };
+        }
+        let mut sum = base;
+        while let Some((node, [x, y])) = chain.pop() {
+            let next = match sum {
+                Some([sx, sy]) => [sx + x, sy + y],
+                None => [x, y],
+            };
+            origins.insert(node, next);
+            sum = Some(next);
+        }
+        sum.unwrap_or([0.0, 0.0])
+    };
+    ids.iter()
+        .map(|&id| {
+            let [x, y] = origin_of(id);
+            let layout = local(id)
+                .map(|(layout, _)| layout)
+                .or_else(|| world.local_layout_box(id))
+                .unwrap_or_default();
+            (id, LayoutBox { x, y, ..layout })
+        })
+        .collect()
+}
+
 /// Cross-frame layout memo for scoped relayout: last published boxes, used-size
 /// resolutions, and content-derived intrinsic facts. Each document owns its
 /// entries, so a full pass cannot invalidate another window's layout.
@@ -843,6 +967,7 @@ impl RetainedLayoutCache {
             cache.intrinsics.remove(&id);
             cache.intrinsic_metrics.remove_content(id.get());
             cache.boxes.remove(&id);
+            cache.frames.remove(&id);
             cache.placements.remove(&id);
             cache.used_padding.remove(&id);
             cache.far_start.remove(&id);
@@ -957,13 +1082,12 @@ impl RetainedLayoutCache {
             .1;
         metrics.last_baseline.or(metrics.first_baseline)
     }
-    /// The boxes the last pass moved with a container that only moved
-    /// (`translate_moved_children`): nothing about them but where they
-    /// stand changed, so their results keep their own geometry.
-    pub(crate) fn take_translated(&mut self, document: DocumentId) -> Vec<StableNodeId> {
+    /// What the box the last pass gave `id` is measured from.
+    pub(crate) fn frame(&self, document: DocumentId, id: StableNodeId) -> crate::LayoutFrame {
         self.documents
-            .get_mut(&document)
-            .map_or_else(Vec::new, |cache| std::mem::take(&mut cache.translated))
+            .get(&document)
+            .and_then(|cache| cache.frames.get(&id).copied())
+            .unwrap_or_default()
     }
 
     pub(crate) fn take_inline_objects(
@@ -1021,13 +1145,14 @@ impl RetainedIntrinsic {
 #[derive(Default)]
 struct DocumentLayoutCache {
     inline_objects: HashMap<StableNodeId, Arc<[nana_text::InlineObject]>>,
-    /// The last pass's translated boxes, until the frame takes them.
-    translated: Vec<StableNodeId>,
     intrinsics: crate::store::DenseNodeMap<RetainedIntrinsic>,
     /// Content-derived intrinsic facts, independent from retained used sizes.
     intrinsic_metrics: RetainedIntrinsicMetrics,
     intrinsic_counters: crate::IntrinsicCacheCounters,
+    /// Each box from its frame's origin (see [`crate::LayoutFrame`]).
     boxes: crate::store::DenseNodeMap<LayoutBox>,
+    /// The frame of each box not measured from its parent's origin.
+    frames: crate::NodeMap<crate::LayoutFrame>,
     materialized_inputs: usize,
     placements: crate::store::DenseNodeMap<(Point, Size, f32)>,
     pub(crate) used_padding: crate::store::DenseNodeMap<nana_ui_core::PaddingSpec>,
@@ -1106,6 +1231,7 @@ struct FullLayoutSnapshot {
     used_padding: crate::store::DenseNodeMap<nana_ui_core::PaddingSpec>,
     far_start: crate::store::DenseNodeMap<[bool; 2]>,
     contexts: crate::store::DenseNodeMap<crate::FormattingContextKind>,
+    frames: crate::NodeMap<crate::LayoutFrame>,
 }
 
 /// Retained intrinsic facts, grouped by the content they describe. A node has
@@ -1283,6 +1409,20 @@ impl DocumentLayoutCache {
         count
     }
 
+    /// Every retained box on the page.
+    #[cfg(test)]
+    fn page_boxes(&self, world: &UiWorld) -> crate::store::DenseNodeMap<LayoutBox> {
+        let ids: Vec<_> = self.boxes.iter().map(|(id, _)| *id).collect();
+        page_boxes(world, &ids, |id| {
+            Some((
+                self.boxes.get(&id).copied()?,
+                self.frames.get(&id).copied().unwrap_or_default(),
+            ))
+        })
+        .into_iter()
+        .collect()
+    }
+
     #[cfg(test)]
     fn footprint(&self) -> RetainedLayoutFootprint {
         RetainedLayoutFootprint {
@@ -1316,6 +1456,7 @@ impl DocumentLayoutCache {
         self.intrinsic_counters = crate::IntrinsicCacheCounters::default();
         self.placements.clear();
         self.boxes.clear();
+        self.frames.clear();
         self.used_padding.clear();
         self.far_start.clear();
         self.contexts.clear();
@@ -1401,20 +1542,19 @@ struct PlannedOverlay {
     /// `block` is the container whose plan holds this entry: the child moves
     /// with it. Otherwise only its containing block moves it.
     in_container: bool,
-    /// The container's content origin at placement, when an axis has both
-    /// insets auto: the box keeps its static position there, so the
-    /// container moving moves it whatever its containing block.
+    /// The container's content origin at placement, in the child's frame,
+    /// when an axis has both insets auto: the box keeps its static position
+    /// there, so a box moving between the containing block and the
+    /// container moves it.
     static_origin: Option<Point>,
     /// The used box reads the containing block's size (percentage, fill,
     /// or both insets). A fixed child reads the viewport instead.
     tracks_containing_block: bool,
     base: Size,
+    /// The block's padding-box origin, and below the child's own, from the
+    /// origin of the frame the child's box is measured from (see
+    /// [`crate::LayoutFrame`]).
     base_origin: Point,
-    /// Where the child stands from the container's content origin: a
-    /// container that only moved puts a child that moves with it (see
-    /// `in_container`) at its new content origin plus this (see
-    /// [`ContainerPlan::moved_to`]).
-    inset: Point,
     origin: Point,
     size: Size,
 }
@@ -1819,66 +1959,6 @@ impl ContainerPlan {
                 style,
                 writing,
             ) && self.flow_stable_under_own_size(content_origin))
-    }
-
-    /// This plan for the container at `origin`, its content box at
-    /// `content_origin`. Every child keeps its place in the content box and
-    /// moves with it, as does every positioned child whose containing block
-    /// is this container: it sits at the new content origin plus its
-    /// recorded offset, the sum a fresh pass computes there. A fixed child
-    /// hangs off the viewport, and an absolute one whose containing block is
-    /// an ancestor or the initial one moves only with that block. `None` when an
-    /// entry's offset is not known (see [`PlannedChild::offset`]), or a grid
-    /// item is not the one the track record holds at its index or inherits
-    /// the tracks it spans as a subgrid.
-    fn moved_to(&self, origin: Point, content_origin: Point) -> Option<Self> {
-        if let Some(grid) = &self.grid {
-            let entries = self.entries.borrow();
-            if grid.items.len() != entries.len()
-                || grid.items.iter().zip(entries.iter()).any(|(item, entry)| {
-                    item.child != entry.child
-                        || entry.style.is_subgrid_columns()
-                        || entry.style.is_subgrid_rows()
-                })
-            {
-                return None;
-            }
-        }
-        let at = |offset: Point| Point {
-            x: content_origin.x + offset.x,
-            y: content_origin.y + offset.y,
-        };
-        let mut moved = self.clone();
-        for entry in moved.entries.get_mut() {
-            entry.origin = at(entry.offset?);
-        }
-        for entry in &mut moved.overlay {
-            if entry.in_container {
-                entry.base_origin = Point {
-                    x: entry.base_origin.x + content_origin.x - self.content_origin.x,
-                    y: entry.base_origin.y + content_origin.y - self.content_origin.y,
-                };
-                entry.origin = at(entry.inset);
-            }
-        }
-        moved.origin = origin;
-        moved.content_origin = content_origin;
-        Some(moved)
-    }
-
-    /// The containing block the child at `index` in `entries` was placed in:
-    /// its cell, in a grid, and the content box otherwise. A grid's items line
-    /// up with its entries on a plan [`Self::moved_to`] gave.
-    fn entry_containing(&self, index: usize) -> Size {
-        let Some(grid) = &self.grid else {
-            return self.content;
-        };
-        let (inline, block) = grid.cell(&grid.items[index]);
-        if self.writing.is_vertical() {
-            Size::new(block, inline)
-        } else {
-            Size::new(inline, block)
-        }
     }
 
     /// A sequential plan places from the start edge. Its main size can grow
@@ -2440,23 +2520,12 @@ impl From<LayoutInput> for PassInput {
     }
 }
 
-/// The work lists of `translate_moved_children`: what is left to move
-/// (node, where it stood, where it goes), and the boxes and plans it moved.
-#[derive(Default)]
-struct TranslateScratch {
-    open: Vec<(StableNodeId, Point, Point)>,
-    boxes: Vec<(StableNodeId, LayoutBox)>,
-    plans: Vec<(StableNodeId, ContainerPlan)>,
-}
-
 /// On-demand `LayoutInput` cache. A miss loads exactly that id from `UiWorld`.
 struct LayoutInputMap<'a> {
     inline_objects: HashMap<StableNodeId, Arc<[nana_text::InlineObject]>>,
-    /// Boxes this pass moved by translation.
-    translated: Vec<StableNodeId>,
-    /// The buffers `translate_moved_children` walks with, kept across the
-    /// containers a pass moves.
-    translate_scratch: TranslateScratch,
+    /// The frame of each positioned box this pass placed, and of each box
+    /// back in flow that had another one: what its box is measured from.
+    frames: crate::NodeMap<crate::LayoutFrame>,
     world: &'a UiWorld,
     nodes: crate::store::DenseNodeMap<PassInput>,
     /// Effective styles for nodes this pass never materialized into `nodes`.
@@ -2544,8 +2613,7 @@ impl<'a> LayoutInputMap<'a> {
     fn new(world: &'a UiWorld) -> Self {
         Self {
             inline_objects: HashMap::new(),
-            translated: Vec::new(),
-            translate_scratch: TranslateScratch::default(),
+            frames: crate::NodeMap::default(),
             world,
             nodes: crate::store::DenseNodeMap::default(),
             styles: RefCell::default(),
@@ -2984,6 +3052,11 @@ fn collapse_omitted_boxes(
             retained.contexts.remove(&node);
             retained.container_plans.remove(&node);
             retained.remote_overlays.remove(&node);
+            // No box, and so no frame other than a cold layout's.
+            if retained.frames.contains_key(&node) {
+                nodes.frames.insert(node, crate::LayoutFrame::Parent);
+                output.entry(node).or_insert(LayoutBox::default());
+            }
             if retained
                 .boxes
                 .get(&node)
@@ -3238,10 +3311,6 @@ pub(crate) struct LayoutExecutionStats {
     pub measure_cache_misses: usize,
     pub placement_nodes: usize,
     pub origin_only_updates: usize,
-    /// Subtrees under a container that only moved, moved without placing
-    /// them again, and the boxes in them.
-    pub translations: usize,
-    pub translated_nodes: usize,
     /// Containers placed from their retained [`ContainerPlan`].
     pub placement_plans_reused: usize,
     /// Containers measured from a retained [`MeasurePlan`], without a walk of
@@ -3431,12 +3500,6 @@ impl PassIntrinsicCache {
     fn note_placement_node(&mut self) {
         self.execution_stats.placement_nodes =
             self.execution_stats.placement_nodes.saturating_add(1);
-    }
-
-    fn note_translation(&mut self, nodes: usize) {
-        self.execution_stats.translations = self.execution_stats.translations.saturating_add(1);
-        self.execution_stats.translated_nodes =
-            self.execution_stats.translated_nodes.saturating_add(nodes);
     }
 
     fn note_origin_only(&mut self) {

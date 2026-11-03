@@ -10,6 +10,13 @@
 //! a static scroller it escapes does not count it; a `fixed` box counts
 //! nowhere. The carried extent depends only on the subtree it comes from, so
 //! a subtree that moves keeps its entries.
+//!
+//! Each entry is measured from its own node's border-box origin, and a
+//! parent reads a child's moved by the child's local box: a subtree that
+//! moves keeps every entry in it, and only the path above its root is read
+//! again. A carried extent is measured from its containing block's origin,
+//! the frame its box is (see [`crate::LayoutFrame`]), and passes the boxes
+//! between them as it is.
 use super::*;
 
 /// The union of the layout boxes under a scroll container that reach its
@@ -41,6 +48,15 @@ impl Extent {
             top: layout.y,
             right: layout.x + layout.width,
             bottom: layout.y + layout.height,
+        }
+    }
+    /// This extent moved by `[x, y]`. An empty one stays empty.
+    pub(crate) fn translated(self, [x, y]: [f32; 2]) -> Self {
+        Self {
+            left: self.left + x,
+            top: self.top + y,
+            right: self.right + x,
+            bottom: self.bottom + y,
         }
     }
     fn merge(self, other: Self) -> Self {
@@ -276,7 +292,11 @@ impl Placement {
             None
         };
         Self {
-            own: Extent::of(record.layout),
+            own: Extent::of(crate::LayoutBox {
+                x: 0.0,
+                y: 0.0,
+                ..record.local_layout
+            }),
             contained: overflow_contained_axes(&record.style.layout, world.nodes.visual(id)),
             omitted: record.style.layout.omits_box(),
             lands,
@@ -310,6 +330,11 @@ impl ContentBoundsIndex {
     ) {
         if self.entries.is_empty() {
             return;
+        }
+        // Boxes carried up inside the child may land somewhere else now,
+        // and are measured from where they land.
+        if new_parent.is_some() {
+            self.reland(world, child);
         }
         self.invalidate(world, child);
         for parent in world.parent_id(child).into_iter().chain(new_parent) {
@@ -374,6 +399,27 @@ impl ContentBoundsIndex {
         entry.changed = Changed::None;
     }
 
+    /// `id` started or stopped being where absolute boxes under it land: a
+    /// carried extent is measured from the box it lands in, so every entry
+    /// under `id` that holds one reads its children again.
+    pub fn reland(&mut self, world: &UiWorld, id: StableNodeId) {
+        if self.entries.is_empty() {
+            return;
+        }
+        self.invalidate(world, id);
+        let mut open = vec![id];
+        while let Some(node) = open.pop() {
+            if let Some(entry) = self.entries.get_mut(&node)
+                && !entry.carried.is_empty()
+            {
+                entry.rebuild = true;
+                entry.changed = Changed::None;
+                self.invalidate(world, node);
+            }
+            open.extend(world.child_ids(node).iter().copied());
+        }
+    }
+
     pub fn remove(&mut self, id: StableNodeId, parent: Option<StableNodeId>) {
         self.entries.remove(&id);
         if let Some(parent) = parent.and_then(|parent| self.entries.get_mut(&parent)) {
@@ -419,17 +465,26 @@ impl ContentBoundsIndex {
             .entries
             .get(&child)
             .map_or(Extent::EMPTY, |entry| entry.pending);
+        // From the child's origin to the origin of the box it adds to: its
+        // parent's, or, carried, its containing block's.
+        let from = |owner: Option<StableNodeId>| {
+            owner
+                .and_then(|owner| world.layout_box_from(owner, child))
+                .map_or([0.0, 0.0], |layout| [layout.x, layout.y])
+        };
         match world.clip_position(child) {
             PositionSpec::Absolute => Read {
                 in_flow: Extent::EMPTY,
-                carried: extent.merge(pending),
+                carried: extent
+                    .translated(from(landing_block(world, child)))
+                    .merge(pending),
             },
             PositionSpec::Fixed => Read {
                 in_flow: Extent::EMPTY,
                 carried: pending,
             },
             _ => Read {
-                in_flow: extent,
+                in_flow: extent.translated(from(world.parent_id(child))),
                 carried: pending,
             },
         }
@@ -526,6 +581,24 @@ impl ContentBoundsIndex {
     }
 }
 
+/// Where the boxes `child` carries land (see [`Placement::lands`]): the
+/// first box above it that is a containing block, the document, or the top
+/// of its tree.
+fn landing_block(world: &UiWorld, child: StableNodeId) -> Option<StableNodeId> {
+    let mut ancestor = world.parent_id(child);
+    while let Some(id) = ancestor {
+        let parent = world.parent_id(id);
+        if parent.is_none()
+            || world.is_document_node(id)
+            || world.clip_position(id).establishes_containing_block()
+        {
+            return Some(id);
+        }
+        ancestor = parent;
+    }
+    None
+}
+
 impl UiWorld {
     /// Diagnostic access to the canonical content index, with per-query work.
     #[cfg(feature = "benchmark")]
@@ -545,8 +618,15 @@ impl UiWorld {
     }
 
     /// The union of the boxes under `id` that reach its scrolling area (see
-    /// [`Extent`]). Scroll offsets do not move it.
+    /// [`Extent`]), on the page. Scroll offsets do not move it.
+    #[cfg(test)]
     pub(crate) fn scroll_content_extent(&self, id: StableNodeId) -> Extent {
+        let origin = self.layout_origin(id).unwrap_or_default();
+        self.scroll_content_extent_local(id).translated(origin)
+    }
+
+    /// [`Self::scroll_content_extent`] measured from `id`'s own origin.
+    pub(crate) fn scroll_content_extent_local(&self, id: StableNodeId) -> Extent {
         self.scroll_content_bounds.borrow_mut().content(self, id)
     }
 
@@ -759,7 +839,10 @@ mod tests {
                     brute(world, root),
                     "{step}: {root:?} against the walk"
                 );
-                let fresh = ContentBoundsIndex::default().content(world, root);
+                // The index keeps it from the root's own origin.
+                let fresh = ContentBoundsIndex::default()
+                    .content(world, root)
+                    .translated(world.layout_origin(root).unwrap_or_default());
                 assert_eq!(read, fresh, "{step}: {root:?} against a fresh index");
             }
             assert!(world.scroll_content_bounds.borrow().settled(), "{step}");

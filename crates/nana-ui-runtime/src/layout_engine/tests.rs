@@ -444,7 +444,7 @@ fn returning_to_old_viewport_does_not_restore_sizes_from_before_a_content_change
         )
         .unwrap();
     assert_eq!(
-        retained.documents[&document].boxes,
+        retained.documents[&document].page_boxes(&world),
         full_boxes(&world, document, original)
     );
 }
@@ -467,7 +467,7 @@ fn repeated_viewport_resize_keeps_intrinsic_history_bounded() {
             )
             .unwrap();
         assert_eq!(
-            retained.documents[&document].boxes,
+            retained.documents[&document].page_boxes(&world),
             full_boxes(&world, document, viewport)
         );
     }
@@ -556,7 +556,7 @@ fn fixed_layout_island_reuses_outer_layout_and_resizing_reaches_siblings() {
         .unwrap();
     assert!(emitted.len() <= 2);
     assert_eq!(
-        retained.documents[&document].boxes,
+        retained.documents[&document].page_boxes(&world),
         full_boxes(&world, document, viewport)
     );
     write_changed_boxes(&mut world, &emitted);
@@ -582,7 +582,7 @@ fn fixed_layout_island_reuses_outer_layout_and_resizing_reaches_siblings() {
         )
         .unwrap();
     assert_eq!(
-        retained.documents[&document].boxes,
+        retained.documents[&document].page_boxes(&world),
         full_boxes(&world, document, viewport)
     );
 }
@@ -628,7 +628,7 @@ fn auto_sized_isolation_request_preserves_parent_layout_dependency() {
         )
         .unwrap();
     assert_eq!(
-        retained.documents[&document].boxes,
+        retained.documents[&document].page_boxes(&world),
         full_boxes(&world, document, viewport)
     );
 }
@@ -673,7 +673,7 @@ fn scoped_layout_touches_only_the_change_closure_and_matches_full_recompute() {
     );
     for (node, box_) in full_boxes(&world, document, viewport) {
         assert_eq!(
-            retained.documents[&document].boxes.get(&node),
+            retained.documents[&document].page_boxes(&world).get(&node),
             Some(&box_),
             "scoped layout diverged from full recompute at {node:?}"
         );
@@ -706,7 +706,7 @@ fn scoped_layout_touches_only_the_change_closure_and_matches_full_recompute() {
     );
     for (node, box_) in full_boxes(&world, document, viewport) {
         assert_eq!(
-            retained.documents[&document].boxes.get(&node),
+            retained.documents[&document].page_boxes(&world).get(&node),
             Some(&box_),
             "shifted scoped layout diverged from full recompute at {node:?}"
         );
@@ -722,7 +722,8 @@ fn scoped_layout_touches_only_the_change_closure_and_matches_full_recompute() {
     let shifted_label = id(4 + 201 * 2);
     assert!(written.contains(&changed_row));
     assert!(written.contains(&shifted_row));
-    assert!(written.contains(&shifted_label));
+    // Its box is measured from the row's: it moves with the row unwritten.
+    assert!(!written.contains(&shifted_label));
     assert!(extract.render_extraction.contains(&changed_row));
     assert!(extract.render_extraction.contains(&shifted_row));
     assert!(extract.render_extraction.contains(&shifted_label));
@@ -776,7 +777,7 @@ fn scoped_layout_materializes_far_fewer_inputs_than_the_document_for_a_tail_row(
     );
     for (node, box_) in full_boxes(&world, document, viewport) {
         assert_eq!(
-            retained.documents[&document].boxes.get(&node),
+            retained.documents[&document].page_boxes(&world).get(&node),
             Some(&box_),
             "on-demand scoped layout diverged from full recompute at {node:?}"
         );
@@ -5135,7 +5136,7 @@ fn scoped_step_matches_full(
     let _ = world.take_system_work();
 
     let expected = full_boxes(world, document, viewport);
-    let cached = &retained.documents[&document].boxes;
+    let cached = &retained.documents[&document].page_boxes(world);
     for (node, box_) in &expected {
         // A node that generates no box at all -- `display:contents` -- is never
         // placed, so the scoped pass never emits it and the retained map has no
@@ -5206,7 +5207,7 @@ fn reversed_axes_keep_the_sequential_replay() {
             write_changed_boxes(&mut world, &emitted);
             let _ = world.take_system_work();
             let expected = full_boxes(&world, document, viewport);
-            let cached = &retained.documents[&document].boxes;
+            let cached = &retained.documents[&document].page_boxes(world);
             for (node, box_) in &expected {
                 assert_eq!(
                     cached.get(node).copied().unwrap_or_default(),
@@ -5270,7 +5271,7 @@ fn an_inherited_direction_change_retires_a_descendant_containers_plan() {
     );
     world.commit(queue).unwrap();
     scoped_step_matches_full(&mut world, document, viewport, &mut retained, "prime");
-    let label_before = retained.documents[&document].boxes[&id(6)];
+    let label_before = retained.documents[&document].page_boxes(&world)[&id(6)];
 
     let mut container = shape.container.clone();
     container.dir = Some(DirSpec::Rtl);
@@ -5290,7 +5291,7 @@ fn an_inherited_direction_change_retires_a_descendant_containers_plan() {
         &mut retained,
         "container turned rtl",
     );
-    let label_after = retained.documents[&document].boxes[&id(6)];
+    let label_after = retained.documents[&document].page_boxes(&world)[&id(6)];
     assert!(
         label_after.x > label_before.x,
         "the row inherited rtl and its label moved right: {label_before:?} -> {label_after:?}"
@@ -6635,7 +6636,10 @@ fn a_cached_row_rechecks_an_item_at_its_used_width() {
     write_changed_boxes(&mut world, &emitted);
     let _ = world.take_system_work();
     prime_measure_plans(&mut world, document, viewport, &mut retained, id(4));
-    assert_eq!(retained.documents[&document].boxes[&id(3)].height, 100.0);
+    assert_eq!(
+        retained.documents[&document].page_boxes(&world)[&id(3)].height,
+        100.0
+    );
 
     let mut queue = MutationQueue::new();
     queue.set_style(
@@ -6653,7 +6657,10 @@ fn a_cached_row_rechecks_an_item_at_its_used_width() {
         &mut retained,
         "an item's content stops wrapping at its used width",
     );
-    assert_eq!(retained.documents[&document].boxes[&id(3)].height, 50.0);
+    assert_eq!(
+        retained.documents[&document].page_boxes(&world)[&id(3)].height,
+        50.0
+    );
 }
 
 /// `MeasurePlan` records the flow direction its container handed each child as
@@ -6694,7 +6701,7 @@ fn flipping_a_container_to_a_row_remeasures_children_that_depend_on_the_directio
     write_changed_boxes(&mut world, &emitted);
     let _ = world.take_system_work();
     prime_measure_plans(&mut world, document, viewport, &mut retained, id(5));
-    let column_box = retained.documents[&document].boxes[&id(3)];
+    let column_box = retained.documents[&document].page_boxes(&world)[&id(3)];
 
     let mut queue = MutationQueue::new();
     queue.set_style(
@@ -6713,7 +6720,7 @@ fn flipping_a_container_to_a_row_remeasures_children_that_depend_on_the_directio
         "container direction flipped to row",
     );
     assert_ne!(
-        retained.documents[&document].boxes[&id(3)],
+        retained.documents[&document].page_boxes(&world)[&id(3)],
         column_box,
         "the child's measurement must actually depend on the parent direction, \
          or this test cannot detect a plan that ignores it"
@@ -6772,7 +6779,7 @@ fn a_display_contents_child_keeps_its_container_off_the_cached_plans() {
     write_changed_boxes(&mut world, &emitted);
     let _ = world.take_system_work();
     prime_measure_plans(&mut world, document, viewport, &mut retained, id(3));
-    let spliced = retained.documents[&document].boxes[&id(2)];
+    let spliced = retained.documents[&document].page_boxes(&world)[&id(2)];
 
     // A grandchild grows. Every DIRECT child of the container keeps its style
     // and its id, so the per-child checks see nothing at all.
@@ -6799,7 +6806,7 @@ fn a_display_contents_child_keeps_its_container_off_the_cached_plans() {
          exercising the case the direct-child entries cannot see"
     );
     assert_ne!(
-        retained.documents[&document].boxes[&id(2)].height,
+        retained.documents[&document].page_boxes(&world)[&id(2)].height,
         spliced.height,
         "the grandchild must actually move the container's height, or this test \
          cannot detect a plan that cached across it"
@@ -6807,7 +6814,7 @@ fn a_display_contents_child_keeps_its_container_off_the_cached_plans() {
 
     // And the ordinary case on the same tree: the spliced child becomes a real
     // box, which changes what the container measures through the flow list.
-    let spliced = retained.documents[&document].boxes[&id(2)];
+    let spliced = retained.documents[&document].page_boxes(&world)[&id(2)];
     let mut queue = MutationQueue::new();
     queue.set_style(
         id(4),
@@ -6825,7 +6832,7 @@ fn a_display_contents_child_keeps_its_container_off_the_cached_plans() {
         "display:contents child became a box",
     );
     assert_ne!(
-        retained.documents[&document].boxes[&id(2)].height,
+        retained.documents[&document].page_boxes(&world)[&id(2)].height,
         spliced.height,
         "unboxing must change the container's own height, or this test cannot \
          detect a plan that cached across it"
@@ -6921,7 +6928,7 @@ fn a_container_whose_own_text_grows_remeasures_itself() {
     shape(&mut world);
     let _ = world.take_system_work();
     prime_measure_plans(&mut world, document, viewport, &mut retained, id(3));
-    let short = retained.documents[&document].boxes[&id(2)];
+    let short = retained.documents[&document].page_boxes(&world)[&id(2)];
 
     let before = world.node_style(id(2)).unwrap().layout.clone();
     let mut queue = MutationQueue::new();
@@ -6946,7 +6953,7 @@ fn a_container_whose_own_text_grows_remeasures_itself() {
         "the container's own text grew",
     );
     assert_ne!(
-        retained.documents[&document].boxes[&id(2)].height,
+        retained.documents[&document].page_boxes(&world)[&id(2)].height,
         short.height,
         "the container's own text must decide its height, or this test cannot \
          detect a plan that ignores it"

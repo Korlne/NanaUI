@@ -73,15 +73,18 @@ pub(super) fn retained_matches_full_layout(
     #[cfg(test)]
     let _paused = super::measure_trace::pause();
     REFERENCE.with(|reference| reference.set(true));
-    let full = engine.layout_document(world, document, viewport);
+    let full = engine.layout_document_local(world, document, viewport);
     REFERENCE.with(|reference| reference.set(false));
     let Ok(full) = full else {
         return;
     };
     let mut wrong = Vec::new();
-    for (id, expected) in full {
+    for (id, expected, frame) in full {
         let kept = cache.boxes.get(&id).copied().unwrap_or_default();
-        if !same(kept, expected) {
+        let kept_frame = cache.frames.get(&id).copied().unwrap_or_default();
+        // A box with no extent has no frame that matters either.
+        let omitted = expected.width == 0.0 && expected.height == 0.0;
+        if !same(kept, expected) || (kept_frame != frame && !omitted) {
             wrong.push((id, kept, expected));
         }
     }

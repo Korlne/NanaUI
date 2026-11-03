@@ -122,7 +122,11 @@ pub(crate) struct NodeRecord {
     pub inherited_orientation: nana_ui_core::TextOrientationSpec,
     pub text: TextContent,
     pub text_metrics: TextMetrics,
-    pub layout: LayoutBox,
+    /// The box layout last wrote, measured from [`Self::layout_frame`]'s
+    /// origin. Its document box is derived ([`crate::UiWorld::layout_box`]):
+    /// a subtree that moves keeps every box under its root.
+    pub local_layout: LayoutBox,
+    pub layout_frame: crate::LayoutFrame,
     pub layout_padding: Option<nana_ui_core::PaddingSpec>,
     /// Page axes the last layout placed the children from the far end.
     pub layout_far_start: Option<[bool; 2]>,
@@ -159,7 +163,8 @@ impl NodeRecord {
             inherited_orientation: nana_ui_core::TextOrientationSpec::Mixed,
             text: TextContent::default(),
             text_metrics: TextMetrics::default(),
-            layout: LayoutBox::default(),
+            local_layout: LayoutBox::default(),
+            layout_frame: crate::LayoutFrame::Parent,
             layout_padding: None,
             layout_far_start: None,
             layout_context: None,

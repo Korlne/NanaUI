@@ -143,7 +143,7 @@ fn mixed_replacement_preserves_children_and_returns_to_plain_without_residue() {
     );
     assert_ne!(
         before,
-        *doc.context()
+        doc.context()
             .world()
             .layout_result(paragraph.stable_id())
             .unwrap()
@@ -467,8 +467,9 @@ fn paint_and_equal_atomic_metrics_do_not_reflow_the_inline_parent() {
     let result = doc
         .context()
         .world()
-        .layout_result(paragraph.stable_id())
-        .unwrap() as *const _ as usize;
+        .local_layout_result(paragraph.stable_id())
+        .map(std::sync::Arc::as_ptr)
+        .unwrap() as usize;
     let mut queue = MutationQueue::new();
     let mut style = doc
         .context()
@@ -502,8 +503,9 @@ fn paint_and_equal_atomic_metrics_do_not_reflow_the_inline_parent() {
     assert_eq!(
         doc.context()
             .world()
-            .layout_result(paragraph.stable_id())
-            .unwrap() as *const _ as usize,
+            .local_layout_result(paragraph.stable_id())
+            .map(std::sync::Arc::as_ptr)
+            .unwrap() as usize,
         result
     );
     assert!(doc.flush(viewport, &mut shaper).unwrap().is_idle());
@@ -629,7 +631,7 @@ fn incremental_inline_content_matches_a_cold_world_and_keeps_focus() {
                 .world()
                 .layout_result(left)
                 .unwrap()
-                .geometry_eq(cold.context().world().layout_result(right).unwrap()),
+                .geometry_eq(&cold.context().world().layout_result(right).unwrap()),
             "{left:?} differs from cold layout"
         );
     }
@@ -697,8 +699,9 @@ fn a_plain_single_run_keeps_box_fragments_when_only_its_advance_changes() {
     let before = doc
         .context()
         .world()
-        .layout_result(label.stable_id())
-        .unwrap() as *const _ as usize;
+        .local_layout_result(label.stable_id())
+        .map(std::sync::Arc::as_ptr)
+        .unwrap() as usize;
     let old_text = doc
         .context()
         .world()
@@ -712,7 +715,7 @@ fn a_plain_single_run_keeps_box_fragments_when_only_its_advance_changes() {
     let world = doc.context().world();
     assert_ne!(world.text_layout(label.stable_id()).unwrap().0, old_text);
     assert_eq!(
-        world.layout_result(label.stable_id()).unwrap() as *const _ as usize,
+        std::sync::Arc::as_ptr(world.local_layout_result(label.stable_id()).unwrap()) as usize,
         before
     );
     assert_eq!(
@@ -983,7 +986,7 @@ fn control_paint_spans_keep_plain_geometry_and_native_budget() {
         doc.flush(viewport, &mut shaper).unwrap();
         let world = doc.context().world();
         assert_eq!(world.text_layout(button.stable_id()).unwrap().0, layout);
-        assert!(before.geometry_eq(world.layout_result(button.stable_id()).unwrap()));
+        assert!(before.geometry_eq(&world.layout_result(button.stable_id()).unwrap()));
         let work = doc.context().last_work_counters();
         assert_eq!(
             (
@@ -1013,7 +1016,7 @@ fn control_paint_spans_keep_plain_geometry_and_native_budget() {
     doc.flush(viewport, &mut shaper).unwrap();
     assert!(
         before.geometry_eq(
-            doc.context()
+            &doc.context()
                 .world()
                 .layout_result(cold.stable_id())
                 .unwrap()

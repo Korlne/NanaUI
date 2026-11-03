@@ -80,7 +80,7 @@ impl UiWorld {
     /// [`crate::LayoutResult::clip_parent`] says, or the same rule before a
     /// result is published.
     pub fn layout_clip_parent(&self, id: StableNodeId) -> Option<StableNodeId> {
-        match self.layout_result(id) {
+        match self.local_layout_result(id) {
             Some(result) => result.clip_parent,
             None => self.clip_parent_of(id),
         }
@@ -89,7 +89,7 @@ impl UiWorld {
     /// `id`'s clip chain, nearest first: every ancestor whose overflow clip
     /// and scroll reach it, read from the published results.
     pub fn layout_clip_chain(&self, id: StableNodeId) -> impl Iterator<Item = StableNodeId> + '_ {
-        let clip = |id| match self.layout_result(id) {
+        let clip = |id| match self.local_layout_result(id) {
             Some(result) => result.clip,
             None => self.overflow_clip_of(id),
         };

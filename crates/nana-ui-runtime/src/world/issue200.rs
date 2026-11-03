@@ -1418,7 +1418,14 @@ impl Windows {
         world
             .document_order(WINDOWS[window])
             .into_iter()
-            .map(|id| (id, world.layout_result(id).cloned()))
+            .map(|id| {
+                (
+                    id,
+                    world
+                        .layout_result(id)
+                        .map(|result| result.as_ref().clone()),
+                )
+            })
             .collect()
     }
 

@@ -102,72 +102,6 @@ fn place_unvisited_reaching(
     Ok(())
 }
 
-/// Place the children of a container that only moved from `moved`, its plan
-/// where it now stands (see [`ContainerPlan::moved_to`]): each child in flow
-/// at its offset in the content box, at the size the plan holds and in the
-/// containing block it was placed in, and each positioned child that moved
-/// with the box. A child that holds a plan of its own moves the same way, so
-/// the whole subtree is written -- every box in it moved -- and none of it is
-/// measured. A positioned child whose box reads a containing block that
-/// changed size is the overlay's to place again.
-#[allow(clippy::too_many_arguments)]
-fn place_moved_children(
-    moved: &ContainerPlan,
-    content_origin: Point,
-    content: Size,
-    viewport: LayoutViewport,
-    nodes: &mut LayoutInputMap<'_>,
-    intrinsic: &mut PassIntrinsicCache,
-    output: &mut HashMap<StableNodeId, LayoutBox>,
-    scope: &ScopeContext<'_>,
-) -> Result<(), UiWorldError> {
-    for (index, entry) in moved.entries.borrow().iter().enumerate() {
-        place_node_scoped(
-            entry.child,
-            entry.origin,
-            entry.size,
-            moved.entry_containing(index),
-            viewport,
-            moved.child_font_px,
-            nodes,
-            intrinsic,
-            output,
-            Some(scope),
-            None,
-        )?;
-    }
-    for entry in &moved.overlay {
-        if entry.fixed
-            || overlay_depends_on_block(
-                entry,
-                moved,
-                content_origin,
-                content,
-                viewport,
-                nodes,
-                output,
-                scope,
-            )
-        {
-            continue;
-        }
-        place_node_scoped(
-            entry.child,
-            entry.origin,
-            entry.size,
-            entry.base,
-            viewport,
-            moved.child_font_px,
-            nodes,
-            intrinsic,
-            output,
-            Some(scope),
-            None,
-        )?;
-    }
-    Ok(())
-}
-
 /// Re-check only the children the change closure reaches.
 ///
 /// Everything outside it is unchanged by construction: a layout-affecting
@@ -1369,11 +1303,9 @@ fn place_level(
                     intrinsic,
                     super::recursion::Boundary {
                         id,
-                        origin: head.origin,
                         size,
                         containing,
                         parent_font_px,
-                        placed_before: head.placed_before,
                         inherited: inherited_grid.cloned(),
                     },
                 );
@@ -1382,12 +1314,10 @@ fn place_level(
             place_node_body(
                 id,
                 Some(head.facts),
-                head.origin,
                 size,
                 containing,
                 viewport,
                 parent_font_px,
-                head.placed_before,
                 nodes,
                 intrinsic,
                 output,
@@ -1424,12 +1354,10 @@ fn place_boundaries(
                 place_node_body(
                     boundary.id,
                     None,
-                    boundary.origin,
                     boundary.size,
                     boundary.containing,
                     viewport,
                     boundary.parent_font_px,
-                    boundary.placed_before,
                     nodes,
                     intrinsic,
                     output,
@@ -1445,9 +1373,6 @@ fn place_boundaries(
 /// A level's head once it has written its node's box: what the body needs.
 struct PlacedHead {
     facts: NodeFacts,
-    /// Where the box stands, its relative offset applied.
-    origin: Point,
-    placed_before: bool,
 }
 
 /// The first half of a level: write `id`'s own box. `None` when that is all
@@ -1492,6 +1417,14 @@ fn place_node_head(
             .insert(id, (origin, containing, parent_font_px));
     }
     let style = style_arc.as_ref();
+    // A box in flow, and one that generates none, is measured from its
+    // parent's origin, whatever frame it had out of flow before; a
+    // positioned box's frame is the one `place_positioned_child` gives it.
+    if (!style.position.is_out_of_flow() || style.omits_box())
+        && scope.is_some_and(|scope| scope.retained.frames.contains_key(&id))
+    {
+        nodes.frames.insert(id, crate::LayoutFrame::Parent);
+    }
     if style.omits_box() {
         output.insert(
             id,
@@ -1521,24 +1454,16 @@ fn place_node_head(
         intrinsic.note_origin_only();
     }
     intrinsic.note_placement_node();
-    // Placed already this pass, as an island laid out on its own: its plan
-    // from the last pass may no longer be what that placement left.
-    let placed_before = output
-        .insert(
-            id,
-            LayoutBox {
-                x: origin.x,
-                y: origin.y,
-                width: size.width,
-                height: size.height,
-            },
-        )
-        .is_some();
-    Ok(Some(PlacedHead {
-        facts,
-        origin,
-        placed_before,
-    }))
+    output.insert(
+        id,
+        LayoutBox {
+            x: origin.x,
+            y: origin.y,
+            width: size.width,
+            height: size.height,
+        },
+    );
+    Ok(Some(PlacedHead { facts }))
 }
 
 /// What a level reads off its node, read once for both of its halves.
@@ -1558,12 +1483,10 @@ struct NodeFacts {
 fn place_node_body(
     id: StableNodeId,
     facts: Option<NodeFacts>,
-    origin: Point,
     size: Size,
     containing: Size,
     viewport: LayoutViewport,
     parent_font_px: f32,
-    placed_before: bool,
     nodes: &mut LayoutInputMap<'_>,
     intrinsic: &mut PassIntrinsicCache,
     output: &mut HashMap<StableNodeId, LayoutBox>,
@@ -1595,6 +1518,10 @@ fn place_node_body(
     let style = style_arc.as_ref();
     let fonts = fonts_of(style, parent_font_px);
     let child_font_px = fonts.element_px;
+    // The children are placed from this box's own origin: their boxes are
+    // measured from it (see `crate::LayoutFrame`), so where it stands moves
+    // none of them.
+    let origin = Point::ZERO;
 
     let containing_inline = containing_writing.inline_size(containing.width, containing.height);
     let padding = style.resolved_padding_against_fonts(Some(containing_inline), fonts);
@@ -1669,31 +1596,6 @@ fn place_node_body(
             output,
             scope,
         );
-    }
-    if place_moved_container(
-        id,
-        origin,
-        size,
-        containing,
-        viewport,
-        parent_font_px,
-        child_font_px,
-        &style_arc,
-        &child_ids,
-        writing,
-        border,
-        padding,
-        lead,
-        content_origin,
-        content,
-        placed_before,
-        inherited_grid,
-        nodes,
-        intrinsic,
-        output,
-        scope,
-    )? {
-        return Ok(());
     }
     let had_plan = scope.is_some_and(|scope| scope.retained.container_plans.contains_key(&id));
     if place_edited_child_list(
@@ -1862,12 +1764,15 @@ fn place_node_body(
         }
     }
     if let Some(overlay) = triggered_menu_overlay(nodes.world, id) {
+        // The items hang off the viewport: they are placed from where the
+        // menu stands on the page.
+        let page = origin_in(None, id, nodes, output, scope);
         place_triggered_menu_items(
             id,
             overlay,
             LayoutBox {
-                x: origin.x,
-                y: origin.y,
+                x: page.x,
+                y: page.y,
                 width: size.width,
                 height: size.height,
             },
@@ -1902,290 +1807,6 @@ fn place_node_body(
         plan.overlay = recorded_overlay;
     }
     Ok(())
-}
-
-/// A container that only moved, placed from its plan. False when the plan
-/// cannot answer.
-#[allow(clippy::too_many_arguments)]
-// Its own frame, taken only on the path that calls it (see `recursion`).
-#[inline(never)]
-fn place_moved_container(
-    id: StableNodeId,
-    origin: Point,
-    size: Size,
-    containing: Size,
-    viewport: LayoutViewport,
-    parent_font_px: f32,
-    child_font_px: f32,
-    style_arc: &Arc<LayoutStyle>,
-    child_ids: &Arc<Vec<StableNodeId>>,
-    writing: nana_ui_core::WritingContext,
-    border: nana_ui_core::PaddingSpec,
-    padding: nana_ui_core::PaddingSpec,
-    lead: Size,
-    content_origin: Point,
-    content: Size,
-    placed_before: bool,
-    inherited_grid: Option<&InheritedGridTracks>,
-    nodes: &mut LayoutInputMap<'_>,
-    intrinsic: &mut PassIntrinsicCache,
-    output: &mut HashMap<StableNodeId, LayoutBox>,
-    scope: Option<&ScopeContext<'_>>,
-) -> Result<bool, UiWorldError> {
-    // A container that only moved: its plan holds where the box stood, and
-    // nothing in it is on the frontier. Every box under it moves with it --
-    // the output -- and none is measured, nor a plan recorded again, to place
-    // them. See `ContainerPlan::moved_to`.
-    if let Some(scope) = scope
-        && !placed_before
-        && inherited_grid.is_none()
-        && let Some(plan) = scope.retained.container_plans.get(&id)
-        && plan.origin != origin
-        && Arc::ptr_eq(&plan.children, child_ids)
-        && plan.can_reuse_flow(
-            plan.origin,
-            size,
-            containing,
-            // Where this pass's border and padding put the content box in the
-            // box where it stood: the box moved, not its content box in it.
-            Point {
-                x: plan.origin.x + border.left + padding.left + lead.width,
-                y: plan.origin.y + border.top + padding.top + lead.height,
-            },
-            parent_font_px,
-            viewport,
-            style_arc,
-            writing,
-        )
-        // A grid solves its tracks again for a box of another size, and a
-        // reversed sequential axis whose main size moved places every child
-        // again from its far edge: neither only moves.
-        && (plan.grid.is_none() || (plan.size == size && plan.content == content))
-        && !(plan.sequential
-            && plan.main_reversed
-            && main_extent(content, plan.main_direction).to_bits()
-                != plan.placed_main.get().to_bits())
-        && scope.reach.children(id).is_empty()
-        // An island among the children is affected without the index above
-        // leading to it.
-        && !child_ids.iter().any(|child| scope.affected.contains(child))
-        && nodes.world.children_layout_style_is_local(id)
-        && triggered_menu_overlay(nodes.world, id).is_none()
-        && let Some(moved) = plan.moved_to(origin, content_origin)
-    {
-        if translate_moved_children(plan, &moved, viewport, nodes, intrinsic, output, scope) {
-            // The container itself only moved too, when its box kept its
-            // size and nothing about it changed: its result and hit entry
-            // keep their own geometry like the boxes it took along.
-            if plan.size == size && !scope.affected.contains(&id) {
-                nodes.translated.push(id);
-            }
-        } else {
-            place_moved_children(
-                &moved,
-                content_origin,
-                content,
-                viewport,
-                nodes,
-                intrinsic,
-                output,
-                scope,
-            )?;
-        }
-        if moved.overlay.is_empty() {
-            nodes.container_plans.insert(id, Some(moved));
-        } else {
-            finish_positioned_overlay(
-                id,
-                &moved,
-                origin,
-                size,
-                content_origin,
-                content,
-                viewport,
-                child_font_px,
-                writing,
-                nodes,
-                intrinsic,
-                output,
-                scope,
-            )?;
-            // Unless the overlay recorded it with what it placed again.
-            nodes.container_plans.entry(id).or_insert(Some(moved));
-        }
-        intrinsic.note_placement_plan_reused();
-        return Ok(true);
-    }
-    Ok(false)
-}
-
-/// The subtrees under a container that only moved, moved with it without
-/// placing a box again. Each box goes where a fresh pass would put it: its
-/// parent's new content origin plus the offset the parent's plan recorded,
-/// and a container's content origin is its new origin plus its border, used
-/// padding and leading parts, summed in the order placement sums them. So
-/// the boxes match a fresh layout to the bit, as `place_moved_children`
-/// does, at a fraction of the work: no style resolution, facts or
-/// formatting context per box.
-///
-/// Nothing is written unless every box qualifies: one that the walk cannot
-/// move -- without a retained box, a plan that holds positioned children or
-/// lost its offsets, a dynamic line, an island, a box no longer where its
-/// plan says -- sends the whole container down `place_moved_children`.
-/// Returns whether the subtrees moved.
-fn translate_moved_children(
-    previous: &ContainerPlan,
-    moved: &ContainerPlan,
-    viewport: LayoutViewport,
-    nodes: &mut LayoutInputMap<'_>,
-    intrinsic: &mut PassIntrinsicCache,
-    output: &mut HashMap<StableNodeId, LayoutBox>,
-    scope: &ScopeContext<'_>,
-) -> bool {
-    if !moved.overlay.is_empty() {
-        return false;
-    }
-    let mut scratch = std::mem::take(&mut nodes.translate_scratch);
-    let walked = walk_moved_children(
-        previous,
-        moved,
-        viewport,
-        nodes,
-        output,
-        scope,
-        &mut scratch,
-    );
-    if walked {
-        let TranslateScratch { boxes, plans, .. } = &mut scratch;
-        intrinsic.note_translation(boxes.len());
-        nodes.translated.extend(boxes.iter().map(|&(id, _)| id));
-        output.extend(boxes.drain(..));
-        for (id, plan) in plans.drain(..) {
-            nodes.container_plans.insert(id, Some(plan));
-        }
-    }
-    scratch.open.clear();
-    scratch.boxes.clear();
-    scratch.plans.clear();
-    nodes.translate_scratch = scratch;
-    walked
-}
-
-/// The walk of [`translate_moved_children`]: fills `scratch` with every box
-/// and plan under `moved` at where it goes, or returns false at the first
-/// one that cannot only move.
-fn walk_moved_children(
-    previous: &ContainerPlan,
-    moved: &ContainerPlan,
-    viewport: LayoutViewport,
-    nodes: &LayoutInputMap<'_>,
-    output: &HashMap<StableNodeId, LayoutBox>,
-    scope: &ScopeContext<'_>,
-    scratch: &mut TranslateScratch,
-) -> bool {
-    let retained = scope.retained;
-    let world = nodes.world;
-    // What a container adds to its origin to reach its content origin: its
-    // border, used padding and leading parts. One container's are read once
-    // for where it stood and where it goes.
-    let content_inset = |id: StableNodeId| -> Option<(
-        nana_ui_core::PaddingSpec,
-        nana_ui_core::PaddingSpec,
-        Size,
-    )> {
-        let style = world.layout_style(id)?;
-        let border = style.resolved_border_edges();
-        let padding = *retained.used_padding.get(&id)?;
-        let lead = world
-            .leading_parts(id)
-            .map_or(Size::default(), |lead| lead.offset());
-        Some((border, padding, lead))
-    };
-    // Summed in the order placement sums them.
-    let content_origin_at = |origin: Point,
-                             (border, padding, lead): (
-        nana_ui_core::PaddingSpec,
-        nana_ui_core::PaddingSpec,
-        Size,
-    )| Point {
-        x: origin.x + border.left + padding.left + lead.width,
-        y: origin.y + border.top + padding.top + lead.height,
-    };
-    let TranslateScratch { open, boxes, plans } = scratch;
-    open.extend(
-        previous
-            .entries
-            .borrow()
-            .iter()
-            .zip(moved.entries.borrow().iter())
-            .map(|(was, now)| (now.child, was.origin, now.origin)),
-    );
-    while let Some((id, was, now)) = open.pop() {
-        let Some(&kept) = retained.boxes.get(&id) else {
-            return false;
-        };
-        if kept.x.to_bits() != was.x.to_bits()
-            || kept.y.to_bits() != was.y.to_bits()
-            || output.contains_key(&id)
-            || nodes.container_plans.contains_key(&id)
-            || retained.placements.contains_key(&id)
-            || retained.remote_overlays.contains(&id)
-            || retained.envelopes.contains_key(&id)
-            || retained.line_solves.contains_key(&id)
-            || retained.applied_adjustments.contains_key(&id)
-            || world.inline_record(id).is_some()
-        {
-            return false;
-        }
-        boxes.push((
-            id,
-            LayoutBox {
-                x: now.x,
-                y: now.y,
-                ..kept
-            },
-        ));
-        let children = world.child_ids(id);
-        if children.is_empty() {
-            continue;
-        }
-        let Some(plan) = retained.container_plans.get(&id) else {
-            return false;
-        };
-        if !plan.overlay.is_empty()
-            || plan.viewport != viewport
-            || plan.origin.x.to_bits() != was.x.to_bits()
-            || plan.origin.y.to_bits() != was.y.to_bits()
-            || plan.children.as_slice() != children
-            || !world.children_layout_style_is_local(id)
-            || triggered_menu_overlay(world, id).is_some()
-        {
-            return false;
-        }
-        // The plan's content origin must be the sum this walk takes, or the
-        // walk would place the children somewhere a fresh pass does not.
-        let Some(inset) = content_inset(id) else {
-            return false;
-        };
-        let stood = content_origin_at(was, inset);
-        if stood.x.to_bits() != plan.content_origin.x.to_bits()
-            || stood.y.to_bits() != plan.content_origin.y.to_bits()
-        {
-            return false;
-        }
-        let Some(next) = plan.moved_to(now, content_origin_at(now, inset)) else {
-            return false;
-        };
-        open.extend(
-            plan.entries
-                .borrow()
-                .iter()
-                .zip(next.entries.borrow().iter())
-                .map(|(was, now)| (now.child, was.origin, now.origin)),
-        );
-        plans.push((id, next));
-    }
-    true
 }
 
 /// A sequential container with a new child list, placed by replaying its
@@ -3609,15 +3230,24 @@ fn reads_main_extent(style: &LayoutStyle, direction: FlexDirection) -> bool {
 /// retained one survives the hide.
 fn retire_omitted_children(
     children: &[StableNodeId],
-    nodes: &LayoutInputMap<'_>,
+    nodes: &mut LayoutInputMap<'_>,
     output: &mut HashMap<StableNodeId, LayoutBox>,
     scope: &ScopeContext<'_>,
 ) {
     for &child in children {
-        if nodes
+        if !nodes
             .style_ref(child)
             .is_some_and(|style| style.omits_box())
-            && scope
+        {
+            continue;
+        }
+        // No box, and so no frame other than a cold layout's.
+        let framed = scope.retained.frames.contains_key(&child);
+        if framed {
+            nodes.frames.insert(child, crate::LayoutFrame::Parent);
+        }
+        if framed
+            || scope
                 .retained
                 .boxes
                 .get(&child)
@@ -3658,12 +3288,22 @@ pub(super) fn place_positioned_child(
     } else {
         absolute_containing_block(child, nodes)
     };
-    let in_container = block.is_some() && block == nodes.world.parent_id(child);
-    let (base_origin, base) = match block {
-        None => (Point::ZERO, Size::new(viewport.width, viewport.height)),
-        Some(block) => {
-            padding_box(block, nodes, output, scope).unwrap_or((content_origin, content))
-        }
+    let container = nodes.world.parent_id(child);
+    let in_container = block.is_some() && block == container;
+    // The child's box is measured from its containing block's origin (the
+    // page's for the initial one and for a fixed box), so that only the
+    // block moving moves it; everything below is in that frame.
+    let (frame, base_origin, base) = match block {
+        None => (
+            crate::LayoutFrame::Page,
+            Point::ZERO,
+            Size::new(viewport.width, viewport.height),
+        ),
+        Some(block) => match padding_box(block, nodes, output, scope) {
+            Some((origin, size)) if in_container => (crate::LayoutFrame::Parent, origin, size),
+            Some((origin, size)) => (crate::LayoutFrame::Block(block), origin, size),
+            None => (crate::LayoutFrame::Parent, content_origin, content),
+        },
     };
     let child_fonts = fonts_of(child_style, child_font_px);
     // An auto height is the content's (CSS shrink-to-fit): what inside it
@@ -3746,16 +3386,28 @@ pub(super) fn place_positioned_child(
     if let Some(max) = child_style.resolved_max_height_fonts(Some(base.height), vp, child_fonts) {
         child_size.height = child_size.height.min(max);
     }
+    let static_position =
+        !fixed && ((left.is_none() && right.is_none()) || (top.is_none() && bottom.is_none()));
+    // Where the container's content box stands in the child's frame: the
+    // box's static position. Only read when an axis keeps it.
+    let static_origin = match (frame, container) {
+        (_, _) if fixed || !static_position => content_origin,
+        (crate::LayoutFrame::Parent, _) | (_, None) => content_origin,
+        (crate::LayoutFrame::Block(block), Some(container)) => {
+            content_origin_in(Some(block), container, content_origin, nodes, output, scope)
+        }
+        (crate::LayoutFrame::Page, Some(container)) => {
+            content_origin_in(None, container, content_origin, nodes, output, scope)
+        }
+    };
     let (static_x, static_y) = if fixed {
         (0.0, 0.0)
     } else {
         (
-            content_origin.x - base_origin.x,
-            content_origin.y - base_origin.y,
+            static_origin.x - base_origin.x,
+            static_origin.y - base_origin.y,
         )
     };
-    let static_position =
-        !fixed && ((left.is_none() && right.is_none()) || (top.is_none() && bottom.is_none()));
     let inset = match child_style.anchor.filter(|_| fixed) {
         // Anchor positioning: hung from its anchor, at the size it measured,
         // by the one resolver every anchored surface shares.
@@ -3782,16 +3434,21 @@ pub(super) fn place_positioned_child(
         x: base_origin.x + inset.x,
         y: base_origin.y + inset.y,
     };
-    if !subtree_unchanged(
-        child,
-        child_origin,
-        child_size,
-        base,
-        child_style,
-        child_fonts,
-        writing,
-        scope,
-    ) {
+    // A box placed in another frame than last pass is placed again: its
+    // retained box is measured from the other one.
+    let frame_kept = pass_frame(child, nodes, scope) == frame;
+    if !frame_kept
+        || !subtree_unchanged(
+            child,
+            child_origin,
+            child_size,
+            base,
+            child_style,
+            child_fonts,
+            writing,
+            scope,
+        )
+    {
         place_node_scoped(
             child,
             child_origin,
@@ -3806,6 +3463,11 @@ pub(super) fn place_positioned_child(
             None,
         )?;
     }
+    // A box that generates none keeps its parent's frame, as a cold layout
+    // leaves it.
+    if !child_style.omits_box() {
+        nodes.frames.insert(child, frame);
+    }
     let tracks_containing_block = positioned_tracks_containing_block(child_style);
     Ok(Some(PlannedOverlay {
         child,
@@ -3813,14 +3475,10 @@ pub(super) fn place_positioned_child(
         fixed,
         block,
         in_container,
-        static_origin: static_position.then_some(content_origin),
+        static_origin: static_position.then_some(static_origin),
         tracks_containing_block,
         base,
         base_origin,
-        inset: Point {
-            x: child_origin.x - content_origin.x,
-            y: child_origin.y - content_origin.y,
-        },
         origin: child_origin,
         size: child_size,
     }))
@@ -3851,29 +3509,129 @@ fn absolute_containing_block(
 }
 
 /// The padding box of `block` as this pass placed it, or as the last one
-/// left it when this pass did not place it: the edge an absolute child's
-/// insets and percentages resolve against.
+/// left it when this pass did not place it, measured from the block's own
+/// origin: the edge an absolute child's insets and percentages resolve
+/// against.
 fn padding_box(
     block: StableNodeId,
     nodes: &LayoutInputMap<'_>,
     output: &HashMap<StableNodeId, LayoutBox>,
     scope: Option<&ScopeContext<'_>>,
 ) -> Option<(Point, Size)> {
-    let border_box = output
-        .get(&block)
-        .or_else(|| scope.and_then(|scope| scope.retained.boxes.get(&block)))
-        .copied()?;
+    let border_box = pass_box(block, output, scope)?;
     let border = nodes.style_ref(block)?.resolved_border_edges();
     Some((
         Point {
-            x: border_box.x + border.left,
-            y: border_box.y + border.top,
+            x: border.left,
+            y: border.top,
         },
         Size::new(
             (border_box.width - border.left - border.right).max(0.0),
             (border_box.height - border.top - border.bottom).max(0.0),
         ),
     ))
+}
+
+/// `id`'s box as this pass placed it, or as the last one left it when this
+/// pass did not place it, measured from its frame's origin.
+pub(super) fn pass_box(
+    id: StableNodeId,
+    output: &HashMap<StableNodeId, LayoutBox>,
+    scope: Option<&ScopeContext<'_>>,
+) -> Option<LayoutBox> {
+    output
+        .get(&id)
+        .or_else(|| scope.and_then(|scope| scope.retained.boxes.get(&id)))
+        .copied()
+}
+
+/// What `id`'s box is measured from, as this pass or the last one left it.
+fn pass_frame(
+    id: StableNodeId,
+    nodes: &LayoutInputMap<'_>,
+    scope: Option<&ScopeContext<'_>>,
+) -> crate::LayoutFrame {
+    nodes
+        .frames
+        .get(&id)
+        .or_else(|| scope.and_then(|scope| scope.retained.frames.get(&id)))
+        .copied()
+        .unwrap_or_default()
+}
+
+/// Where `container`'s content box, at `content_origin` from its own
+/// origin, stands from `ancestor`'s origin, or the page's for `None`. The
+/// boxes on the way are summed down from the first one under `ancestor`,
+/// as a document box is. An ancestor the frames do not lead through is
+/// reached through the page.
+pub(super) fn content_origin_in(
+    ancestor: Option<StableNodeId>,
+    container: StableNodeId,
+    content_origin: Point,
+    nodes: &LayoutInputMap<'_>,
+    output: &HashMap<StableNodeId, LayoutBox>,
+    scope: Option<&ScopeContext<'_>>,
+) -> Point {
+    let origin = origin_in(ancestor, container, nodes, output, scope);
+    Point {
+        x: origin.x + content_origin.x,
+        y: origin.y + content_origin.y,
+    }
+}
+
+/// Where `id`'s origin stands from `ancestor`'s, or the page's for `None`.
+pub(super) fn origin_in(
+    ancestor: Option<StableNodeId>,
+    id: StableNodeId,
+    nodes: &LayoutInputMap<'_>,
+    output: &HashMap<StableNodeId, LayoutBox>,
+    scope: Option<&ScopeContext<'_>>,
+) -> Point {
+    let world = nodes.world;
+    let mut chain: Vec<Point> = Vec::new();
+    let mut cursor = Some(id);
+    let mut reached = ancestor.is_none();
+    while let Some(node) = cursor {
+        if Some(node) == ancestor {
+            reached = true;
+            break;
+        }
+        let local = pass_box(node, output, scope).unwrap_or_default();
+        chain.push(Point {
+            x: local.x,
+            y: local.y,
+        });
+        cursor = match pass_frame(node, nodes, scope) {
+            crate::LayoutFrame::Parent => world
+                .parent_id(node)
+                .filter(|parent| !world.is_document_node(*parent)),
+            crate::LayoutFrame::Block(block) => Some(block),
+            crate::LayoutFrame::Page => None,
+        };
+    }
+    if !reached {
+        // The page origin of both, apart.
+        let from = origin_in(
+            None,
+            ancestor.expect("only an ancestor is missed"),
+            nodes,
+            output,
+            scope,
+        );
+        let to = origin_in(None, id, nodes, output, scope);
+        return Point {
+            x: to.x - from.x,
+            y: to.y - from.y,
+        };
+    }
+    let mut sum = chain.pop().unwrap_or(Point::ZERO);
+    while let Some(next) = chain.pop() {
+        sum = Point {
+            x: sum.x + next.x,
+            y: sum.y + next.y,
+        };
+    }
+    sum
 }
 
 /// Where a fixed box with `anchor` lands at `size` in `viewport`: inside its
@@ -3968,10 +3726,7 @@ fn overlay_depends_on_block(
             || plan.viewport.height.to_bits() != viewport.height.to_bits();
     }
     if !entry.in_container {
-        return entry
-            .static_origin
-            .is_some_and(|origin| origin != content_origin)
-            || remote_block_moved(entry, viewport, nodes, output, Some(scope));
+        return remote_block_moved(entry, plan, viewport, nodes, output, Some(scope));
     }
     if plan.content_origin != content_origin {
         return true;
@@ -4024,7 +3779,7 @@ pub(super) fn place_remote_overlays(
                     !entry.fixed
                         && !entry.in_container
                         && !output.contains_key(&entry.child)
-                        && remote_block_moved(entry, viewport, nodes, output, Some(scope))
+                        && remote_block_moved(entry, &plan, viewport, nodes, output, Some(scope))
                 })
                 .map(|entry| entry.child)
                 .collect();
@@ -4098,12 +3853,28 @@ pub(super) fn place_remote_overlays(
 /// box now, or moved, or changed size under a child that reads its size.
 fn remote_block_moved(
     entry: &PlannedOverlay,
+    plan: &ContainerPlan,
     viewport: LayoutViewport,
     nodes: &LayoutInputMap<'_>,
     output: &HashMap<StableNodeId, LayoutBox>,
     scope: Option<&ScopeContext<'_>>,
 ) -> bool {
     if absolute_containing_block(entry.child, nodes) != entry.block {
+        return true;
+    }
+    // A box at its static position moves with the container, measured
+    // from the containing block: with every box between them.
+    if let Some(origin) = entry.static_origin
+        && let Some(container) = nodes.world.parent_id(entry.child)
+        && content_origin_in(
+            entry.block,
+            container,
+            plan.content_origin,
+            nodes,
+            output,
+            scope,
+        ) != origin
+    {
         return true;
     }
     let (origin, size) = match entry.block {
@@ -4354,20 +4125,23 @@ fn place_triggered_menu_items(
         };
         let child_style = child_style.as_ref();
         let child_fonts = fonts_of(child_style, parent_font_px);
+        let has_box = !child_style.omits_box();
         let child_origin = Point {
             x: item_x,
             y: cursor_y,
         };
-        if !subtree_unchanged(
-            child,
-            child_origin,
-            child_size,
-            available,
-            child_style,
-            child_fonts,
-            nodes.world.containing_writing(child),
-            scope,
-        ) {
+        if pass_frame(child, nodes, scope) != crate::LayoutFrame::Page
+            || !subtree_unchanged(
+                child,
+                child_origin,
+                child_size,
+                available,
+                child_style,
+                child_fonts,
+                nodes.world.containing_writing(child),
+                scope,
+            )
+        {
             place_node_scoped(
                 child,
                 child_origin,
@@ -4381,6 +4155,9 @@ fn place_triggered_menu_items(
                 scope,
                 None,
             )?;
+        }
+        if has_box {
+            nodes.frames.insert(child, crate::LayoutFrame::Page);
         }
         if child_size.height > 0.0 {
             cursor_y += child_size.height + nodes.world.theme().spacing().xxs;

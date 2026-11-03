@@ -183,7 +183,9 @@ impl UiWorld {
     }
 
     pub(super) fn component_content_parts(&self, id: StableNodeId) -> ContentParts {
-        if let Some(result) = self.layout_result(id) {
+        if let Some(result) = self.local_layout_result(id)
+            && let Some(origin) = self.layout_origin(id)
+        {
             let mut parts = NO_CONTENT_PARTS;
             let mut published = result.parts.iter().filter(|part| {
                 matches!(
@@ -202,7 +204,7 @@ impl UiWorld {
                 )
             });
             for (slot, part) in parts.iter_mut().zip(published.by_ref()) {
-                *slot = Some(*part);
+                *slot = Some(crate::LayoutResult::place_part(origin, part));
             }
             // The solver never yields more than the slots hold, so nothing
             // published is dropped here.
@@ -217,39 +219,44 @@ impl UiWorld {
                 self.solve_content_parts(id, content)
             })
     }
+    /// `id`'s parts in `content`, both on the page.
     pub(super) fn solve_content_parts(&self, id: StableNodeId, content: LayoutBox) -> ContentParts {
-        self.solve_content_parts_at(
+        self.solve_content_parts_in(
             id,
             content,
             self.component_layout_box(id).unwrap_or(content),
+            false,
         )
     }
+    /// [`Self::solve_content_parts`] with `content` and `bounds` measured
+    /// from `id`'s own border-box origin, as layout places them and a
+    /// result keeps its own geometry: the boxes of the slots a part steers
+    /// around are measured from it too.
     pub(crate) fn solve_content_parts_at(
         &self,
         id: StableNodeId,
         content: LayoutBox,
         bounds: LayoutBox,
     ) -> ContentParts {
-        self.solve_content_parts_in(id, content, bounds, [0.0, 0.0])
+        self.solve_content_parts_in(id, content, bounds, true)
     }
 
-    /// [`Self::solve_content_parts_at`] with `content` and `bounds` measured
-    /// from `origin` on the page: the boxes of the slots a part steers
-    /// around are measured from it too. A result's own geometry is solved
-    /// with the border box at the origin (`build_own_layout_result`).
-    pub(crate) fn solve_content_parts_in(
+    /// The parts of `id` in `content` and `bounds`, measured on the page or,
+    /// `own_frame`, from `id`'s own origin, with the slots' boxes in the
+    /// same space.
+    fn solve_content_parts_in(
         &self,
         id: StableNodeId,
         content: LayoutBox,
         bounds: LayoutBox,
-        origin: [f32; 2],
+        own_frame: bool,
     ) -> ContentParts {
         let slot_box = |slot: StableNodeId| {
-            self.component_layout_box(slot).map(|slot| LayoutBox {
-                x: slot.x - origin[0],
-                y: slot.y - origin[1],
-                ..slot
-            })
+            if own_frame {
+                self.layout_box_from(id, slot)
+            } else {
+                self.component_layout_box(slot)
+            }
         };
         let Some(visual) = self.standard_visual_ref(id) else {
             return NO_CONTENT_PARTS;
@@ -968,12 +975,13 @@ impl UiWorld {
         id: StableNodeId,
         kind: crate::LayoutPartKind,
     ) -> Option<LayoutBox> {
-        if let Some(result) = self.layout_result(id) {
+        if let Some(result) = self.local_layout_result(id) {
+            let origin = self.layout_origin(id)?;
             return result
                 .parts
                 .iter()
                 .find(|part| part.kind == kind)
-                .map(|part| part.bounds);
+                .map(|part| crate::LayoutResult::place_part(origin, part).bounds);
         }
         part_bounds(
             &self.solve_content_parts(id, self.component_content_box(id)?),

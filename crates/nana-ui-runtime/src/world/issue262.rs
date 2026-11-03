@@ -374,7 +374,8 @@ fn issue262_gate_a_a_row_growing_in_a_million_scans_its_window_at_most() {
         growth.placed.layout_measure_nodes
     );
     assert_eq!(growth.placed.intrinsic_measure_full_subtrees, 0);
-    assert!(growth.placed.layout_origin_only_updates >= growth.pass.repositioned);
+    // Each row below moves, and what it holds moves with it unplaced.
+    assert!(growth.placed.layout_translated_nodes >= growth.pass.repositioned);
     assert_eq!(growth.placed.layout_full_document_fallbacks, 0);
     for (index, (before, after)) in before.iter().zip(&after).enumerate() {
         let (moved, grew) = match index.cmp(&at) {
@@ -647,12 +648,13 @@ fn issue262_gate_e_expanding_a_node_in_a_million_creates_only_its_children() {
     assert!(pass.index_updates <= 32, "{pass:?}");
     assert_eq!(pass.extent_updates, 1);
     // The children lay out in full, once each, and nothing else does: the
-    // rows below the parent move by their origin, at a height of their own.
+    // rows below the parent move by their origin, at a height of their own,
+    // and what each holds moves with it unplaced.
     assert_eq!(laid.intrinsic_measure_full_subtrees, CHILDREN);
     assert!(
-        laid.layout_origin_only_updates >= pass.repositioned,
-        "{} origin-only updates for {pass:?}",
-        laid.layout_origin_only_updates
+        laid.layout_translated_nodes >= pass.repositioned,
+        "{} boxes moved with their rows for {pass:?}",
+        laid.layout_translated_nodes
     );
     assert_eq!(laid.layout_full_document_fallbacks, 0);
 }

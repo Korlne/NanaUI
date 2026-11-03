@@ -412,7 +412,7 @@ fn gutter_page(gutter: Gutter, theme: Option<&ThemeDefinition>) -> (AppContext, 
 }
 
 fn result(cx: &AppContext, id: StableNodeId) -> crate::LayoutResult {
-    cx.world().layout_result(id).unwrap().clone()
+    cx.world().layout_result(id).unwrap().as_ref().clone()
 }
 
 fn bar_lane(cx: &AppContext, scroll: StableNodeId) -> LayoutBox {

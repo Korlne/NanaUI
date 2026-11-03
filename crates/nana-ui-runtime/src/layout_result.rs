@@ -117,6 +117,25 @@ pub struct LayoutChildPlacement {
     pub index: usize,
 }
 
+/// What a node's local layout box is measured from (see
+/// [`crate::UiWorld::local_layout_box`]). Its document box is that origin
+/// plus the local box, summed down from the root one axis at a time, so a
+/// subtree that moves keeps every local box under it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub enum LayoutFrame {
+    /// The parent's border-box origin: every box in flow, and an absolute
+    /// box whose containing block is its parent.
+    #[default]
+    Parent,
+    /// The border-box origin of an ancestor: an absolute box's containing
+    /// block when it is not the parent.
+    Block(StableNodeId),
+    /// The document origin: a root, a `fixed` box, an absolute box under the
+    /// initial containing block, and a triggered menu's items, which hang
+    /// off the viewport.
+    Page,
+}
+
 /// Origin of a result, useful when diagnosing a stale or compatibility path.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum LayoutResultSource {

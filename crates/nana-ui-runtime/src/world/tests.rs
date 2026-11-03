@@ -10764,7 +10764,9 @@ fn write_layout_does_not_extract_bit_identical_descendants() {
     );
     assert!(work.layout_frontier_seeds.is_empty());
     assert_eq!(work.input_hit_test, work.render_extraction);
-    assert_eq!(work.accessibility, work.render_extraction);
+    // The shifted row's label moved with it on the page, and kept its offset
+    // from the row: its accessible bounds, relative to the row's, hold.
+    assert_eq!(work.accessibility, [node(2), node(5), node(7)]);
 }
 
 #[test]

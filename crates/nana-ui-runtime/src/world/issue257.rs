@@ -708,12 +708,12 @@ fn equivalent_recompute_does_not_publish_layout_geometry() {
     let section_ptr = world
         .layout_results
         .get(&node(2))
-        .map(|result| Arc::as_ptr(&result.placed))
+        .map(|result| Arc::as_ptr(&result.local))
         .expect("section result");
     let fixed_ptr = world
         .layout_results
         .get(&node(3))
-        .map(|result| Arc::as_ptr(&result.placed))
+        .map(|result| Arc::as_ptr(&result.local))
         .expect("fixed result");
 
     // A definite min-width below the used width recomputes the section and
@@ -752,7 +752,7 @@ fn equivalent_recompute_does_not_publish_layout_geometry() {
         world
             .layout_results
             .get(&node(2))
-            .map(|result| Arc::as_ptr(&result.placed)),
+            .map(|result| Arc::as_ptr(&result.local)),
         Some(section_ptr),
         "the section result object must stay the one already published"
     );
@@ -760,7 +760,7 @@ fn equivalent_recompute_does_not_publish_layout_geometry() {
         world
             .layout_results
             .get(&node(3))
-            .map(|result| Arc::as_ptr(&result.placed)),
+            .map(|result| Arc::as_ptr(&result.local)),
         Some(fixed_ptr),
         "an untouched fixed-position result must not be republished"
     );
@@ -789,7 +789,7 @@ fn equivalent_recompute_does_not_publish_layout_geometry() {
         world
             .layout_results
             .get(&node(3))
-            .map(|result| Arc::as_ptr(&result.placed)),
+            .map(|result| Arc::as_ptr(&result.local)),
         Some(fixed_ptr)
     );
     assert_eq!(

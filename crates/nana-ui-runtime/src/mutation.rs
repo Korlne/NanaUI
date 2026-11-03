@@ -113,11 +113,21 @@ pub enum UiMutation {
         id: StableNodeId,
         marks: Option<crate::RichEditorMarks>,
     },
-    /// Engine writeback (and tests). Product frames must not use this to
-    /// fight [`crate::RuntimeLayoutEngine`]; mixed trees flush that engine.
+    /// A document box, written by a test or a tool. Product frames must not
+    /// use this to fight [`crate::RuntimeLayoutEngine`]; mixed trees flush
+    /// that engine. The box is kept measured from the node's
+    /// [`crate::LayoutFrame`] once the commit's tree is in place: a child
+    /// not written with it moves with it.
     WriteLayout {
         id: StableNodeId,
         layout: LayoutBox,
+    },
+    /// Engine writeback: `layout` measured from `frame`'s origin.
+    #[doc(hidden)]
+    PlaceLayout {
+        id: StableNodeId,
+        layout: LayoutBox,
+        frame: crate::LayoutFrame,
     },
     /// Move an absolute placement container. Only `offset_top` and `height`
     /// change; the rest of the authored style stays. `height: None` clears
@@ -508,9 +518,21 @@ impl MutationQueue {
             .push(UiMutation::SetRichText { id, rich: None });
     }
 
-    /// Publish a box computed by [`crate::RuntimeLayoutEngine`], or by a test.
+    /// Publish a document box for `id`, as a test or a tool lays it out.
     pub fn write_layout(&mut self, id: StableNodeId, layout: LayoutBox) {
         self.mutations.push(UiMutation::WriteLayout { id, layout });
+    }
+
+    /// Publish a box [`crate::RuntimeLayoutEngine`] computed, measured from
+    /// `frame`'s origin.
+    pub(crate) fn place_layout(
+        &mut self,
+        id: StableNodeId,
+        layout: LayoutBox,
+        frame: crate::LayoutFrame,
+    ) {
+        self.mutations
+            .push(UiMutation::PlaceLayout { id, layout, frame });
     }
 
     /// Queue [`UiMutation::PatchPlacement`].

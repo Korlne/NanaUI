@@ -43,21 +43,52 @@ impl UiWorld {
         if node.resolved_layout.position != PositionSpec::Sticky {
             return [0.0; 2];
         }
-        let ancestors = std::iter::successors(node.hierarchy.parent, |id| self.parent_id(*id))
-            .filter_map(|id| {
-                let record = self.nodes.get(id)?;
-                Some(crate::StickyAncestor {
-                    style: &record.resolved_layout,
-                    bounds: record.layout,
-                    result: self.layout_result(id),
-                    scroll: record.scroll_offset,
-                    font_size: record.resolved.0.font_size,
-                    writing: record.resolved.0.writing_context(),
-                })
+        // Every box is read from its local one, measured from the node's own
+        // origin: the projection reads only where they stand apart, and a
+        // move above them all leaves it as it was.
+        let mut chain: Vec<(&NodeRecord, [f32; 2], Option<&crate::LayoutResult>)> = Vec::new();
+        let mut child = id;
+        let mut origin = [0.0f32; 2];
+        let mut cursor = node.hierarchy.parent;
+        while let Some(ancestor) = cursor {
+            let Some(record) = self.nodes.get(ancestor) else {
+                break;
+            };
+            let offset = self.layout_box_from(ancestor, child).unwrap_or_default();
+            origin = [origin[0] - offset.x, origin[1] - offset.y];
+            let result = self.local_layout_result(ancestor).map(Arc::as_ref);
+            chain.push((record, origin, result));
+            let style = &record.resolved_layout;
+            if style.overflow_x.clips()
+                || style.overflow_y.clips()
+                || style.position == PositionSpec::Fixed
+            {
+                break;
+            }
+            child = ancestor;
+            cursor = record.hierarchy.parent;
+        }
+        let ancestors = chain
+            .iter()
+            .map(|(record, [x, y], result)| crate::StickyAncestor {
+                style: &record.resolved_layout,
+                bounds: LayoutBox {
+                    x: *x,
+                    y: *y,
+                    ..record.local_layout
+                },
+                result: *result,
+                scroll: record.scroll_offset,
+                font_size: record.resolved.0.font_size,
+                writing: record.resolved.0.writing_context(),
             });
         crate::sticky_translation(
             &node.resolved_layout,
-            node.layout,
+            LayoutBox {
+                x: 0.0,
+                y: 0.0,
+                ..node.local_layout
+            },
             node.resolved.0.font_size,
             node.resolved.0.writing_context(),
             ancestors,

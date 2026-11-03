@@ -1999,7 +1999,7 @@ impl UiWorld {
                     computed.visible,
                     record.style.layout.pointer_events,
                     computed.pointer_events,
-                    record.layout,
+                    self.record_layout_box(record),
                     plain_style.then(|| Arc::clone(&record.resolved_layout)),
                     default_box,
                     record.scroll_offset,

@@ -279,10 +279,7 @@ impl UiWorld {
             })
             .cloned();
         Some(ExtractedNode {
-            layout_result: self
-                .layout_result(id)
-                .and_then(|_| self.layout_results.get(&id))
-                .map(|result| Arc::clone(&result.placed)),
+            layout_result: self.local_layout_result(id).cloned(),
             id,
             kind,
             parent: hierarchy_parent,
@@ -758,10 +755,7 @@ impl UiWorld {
         let moved = ExtractedMove {
             id,
             layout: self.component_layout_box(id)?,
-            layout_result: self
-                .layout_result(id)
-                .and_then(|_| self.layout_results.get(&id))
-                .map(|result| Arc::clone(&result.placed)),
+            layout_result: self.local_layout_result(id).cloned(),
         };
         #[cfg(any(test, feature = "layout-verify"))]
         {

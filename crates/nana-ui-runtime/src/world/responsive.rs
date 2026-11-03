@@ -359,7 +359,7 @@ impl UiWorld {
     /// less padding and border, and which way it writes.
     fn responsive_extents(&self, container: StableNodeId) -> Option<Extents> {
         let record = self.nodes.get(container)?;
-        let bounds = record.layout;
+        let bounds = record.local_layout;
         if bounds.width <= 0.0 && bounds.height <= 0.0 {
             return None;
         }

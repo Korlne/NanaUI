@@ -24,7 +24,7 @@
 //! crashing, the budget keeps each level from growing back.
 
 use super::grid::InheritedGridTracks;
-use super::{PassIntrinsicCache, Point, Size};
+use super::{PassIntrinsicCache, Size};
 use crate::StableNodeId;
 use crate::stack::{RED_ZONE, SEGMENT};
 
@@ -44,11 +44,9 @@ pub(super) const SPAN: usize = if cfg!(test) {
 /// where `place_node_body` resumes.
 pub(super) struct Boundary {
     pub(super) id: StableNodeId,
-    pub(super) origin: Point,
     pub(super) size: Size,
     pub(super) containing: Size,
     pub(super) parent_font_px: f32,
-    pub(super) placed_before: bool,
     pub(super) inherited: Option<InheritedGridTracks>,
 }
 

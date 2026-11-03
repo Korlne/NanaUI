@@ -42,24 +42,41 @@ Taffy 做同一次编辑只要 0.48 ms。真正重新排布的只有约 1 000 �
 
 ### 3.1 布局：以相对偏移为准
 
-- `NodeRecord` 存「相对父节点边框盒原点的偏移 + 尺寸」，引擎的 `boxes` 和 `ContainerPlan` 的原点也都改成相对值。
-- 父节点的边框盒原点就是子节点偏移的参照点。对于逃逸的绝对定位和 `fixed`，参照点是包含块或视口，规则和今天求解时的一致。
-- **逐位精确的约定**：绝对坐标一律定义为 `abs(child) = abs(parent) + local(child)`，按坐标轴从根往下逐级相加。冷求解也改成先求出本地偏移、再这样累加，所以增量和冷对照永远逐位相等，平移也永远不需要做 delta 加法。这会让个别坐标和今天差在最后一位（ulp）之内，预期快照零像素变化；如果确实出现像素差，先逐张核对，再决定是否重录。
-- `translate_moved_children` 的整棵子树遍历随之取消。父节点重新排布时只写直接子节点的偏移，孙子辈原封不动。
+- `NodeRecord` 存「相对参照系原点的偏移 + 尺寸」（`local_layout`）和参照系本身（`layout_frame: LayoutFrame`）。引擎的 `DocumentLayoutCache.boxes` 和 `ContainerPlan` 的原点也都是相对值，非父节点的参照系另记在 `DocumentLayoutCache.frames`。
+- 参照系（`LayoutFrame`）有三种：
+  - `Parent`：父节点边框盒原点。普通流里的盒子，以及包含块就是父节点的 `absolute` 盒子。
+  - `Block(id)`：包含块的边框盒原点。包含块在父节点之上的 `absolute` 盒子（逃逸的绝对定位）。
+  - `Page`：文档原点。根、`fixed` 盒子、包含块是初始包含块的 `absolute` 盒子、触发式菜单的菜单项（它们挂在视口上）。`Page` 下的本地值就是绝对值，和改造前逐位相同。
+- 引擎的做法：`place_node_body` 一律以 `Point::ZERO` 作为本容器的坐标系原点放置子节点，`place_node_head` 写出的盒子就是相对参照系的偏移。跨参照系的读取只有几处，逐一改过：
+  - 定位子节点的包含块内边距盒在包含块自己的坐标系里（`padding_box`）；
+  - 静态位置要从容器换到包含块的坐标系，经 `content_origin_in` 沿参照系链求和；
+  - 触发式菜单的菜单项放在页面坐标里，菜单自身的页面原点由 `origin_in` 求出；
+  - 行内上下文求部件时，用盒子自己坐标系里的边框盒。
+- 静态位置的逃逸绝对定位会随包含块与容器之间的盒子移动。沿用 `place_remote_overlays` 每遍对未放置容器的复查，比较项多一个「静态位置换到包含块坐标系后是否变了」，代价 O(逃逸条目数 × 深度)。
+- **逐位精确的约定**：绝对坐标一律定义为 `abs(child) = abs(frame) + local(child)`，按坐标轴从最上面的参照系往下逐级相加（`UiWorld::record_layout_origin`、引擎的 `origin_in`、`RuntimeLayoutEngine::layout_document` 的 `page_boxes` 用同一种加法顺序）。冷求解同样先求本地偏移、再这样累加，所以增量和冷对照逐位相等，平移也不需要做 delta 加法。
+- `translate_moved_children` 与 `place_moved_container` / `place_moved_children` 随之删除。父节点重新排布时只写直接子节点的偏移，孙子辈原封不动：只挪了位置的容器在父节点那里 `subtree_unchanged` 不成立，进 `place_node_body` 后计划照旧成立，一个子节点也不碰。
 
 ### 3.2 布局结果：本地存储，绝对值按需给
 
-- `LayoutResult` 改为在本节点坐标里存：边框盒在 (0,0)。`child_placements` 用父节点的本地坐标，`overflow` 和 `scroll_extent` 也一样。
-- 节点只是被平移时，它的结果不变。这正是 c642ac283 引入的 `OwnGeometry` 的完全体，`placed` 那一层随之去掉。
-- `ComponentGeometry` 同样改为节点本地坐标；`ModalSurfaceSections` 早就是 surface 本地的。
+- `LayoutResult` 在本节点坐标里存：边框盒在 (0,0)。`child_placements`、子节点片段和 `ChildPlacement` 部件存子节点的本地盒子（它自己的参照系里），`overflow` 和 `scroll_extent` 在本节点坐标里，只并入参照系是本节点的子节点；参照系在别处的子节点（`fixed`、逃逸的绝对定位、菜单项）在放到页面上时才并入溢出框。
+- 节点只是被平移时，它的结果不变，发布时 `geometry_eq` 直接判为相同。`placed` 层、`OwnGeometry`、`moved_local_result` 和 `place_layout_result` 都去掉了。
+- `ComponentGeometry` 本来就不存：`component_geometry(id)` 每次按当前盒子现算，仍然给绝对坐标。第 3 阶段要让带组件几何的节点也走轻量路径时，需要一个按本地坐标算的版本。`ModalSurfaceSections` 早就是 surface 本地的。
 
 ### 3.3 对外 API：语义不变，绝对值靠推导
 
-运行时内约 230 处读几何。对外的 `layout_box`、`layout_result`、`component_geometry`、`viewport_layout_box` 等都保持返回绝对（文档）坐标：
+对外的 `layout_box`、`layout_result`、`component_geometry`、`canonical_layout_box`、`viewport_layout_box` 等仍返回绝对（文档）坐标：
 
-- `layout_box(id)` 从根往下累加偏移，代价 O(深度)，不需要缓存。
-- `layout_result(id)` / `component_geometry(id)` 由一个惰性的绝对副本缓存给出。每条缓存记下它是按哪个绝对原点放置的，读的时候比一下当前推导出的原点，不一致才重新放置。代价是每次读 O(深度)，摊还 O(1)。返回类型可能从 `&LayoutResult` 变成 `Arc<LayoutResult>`；字段访问能自动解引用，基本兼容，具体影响由第 1 阶段核实。
-- 帧路径上的消费者（提取、Scene、命中、无障碍、`ContentBoundsIndex`、粘性定位）一律改读本地值，不触发绝对值的推导。
+- `layout_box(id)` 沿参照系链累加，O(深度)，不缓存。
+- `layout_result(id)` 返回 `Option<Arc<LayoutResult>>`（原来是 `Option<&LayoutResult>`）。放到页面上的结果缓存在 `page_layout_results` 里，每条记下它是按哪个本地结果（`Arc` 指针）、哪个原点（逐位）放的，读时比一下，不一致才重新放置。运行时内部不走这条路：`canonical_layout_box`、`component_content_box`、部件查询、裁剪链都直接读本地结果再加原点，所以缓存只在外部调用时才填，不会让每个节点多一份结果（`node_memory` 的预算守着这一点）。
+- 新增的本地接口：`local_layout_box(id)`、`layout_frame(id)`、`local_layout_result(id)`、`LayoutFrame`；crate 内另有 `layout_origin(id)`（页面原点）和 `layout_box_from(owner, child)`（子节点相对某个祖先的盒子）。
+- `RuntimeLayoutEngine::layout_document` / `layout_document_with_frontier` 仍返回页面坐标；框架写回用 crate 内的 `layout_document_with_frontier_local`。
+- 外部写的 `WriteLayout` 仍是文档坐标。提交结束时按深度从上往下换成本地值，参照系按样式推断（`layout_frame_from_styles`，与裁剪链的规则一致），所以和写入顺序无关；没写的子节点随父节点平移。引擎写回走隐藏的 `UiMutation::PlaceLayout { id, layout, frame }`。`position` 改变而布局还没重跑时，提交末尾把受影响子树里参照系与样式不符的盒子换到新参照系，页面位置不变（`reframe_layouts`）。
+- 帧路径上的消费者读本地值：
+  - `ContentBoundsIndex` 每条按自己节点的原点存，父节点读子节点时加上子节点的本地偏移；携带给包含块的范围按落地的包含块的坐标存，所以平移的子树里条目全部不动。落地点可能变的两种情况（`position` 在是否建立包含块之间变化、子树换父节点）会让子树里携带范围的条目重读子节点（`reland`）。
+  - 粘性定位从本地盒子和本地结果算，所有盒子都相对节点自己的原点，`StickyAncestor.result` 约定为祖先自己坐标里的结果，按 `bounds` 的原点放置。
+  - 提取：`ExtractedNode.layout_result` / `ExtractedMove.layout_result` 改为本地结果（共享同一个 `Arc`，不复制）；`ExtractedNode.layout` 仍是推导出的绝对盒子，这是 Scene 第 3 阶段的事。Scene 读结果的地方只有裁剪链、参与方式、滚动指标（与坐标无关）和粘性定位（已按上面的约定改）。
+  - 无障碍见 3.7。
+- **第 1 阶段的过渡**：命中索引和 Scene 仍按绝对盒子工作。提交时 `spread_layout_moves` 从原点变了的盒子往下走，把随之平移的后代标成「只是移动」（INPUT、RENDER，`render_moved_epoch`、`translated_hit`），参照系在子树外的盒子（`fixed`、包含块在外的绝对定位）不动；后代的最近裁剪容器也在动时再标 ACCESSIBILITY。第 2、3 阶段各自本地化后删掉这一步。
 
 ### 3.4 命中索引
 
@@ -87,7 +104,7 @@ Taffy 做同一次编辑只要 0.48 ms。真正重新排布的只有约 1 000 �
 
 ### 3.7 无障碍
 
-`AccessibilityNode.bounds` 已经是相对父节点的（47aa93fb2）。改成相对布局后，「偏移逐位没变」的判断直接读本地值即可，发布时的那次检查也随之消失。
+`AccessibilityNode.bounds` 已经是相对父节点的（47aa93fb2）。改成相对布局后，发布时的那次判断（`boxes_keeping_parent_offset`、推迟标记）去掉了：写回时本地偏移变了的盒子直接标 ACCESSIBILITY，随父节点平移的后代本地偏移不变、不写回也不标；参照系不跟着动的子节点（`fixed` 等）相对父节点的偏移变了，由 `spread_layout_moves` 补标。
 
 ## 4. 验证
 
@@ -107,5 +124,7 @@ Taffy 做同一次编辑只要 0.48 ms。真正重新排布的只有约 1 000 �
 | 5 | 端到端基准，更新 `docs/reference/resource-budgets.md` | 2、3 |
 
 第 2、3 阶段在第 1 阶段落地之后并行推进。
+
+第 1 阶段已落地：42 001 盒改行高，布局 16.4 → 3.9 ms，整帧 29.9 → 17.8 ms，每次编辑指令 296 M → 166 M（数字与做法见 `resource-budgets.md`）。
 
 **目标**：改行高时整帧和 Taffy 布局在同一数量级，个位数毫秒；改宽度和改控件文字不回退。

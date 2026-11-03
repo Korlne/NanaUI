@@ -81,7 +81,7 @@ fn scoped(
     write_changed(world, &emitted);
     let _ = world.take_system_work();
     let expected = full_boxes(world, document, viewport);
-    let cached = &retained.documents[&document].boxes;
+    let cached = &retained.documents[&document].page_boxes(world);
     for (id, box_) in expected {
         assert_eq!(
             cached.get(&id).copied().unwrap_or_default(),

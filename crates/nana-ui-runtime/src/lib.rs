@@ -331,8 +331,8 @@ pub use layout_frontier::{
 };
 pub use layout_node::{FormattingContextKind, LayoutContentKind, LayoutNode, ParticipationKind};
 pub use layout_result::{
-    LayoutChildPlacement, LayoutFragment, LayoutFragmentKind, LayoutPart, LayoutPartKind,
-    LayoutResult, LayoutResultSource,
+    LayoutChildPlacement, LayoutFragment, LayoutFragmentKind, LayoutFrame, LayoutPart,
+    LayoutPartKind, LayoutResult, LayoutResultSource,
 };
 pub use media_transport::{
     MediaTransportBar, MediaTransportDensity, MediaTransportEvent, MediaTransportIcons,

@@ -28,10 +28,14 @@ pub(super) fn place_native_inline(
         width: content.width,
         height: content.height,
     };
-    let parts =
-        nodes
-            .world
-            .solve_content_parts_at(id, bounds, output.get(&id).copied().unwrap_or(bounds));
+    // The content box and the border box from the box's own origin, as
+    // everything under it is placed.
+    let own = output.get(&id).map_or(bounds, |placed| LayoutBox {
+        x: 0.0,
+        y: 0.0,
+        ..*placed
+    });
+    let parts = nodes.world.solve_content_parts_at(id, bounds, own);
     let text_box =
         super::parts::part_bounds(&parts, crate::LayoutPartKind::TextContent).unwrap_or(bounds);
     let anchor = nodes.world.native_text_origin(id, text_box, &layout);
