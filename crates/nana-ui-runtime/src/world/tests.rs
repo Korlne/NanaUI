@@ -777,6 +777,93 @@ fn scoped_hit_patch_matches_a_full_rebuild_for_a_leaf_layout_change() {
 }
 
 #[test]
+fn a_moved_row_rewrites_its_own_hit_entry_and_its_pinned_ones_only() {
+    // Rows of a column, each holding a cell holding a leaf; the second row
+    // also holds an absolute box measured from the page, not from the row.
+    let mut world = UiWorld::new();
+    let mut queue = MutationQueue::new();
+    queue.create(node(1), document(1), NodeKind::Document);
+    queue.write_layout(node(1), box_at(0.0, 0.0, 100.0, 100.0));
+    for row in 0..3u64 {
+        let (row_id, cell, leaf) = (
+            node(10 + row * 10),
+            node(11 + row * 10),
+            node(12 + row * 10),
+        );
+        for id in [row_id, cell, leaf] {
+            queue.create(id, document(1), NodeKind::Element { tag: "box".into() });
+        }
+        queue.insert(node(1), row_id, None);
+        queue.insert(row_id, cell, None);
+        queue.insert(cell, leaf, None);
+        let y = row as f32 * 20.0;
+        queue.write_layout(row_id, box_at(0.0, y, 100.0, 20.0));
+        queue.write_layout(cell, box_at(10.0, y + 2.0, 40.0, 16.0));
+        queue.write_layout(leaf, box_at(12.0, y + 4.0, 8.0, 8.0));
+    }
+    let pinned = node(90);
+    queue.create(
+        pinned,
+        document(1),
+        NodeKind::Element {
+            tag: "badge".into(),
+        },
+    );
+    queue.insert(node(20), pinned, None);
+    let mut absolute = NodeStyle::default();
+    Arc::make_mut(&mut absolute.layout).position = PositionSpec::Absolute;
+    queue.set_style(pinned, absolute);
+    let absolute_style = || {
+        let mut style = NodeStyle::default();
+        Arc::make_mut(&mut style.layout).position = PositionSpec::Absolute;
+        style
+    };
+    queue.write_layout(pinned, box_at(70.0, 24.0, 10.0, 10.0));
+    // And one in the second row's leaf measured from the cell, which moves
+    // it: its entry hangs from the leaf, an offset across frames.
+    let follower = node(91);
+    queue.create(
+        follower,
+        document(1),
+        NodeKind::Element { tag: "dot".into() },
+    );
+    queue.insert(node(22), follower, None);
+    queue.set_style(follower, absolute_style());
+    let mut relative = NodeStyle::default();
+    Arc::make_mut(&mut relative.layout).position = PositionSpec::Relative;
+    queue.set_style(node(21), relative);
+    queue.write_layout(follower, box_at(60.0, 30.0, 6.0, 6.0));
+    world.commit(queue).unwrap();
+    let work = world.take_system_work();
+    world.resolve_styles(&work.style).unwrap();
+    world.rebuild_hit_test(document(1));
+    assert_eq!(world.layout_frame(pinned), Some(crate::LayoutFrame::Page));
+    assert_eq!(
+        world.layout_frame(follower),
+        Some(crate::LayoutFrame::Block(node(21)))
+    );
+
+    // The second row moves down 7 px; what it holds moves with it, the
+    // absolute box stays on the page.
+    let mut moved = MutationQueue::new();
+    moved.write_layout(node(20), box_at(0.0, 27.0, 100.0, 20.0));
+    world.commit(moved).unwrap();
+    let work = world.take_system_work();
+    let before = hit_entries_built(&world);
+    assert!(world.rebuild_hit_test_scoped(document(1), &work.input_hit_test));
+    // The row's own entry and the absolute boxes'; not the cell or leaf.
+    assert_eq!(hit_entries_built(&world) - before, 3);
+    assert_eq!(world.hit_test(document(1), 62.0, 39.0), Some(follower));
+    let patched = hit_probe_grid(&world, document(1));
+    let shape = hit_shape(&world, document(1));
+    assert_eq!(world.hit_test(document(1), 13.0, 33.0), Some(node(22)));
+    assert_eq!(world.hit_test(document(1), 75.0, 28.0), Some(pinned));
+    world.rebuild_hit_test(document(1));
+    assert_eq!(patched, hit_probe_grid(&world, document(1)));
+    assert_eq!(shape, hit_shape(&world, document(1)));
+}
+
+#[test]
 fn scoped_hit_reparent_keeps_new_owner_in_both_patch_orders() {
     for (source, destination) in [(10, 110), (110, 10)] {
         let mut world = hit_fixture(2, 4);

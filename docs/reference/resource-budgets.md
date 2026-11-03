@@ -276,6 +276,20 @@ Scene（2026-11-03）：图元是用绝对坐标的布局盒（加祖先变换�
 
 公开接口变化：`UiWorld::layout_result` 返回 `Option<Arc<LayoutResult>>`（原来是 `Option<&LayoutResult>`）；新增 `LayoutFrame`、`local_layout_box`、`layout_frame`、`local_layout_result`；`ExtractedNode::layout_result`、`ExtractedMove::layout_result` 与 `StickyAncestor::result` 改为节点自身坐标里的结果；`UiMutation::PlaceLayout`（隐藏，引擎写回用）。`MutationQueue::write_layout` 仍收文档坐标，提交结束时按深度换成本地值，没写的子节点随父节点平移（以前保持原位）。
 
+相对几何第 2 阶段（2026-11-03）：命中条目改为本地的——每个条目在自己边框盒的坐标里，另存离命中父节点原点的 `origin`，查询时逐层减去（与滚动的 `shift` 同一条路）；平移子树只重建根条目，后代条目不碰。读了自身偏移以外几何的条目（跨参照系的偏移、逃逸、组件几何、粘性）记为钉住，脏节点下面的钉住条目单独重建。42 001 盒（与 35045d816 交替 8 轮读最小值，负载 3.2–3.9，µs）：
+
+| 编辑 | 阶段 | 35045d816 | 第 2 阶段 |
+| --- | --- | ---: | ---: |
+| height | 布局 | 3 792 | 3 779 |
+| height | 命中 | 3 617 | 660 |
+| height | 无障碍 | 3 230 | 3 003 |
+| height | 提取 | 3 769 | 3 767 |
+| height | 整帧 | 17 325 | 13 789 |
+| width | 布局 / 整帧 | 760 / 776 | 762 / 778 |
+| 控件页 text | 布局 / 整帧 | 10 / 22 | 10 / 22 |
+
+每次编辑的指令（`RUNS=240` 与 `RUNS=40` 两次 `time -l` 之差除以 200）：height 167.7 M → 139.5 M（−17%）。命中阶段剩下的 0.66 ms：1 012 个写回的行各重建自己那一条（`hit_test_entries_moved` 1 008，`hit_test_nodes_rebuilt` 1 012）、按深度刷新祖先包围盒，以及在约 2 万个仍标 INPUT 的后代里跳过随父节点平移的那些（`layout_followers`；这些 INPUT 标记现在只是给无障碍的移动种子用的，第 3 阶段之后无障碍不再需要时一起去掉）。
+
 `component-gallery` 的语义快照另有 8 个与此无关的差异（对话框、空状态等文字的 `line_height` 由 `Relative` 变为 `normal`），来自 b1bc92819，不含这些改动的树上同样出现，基线没有重录。
 
 已做的（2026-11-02）：发布阶段每个结果的四个切片在复用的暂存表里建好、按最终长度一次分配，空切片不分配（`Arc::<[T]>::default()`），按父分组的子集改为一张排序表，不再每个父节点一个 `Vec`；意图缓存键的环境哈希从 SipHash 换成固定种子的 foldhash，`seeded_intrinsic` 换成 hashbrown；`ConstraintClass` 的相等与哈希一趟读出归一化后的标签与值，不再各自归一化两遍；`RetainedIntrinsicMetrics` 每个内容的变体表按一增长（首个 push 原本预留 4 个，320 B 只用 80 B）；`MeasurePlanSlots` 的两个槽装箱（原本每个容器 528 B 内联在表里，通常只用一个槽）；整页 pass 按节点数和容器数预先给各表留好容量；锚点记忆表在父节点已结算时不再分配。

@@ -476,7 +476,22 @@ struct HitEntry {
     /// Shared authoritative child sequence at projection time. Pointer identity
     /// validates cached sibling ordinals without searching a wide parent.
     source_children: Arc<Vec<StableNodeId>>,
+    /// The border box in the entry's own coordinates: at the origin, its
+    /// size. Everything below is in that space too, `transform` mapping it
+    /// to the space the walk reaches the entry in, [`Self::origin`] away
+    /// from its parent's children.
     layout: LayoutBox,
+    /// Where the box stands from its hit parent's origin, mapped through the
+    /// linear part of what the parent hands its children: the one value a
+    /// move of the box changes. The children of an entry that only moved
+    /// keep theirs (relative geometry, stage 2). Zero under a perspective,
+    /// which takes the offset into `transform` instead.
+    origin: [f32; 2],
+    /// Whether the entry reads geometry from beyond its own box and its hit
+    /// parent's: an offset measured across frames, a component's or a
+    /// sticky box's placement, an escaped bridge. A move of a box above it
+    /// builds it again.
+    pinned: bool,
     transform: [f32; 6],
     persp: [f32; 2],
     /// Clips applied to this node's own hit (and therefore its subtree).
@@ -938,10 +953,12 @@ pub struct UiWorld {
     /// [`Self::layout_result`]'s answers: each result placed where its box
     /// stands on the page, while it and its box hold.
     page_layout_results: RefCell<crate::NodeMap<PageLayoutResult>>,
-    /// Boxes the coming hit-index patch finds only moved on the page: an
-    /// entry whose geometry is only its box is moved in place instead of
-    /// rebuilt.
-    translated_hit: NodeSet,
+    /// Boxes the commit moved with a box above it and nothing else
+    /// ([`Self::spread_layout_moves`]). Their INPUT marks are for
+    /// accessibility's moved seeds; their hit entries, in their own boxes'
+    /// coordinates, hold, so the coming hit patch passes over them but the
+    /// pinned.
+    layout_followers: NodeSet,
     /// Boxes the commit being applied wrote with a new origin, and whether
     /// that is all that changed, and every box it wrote with a new origin or
     /// size: the boxes under the first move with them
@@ -1238,7 +1255,7 @@ impl UiWorld {
             layout_results: crate::NodeMap::default(),
             layout_results_suppressed: NodeSet::default(),
             page_layout_results: RefCell::default(),
-            translated_hit: NodeSet::default(),
+            layout_followers: NodeSet::default(),
             layout_moved_roots: Vec::new(),
             layout_written: NodeSet::default(),
             pending_document_layouts: Vec::new(),
@@ -6195,6 +6212,10 @@ impl UiWorld {
             self.note_layout_source_change();
         }
         let bits = if bits & DirtyMask::INPUT != 0 && !self.marking_layout_move {
+            // Marked for more than a move: its hit entry is built again.
+            if !self.layout_followers.is_empty() {
+                self.layout_followers.remove(&id);
+            }
             bits | DirtyMask::INPUT_ELSEWHERE
         } else {
             bits

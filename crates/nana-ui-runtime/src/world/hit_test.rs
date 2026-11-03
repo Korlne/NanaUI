@@ -156,6 +156,10 @@ pub(super) struct HitIndex {
     /// (#201). Ids whose entry has since gone or stopped escaping only cost a
     /// paint-order ranking they did not need.
     escaped: HashSet<StableNodeId>,
+    /// Entries that read geometry from beyond their own offset
+    /// ([`HitEntry::pinned`]): a move of a box above one builds it again.
+    /// Ids whose entry has since gone or stopped being pinned cost a check.
+    pinned: HashSet<StableNodeId>,
     /// The open levels and pending children of a [`Self::visit_hits`] walk,
     /// kept between queries so a pointer move allocates nothing once they
     /// have grown to the tree's depth.
@@ -169,6 +173,11 @@ struct HitVisitScratch {
     /// Every open level's pending children, each level's in a range of it.
     children: Vec<StableNodeId>,
 }
+
+/// Where a build starts: a node, the transform its hit parent hands its
+/// children, and that parent (`None` for a root of the index), whose
+/// origin the node's offset is measured from.
+type HitSeed = (StableNodeId, [f32; 6], Option<StableNodeId>);
 
 // Preorder construction data; parents precede their children.
 struct BuiltHit {
@@ -250,6 +259,26 @@ fn hit_bounds(entry: &HitEntry) -> Bounds {
             height: bottom - top,
         })
         .into()
+}
+
+/// What an entry covers in its parent's children's space: its own hit and
+/// its children's, `shift` (its scroll) away, all [`HitEntry::origin`] away.
+fn entry_bounds(entry: &HitEntry, children: Option<Bounds>, shift: [f32; 2]) -> Bounds {
+    let own = hit_bounds(entry);
+    let merged = match children {
+        Some(children) => own.merge(children.translated(shift)),
+        None => own,
+    };
+    merged.translated(entry.origin)
+}
+
+/// `offset` through the linear part of `transform`: where a box `offset`
+/// away in the coordinates `transform` maps stands in the space it maps to.
+fn linear_offset([a, b, c, d, _, _]: [f32; 6], [x, y]: [f32; 2]) -> [f32; 2] {
+    if a == 1.0 && b == 0.0 && c == 0.0 && d == 1.0 {
+        return [x, y];
+    }
+    [a * x + c * y, b * x + d * y]
 }
 
 fn union_bounds(a: LayoutBox, b: LayoutBox) -> LayoutBox {
@@ -338,7 +367,7 @@ impl HitIndex {
         self.escaped.iter().any(|id| {
             self.entries.get(id).is_some_and(|indexed| {
                 indexed.entry.escaped && {
-                    let shift = self.inherited_shift(*id);
+                    let shift = self.inherited_offset(*id);
                     indexed.bounds.contains(x - shift[0], y - shift[1])
                 }
             })
@@ -405,16 +434,14 @@ impl HitIndex {
                 roots.sort_by_key(by_paint);
             }
         }
-        let mut bounds = built
-            .iter()
-            .map(|node| hit_bounds(&node.entry))
-            .collect::<Vec<_>>();
+        let mut bounds = vec![Bounds::Empty; n];
         let mut trees = Vec::with_capacity(n);
         trees.resize_with(n, BoundsTree::default);
         for index in (0..n).rev() {
             let start = offsets[index] as usize;
             let end = offsets[index + 1] as usize;
             if start == end {
+                bounds[index] = entry_bounds(&built[index].entry, None, [0.0, 0.0]);
                 continue;
             }
             let tree = BoundsTree::new(
@@ -423,7 +450,7 @@ impl HitIndex {
                     .copied()
                     .map(|child| bounds[child]),
             );
-            bounds[index] = bounds[index].merge(tree.bounds());
+            bounds[index] = entry_bounds(&built[index].entry, Some(tree.bounds()), [0.0, 0.0]);
             trees[index] = tree;
         }
         let root_bounds = BoundsTree::new(roots.iter().copied().map(|child| bounds[child]));
@@ -440,9 +467,13 @@ impl HitIndex {
         }
         let mut entries = hashbrown::HashMap::with_capacity(n);
         let mut escaped = HashSet::new();
+        let mut pinned = HashSet::new();
         for (index, node) in built.into_iter().enumerate() {
             if node.entry.escaped {
                 escaped.insert(node.entry.id);
+            }
+            if node.entry.pinned {
+                pinned.insert(node.entry.id);
             }
             let id = node.entry.id;
             let parent = node.parent.map(|position| ids[position]);
@@ -471,6 +502,7 @@ impl HitIndex {
             root_bounds,
             viewport_roots: HashSet::new(),
             escaped,
+            pinned,
             visit_scratch: Default::default(),
         }
     }
@@ -499,6 +531,9 @@ impl HitIndex {
             if entry.escaped {
                 index.escaped.insert(entry.id);
             }
+            if entry.pinned {
+                index.pinned.insert(entry.id);
+            }
             let children = std::mem::take(&mut entry.children);
             entry.transform[4] -= offset[0];
             entry.transform[5] -= offset[1];
@@ -511,7 +546,7 @@ impl HitIndex {
                 transform[5] -= offset[1];
             }
             Open {
-                bounds: hit_bounds(&entry),
+                bounds: Bounds::Empty,
                 child_ids: children.iter().map(|child| Some(child.id)).collect(),
                 children: children.into_iter().enumerate(),
                 entry,
@@ -535,8 +570,13 @@ impl HitIndex {
                     .iter()
                     .map(|id| self.entries[&id.unwrap()].bounds),
             );
+            let bounds = entry_bounds(
+                &level.entry,
+                (!level.child_ids.is_empty()).then(|| child_bounds.bounds()),
+                [0.0, 0.0],
+            );
             if let Some(parent) = levels.last_mut() {
-                parent.bounds = parent.bounds.merge(level.bounds);
+                parent.bounds = parent.bounds.merge(bounds);
             }
             self.entries.insert(
                 id,
@@ -545,7 +585,7 @@ impl HitIndex {
                     parent: level.parent,
                     children: level.child_ids,
                     shift: [0.0, 0.0],
-                    bounds: level.bounds,
+                    bounds,
                     child_bounds,
                     sibling_slot: level.sibling_slot,
                 },
@@ -553,6 +593,8 @@ impl HitIndex {
         }
     }
 
+    /// The scroll the entries above `id` took since they were built: what
+    /// a transform built against the live scroll has in it beyond theirs.
     fn inherited_shift(&self, id: StableNodeId) -> [f32; 2] {
         let mut shift = [0.0, 0.0];
         let mut cursor = self.entries.get(&id).and_then(|n| n.parent);
@@ -565,6 +607,34 @@ impl HitIndex {
             cursor = node.parent;
         }
         shift
+    }
+
+    /// How far the space the walk reaches `id` in is from the window: the
+    /// origins and scroll of the entries above it, the walk's own order
+    /// (from `id`'s parent up) aside.
+    fn inherited_offset(&self, id: StableNodeId) -> [f32; 2] {
+        let mut offset = [0.0, 0.0];
+        let mut cursor = self.entries.get(&id).and_then(|n| n.parent);
+        while let Some(id) = cursor {
+            let Some(node) = self.entries.get(&id) else {
+                break;
+            };
+            offset[0] += node.entry.origin[0] + node.shift[0];
+            offset[1] += node.entry.origin[1] + node.shift[1];
+            cursor = node.parent;
+        }
+        offset
+    }
+
+    /// How far `id`'s own coordinates are from the window: what a point
+    /// there takes off before `id`'s transform maps it.
+    pub(super) fn entry_offset(&self, id: StableNodeId) -> [f32; 2] {
+        let mut offset = self.inherited_offset(id);
+        if let Some(node) = self.entries.get(&id) {
+            offset[0] += node.entry.origin[0];
+            offset[1] += node.entry.origin[1];
+        }
+        offset
     }
 
     fn child_shift(&self, parent: Option<StableNodeId>) -> [f32; 2] {
@@ -625,12 +695,11 @@ impl HitIndex {
             let Some(node) = self.entries.get_mut(&id) else {
                 continue;
             };
-            let own = hit_bounds(&node.entry);
-            node.bounds = if node.children.is_empty() {
-                own
-            } else {
-                own.merge(node.child_bounds.bounds().translated(node.shift))
-            };
+            node.bounds = entry_bounds(
+                &node.entry,
+                (!node.children.is_empty()).then(|| node.child_bounds.bounds()),
+                node.shift,
+            );
             let (parent, slot, bounds) = (node.parent, node.sibling_slot, node.bounds);
             match parent {
                 Some(parent) => {
@@ -653,12 +722,11 @@ impl HitIndex {
             let Some(node) = self.entries.get_mut(&id) else {
                 return;
             };
-            let own = hit_bounds(&node.entry);
-            node.bounds = if node.children.is_empty() {
-                own
-            } else {
-                own.merge(node.child_bounds.bounds().translated(node.shift))
-            };
+            node.bounds = entry_bounds(
+                &node.entry,
+                (!node.children.is_empty()).then(|| node.child_bounds.bounds()),
+                node.shift,
+            );
             let (parent, slot, bounds) = (node.parent, node.sibling_slot, node.bounds);
             if let Some(parent) = parent {
                 self.entries
@@ -874,6 +942,8 @@ impl HitIndex {
             return None;
         }
         let node = &indexed.entry;
+        // Into the entry's own space: everything it holds is measured there.
+        let (x, y) = (x - node.origin[0], y - node.origin[1]);
         if !node
             .self_clips
             .iter()
@@ -920,7 +990,8 @@ impl HitIndex {
 /// A node [`HitIndex::visit_hits`] has entered and not yet finished.
 struct OpenHit {
     id: StableNodeId,
-    /// The point in this node's space, and in its children's.
+    /// The point in this node's space (past its origin), and in its
+    /// children's.
     x: f32,
     y: f32,
     child_point: (f32, f32),
@@ -1215,13 +1286,17 @@ impl UiWorld {
             && let Some(index) = self.hit_test_index.get(&document)
             && let Some(indexed) = index.entries.get(&target)
         {
-            let shift = index.inherited_shift(target);
+            // The entry maps its own box's coordinates; the answer is the
+            // page's, where the box stands.
+            let shift = index.entry_offset(target);
+            let [origin_x, origin_y] = self.layout_origin(target)?;
             return transformed_point(
                 indexed.entry.transform,
                 indexed.entry.persp,
                 x - shift[0],
                 y - shift[1],
-            );
+            )
+            .map(|(x, y)| (x + origin_x, y + origin_y));
         }
         let (transform, persp) = self.layout_projection_transform(target)?;
         transformed_point(transform, persp, x, y)
@@ -1249,13 +1324,15 @@ impl UiWorld {
         }
         let index = self.hit_test_index.get(&document)?;
         let entry = &index.entries.get(&target)?.entry;
+        let [origin_x, origin_y] = self.layout_origin(target)?;
+        let (x, y) = (x - origin_x, y - origin_y);
         let [a, b, c, d, e, f] = entry.transform;
         let [g, h] = entry.persp;
         let w = g * x + h * y + 1.0;
         if !w.is_finite() || w.abs() < 1e-8 {
             return None;
         }
-        let shift = index.inherited_shift(target);
+        let shift = index.entry_offset(target);
         let result = (
             (a * x + c * y + e) / w + shift[0],
             (b * x + d * y + f) / w + shift[1],
@@ -1418,13 +1495,21 @@ impl UiWorld {
     /// Whether `target`'s menu region (an open select menu, a hover card's
     /// connector strip) is at the window point `(x, y)`.
     fn menu_region_contains(&self, index: &HitIndex, target: StableNodeId, x: f32, y: f32) -> bool {
-        let shift = index.inherited_shift(target);
+        let shift = index.entry_offset(target);
         let has_overlay = self
             .document_of(target)
             .is_some_and(|document| self.has_compositor_transform_overlay_for(document));
         index.entries.get(&target).is_some_and(|node| {
             node.entry.menu.is_some_and(|menu| {
                 if has_overlay {
+                    // The projection maps page coordinates; the menu is in
+                    // the entry's own.
+                    let at = self.layout_origin(target).unwrap_or_default();
+                    let menu = LayoutBox {
+                        x: menu.x + at[0],
+                        y: menu.y + at[1],
+                        ..menu
+                    };
                     self.layout_projection_transform(target)
                         .is_some_and(|(transform, persp)| {
                             transformed_contains(menu, transform, persp, x, y)
@@ -1511,24 +1596,29 @@ impl UiWorld {
         };
         let local = self.input_local_scene_transform(id, &style, layout, parent_blocks_3d);
         let (transform, persp) = then_hit(parent_hit, self.with_sticky_translation(id, local));
+        // The entry keeps its clips, menu and box in its own coordinates;
+        // these transforms map the page's.
+        let to_page = ([1.0, 0.0, 0.0, 1.0, layout.x, layout.y], [0.0, 0.0]);
+        let own = then_hit((transform, persp), to_page);
+        let parent_own = then_hit(parent_hit, to_page);
         let node = &indexed.entry;
         if !node
             .self_clips
             .iter()
-            .all(|(bounds, _)| transformed_contains(*bounds, parent_hit.0, parent_hit.1, x, y))
+            .all(|(bounds, _)| transformed_contains(*bounds, parent_own.0, parent_own.1, x, y))
         {
             return false;
         }
-        if !path_clips_contain(&node.path_clips, transform, persp, x, y) {
+        if !path_clips_contain(&node.path_clips, own.0, own.1, x, y) {
             return false;
         }
         let menu_hit = node
             .menu
-            .is_some_and(|menu| transformed_contains(menu, transform, persp, x, y));
+            .is_some_and(|menu| transformed_contains(menu, own.0, own.1, x, y));
         let children_ok = node
             .child_clips
             .iter()
-            .all(|(bounds, _)| transformed_contains(*bounds, transform, persp, x, y));
+            .all(|(bounds, _)| transformed_contains(*bounds, own.0, own.1, x, y));
         let child_transform = then_hit(
             (transform, persp),
             (
@@ -1590,8 +1680,8 @@ impl UiWorld {
             return true;
         }
         if node.hittable
-            && transformed_contains(layout, transform, persp, x, y)
-            && painter_accepts(node, layout, transform, persp, x, y)
+            && transformed_contains(node.layout, own.0, own.1, x, y)
+            && painter_accepts(node, node.layout, own.0, own.1, x, y)
         {
             return emit(id);
         }
@@ -1889,7 +1979,7 @@ impl UiWorld {
     /// `order` is assigned per sibling group from `Hierarchy` position. It is
     /// only ever compared between siblings, so a spliced subtree stays sortable
     /// against untouched siblings without renumbering the document.
-    fn build_hit_entries(&self, seeds: Vec<(StableNodeId, [f32; 6])>) -> Vec<BuiltHit> {
+    fn build_hit_entries(&self, seeds: Vec<HitSeed>) -> Vec<BuiltHit> {
         let (mut built, mut deferred) = self.build_hit_entries_deferring(seeds);
         // An escaped box whose clip parent is no node hangs as a root of its
         // own, from the transforms above it but none of their scroll.
@@ -1899,7 +1989,7 @@ impl UiWorld {
             }
             let (transform, _) =
                 self.clip_bridge_transform(id, None, (IDENTITY_AFFINE, [0.0, 0.0]), false);
-            let (more, later) = self.build_hit_entries_deferring(vec![(id, transform)]);
+            let (more, later) = self.build_hit_entries_deferring(vec![(id, transform, None)]);
             let base = built.len();
             built.extend(more.into_iter().map(|mut node| {
                 node.parent = node.parent.map(|parent| parent + base);
@@ -1907,6 +1997,7 @@ impl UiWorld {
             }));
             if let Some(root) = built.get_mut(base) {
                 root.entry.escaped = true;
+                root.entry.pinned = true;
                 root.entry.order = self
                     .parent_id(id)
                     .and_then(|parent| self.child_index(parent, id))
@@ -1922,7 +2013,7 @@ impl UiWorld {
     /// returned for the caller to hang where they belong.
     fn build_hit_entries_deferring(
         &self,
-        seeds: Vec<(StableNodeId, [f32; 6])>,
+        seeds: Vec<HitSeed>,
     ) -> (Vec<BuiltHit>, Vec<StableNodeId>) {
         self.build_hit_entries_reaching(seeds, true)
     }
@@ -1931,14 +2022,14 @@ impl UiWorld {
     /// seeds' own entries alone.
     fn build_hit_entries_reaching(
         &self,
-        seeds: Vec<(StableNodeId, [f32; 6])>,
+        seeds: Vec<HitSeed>,
         descend: bool,
     ) -> (Vec<BuiltHit>, Vec<StableNodeId>) {
         let mut stack = seeds
             .into_iter()
             .enumerate()
             .rev()
-            .map(|(position, (id, transform))| {
+            .map(|(position, (id, transform, hit_parent))| {
                 (
                     id,
                     (transform, [0.0f32, 0.0]),
@@ -1946,6 +2037,7 @@ impl UiWorld {
                     position,
                     self.parent_used_pointer_events(id),
                     false,
+                    hit_parent,
                 )
             })
             .collect::<Vec<_>>();
@@ -1962,8 +2054,15 @@ impl UiWorld {
             && self.detached_mounted.is_empty()
             && !visuals;
         let retained_boxes = self.layout_results.is_empty();
-        while let Some((id, parent_hit, parent, position, parent_used_pe, parent_blocks_3d)) =
-            stack.pop()
+        while let Some((
+            id,
+            parent_hit,
+            parent,
+            position,
+            parent_used_pe,
+            parent_blocks_3d,
+            hit_parent,
+        )) = stack.pop()
         {
             if self.motion_blocks_input(id) || self.inline_box_omitted(id) {
                 continue;
@@ -1972,7 +2071,8 @@ impl UiWorld {
                 visible,
                 specified_pointer,
                 computed_pointer,
-                retained_layout,
+                local_layout,
+                (frame, tree_parent),
                 resolved_layout,
                 default_box,
                 scroll,
@@ -1999,7 +2099,8 @@ impl UiWorld {
                     computed.visible,
                     record.style.layout.pointer_events,
                     computed.pointer_events,
-                    self.record_layout_box(record),
+                    record.local_layout,
+                    (record.layout_frame, record.hierarchy.parent),
                     plain_style.then(|| Arc::clone(&record.resolved_layout)),
                     default_box,
                     record.scroll_offset,
@@ -2008,12 +2109,29 @@ impl UiWorld {
                     record.style.painter.is_some() || !self.painter_overrides.is_empty(),
                 )
             };
-            let Some(layout) = (if retained_boxes {
-                Some(retained_layout)
-            } else {
-                self.component_layout_box(id)
-            }) else {
-                continue;
+            // Every entry is in its own box's coordinates, which stand an
+            // offset from its hit parent's: the local box itself where that
+            // is what layout measures it from.
+            let layout = LayoutBox {
+                x: 0.0,
+                y: 0.0,
+                ..local_layout
+            };
+            let offset_from = |hit_parent: Option<StableNodeId>| match hit_parent {
+                Some(owner)
+                    if frame == crate::LayoutFrame::Parent && tree_parent == Some(owner) =>
+                {
+                    ([local_layout.x, local_layout.y], false)
+                }
+                Some(owner) => (
+                    self.layout_box_from(owner, id)
+                        .map_or([local_layout.x, local_layout.y], |b| [b.x, b.y]),
+                    true,
+                ),
+                None if frame == crate::LayoutFrame::Page => {
+                    ([local_layout.x, local_layout.y], false)
+                }
+                None => (self.layout_origin(id).unwrap_or_default(), true),
             };
             // A mounted default box under an identity ancestor has no transform,
             // clip, scroll, or overlay. Skip the style arc and the geometry
@@ -2033,11 +2151,14 @@ impl UiWorld {
                     && used_pe.hittable()
                     && computed_pointer.hittable();
                 let index = built.len();
+                let (origin, pinned) = offset_from(hit_parent);
                 built.push(BuiltHit {
                     entry: HitEntry {
                         id,
                         source_children: Arc::clone(&children),
                         layout,
+                        origin,
+                        pinned,
                         transform: IDENTITY_AFFINE,
                         persp: [0.0, 0.0],
                         self_clips: Vec::new(),
@@ -2056,7 +2177,15 @@ impl UiWorld {
                 child_states.push((parent_hit, false));
                 if descend {
                     stack.extend(children.iter().enumerate().rev().map(|(position, child)| {
-                        (*child, parent_hit, Some(index), position, used_pe, false)
+                        (
+                            *child,
+                            parent_hit,
+                            Some(index),
+                            position,
+                            used_pe,
+                            false,
+                            Some(id),
+                        )
                     }));
                 }
                 continue;
@@ -2074,9 +2203,9 @@ impl UiWorld {
             // An absolute box that escapes overflow containers hangs from its
             // clip parent instead (#201): their clips and scroll do not reach
             // it, the transforms between still do.
-            let (parent_hit, parent, parent_blocks_3d, escaped) =
+            let (parent_hit, parent, parent_blocks_3d, escaped, hit_parent) =
                 if node_style.position == PositionSpec::Fixed {
-                    ((IDENTITY_AFFINE, [0.0, 0.0]), None, false, false)
+                    ((IDENTITY_AFFINE, [0.0, 0.0]), None, false, false, None)
                 } else if let Some(tree_parent) = parent
                     && node_style.position == PositionSpec::Absolute
                     && let Some(anchor) = self.clip_escape(id)
@@ -2092,15 +2221,49 @@ impl UiWorld {
                         continue;
                     };
                     let (base, blocks_3d) = child_states[at];
+                    let anchor_id = built[at].entry.id;
                     (
-                        self.clip_bridge_transform(id, anchor, base, false),
+                        self.clip_bridge_transform_from(
+                            id,
+                            anchor,
+                            base,
+                            false,
+                            self.layout_origin(anchor_id).unwrap_or_default(),
+                        ),
                         Some(at),
                         blocks_3d,
                         true,
+                        Some(anchor_id),
                     )
                 } else {
-                    (parent_hit, parent, parent_blocks_3d, false)
+                    (parent_hit, parent, parent_blocks_3d, false, hit_parent)
                 };
+            let (offset, offset_pinned) = offset_from(hit_parent);
+            // The offset is a translation of what the parent hands down, so
+            // it moves the box as a shift of the space it lands in, which
+            // the children then keep. Under a perspective it does not
+            // commute: the entry takes it into its transform.
+            let (parent_hit, origin) = if parent_hit.1 == [0.0, 0.0] {
+                (parent_hit, linear_offset(parent_hit.0, offset))
+            } else {
+                (
+                    then_hit(
+                        parent_hit,
+                        ([1.0, 0.0, 0.0, 1.0, offset[0], offset[1]], [0.0, 0.0]),
+                    ),
+                    [0.0, 0.0],
+                )
+            };
+            // Component geometry is on the page; the entry's own box's
+            // coordinates start where the box stands.
+            let page_origin = || self.layout_origin(id).unwrap_or_default();
+            let own_space = |rect: LayoutBox, [x, y]: [f32; 2]| LayoutBox {
+                x: rect.x - x,
+                y: rect.y - y,
+                ..rect
+            };
+            let mut reads_page =
+                offset_pinned || escaped || node_style.position == PositionSpec::Sticky;
             let local = if parent_blocks_3d && node_style.transform_3d.is_some() {
                 (IDENTITY_AFFINE, [0.0, 0.0])
             } else {
@@ -2154,7 +2317,8 @@ impl UiWorld {
                 if let Some(crate::ComponentGeometry::ModalFrame { surface, .. }) =
                     self.component_geometry(id)
                 {
-                    child_clips.push((surface, transform));
+                    reads_page = true;
+                    child_clips.push((own_space(surface, page_origin()), transform));
                 }
                 if let Some(parent_id) = self.parent_id(id)
                     && let Some(StandardVisual::ModalFrame { slots, .. }) =
@@ -2163,7 +2327,8 @@ impl UiWorld {
                     && let Some(crate::ComponentGeometry::ModalFrame { body, .. }) =
                         self.component_geometry(parent_id)
                 {
-                    self_clips.push((body, parent_hit.0));
+                    reads_page = true;
+                    self_clips.push((own_space(body, page_origin()), parent_hit.0));
                 }
             }
             let confirm_busy = self
@@ -2185,13 +2350,17 @@ impl UiWorld {
                         })
                         .or_else(|| self.overlay_connector_hit(id))
                 })
-                .flatten();
+                .flatten()
+                .map(|menu| own_space(menu, page_origin()));
+            reads_page |= menu.is_some();
             let index = built.len();
             built.push(BuiltHit {
                 entry: HitEntry {
                     id,
                     source_children: Arc::clone(&children),
                     layout,
+                    origin,
+                    pinned: reads_page,
                     transform,
                     persp,
                     self_clips,
@@ -2202,7 +2371,8 @@ impl UiWorld {
                     hittable,
                     menu,
                     painter: if painted {
-                        self.painter_hit(id, layout)
+                        let [x, y] = page_origin();
+                        self.painter_hit(id, LayoutBox { x, y, ..layout })
                     } else {
                         None
                     },
@@ -2226,6 +2396,7 @@ impl UiWorld {
                     position,
                     used_pe,
                     child_blocks_3d,
+                    Some(id),
                 )
             }));
         }
@@ -2234,6 +2405,10 @@ impl UiWorld {
 
     #[cfg(test)]
     pub(super) fn build_hit_forest(&self, seeds: Vec<(StableNodeId, [f32; 6])>) -> Vec<HitEntry> {
+        let seeds = seeds
+            .into_iter()
+            .map(|(id, transform)| (id, transform, None))
+            .collect();
         self.build_hit_forest_deferring(seeds).0
     }
 
@@ -2241,7 +2416,7 @@ impl UiWorld {
     /// caller to hang from a clip parent outside the seeded branch.
     fn build_hit_forest_deferring(
         &self,
-        seeds: Vec<(StableNodeId, [f32; 6])>,
+        seeds: Vec<HitSeed>,
     ) -> (Vec<HitEntry>, Vec<StableNodeId>) {
         let (built, deferred) = self.build_hit_entries_deferring(seeds);
         let n = built.len();
@@ -2354,7 +2529,7 @@ impl UiWorld {
     ) -> Option<Vec<StableNodeId>> {
         if self.hit_motion_layout(root).position == PositionSpec::Fixed {
             let (mut forest, deferred) =
-                self.build_hit_forest_deferring(vec![(root, IDENTITY_AFFINE)]);
+                self.build_hit_forest_deferring(vec![(root, IDENTITY_AFFINE, None)]);
             if forest.len() > 1 {
                 return None;
             }
@@ -2411,7 +2586,7 @@ impl UiWorld {
             }
             let position = roots.iter().position(|id| *id == root).unwrap_or_default();
             let (mut rebuilt, deferred) =
-                self.build_hit_forest_deferring(vec![(root, IDENTITY_AFFINE)]);
+                self.build_hit_forest_deferring(vec![(root, IDENTITY_AFFINE, None)]);
             if rebuilt.len() > 1 {
                 return None;
             }
@@ -2452,7 +2627,7 @@ impl UiWorld {
             .or_else(|| siblings.iter().position(|id| *id == root));
         let position = position?;
         let (mut rebuilt, deferred) =
-            self.build_hit_forest_deferring(vec![(root, child_transform)]);
+            self.build_hit_forest_deferring(vec![(root, child_transform, Some(parent))]);
         if rebuilt.len() > 1 {
             return None;
         }
@@ -2487,18 +2662,25 @@ impl UiWorld {
         };
         let scroll = self.record(anchor).scroll_offset;
         let base = then_affine(anchor_transform, [1.0, 0.0, 0.0, 1.0, -scroll.x, -scroll.y]);
-        let (transform, _) =
-            self.clip_bridge_transform(root, Some(anchor), (base, [0.0, 0.0]), false);
+        let (transform, _) = self.clip_bridge_transform_from(
+            root,
+            Some(anchor),
+            (base, [0.0, 0.0]),
+            false,
+            self.layout_origin(anchor).unwrap_or_default(),
+        );
         let position = self
             .parent_id(root)
             .and_then(|parent| self.child_index(parent, root))?;
-        let (mut rebuilt, deferred) = self.build_hit_forest_deferring(vec![(root, transform)]);
+        let (mut rebuilt, deferred) =
+            self.build_hit_forest_deferring(vec![(root, transform, Some(anchor))]);
         if rebuilt.len() > 1 {
             return None;
         }
         let entry = rebuilt.pop().map(|mut entry| {
             entry.order = position;
             entry.escaped = true;
+            entry.pinned = true;
             sort_hit_children(&mut entry);
             entry
         });
@@ -2552,27 +2734,6 @@ impl UiWorld {
 }
 
 impl UiWorld {
-    /// Whether `id`'s hit entry is its box and nothing that box gives it:
-    /// no transform of its own or above it, no clip, no shape, no menu or
-    /// painter, not escaped and not sticky. A box layout only moved then
-    /// takes the entry along by its box alone, to the bit what a rebuild
-    /// would make of it.
-    fn hit_entry_moves_in_place(&self, document: DocumentId, id: StableNodeId) -> bool {
-        let Some(hit) = self
-            .hit_test_index
-            .get(&document)
-            .and_then(|index| index.entries.get(&id))
-        else {
-            return false;
-        };
-        plain_hit_entry(&hit.entry)
-            && hit.shift == [0.0, 0.0]
-            && self
-                .layout_style(id)
-                .is_some_and(|style| style.position != PositionSpec::Sticky)
-            && self.component_layout_box(id).is_some()
-    }
-
     /// `id`'s entry built again on its own, when the one held is plain (see
     /// [`plain_hit_entry`]) under plain entries without scroll, and so is the
     /// new one, over the same children. Such an entry hands its children
@@ -2598,7 +2759,7 @@ impl UiWorld {
             return None;
         }
         let (mut built, deferred) =
-            self.build_hit_entries_reaching(vec![(id, IDENTITY_AFFINE)], false);
+            self.build_hit_entries_reaching(vec![(id, IDENTITY_AFFINE, hit.parent)], false);
         if !deferred.is_empty() || built.len() != 1 {
             return None;
         }
@@ -2619,62 +2780,104 @@ impl UiWorld {
         Some(fresh)
     }
 
-    /// Move the entries of boxes that only moved (see
-    /// [`Self::hit_entry_moves_in_place`]) to where their boxes now stand,
-    /// and refresh the bounds above them once each.
-    fn move_hit_entries(
+    /// Put the plain entries built again on their own (see
+    /// [`Self::rebuilt_plain_hit_entry`]) in place over their children, and
+    /// refresh the bounds above them once each. An entry that only moved
+    /// takes a new origin this way; what hangs below it keeps its own.
+    fn replace_plain_hit_entries(
         &mut self,
         document: DocumentId,
-        moved: &[StableNodeId],
         rebuilt: Vec<(StableNodeId, HitEntry)>,
-    ) {
-        if moved.is_empty() && rebuilt.is_empty() {
-            return;
+    ) -> Vec<StableNodeId> {
+        if rebuilt.is_empty() {
+            return Vec::new();
         }
-        let boxes: Vec<(StableNodeId, LayoutBox)> = moved
-            .iter()
-            .filter_map(|&id| Some((id, self.component_layout_box(id)?)))
-            .collect();
         let Some(index) = self.hit_test_index.get_mut(&document) else {
-            return;
+            return Vec::new();
         };
-        for &(id, layout) in &boxes {
-            if let Some(hit) = index.entries.get_mut(&id) {
-                hit.entry.layout = layout;
-            }
-        }
-        let mut touched: Vec<StableNodeId> = moved.to_vec();
+        let mut touched: Vec<StableNodeId> = Vec::with_capacity(rebuilt.len());
+        let mut moved = 0usize;
         let built = rebuilt.len();
         for (id, mut entry) in rebuilt {
             if let Some(hit) = index.entries.get_mut(&id) {
+                if entry.origin != hit.entry.origin {
+                    moved += 1;
+                }
+                if entry.pinned {
+                    index.pinned.insert(id);
+                }
                 entry.children = std::mem::take(&mut hit.entry.children);
                 hit.entry = entry;
                 touched.push(id);
             }
         }
         index.refresh_bounds_of(&touched);
-        let moved = boxes.len();
         self.bump_last_counters(|counters| {
             counters.hit_test_entries_moved += moved;
-            if built > 0 {
-                counters.record_hit_test_rebuild(built);
-            }
+            counters.record_hit_test_rebuild(built);
         });
-        #[cfg(any(test, feature = "layout-verify"))]
-        self.check_moved_hit_entries(document, &touched);
+        touched
     }
 
-    /// A moved entry is what a rebuild of the whole index makes of it,
+    /// The pinned entries ([`HitEntry::pinned`]) below a node of `dirty`
+    /// and not in it: they read geometry a change above them can move,
+    /// so they are built again although nothing marked them.
+    fn pinned_hit_entries_under(
+        &mut self,
+        document: DocumentId,
+        dirty: &[StableNodeId],
+    ) -> Vec<StableNodeId> {
+        let Some(index) = self.hit_test_index.get_mut(&document) else {
+            return Vec::new();
+        };
+        let HitIndex {
+            pinned, entries, ..
+        } = index;
+        pinned.retain(|id| entries.get(id).is_some_and(|hit| hit.entry.pinned));
+        if pinned.is_empty() {
+            return Vec::new();
+        }
+        let dirty: crate::NodeSet = dirty.iter().copied().collect();
+        let index = &self.hit_test_index[&document];
+        index
+            .pinned
+            .iter()
+            .copied()
+            .filter(|&id| {
+                !dirty.contains(&id)
+                    && self.contains(id)
+                    && std::iter::successors(self.parent_id(id), |&at| self.parent_id(at))
+                        .any(|at| dirty.contains(&at))
+            })
+            .collect()
+    }
+
+    /// A moved entry, and every entry below it that no scroll since its
+    /// build has shifted, is what a rebuild of the whole index makes of it,
     /// wherever that rebuild stays cheap.
     #[cfg(any(test, feature = "layout-verify"))]
     fn check_moved_hit_entries(&self, document: DocumentId, moved: &[StableNodeId]) {
         if self.len() > 4096 {
             return;
         }
+        let index = &self.hit_test_index[&document];
+        let mut below: Vec<StableNodeId> = Vec::new();
+        let mut open: Vec<StableNodeId> = moved.to_vec();
+        while let Some(id) = open.pop() {
+            let Some(hit) = index.entries.get(&id) else {
+                continue;
+            };
+            if hit.shift != [0.0, 0.0] {
+                continue;
+            }
+            below.push(id);
+            open.extend(hit.children.iter().flatten().copied());
+        }
+        let moved = below.as_slice();
         let seeds = self
             .document_roots(document)
             .iter()
-            .map(|&id| (id, IDENTITY_AFFINE))
+            .map(|&id| (id, IDENTITY_AFFINE, None))
             .collect::<Vec<_>>();
         let fresh = HitIndex::from_entries(self.build_hit_entries(seeds));
         let index = &self.hit_test_index[&document];
@@ -2686,6 +2889,9 @@ impl UiWorld {
             assert!(
                 ours.parent == theirs.parent
                     && a.layout == b.layout
+                    && a.origin == b.origin
+                    && a.pinned == b.pinned
+                    && ours.bounds == theirs.bounds
                     && a.transform == b.transform
                     && a.persp == b.persp
                     && a.hittable == b.hittable
@@ -2696,7 +2902,12 @@ impl UiWorld {
                     && a.child_clips == b.child_clips
                     && a.path_clips.is_empty() == b.path_clips.is_empty()
                     && hit_bounds(a) == hit_bounds(b),
-                "{id:?}: a moved hit entry differs from a rebuilt one: {a:?} != {b:?}"
+                "{id:?}: a moved hit entry differs from a rebuilt one: {a:?} != {b:?} \
+                 (bounds {:?} != {:?}, parent {:?} != {:?})",
+                ours.bounds,
+                theirs.bounds,
+                ours.parent,
+                theirs.parent
             );
         }
     }
@@ -2719,22 +2930,37 @@ impl UiWorld {
         if !self.hit_test_index.contains_key(&document) {
             return false;
         }
-        // A plain entry is moved or built again on its own, in place; the
-        // rest patch the subtrees over them.
-        let translated = std::mem::take(&mut self.translated_hit);
-        let mut moved = Vec::new();
+        // A box that only moved with one above it keeps its entry, in its
+        // own box's coordinates, unless that entry is pinned.
+        let followers = std::mem::take(&mut self.layout_followers);
+        let kept_dirty;
+        let dirty = if followers.is_empty() {
+            dirty
+        } else {
+            let index = &self.hit_test_index[&document];
+            kept_dirty = dirty
+                .iter()
+                .copied()
+                .filter(|id| {
+                    !followers.contains(id)
+                        || index.entries.get(id).is_none_or(|hit| hit.entry.pinned)
+                })
+                .collect::<Vec<_>>();
+            kept_dirty.as_slice()
+        };
+        // A plain entry is built again on its own, in place; the rest patch
+        // the subtrees over them. Entries below a dirty one keep theirs,
+        // being in their own boxes' coordinates, but for the pinned.
+        let mut rest = self.pinned_hit_entries_under(document, dirty);
         let mut rebuilt = Vec::new();
-        let mut rest = Vec::new();
         for &id in dirty {
-            if translated.contains(&id) && self.hit_entry_moves_in_place(document, id) {
-                moved.push(id);
-            } else if let Some(entry) = self.rebuilt_plain_hit_entry(document, id) {
+            if let Some(entry) = self.rebuilt_plain_hit_entry(document, id) {
                 rebuilt.push((id, entry));
             } else {
                 rest.push(id);
             }
         }
-        self.move_hit_entries(document, &moved, rebuilt);
+        let _replaced = self.replace_plain_hit_entries(document, rebuilt);
         let dirty = rest.as_slice();
         let Some(roots) = self.minimal_hit_patch_roots(document, dirty) else {
             return false;
@@ -2744,6 +2970,10 @@ impl UiWorld {
                 return false;
             }
         }
+        // Once every patch is in: an entry replaced early sits over others
+        // the patches after it build again.
+        #[cfg(any(test, feature = "layout-verify"))]
+        self.check_moved_hit_entries(document, &_replaced);
         #[cfg(debug_assertions)]
         self.audit_hit_eligibility("scoped rebuild");
         true
@@ -2883,12 +3113,12 @@ impl UiWorld {
     /// or layout work. Pointer dispatch walks that tree in z/order with clip
     /// early-out instead of flattening and sorting every query.
     pub fn rebuild_hit_test(&mut self, document: DocumentId) {
-        self.translated_hit.clear();
+        self.layout_followers.clear();
         let roots = self.document_roots(document);
         let seeds = roots
             .iter()
             .copied()
-            .map(|id| (id, IDENTITY_AFFINE))
+            .map(|id| (id, IDENTITY_AFFINE, None))
             .collect::<Vec<_>>();
         let entries = self.build_hit_entries(seeds);
         let viewport_roots = entries

@@ -135,6 +135,20 @@ impl UiWorld {
         base: ([f32; 6], [f32; 2]),
         presented: bool,
     ) -> ([f32; 6], [f32; 2]) {
+        self.clip_bridge_transform_from(id, anchor, base, presented, [0.0, 0.0])
+    }
+
+    /// [`Self::clip_bridge_transform`] with the boxes passed over measured
+    /// from `from` on the page: `base` maps coordinates from there, as the
+    /// hit index's entries are each in their own box's.
+    pub(super) fn clip_bridge_transform_from(
+        &self,
+        id: StableNodeId,
+        anchor: Option<StableNodeId>,
+        base: ([f32; 6], [f32; 2]),
+        presented: bool,
+        from: [f32; 2],
+    ) -> ([f32; 6], [f32; 2]) {
         let mut between = Vec::new();
         let mut cursor = self.parent_id(id);
         while let Some(node) = cursor {
@@ -146,9 +160,13 @@ impl UiWorld {
         }
         let mut transform = base;
         for node in between.into_iter().rev() {
-            let Some(bounds) = self.component_layout_box(node) else {
+            let Some(mut bounds) = self.component_layout_box(node) else {
                 continue;
             };
+            if from != [0.0, 0.0] {
+                bounds.x -= from[0];
+                bounds.y -= from[1];
+            }
             let style = self.hit_motion_layout(node);
             let local = if presented {
                 self.input_local_scene_transform(node, &style, bounds, false)

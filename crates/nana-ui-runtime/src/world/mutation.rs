@@ -3669,12 +3669,15 @@ impl UiWorld {
     }
 
     /// The boxes under the ones the commit moved stand elsewhere on the page
-    /// although none of them was written: their local boxes, results and
-    /// content extents hold, but the hit index and the scene still read
-    /// document boxes. Each is marked as moved; one whose nearest clip
+    /// although none of them was written: their local boxes, results, hit
+    /// entries and content extents hold, but the scene still reads document
+    /// boxes. Each is marked as moved for it (and for accessibility, which
+    /// reads the INPUT mark as a moved box); one whose nearest clip
     /// container moved with it has a new accessible clip too. A box hung
     /// from a frame that did not move stays where it is on the page, and its
-    /// offset from its parent, which its accessible bounds are, changed.
+    /// offset from its parent, which its accessible bounds and hit entry
+    /// are, changed. The hit index finds the entries under a moved box that
+    /// read more than their own offset itself ([`HitEntry::pinned`]).
     pub(super) fn spread_layout_moves(&mut self) {
         let written = std::mem::take(&mut self.layout_written);
         let roots = std::mem::take(&mut self.layout_moved_roots);
@@ -3706,7 +3709,13 @@ impl UiWorld {
                 crate::LayoutFrame::Page => false,
             };
             if !follows {
-                self.mark(id, DirtyMask::ACCESSIBILITY);
+                // A fixed box hangs from the viewport in the hit index too.
+                let hit = if self.hit_motion_layout(id).position == PositionSpec::Fixed {
+                    0
+                } else {
+                    DirtyMask::INPUT
+                };
+                self.mark_moved_by_layout(id, DirtyMask::ACCESSIBILITY | hit, true);
                 continue;
             }
             if !moved.insert(id) {
@@ -3726,7 +3735,9 @@ impl UiWorld {
             } else {
                 0
             };
-            self.translated_hit.insert(id);
+            // INPUT for accessibility, which takes a box marked so as a
+            // moved seed; the hit index passes over it.
+            self.layout_followers.insert(id);
             self.mark_moved_by_layout(
                 id,
                 DirtyMask::INPUT | DirtyMask::RENDER | accessibility,

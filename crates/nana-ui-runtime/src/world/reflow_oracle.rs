@@ -355,6 +355,8 @@ pub(super) fn admitted_nodes(context: &AppContext, document: DocumentId) -> Hash
 struct HitGeometry {
     layout: crate::LayoutBox,
     transform: [f32; 6],
+    /// Where the entry's own coordinates stand from the window.
+    offset: [f32; 2],
 }
 
 fn hit_geometry(world: &UiWorld, document: DocumentId, id: StableNodeId) -> Option<HitGeometry> {
@@ -363,6 +365,7 @@ fn hit_geometry(world: &UiWorld, document: DocumentId, id: StableNodeId) -> Opti
     Some(HitGeometry {
         layout: hit.entry.layout,
         transform: super::hit_test::find_hit_transform(index, id)?,
+        offset: index.entry_offset(id),
     })
 }
 
