@@ -1915,7 +1915,9 @@ mod tests {
         context: &AppContext,
         tree: Entity<TreeView>,
     ) -> Vec<Vec<crate::AccessibilityNode>> {
-        let nodes = context.world().project_accessibility(document());
+        let nodes = context
+            .world()
+            .project_accessibility_in_viewport(document());
         let (_, rows) = semantics(context, tree);
         rows.iter()
             .map(|row| {

@@ -240,6 +240,9 @@ fn frame(
     context.compat_world_mut().observe_text_shaper(shaper);
     context.begin_frame_profile();
     let mut drained_any = false;
+    // Nodes some pass marked INPUT for more than a layout move, as
+    // `RuntimeDocument::flush` keeps them apart.
+    let mut seeded_input = HashSet::new();
     for _ in 0..8 {
         let work = context.take_system_work_for(document);
         drained_any |= !work.is_empty() || resized;
@@ -251,6 +254,13 @@ fn frame(
                 .extend(&work.accessibility_removals);
             drained.input_hit_test.extend(&work.input_hit_test);
             drained.transform.extend(&work.transform);
+            for id in &work.input_hit_test {
+                if work.accessibility_moved.binary_search(id).is_ok() {
+                    drained.accessibility_moved.push(*id);
+                } else {
+                    seeded_input.insert(*id);
+                }
+            }
         }
         if work.is_empty() && !resized {
             break;
@@ -296,6 +306,13 @@ fn frame(
         }
     }
     context.finish_frame_profile();
+    if let Some(drained) = accessible {
+        drained
+            .accessibility_moved
+            .retain(|id| !seeded_input.contains(id));
+        drained.accessibility_moved.sort_unstable();
+        drained.accessibility_moved.dedup();
+    }
     // `last_work_counters` keeps the last frame that drained work across idle
     // frames, which reads as that work repeating (#397); an idle frame
     // reports its own counters.

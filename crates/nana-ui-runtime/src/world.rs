@@ -955,6 +955,17 @@ pub struct UiWorld {
     /// Counts [`Self::extract_nodes_reusing`] calls: a node's render marks
     /// (`NodeRecord::render_full_epoch`) say why it is dirty since the last.
     render_epoch: Cell<u64>,
+    /// Set while a layout move marks its box: the INPUT it marks is the
+    /// move's alone (no [`DirtyMask::INPUT_ELSEWHERE`]).
+    marking_layout_move: bool,
+    /// Boxes a pass's writes only moved, committed for the publish that
+    /// follows: it marks ACCESSIBILITY on the ones that did not keep their
+    /// offset from their parent. A drain marks any left.
+    layout_moved_accessibility: Vec<StableNodeId>,
+    /// Every accessibility node a projection handed out, as it handed it
+    /// out: the nodes a delta leaves alone are checked against it.
+    #[cfg(any(test, feature = "layout-verify"))]
+    pub(super) accessibility_shipped: accessibility::ShippedAccessibility,
     /// Set while the frame driver commits a layout pass's box writes: it
     /// publishes the whole pass scope right after, so the commit leaves the
     /// written boxes to that publish: it would build each result only for
@@ -1231,6 +1242,10 @@ impl UiWorld {
             translated_layout: NodeSet::default(),
             translated_hit: NodeSet::default(),
             render_epoch: Cell::new(0),
+            marking_layout_move: false,
+            layout_moved_accessibility: Vec::new(),
+            #[cfg(any(test, feature = "layout-verify"))]
+            accessibility_shipped: Default::default(),
             pass_publishes_written_boxes: false,
             layout_anchor_roots: HashSet::new(),
             cursor_style_dirty: false,
@@ -1870,14 +1885,21 @@ impl UiWorld {
             true
         });
         if published.is_empty() {
+            self.mark_moved_accessibility(&[]);
             self.note_layout_result_publish(reused, 0, 0, children_visited);
             return;
         }
+        let kept_offset = self.boxes_keeping_parent_offset(&published, &translated);
+        let kept_ids: Vec<StableNodeId> = published
+            .iter()
+            .zip(&kept_offset)
+            .filter_map(|((id, ..), kept)| kept.then_some(*id))
+            .collect();
         let changed = published.len();
         self.note_layout_result_publish(reused, changed, 1, children_visited);
         self.layout_generation = self.layout_generation.wrapping_add(1);
         let generation = self.layout_generation;
-        for (id, mut retained, moved) in published {
+        for (at, (id, mut retained, moved)) in published.into_iter().enumerate() {
             let result = Arc::get_mut(&mut retained.placed).expect("a result just built");
             // The menu's growing label slot depends on chrome and its offered
             // box, not on label advance. A changed slot must reach text even
@@ -1926,12 +1948,18 @@ impl UiWorld {
                 self.record_mut(id).render_moved_epoch = self.render_epoch.get();
             }
             if project {
-                let bits = DirtyMask::INPUT | DirtyMask::RENDER | DirtyMask::ACCESSIBILITY;
-                if moved {
-                    self.mark_moved(id, bits);
+                // Accessible bounds are relative to the parent's: a box that
+                // kept its offset from its parent keeps them.
+                let accessibility = if kept_offset.get(at).copied().unwrap_or(false) {
+                    0
                 } else {
-                    self.mark(id, bits);
-                }
+                    DirtyMask::ACCESSIBILITY
+                };
+                self.mark_moved_by_layout(
+                    id,
+                    DirtyMask::INPUT | DirtyMask::RENDER | accessibility,
+                    moved,
+                );
             }
             if sticky_changed {
                 self.mark(id, DirtyMask::RENDER);
@@ -1943,8 +1971,47 @@ impl UiWorld {
                 }
             }
         }
+        self.mark_moved_accessibility(&kept_ids);
         #[cfg(feature = "benchmark")]
         phase.lap(9);
+    }
+
+    /// The pass publish decides what its writes deferred: a moved box that
+    /// did not keep its offset from its parent projects again. A publish
+    /// inside the pass's commit leaves them to it.
+    fn mark_moved_accessibility(&mut self, kept: &[StableNodeId]) {
+        if self.pass_publishes_written_boxes || self.layout_moved_accessibility.is_empty() {
+            return;
+        }
+        let mut deferred = std::mem::take(&mut self.layout_moved_accessibility);
+        deferred.sort_unstable();
+        let mut kept = kept.iter().peekable();
+        for id in deferred {
+            while kept.next_if(|kept| **kept < id).is_some() {}
+            if kept.peek() != Some(&&id) && self.nodes.contains(id) {
+                self.mark(id, DirtyMask::ACCESSIBILITY);
+            }
+        }
+    }
+
+    /// Mark `bits` on a box layout moved or resized, through
+    /// [`Self::mark_moved`] when it only `moved`. Its INPUT mark is layout's
+    /// alone (see [`SystemWork::accessibility_moved`]) unless something else
+    /// marks INPUT on it too.
+    fn mark_moved_by_layout(&mut self, id: StableNodeId, bits: u16, moved: bool) {
+        self.marking_layout_move = true;
+        if moved {
+            self.mark_moved(id, bits);
+        } else {
+            self.mark(id, bits);
+        }
+        self.marking_layout_move = false;
+    }
+
+    /// A pass's write moved `id` without resizing it: the publish right
+    /// after decides its ACCESSIBILITY bit.
+    fn defer_moved_accessibility(&mut self, id: StableNodeId) {
+        self.layout_moved_accessibility.push(id);
     }
 
     /// The nodes of `batch` with no box: ones layout sees hidden (see
@@ -1982,6 +2049,76 @@ impl UiWorld {
         memo.into_iter()
             .filter_map(|(id, boxless)| boxless.then_some(id))
             .collect()
+    }
+
+    /// Which boxes of `published` (sorted by node), by position, layout only
+    /// moved (`translated`) and stand where they stood from their parent's
+    /// box, to the bit, under no clip container this publish moves or
+    /// resizes. Their accessible bounds, relative to the parent's, and their
+    /// clip, in viewport coordinates, stay what they were. Read before the
+    /// publish replaces the results it holds; empty when none moved.
+    fn boxes_keeping_parent_offset(
+        &self,
+        published: &[(StableNodeId, RetainedLayoutResult, bool)],
+        translated: &NodeSet,
+    ) -> Vec<bool> {
+        if translated.is_empty() {
+            return Vec::new();
+        }
+        let was: Vec<Option<&crate::LayoutResult>> = published
+            .iter()
+            .map(|(id, ..)| self.layout_results.get(id).map(|held| &*held.placed))
+            .collect();
+        let index = |id: StableNodeId| published.binary_search_by_key(&id, |(id, ..)| *id).ok();
+        // (where it stood, where it stands)
+        let boxes = |id: StableNodeId| match index(id) {
+            Some(at) => was[at].map(|was| (was, &*published[at].1.placed)),
+            None => self
+                .layout_results
+                .get(&id)
+                .map(|held| (&*held.placed, &*held.placed)),
+        };
+        let offset = |child: LayoutBox, parent: LayoutBox| {
+            [
+                (child.x - parent.x).to_bits(),
+                (child.y - parent.y).to_bits(),
+                child.width.to_bits(),
+                child.height.to_bits(),
+            ]
+        };
+        let mut kept = vec![false; published.len()];
+        for (at, (id, result, _)) in published.iter().enumerate() {
+            let Some(was) = was[at] else {
+                continue;
+            };
+            if !translated.contains(id) {
+                continue;
+            }
+            let Some((parent_was, parent_now)) = self.parent_id(*id).and_then(boxes) else {
+                continue;
+            };
+            if offset(was.bounds, parent_was.bounds)
+                != offset(result.placed.bounds, parent_now.bounds)
+            {
+                continue;
+            }
+            let mut clip = result.placed.clip;
+            let mut clip_moved = false;
+            while let Some(container) = clip {
+                let Some((held, now)) = boxes(container) else {
+                    // A container this publish lays out for the first time.
+                    clip_moved = index(container).is_some();
+                    break;
+                };
+                if held.bounds != now.bounds {
+                    clip_moved = true;
+                    break;
+                }
+                clip = held.clip;
+            }
+            kept[at] = !clip_moved;
+        }
+        kept
     }
 
     /// Whether `id`'s own parts steer around where its slots stand (a list
@@ -3229,6 +3366,8 @@ impl UiWorld {
         };
         self.pending_drain_counts.scroll_content_extent_recomputes +=
             self.take_scroll_extent_recomputes();
+        // A write whose publish never ran keeps its accessibility.
+        self.mark_moved_accessibility(&[]);
         let mut ids = std::mem::take(&mut self.dirty_entities)
             .into_iter()
             .collect::<Vec<_>>();
@@ -3244,6 +3383,7 @@ impl UiWorld {
             input_hit_test: Vec::new(),
             focus_ime: Vec::new(),
             accessibility: Vec::new(),
+            accessibility_moved: Vec::new(),
             accessibility_removals: sorted_unique(std::mem::take(
                 &mut self.pending_accessibility_removals,
             )),
@@ -3422,7 +3562,10 @@ impl UiWorld {
             (work.state, DirtyMask::STATE),
             (work.text, DirtyMask::TEXT),
             (work.transform, DirtyMask::TRANSFORM),
-            (work.input_hit_test, DirtyMask::INPUT),
+            (
+                work.input_hit_test,
+                DirtyMask::INPUT | DirtyMask::INPUT_ELSEWHERE,
+            ),
             (work.focus_ime, DirtyMask::FOCUS_IME),
             (work.accessibility, DirtyMask::ACCESSIBILITY),
             (work.render_extraction, DirtyMask::RENDER),
@@ -6023,6 +6166,11 @@ impl UiWorld {
         if bits & DirtyMask::LAYOUT != 0 {
             self.note_layout_source_change();
         }
+        let bits = if bits & DirtyMask::INPUT != 0 && !self.marking_layout_move {
+            bits | DirtyMask::INPUT_ELSEWHERE
+        } else {
+            bits
+        };
         let changed = self.record_mut(id).dirty.insert(bits);
         if changed {
             self.dirty_entities.insert(id);

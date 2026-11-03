@@ -65,6 +65,8 @@ settings_row("静音").control(switch(""))
 
 `UiWorld::project_accessibility` 保留连接可见控件所需的结构祖先。`visibility: hidden` 的容器输出中性的 Generic：它自己的标签、值、描述、原来的角色和交互状态都不对外提供。显式 `visibility: visible` 的孩子继续有完整的父子链和语义。隐藏的叶子，以及不生成布局盒的子树，不进入投影。重新可见之后，恢复的是当前业务状态里的语义。
 
+节点的 `bounds` 相对父节点的 `bounds`，`clip` 在视口坐标里；要屏幕坐标用 `project_accessibility_in_viewport`（见 [应用 API](../../reference/application-api.md#无障碍节点的坐标)）。
+
 启用 `accesskit-tree` 的嵌入式宿主用 `AccessTreeProjector` 消费完整树或 `AccessibilityDelta`。隐藏的结构容器是没有点击、没有聚焦操作的 GenericContainer，孩子的操作和焦点还在。`AccessTreeProjector::new` 只建立保留状态。第一次要完整树时调用 `full_update()`。
 
 静态 `Text` 的可访问内容映射到 AccessKit 的 `Label.value`，于是 UIA 的 Name 里有这段文字。普通控件的 label 和 value 仍然分开。编辑控件的名称和输入值不混在一起。

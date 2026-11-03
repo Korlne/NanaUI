@@ -1731,12 +1731,17 @@ impl UiWorld {
                 // Padding and fragment changes that keep this border box are
                 // scheduled when their result publishes. A box that only moved
                 // leaves its record to that publish to say whether anything
-                // but its place changed.
+                // but its place changed, and, when a pass moved it, whether
+                // it kept its offset from its parent and with it its
+                // accessible bounds.
                 let bits = DirtyMask::INPUT | DirtyMask::RENDER | DirtyMask::ACCESSIBILITY;
                 if resized {
-                    self.mark(*id, bits);
+                    self.mark_moved_by_layout(*id, bits, false);
+                } else if moved && !omission_changed && self.pass_publishes_written_boxes() {
+                    self.mark_moved_by_layout(*id, DirtyMask::INPUT | DirtyMask::RENDER, true);
+                    self.defer_moved_accessibility(*id);
                 } else if moved {
-                    self.mark_moved(*id, bits);
+                    self.mark_moved_by_layout(*id, bits, true);
                 }
             }
             UiMutation::PatchPlacement { id, top, height } => {

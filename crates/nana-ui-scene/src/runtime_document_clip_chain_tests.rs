@@ -246,7 +246,7 @@ fn assert_agree(fixture: &Fixture, at: &str) {
     let scene = fixture.runtime.scene();
     let world = fixture.runtime.context().world();
     let document = DocumentId::new(1).unwrap();
-    let accessible = world.project_accessibility(document);
+    let accessible = world.project_accessibility_in_viewport(document);
     for (id, layout) in fixture.targets {
         let primitive = scene
             .primitives()

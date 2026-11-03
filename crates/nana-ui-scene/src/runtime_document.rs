@@ -186,6 +186,7 @@ impl RuntimeDocument {
         let mut hit_scroll_updates: Vec<(StableNodeId, [f32; 2])> = Vec::new();
         let mut hit_geometry_changed = false;
         let mut accessibility_subtrees = BTreeSet::new();
+        let mut accessibility_moved = BTreeSet::new();
 
         self.context.begin_frame_profile();
         loop {
@@ -232,9 +233,16 @@ impl RuntimeDocument {
             // Same seed rule as `project_accessibility_delta`: hit-test and
             // transform subtrees moved in viewport space, scheduled-layout
             // nodes did not. The retained layout writer supplies the exact
-            // moved nodes through `WriteLayout`.
-            accessibility_subtrees
-                .extend(work.input_hit_test.iter().chain(&work.transform).copied());
+            // moved nodes through `WriteLayout`. A box layout only moved with
+            // its parent is no subtree seed in the pass that moved it.
+            for &id in &work.input_hit_test {
+                if work.accessibility_moved.binary_search(&id).is_ok() {
+                    accessibility_moved.insert(id);
+                } else {
+                    accessibility_subtrees.insert(id);
+                }
+            }
+            accessibility_subtrees.extend(work.transform.iter().copied());
 
             accessibility_dirty.extend(work.accessibility.iter().copied());
             accessibility_removed.extend(work.accessibility_removals.iter().copied());
@@ -252,13 +260,21 @@ impl RuntimeDocument {
         if !accessibility_dirty.is_empty()
             || !accessibility_removed.is_empty()
             || !accessibility_subtrees.is_empty()
+            || !accessibility_moved.is_empty()
         {
             let started = std::time::Instant::now();
             let work = SystemWork {
                 generation,
                 accessibility: accessibility_dirty.into_iter().collect(),
                 accessibility_removals: accessibility_removed.into_iter().collect(),
-                input_hit_test: accessibility_subtrees.into_iter().collect(),
+                accessibility_moved: accessibility_moved
+                    .difference(&accessibility_subtrees)
+                    .copied()
+                    .collect(),
+                input_hit_test: accessibility_subtrees
+                    .union(&accessibility_moved)
+                    .copied()
+                    .collect(),
                 ..Default::default()
             };
             accessibility = self.context.world().project_accessibility_delta(&work);

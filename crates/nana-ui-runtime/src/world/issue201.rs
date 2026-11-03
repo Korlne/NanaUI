@@ -205,7 +205,7 @@ fn issue201_a_paragraph_and_a_custom_renderer_scroll_without_layout() {
         Some(texture.stable_id())
     );
     let accessible = world
-        .project_accessibility(document)
+        .project_accessibility_in_viewport(document)
         .into_iter()
         .find(|node| node.id == texture.stable_id())
         .unwrap()
@@ -365,7 +365,7 @@ mod clip_chain {
     fn accessible(context: &AppContext, id: StableNodeId) -> (LayoutBox, Option<LayoutBox>) {
         let node = context
             .world()
-            .project_accessibility(document())
+            .project_accessibility_in_viewport(document())
             .into_iter()
             .find(|node| node.id == id)
             .unwrap_or_else(|| panic!("{id:?} is in the accessible tree"));

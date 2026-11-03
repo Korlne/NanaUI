@@ -11841,7 +11841,7 @@ fn modal_accessibility_bounds_keep_surface_and_descendant_clipping() {
     else {
         panic!("modal")
     };
-    let accessible = world.project_accessibility(document(1));
+    let accessible = world.project_accessibility_in_viewport(document(1));
     assert_eq!(accessible.len(), 2);
     assert_eq!(accessible[0].bounds, surface);
     assert_eq!(

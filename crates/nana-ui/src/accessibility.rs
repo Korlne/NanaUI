@@ -5,7 +5,7 @@ use std::collections::VecDeque;
 
 use accesskit::ActionData;
 use accesskit::{
-    Action, HasPopup, Invalid, Live, Node, NodeId, Orientation, Rect, Role, ScrollUnit,
+    Action, Affine, HasPopup, Invalid, Live, Node, NodeId, Orientation, Rect, Role, ScrollUnit,
     TextDirection, TextPosition, TextSelection as AccessKitTextSelection, Toggled, TreeId,
     TreeInfo, TreeUpdate,
 };
@@ -1055,11 +1055,22 @@ fn project_node(
         .collect::<Vec<_>>();
     children.extend(text_run_id);
     projected.set_children(children);
+    // Runtime bounds are relative to the parent's box: the offset is this
+    // node's transform, so its children's offsets start from its origin, and
+    // the size is its local bounds. A box that moved with its parent keeps
+    // both and is not sent again.
+    let (x, y) = (
+        f64::from(node.bounds.x * scale_factor),
+        f64::from(node.bounds.y * scale_factor),
+    );
+    if x != 0.0 || y != 0.0 {
+        projected.set_transform(Affine::translate((x, y)));
+    }
     projected.set_bounds(Rect {
-        x0: f64::from(node.bounds.x * scale_factor),
-        y0: f64::from(node.bounds.y * scale_factor),
-        x1: f64::from((node.bounds.x + node.bounds.width) * scale_factor),
-        y1: f64::from((node.bounds.y + node.bounds.height) * scale_factor),
+        x0: 0.0,
+        y0: 0.0,
+        x1: f64::from(node.bounds.width * scale_factor),
+        y1: f64::from(node.bounds.height * scale_factor),
     });
     if node.disabled {
         projected.set_disabled();
@@ -1731,7 +1742,53 @@ mod tests {
         assert_eq!(input.label(), Some("Message"));
         assert_eq!(input.description(), Some("Required details"));
         assert_eq!(input.value(), Some("hello"));
-        assert_eq!(input.bounds().unwrap().x1, 110.0);
+        // The root has no offset, so the input's is its transform.
+        assert_eq!(placed(input).x0, 10.0);
+        assert_eq!(placed(input).x1, 110.0);
+        assert_eq!(input.bounds().unwrap().x1, 100.0);
+    }
+
+    /// Where `node`'s bounds stand in its parent's coordinates: its
+    /// transform applied to them.
+    fn placed(node: &Node) -> accesskit::Rect {
+        let bounds = node.bounds().unwrap();
+        node.transform()
+            .map_or(bounds, |transform| transform.transform_rect_bbox(bounds))
+    }
+
+    #[test]
+    fn a_child_offset_is_its_transform_from_the_parent_origin() {
+        let mut root = node(1, None, &[2]);
+        root.bounds = LayoutBox {
+            x: 5.0,
+            y: 7.0,
+            width: 200.0,
+            height: 100.0,
+        };
+        let mut child = node(2, Some(1), &[]);
+        child.bounds = LayoutBox {
+            x: 10.0,
+            y: 20.0,
+            width: 30.0,
+            height: 40.0,
+        };
+        let (_, update) = AccessibilityProjector::new(vec![root, child], false, 2.0);
+        let projected = |id| &update.nodes.iter().find(|(node, _)| *node == id).unwrap().1;
+        let root = projected(NodeId(1));
+        let child = projected(NodeId(2));
+        assert_eq!(
+            root.transform().unwrap().as_coeffs(),
+            [1.0, 0.0, 0.0, 1.0, 10.0, 14.0]
+        );
+        assert_eq!(
+            root.bounds().unwrap(),
+            accesskit::Rect::new(0.0, 0.0, 400.0, 200.0)
+        );
+        assert_eq!(
+            child.transform().unwrap().as_coeffs(),
+            [1.0, 0.0, 0.0, 1.0, 20.0, 40.0]
+        );
+        assert_eq!(placed(child), accesskit::Rect::new(20.0, 40.0, 80.0, 120.0));
     }
 
     #[test]
@@ -1937,8 +1994,8 @@ mod tests {
             .unwrap()
             .1;
         assert_eq!(projected.label(), Some("current"));
-        assert_eq!(projected.bounds().unwrap().x0, 20.0);
-        assert_eq!(projected.bounds().unwrap().x1, 30.0);
+        assert_eq!(placed(projected).x0, 20.0);
+        assert_eq!(placed(projected).x1, 30.0);
     }
 
     #[test]
@@ -3134,7 +3191,7 @@ mod tests {
         let (mut projector, _) = AccessibilityProjector::new(vec![root.clone()], false, 1.0);
 
         let update = projector.synchronize(vec![root], 2.0).unwrap();
-        let bounds = update.nodes[0].1.bounds().unwrap();
+        let bounds = placed(&update.nodes[0].1);
         assert_eq!(bounds.x0, 20.0);
         assert_eq!(bounds.y0, 40.0);
         assert_eq!(bounds.x1, 80.0);

@@ -161,7 +161,7 @@ fn issue200_a_pointer_menu_is_placed_by_layout_and_follows_the_viewport() {
     }
     assert_eq!(hit, Some(menu), "the pointer over the menu lands in it");
     let spoken = world
-        .project_accessibility(window.document)
+        .project_accessibility_in_viewport(window.document)
         .into_iter()
         .find(|node| node.id == menu)
         .unwrap()
@@ -609,7 +609,7 @@ impl SelectPage {
         let spoken = self
             .context
             .world()
-            .project_accessibility(self.document)
+            .project_accessibility_in_viewport(self.document)
             .into_iter()
             .find(|node| node.id == self.id())
             .unwrap()
@@ -687,8 +687,22 @@ fn issue200_a_select_menu_follows_the_viewport_and_hits_where_it_paints() {
 // closing the menu takes the list box away, and choosing an option through
 // accessibility is a press on its row.
 
-/// Every accessibility node of `document`, by id.
+/// Every accessibility node of `document`, by id, its bounds in the
+/// viewport.
 fn spoken(
+    context: &AppContext,
+    document: DocumentId,
+) -> std::collections::HashMap<StableNodeId, crate::AccessibilityNode> {
+    context
+        .world()
+        .project_accessibility_in_viewport(document)
+        .into_iter()
+        .map(|node| (node.id, node))
+        .collect()
+}
+
+/// [`spoken`] as a host holds it: bounds relative to the parent's.
+fn held(
     context: &AppContext,
     document: DocumentId,
 ) -> std::collections::HashMap<StableNodeId, crate::AccessibilityNode> {
@@ -807,8 +821,8 @@ fn issue200_a_select_listbox_follows_its_menu_and_its_highlight() {
     let mut page = SelectPage::new(1000.0);
     // What a host holds: the full tree once, then the deltas each frame
     // drains.
-    let mut held = spoken(&page.context, page.document);
-    let (_, _, below) = listbox(&held, page.id());
+    let mut held_nodes = held(&page.context, page.document);
+    let (_, _, below) = listbox(&spoken(&page.context, page.document), page.id());
     let mut follow = |page: &mut SelectPage, height: f32, resized: bool| {
         let work = super::reflow_oracle::accessible_frame(
             &mut page.context,
@@ -820,17 +834,18 @@ fn issue200_a_select_listbox_follows_its_menu_and_its_highlight() {
         page.context.rebuild_hit_test(page.document);
         let delta = page.context.world().project_accessibility_delta(&work);
         for id in delta.removed {
-            held.remove(&id);
+            held_nodes.remove(&id);
         }
-        held.extend(delta.updated.into_iter().map(|node| (node.id, node)));
-        let fresh = spoken(&page.context, page.document);
-        let (field, listbox, options) = listbox(&fresh, page.id());
+        held_nodes.extend(delta.updated.into_iter().map(|node| (node.id, node)));
+        let fresh = held(&page.context, page.document);
+        let (field, list, options) = listbox(&fresh, page.id());
         for node in std::iter::once(&field)
-            .chain(std::iter::once(&listbox))
+            .chain(std::iter::once(&list))
             .chain(&options)
         {
-            assert_eq!(held.get(&node.id), Some(node), "the delta carries it");
+            assert_eq!(held_nodes.get(&node.id), Some(node), "the delta carries it");
         }
+        let (field, _, options) = listbox(&spoken(&page.context, page.document), page.id());
         (field, options)
     };
 
@@ -1414,7 +1429,7 @@ impl Windows {
         let hit = world.hit_test(WINDOWS[window], x, y).unwrap();
         let id = window_node(window, offset);
         let spoken = world
-            .project_accessibility_nodes(&[id])
+            .project_accessibility_nodes_in_viewport(&[id])
             .into_iter()
             .find(|node| node.id == id)
             .unwrap()

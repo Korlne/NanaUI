@@ -112,7 +112,9 @@ fn assert_y(world: &UiWorld, scene: &UiScene, node: u64, expected: f32) {
     );
     assert_eq!(scene.draw_node_bounds(id(node)).unwrap().y, expected);
     assert_eq!(
-        world.project_accessibility_nodes(&[id(node)])[0].bounds.y,
+        world.project_accessibility_nodes_in_viewport(&[id(node)])[0]
+            .bounds
+            .y,
         expected
     );
 }

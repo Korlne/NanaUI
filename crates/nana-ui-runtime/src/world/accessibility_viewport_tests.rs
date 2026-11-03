@@ -199,7 +199,7 @@ fn fixture() -> UiWorld {
 
 fn button_bounds(world: &UiWorld) -> LayoutBox {
     world
-        .project_accessibility(document())
+        .project_accessibility_in_viewport(document())
         .into_iter()
         .find(|n| n.id == node(3))
         .unwrap()
@@ -322,12 +322,11 @@ fn scrolling_publishes_moved_descendants_in_accessibility_delta() {
     world.update_hit_test_scroll(document(), node(1), [0.0, -20.0]);
     let work = world.take_system_work();
     let delta = world.project_accessibility_delta(&work);
-    let button = delta
-        .updated
-        .iter()
-        .find(|item| item.id == node(3))
-        .expect("moving a scroll ancestor updates the cached descendant bounds");
-    assert_eq!(button.bounds.y, 60.0);
+    assert!(
+        delta.updated.iter().any(|item| item.id == node(3)),
+        "moving a scroll ancestor updates the cached descendant bounds"
+    );
+    assert_eq!(button_bounds(&world).y, 60.0);
     assert_hit_at_accessible_center(&world);
 }
 

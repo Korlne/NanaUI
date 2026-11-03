@@ -326,6 +326,10 @@ impl UiWorld {
 #[path = "accessibility_viewport_tests.rs"]
 mod viewport_tests;
 
+#[cfg(test)]
+#[path = "accessibility_relative_tests.rs"]
+mod relative_tests;
+
 impl UiWorld {
     /// Whether a node or one of its ancestors is explicitly hidden from the
     /// accessibility tree. The retained hierarchy is still used for paint,
@@ -495,10 +499,8 @@ impl UiWorld {
         };
         let bounds = if plain && self.layout_results.is_empty() {
             layout_box
-        } else if plain || self.axis_aligned(id, memo) {
-            self.component_layout_box(id)?
         } else {
-            self.visible_accessibility_bounds(id, memo)?
+            self.accessible_viewport_bounds(id, plain, memo)?
         };
         let mut children = if plain {
             children.as_ref().clone()
@@ -1032,7 +1034,82 @@ impl UiWorld {
         nodes
     }
 
+    /// Where `id`'s accessible box stands in the viewport, as its projection
+    /// computes it.
+    fn accessible_viewport_bounds(
+        &self,
+        id: StableNodeId,
+        plain: bool,
+        memo: &mut ProjectionMemo,
+    ) -> Option<LayoutBox> {
+        if plain || self.axis_aligned(id, memo) {
+            self.component_layout_box(id)
+        } else {
+            self.visible_accessibility_bounds(id, memo)
+        }
+    }
+
+    /// `id` and the virtual nodes it holds, their bounds relative to their
+    /// parents' ([`AccessibilityNode::bounds`]) when `relative`, in viewport
+    /// coordinates otherwise.
     fn project_accessibility_entries(
+        &self,
+        id: StableNodeId,
+        plain: bool,
+        relative: bool,
+        memo: &mut ProjectionMemo,
+    ) -> Vec<AccessibilityNode> {
+        let mut entries = self.project_viewport_entries(id, plain, memo);
+        if relative && !entries.is_empty() {
+            self.make_bounds_relative(&mut entries, plain, memo);
+        }
+        entries
+    }
+
+    /// Move `entries`' bounds from the viewport to their parents' boxes. The
+    /// first entry's parent is a retained node; the virtual ones after it
+    /// hang from entries before them.
+    fn make_bounds_relative(
+        &self,
+        entries: &mut [AccessibilityNode],
+        plain: bool,
+        memo: &mut ProjectionMemo,
+    ) {
+        let origins = (entries.len() > 1)
+            .then(|| {
+                entries
+                    .iter()
+                    .map(|entry| (entry.id, entry.bounds.x, entry.bounds.y))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        for (index, entry) in entries.iter_mut().enumerate() {
+            let Some(parent) = entry.parent else {
+                continue;
+            };
+            let origin = if index == 0 {
+                if plain && self.layout_results.is_empty() {
+                    self.nodes
+                        .get(parent)
+                        .map(|node| (node.layout.x, node.layout.y))
+                } else {
+                    self.accessible_viewport_bounds(parent, plain, memo)
+                        .map(|bounds| (bounds.x, bounds.y))
+                }
+            } else {
+                origins
+                    .iter()
+                    .find(|(id, ..)| *id == parent)
+                    .map(|&(_, x, y)| (x, y))
+            };
+            if let Some((x, y)) = origin {
+                entry.bounds.x -= x;
+                entry.bounds.y -= y;
+            }
+        }
+    }
+
+    fn project_viewport_entries(
         &self,
         id: StableNodeId,
         plain: bool,
@@ -1091,6 +1168,12 @@ impl UiWorld {
         // which marks INPUT | RENDER | ACCESSIBILITY on exactly those nodes,
         // shifted descendants included.
         //
+        // Bounds are relative to the parent's, so a box layout moved with its
+        // parent keeps them: the publish leaves its ACCESSIBILITY bit off and
+        // lists it in `accessibility_moved`. Such a node is no subtree seed;
+        // of what it holds, only a child layout left where it stood moved
+        // relative to it.
+        //
         // These sets exist to produce a sorted, de-duplicated id sequence. A
         // `BTreeSet` pays a tree insert and node allocation per id to do that;
         // sorting a flat vec once yields the identical sequence for far less.
@@ -1103,12 +1186,19 @@ impl UiWorld {
             .copied()
             .collect::<Vec<_>>();
         affected.extend(named);
-        let mut pending = work
-            .input_hit_test
-            .iter()
-            .chain(&work.transform)
-            .copied()
-            .collect::<Vec<_>>();
+        let moved = |id: &StableNodeId| work.accessibility_moved.binary_search(id).is_ok();
+        // A plain tree has no clips: its styles are all the default.
+        let tree_plain =
+            affected.len() + work.input_hit_test.len() >= 64 && self.accessibility_tree_is_plain();
+        // A box that clips what it holds, or any box under a clip visual,
+        // cuts boxes that need not move with it: its whole subtree projects
+        // again.
+        let carries = |id: &StableNodeId| {
+            moved(id) && (tree_plain || (self.clip_visuals == 0 && !self.clips_overflow(*id)))
+        };
+        let (moved_seeds, mut pending): (Vec<StableNodeId>, Vec<StableNodeId>) =
+            work.input_hit_test.iter().partition(|id| carries(id));
+        pending.extend(&work.transform);
         // `visited` is membership-only, so it does not need ordering at all.
         let mut visited = hashbrown::HashSet::new();
         while let Some(id) = pending.pop() {
@@ -1120,14 +1210,46 @@ impl UiWorld {
                 pending.extend(node.hierarchy.children.iter().copied());
             }
         }
+        for &id in &moved_seeds {
+            if let Some(node) = self.nodes.get(id) {
+                affected.extend(
+                    node.hierarchy
+                        .children
+                        .iter()
+                        .copied()
+                        .filter(|child| !moved(child)),
+                );
+            }
+        }
         affected.sort_unstable();
         affected.dedup();
-        let mut removed = work.accessibility_removals.clone();
         let mut memo = ProjectionMemo::default();
-        let plain = affected.len() >= 64 && self.accessibility_tree_is_plain();
+        // A moved box keeps the bounds it was handed only where they are its
+        // layout box, and its parent's are too: what a transform or a scroll
+        // above makes of a box is not moved with it to the bit.
+        let kept = moved_seeds
+            .iter()
+            .copied()
+            .filter(|id| affected.binary_search(id).is_err())
+            .collect::<Vec<_>>();
+        if !tree_plain && !kept.is_empty() {
+            let reprojected = kept
+                .iter()
+                .copied()
+                .filter(|&id| !self.keeps_relative_bounds(id, &mut memo))
+                .collect::<Vec<_>>();
+            if !reprojected.is_empty() {
+                affected.extend(reprojected);
+                affected.sort_unstable();
+            }
+        }
+        #[cfg(any(test, feature = "layout-verify"))]
+        self.check_kept_accessibility(&moved_seeds, &affected);
+        let mut removed = work.accessibility_removals.clone();
+        let plain = affected.len() >= 64 && tree_plain;
         let mut updated = Vec::new();
         for id in affected {
-            let entries = self.project_accessibility_entries(id, plain, &mut memo);
+            let entries = self.project_accessibility_entries(id, plain, true, &mut memo);
             if entries.is_empty() {
                 if self.nodes.contains(id) {
                     removed.push(id);
@@ -1138,10 +1260,120 @@ impl UiWorld {
         }
         removed.sort_unstable();
         removed.dedup();
+        #[cfg(any(test, feature = "layout-verify"))]
+        self.accessibility_shipped.record(&updated, &removed);
         AccessibilityDelta {
             generation: work.generation,
             updated,
             removed,
+        }
+    }
+
+    /// Whether `id`'s accessible bounds are its layout box and its parent's
+    /// are too, so that a box that kept its offset from its parent keeps
+    /// them, to the bit. Virtual nodes are placed from its geometry, and a
+    /// clip visual cuts the boxes under it: both project again.
+    fn keeps_relative_bounds(&self, id: StableNodeId, memo: &mut ProjectionMemo) -> bool {
+        if self.clip_visuals != 0 {
+            return false;
+        }
+        if self.nodes.has_visuals()
+            && matches!(
+                self.nodes.visual(id),
+                Some(
+                    StandardVisual::Select { .. }
+                        | StandardVisual::TreeView { .. }
+                        | StandardVisual::MenuSurface { .. }
+                        | StandardVisual::ModalFrame { .. }
+                )
+            )
+        {
+            return false;
+        }
+        let parent = self.nodes.get(id).and_then(|node| node.hierarchy.parent);
+        [Some(id), parent].into_iter().flatten().all(|node| {
+            !(self.nodes.has_visuals()
+                && matches!(
+                    self.nodes.visual(node),
+                    Some(StandardVisual::ModalFrame { .. })
+                ))
+                && (self.axis_aligned(node, memo)
+                    || self.visible_accessibility_bounds(node, memo)
+                        == self.component_layout_box(node))
+        })
+    }
+}
+
+/// What the projections handed out, kept where a delta's narrowing is
+/// checked: a node a delta leaves alone must still be what it was handed out
+/// as. Only small worlds are kept, as the hit index's own check.
+#[cfg(any(test, feature = "layout-verify"))]
+#[derive(Default)]
+pub(crate) struct ShippedAccessibility(
+    std::sync::Mutex<hashbrown::HashMap<StableNodeId, AccessibilityNode>>,
+);
+
+#[cfg(any(test, feature = "layout-verify"))]
+const SHIPPED_ACCESSIBILITY_LIMIT: usize = 4096;
+
+#[cfg(any(test, feature = "layout-verify"))]
+impl ShippedAccessibility {
+    fn record(&self, updated: &[AccessibilityNode], removed: &[StableNodeId]) {
+        let mut shipped = self.0.lock().unwrap_or_else(|error| error.into_inner());
+        for id in removed {
+            shipped.remove(id);
+        }
+        if shipped.len() + updated.len() > SHIPPED_ACCESSIBILITY_LIMIT {
+            shipped.clear();
+            return;
+        }
+        for node in updated {
+            shipped.insert(node.id, node.clone());
+        }
+    }
+}
+
+#[cfg(any(test, feature = "layout-verify"))]
+impl UiWorld {
+    /// Every node under a moved box the delta does not project is what the
+    /// projections last handed out: projected from scratch, it is the same.
+    fn check_kept_accessibility(&self, moved_seeds: &[StableNodeId], affected: &[StableNodeId]) {
+        if moved_seeds.is_empty() || self.len() > SHIPPED_ACCESSIBILITY_LIMIT {
+            return;
+        }
+        let shipped = self
+            .accessibility_shipped
+            .0
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let mut memo = ProjectionMemo::default();
+        let mut pending = moved_seeds.to_vec();
+        let mut visited = hashbrown::HashSet::new();
+        while let Some(id) = pending.pop() {
+            if !visited.insert(id) {
+                continue;
+            }
+            if let Some(node) = self.nodes.get(id) {
+                pending.extend(node.hierarchy.children.iter().copied());
+            }
+            if affected.binary_search(&id).is_ok() {
+                continue;
+            }
+            let fresh = self.project_accessibility_entries(id, false, true, &mut memo);
+            match fresh.first() {
+                Some(fresh) => {
+                    if let Some(held) = shipped.get(&id) {
+                        assert_eq!(
+                            held, fresh,
+                            "{id:?}: a delta kept an accessibility node that projects differently now"
+                        );
+                    }
+                }
+                None => assert!(
+                    !shipped.contains_key(&id),
+                    "{id:?}: a delta kept an accessibility node that no longer projects"
+                ),
+            }
         }
     }
 }
@@ -1193,11 +1425,18 @@ impl UiWorld {
 
     /// Project only accessibility nodes named by scheduled dirty work.
     pub fn project_accessibility_nodes(&self, ids: &[StableNodeId]) -> Vec<AccessibilityNode> {
+        let projected = self.project_nodes(ids, true);
+        #[cfg(any(test, feature = "layout-verify"))]
+        self.accessibility_shipped.record(&projected, &[]);
+        projected
+    }
+
+    fn project_nodes(&self, ids: &[StableNodeId], relative: bool) -> Vec<AccessibilityNode> {
         let mut memo = ProjectionMemo::default();
         let plain = ids.len() >= 64 && self.accessibility_tree_is_plain();
         let mut projected = Vec::with_capacity(ids.len());
         for &id in ids {
-            projected.extend(self.project_accessibility_entries(id, plain, &mut memo));
+            projected.extend(self.project_accessibility_entries(id, plain, relative, &mut memo));
         }
         projected
     }
@@ -1208,5 +1447,26 @@ impl UiWorld {
     /// the same retained authority, preserving a connected accessibility tree.
     pub fn project_accessibility(&self, document: DocumentId) -> Vec<AccessibilityNode> {
         self.project_accessibility_nodes(&self.document_order(document))
+    }
+
+    /// [`Self::project_accessibility`] with every node's `bounds` where it
+    /// stands in the viewport rather than relative to its parent: for
+    /// automation and tests that find a node on screen. A platform tree is
+    /// built from [`Self::project_accessibility`] and its deltas, never
+    /// from this.
+    pub fn project_accessibility_in_viewport(
+        &self,
+        document: DocumentId,
+    ) -> Vec<AccessibilityNode> {
+        self.project_nodes(&self.document_order(document), false)
+    }
+
+    /// [`Self::project_accessibility_nodes`] with viewport bounds, as
+    /// [`Self::project_accessibility_in_viewport`].
+    pub fn project_accessibility_nodes_in_viewport(
+        &self,
+        ids: &[StableNodeId],
+    ) -> Vec<AccessibilityNode> {
+        self.project_nodes(ids, false)
     }
 }

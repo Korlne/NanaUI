@@ -150,7 +150,9 @@ pub fn accessibility_dump(
     document: &nana_ui::runtime::RuntimeDocument,
 ) -> Vec<AccessibilityDumpNode> {
     let context = document.context();
-    let nodes = context.world().project_accessibility(document.document());
+    let nodes = context
+        .world()
+        .project_accessibility_in_viewport(document.document());
     let paths: BTreeMap<u64, String> = nodes
         .iter()
         .filter_map(|node| Some((node.id.get(), context.assembly_path(node.id)?)))

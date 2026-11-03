@@ -1676,7 +1676,7 @@ fn issue205_menu_room_and_chrome_clips_follow_the_clip_chain() {
 
     let accessible = |id| {
         world
-            .project_accessibility(document)
+            .project_accessibility_in_viewport(document)
             .into_iter()
             .find(|node| node.id == id)
             .map(|node| node.bounds)

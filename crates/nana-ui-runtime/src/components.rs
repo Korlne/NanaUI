@@ -3788,14 +3788,23 @@ pub struct AccessibilityNode {
     /// This is omitted when the node cannot move on that axis.
     pub scroll_y: Option<AccessibilityScrollAxis>,
     pub focused: bool,
+    /// The node's box relative to its parent's: its offset from the
+    /// `bounds` origin of [`Self::parent`] (from the viewport for a root, or
+    /// a parent without bounds), and its size. A platform tree takes the
+    /// offset as the node's transform and the size as its local bounds, as
+    /// AccessKit does, so a node whose box moved with its parent is not
+    /// handed out again. The viewport box is the sum of the offsets down
+    /// the parent chain; [`crate::UiWorld::project_accessibility_in_viewport`]
+    /// gives it directly.
     pub bounds: LayoutBox,
-    /// What the node's clip chain leaves of the viewport, in the coordinates
-    /// of `bounds`: the overflow containers whose clip reaches it (#201),
+    /// What the node's clip chain leaves of the viewport, in viewport
+    /// coordinates: the overflow containers whose clip reaches it (#201),
     /// each where it sits after the scroll above it. `None` when no
     /// container clips it. `bounds` is the whole box; the part of it inside
     /// this is the part painted and hit. An absolute box whose containing
     /// block lies outside a scroller is not clipped by it, nor is a `fixed`
-    /// box by anything.
+    /// box by anything. It stays in the viewport, where a box moving under
+    /// a still scroller does not change it.
     pub clip: Option<LayoutBox>,
     /// The writing mode and direction its text reads in (#59): which way an
     /// assistive technology walks a text run.

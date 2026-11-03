@@ -611,6 +611,14 @@ padding。同一 `UiWorld` 交替布局多个文档时。一个文档的全量�
 `DesktopShell` 对直接借入的 ScrollView 自动选择此合同。普通结构区域保留原行为。
 创建 Workspace 后须调用 `AppContext::assemble_workspace` 建立区域轨道。再进行布局和命中索引构建。
 
+### 无障碍节点的坐标
+
+`AccessibilityNode::bounds` 相对父节点：偏移从 `parent` 的 `bounds` 原点量起（根节点、或父节点没有 bounds 时从视口量起），尺寸是自己的。
+虚拟子节点（菜单行、树行、列表框选项）同样相对各自的父节点。`clip` 仍在视口坐标里：它是裁剪链留下的屏幕区域。
+AccessKit 宿主把偏移设成节点的 `transform`、尺寸设成本地 `bounds`，所以一行变高时，下面只是跟着父节点平移的节点不进增量，也不进原生更新。
+要在屏幕上找节点（自动化、测试、调试导出）用 `UiWorld::project_accessibility_in_viewport` 或 `project_accessibility_nodes_in_viewport`，它们给视口坐标；
+原生树只能由 `project_accessibility` 和 `project_accessibility_delta` 建立。
+
 ### 隐藏层级中的无障碍语义
 
 `UiWorld::project_accessibility` 与增量投影会保留连接可见控件所需的结构祖先。

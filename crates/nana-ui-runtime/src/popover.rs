@@ -2222,7 +2222,7 @@ mod tests {
         let last_id = last.stable_id();
         let bounds = context
             .world()
-            .project_accessibility(document())
+            .project_accessibility_in_viewport(document())
             .into_iter()
             .find(|entry| entry.id == last_id)
             .expect("last item is accessible")

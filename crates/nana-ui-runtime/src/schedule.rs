@@ -24,6 +24,9 @@ impl DirtyMask {
     /// STYLE or LAYOUT. RENDER/INPUT are set only when extract or hit-test
     /// consume the matrix.
     pub(crate) const TRANSFORM: u16 = 1 << 8;
+    /// Set with every INPUT mark but a layout move's: a node whose INPUT
+    /// lacks it moved with its box alone ([`SystemWork::accessibility_moved`]).
+    pub(crate) const INPUT_ELSEWHERE: u16 = 1 << 9;
     pub(crate) const ALL: u16 = Self::STYLE
         | Self::TEXT
         | Self::LAYOUT
@@ -32,7 +35,8 @@ impl DirtyMask {
         | Self::RENDER
         | Self::ACCESSIBILITY
         | Self::STATE
-        | Self::TRANSFORM;
+        | Self::TRANSFORM
+        | Self::INPUT_ELSEWHERE;
 
     pub(crate) const fn all() -> Self {
         Self(Self::ALL)
@@ -77,6 +81,14 @@ pub struct SystemWork {
     pub input_hit_test: Vec<StableNodeId>,
     pub focus_ime: Vec<StableNodeId>,
     pub accessibility: Vec<StableNodeId>,
+    /// The nodes of [`Self::input_hit_test`] only a layout move put there,
+    /// sorted: their boxes moved or resized, with nothing else marking them. Accessible bounds are relative to the parent's, so
+    /// such a node projects again only when its offset from its parent
+    /// changed (it is then in [`Self::accessibility`] too), and of what it
+    /// holds only the children layout left where they stood; the rest of its
+    /// subtree moved with it. Empty never narrows anything: every node of
+    /// `input_hit_test` not listed here projects its whole subtree again.
+    pub accessibility_moved: Vec<StableNodeId>,
     pub accessibility_removals: Vec<StableNodeId>,
     pub render_extraction: Vec<StableNodeId>,
     pub render_removals: Vec<StableNodeId>,
@@ -278,6 +290,9 @@ pub(crate) fn push_work(work: &mut SystemWork, id: StableNodeId, bits: u16) {
     }
     if bits & DirtyMask::INPUT != 0 {
         work.input_hit_test.push(id);
+        if bits & DirtyMask::INPUT_ELSEWHERE == 0 {
+            work.accessibility_moved.push(id);
+        }
     }
     if bits & DirtyMask::FOCUS_IME != 0 {
         work.focus_ime.push(id);
@@ -338,10 +353,11 @@ mod tests {
             }
         }
         let union = NAMED_BITS.iter().fold(0, |acc, (_, bit)| acc | bit);
+        assert_eq!(union & DirtyMask::INPUT_ELSEWHERE, 0);
         assert_eq!(
-            union | DirtyMask::LAYOUT,
+            union | DirtyMask::LAYOUT | DirtyMask::INPUT_ELSEWHERE,
             DirtyMask::ALL,
-            "ALL must include the typed layout lane"
+            "ALL must include the typed layout lane and mark INPUT as not a layout move's"
         );
         assert!(DirtyMask::all().has(DirtyMask::ALL));
     }

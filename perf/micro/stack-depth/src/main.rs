@@ -12,6 +12,8 @@
 //!                                          # (`layout_document_for_viewport`), not a full pass
 //! CONTROLS=1 cargo run --release -- wide    # a page of labels and buttons instead of bare boxes
 //! cargo run --release -- edits 200,2000   # one edit a product frame: layout and frame time
+//! RUNS=240 /usr/bin/time -l target/release/nana-stack-depth edits 2000 height
+//!                                          # 240 edits; less RUNS=40, over 200: one edit's instructions
 //! cargo run --release -- stages 250,500    # a deep frame's least time per stage
 //! ```
 //!
@@ -724,10 +726,14 @@ fn main() {
             };
             println!("| engine | boxes | edit | layout | whole frame | taffy layout |");
             println!("| --- | ---: | --- | ---: | ---: | ---: |");
+            // `RUNS=n`: edits a page (40). Two counts' `time -l` difference
+            // over their edits is what one edit costs, the page and its
+            // first frame taken out.
+            let runs = std::env::var("RUNS").map_or(40, |runs| runs.parse().unwrap());
             for rows in rows {
                 let boxes = 1 + rows * (1 + if controls { 3 } else { 2 } * 10);
                 for edit in &edits {
-                    let (layout, whole) = nana_edits(rows, 10, edit, 40);
+                    let (layout, whole) = nana_edits(rows, 10, edit, runs);
                     let taffy = if controls {
                         "-".to_owned()
                     } else {
