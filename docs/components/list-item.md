@@ -34,7 +34,9 @@ list_item("设置").detail("外观").selected(current).on_activate(open)
 
 ## 紧跟主文本的次要文字
 
-`note` 画在主文本后面，和 `detail` 同字号、同取色，同样不改变行高。适合主文本是译名、`note` 写原文这类成对的名字：`list_item("角度X").note("ParamAngleX")`。
+`note` 画在主文本后面，和 `detail` 同字号、同取色，同样不改变行高。适合主文本是名称、`note` 写标识这类成对的名字：`list_item("Angle X").note("ParamAngleX")`。
+
+悬停气泡用组件上的 `ListItem::with_tooltip`（`tooltip: Option<IconButtonTooltip>`，配置同 `IconButton`），指针停在行本身（不在前导、尾随槽里）超过延迟就出现，适合放主文本以外的补充说明。空标签或 `None` 没有气泡；禁用的行不显示。只读行有气泡时仍接指针来显示它，但不悬停高亮、不进 Tab、不发 `Activate`。
 
 宽度先给主文本和行尾的 `detail`，`note` 只用两者之间剩下的地方，放不下时省略；剩下的连一小段都不够时不画。挂了 content 槽时和 `detail` 一样不画。
 
@@ -80,7 +82,7 @@ widget(ListItem::new("模型").tools_rest(RowToolsRest::Reserve))
 
 ## 属性
 
-字段是 `label: String`、`note: String`、`detail: String`、`selected: bool`、`disabled: bool`、`read_only: bool`、`role: ListItemRole`、`has_popup: bool`、`keep_tools: bool`。没有 `model`。选中不由控件自己翻。
+字段是 `label: String`、`note: String`、`detail: String`、`selected: bool`、`disabled: bool`、`read_only: bool`、`tooltip: Option<IconButtonTooltip>`、`role: ListItemRole`、`has_popup: bool`、`keep_tools: bool`。没有 `model`。选中不由控件自己翻。
 
 | 属性 | 类型 | 说明 |
 | --- | --- | --- |
@@ -90,6 +92,7 @@ widget(ListItem::new("模型").tools_rest(RowToolsRest::Reserve))
 | `selected` | `bool` | 由应用写。选中不由控件自己翻。无障碍映射选中 |
 | `disabled` | `bool` | 为真时不发 `Activate`。无障碍映射禁用 |
 | `read_only` | `bool` | 只显示：不接指针与焦点、不悬停高亮、不发 `Activate`，正常文字色。无障碍不报禁用，也没有 `Click` / `Focus` 动作 |
+| `tooltip` | `Option<IconButtonTooltip>` | 悬停气泡；`None` 或空标签没有。禁用时不显示，只读时只为它接指针 |
 | `role` | `ListItemRole` | 默认 `ListItem`；`Button`、`ToggleButton`（`selected` 报成按下）。只改无障碍，不改外观 |
 | `has_popup` | `bool` | 这一行会弹出菜单。读屏报成菜单按钮，ArrowUp / ArrowDown 发 `keyboard: true` 的 `SecondaryPress` |
 | `keep_tools` | `bool` | `.tools` 的工具平时也显示 |

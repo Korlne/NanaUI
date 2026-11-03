@@ -1722,6 +1722,11 @@ pub struct ListItem {
     pub keep_tools: bool,
     /// Kept by the framework from the pointer and keyboard focus.
     pub tools_presence: RowToolsPresence,
+    /// Shown after the pointer rests on the row (not on its slots), like an
+    /// [`IconButton`]'s. A [`Self::read_only`] row with one still takes the
+    /// pointer for it, without a hover look, focus or activation; a disabled
+    /// row shows none. `None` or an empty label for none.
+    pub tooltip: Option<IconButtonTooltip>,
     pub style: NodeStyle,
 }
 
@@ -1862,6 +1867,7 @@ impl ListItem {
             tools_rest: RowToolsRest::Yield,
             keep_tools: false,
             tools_presence: RowToolsPresence::default(),
+            tooltip: None,
             style: NodeStyle {
                 layout: Arc::new(layout),
                 background: None,
@@ -1951,6 +1957,36 @@ impl ListItem {
     /// read-only.
     pub(crate) fn interactive(&self) -> bool {
         !self.disabled && !self.read_only
+    }
+
+    /// See [`Self::tooltip`](field@Self::tooltip).
+    pub fn tooltip(
+        mut self,
+        label: impl Into<Arc<str>>,
+        config: nana_ui_core::TooltipConfig,
+    ) -> Self {
+        self.tooltip = Some(IconButtonTooltip {
+            label: label.into(),
+            config,
+        });
+        self
+    }
+
+    /// Tooltip with [`nana_ui_core::TooltipConfig::default`].
+    pub fn with_tooltip(self, label: impl Into<Arc<str>>) -> Self {
+        self.tooltip(label, nana_ui_core::TooltipConfig::default())
+    }
+
+    /// The tooltip the row shows now: none while disabled or empty.
+    pub(crate) fn shown_tooltip(&self) -> Option<&IconButtonTooltip> {
+        self.tooltip
+            .as_ref()
+            .filter(|tooltip| !self.disabled && !tooltip.label.is_empty())
+    }
+
+    /// Takes the pointer: interactive, or read-only only for its tooltip.
+    fn takes_pointer(&self) -> bool {
+        self.interactive() || self.shown_tooltip().is_some()
     }
     /// Declarative projection hook for adapters that already own and validate
     /// the retained hierarchy. Direct Runtime consumers should prefer
@@ -2154,6 +2190,14 @@ impl ListItem {
 
     fn effective_style_in(&self, metrics: nana_ui_core::ThemeMetrics) -> NodeStyle {
         let mut style = self.style.clone();
+        if self.read_only {
+            // Taking the pointer only for a tooltip, it still reads as text.
+            let interaction = &mut style.interaction;
+            interaction.hovered = SemanticPaint::default();
+            interaction.pressed = SemanticPaint::default();
+            interaction.selected_hovered = interaction.selected;
+            interaction.selected_pressed = interaction.selected;
+        }
         let inset = style
             .control_padding_x
             .map(|padding| padding.resolve(metrics));
@@ -2336,7 +2380,7 @@ impl ComponentView for ListItem {
             mutations,
             &self.effective_style_in(world.theme_metrics()),
             InteractionState {
-                pointer_events: self.interactive(),
+                pointer_events: self.takes_pointer(),
                 focusable: self.interactive(),
             },
             AccessibilityState {

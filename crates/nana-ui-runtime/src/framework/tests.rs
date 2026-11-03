@@ -9637,6 +9637,59 @@ fn tooltip_default_delay_stays_closed_until_deadline_and_is_label_only() {
 }
 
 #[test]
+fn list_item_tooltip_opens_on_hover_even_when_read_only() {
+    let mut context = AppContext::new();
+    let document = DocumentId::new(1).unwrap();
+    let row = context
+        .create_component(
+            document,
+            ListItem::new("Angle X")
+                .read_only(true)
+                .with_tooltip("Probably: head turn"),
+        )
+        .unwrap();
+    let interaction = context.world().interaction(row.stable_id()).unwrap();
+    assert!(interaction.pointer_events);
+    assert!(!interaction.focusable);
+
+    context
+        .set_pointer_hover_at(
+            document,
+            1,
+            Some(row.stable_id()),
+            Duration::from_millis(10),
+        )
+        .unwrap();
+    context.advance_animations(Duration::from_millis(360));
+    let overlay = context
+        .world()
+        .overlay_host(row.stable_id())
+        .unwrap()
+        .active
+        .expect("the row's tooltip is open");
+    assert_eq!(context.world().text(overlay), Some("Probably: head turn"));
+
+    // Disabled, it shows none and no longer takes the pointer.
+    context
+        .update_component(row, |row, _| row.disabled = true)
+        .unwrap();
+    assert!(
+        !context
+            .world()
+            .interaction(row.stable_id())
+            .unwrap()
+            .pointer_events
+    );
+    assert_eq!(
+        context
+            .world()
+            .overlay_host(row.stable_id())
+            .and_then(|host| host.active),
+        None
+    );
+}
+
+#[test]
 fn tooltip_default_follows_pointer_as_a_compact_card() {
     let mut context = AppContext::new();
     let document = DocumentId::new(1).unwrap();

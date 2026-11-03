@@ -1181,6 +1181,13 @@ impl AppContext {
         {
             return (!button.disabled).then(|| button.tooltip.clone()).flatten();
         }
+        if let Some(item) = self
+            .views
+            .get(&id)
+            .and_then(|view| view.downcast_ref::<ListItem>())
+        {
+            return item.shown_tooltip().cloned();
+        }
         let value = match self.world.standard_visual(id)? {
             crate::StandardVisual::PathText { value } => value,
             crate::StandardVisual::LabeledValue {
