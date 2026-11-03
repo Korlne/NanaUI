@@ -36,7 +36,7 @@ pub(super) fn build(context: &GeometryPaintContext<'_>, emit: &mut impl FnMut(Sc
                         background: Some(color),
                         border_color: None,
                         border_width: 0.0,
-                        corner_radius: corner_radii(node.chrome_radii.sm),
+                        corner_radius: corner_radii(node.chrome_radii.list_item),
                     },
                 ));
             }
@@ -61,7 +61,7 @@ pub(super) fn build(context: &GeometryPaintContext<'_>, emit: &mut impl FnMut(Sc
                         background: None,
                         border_color: Some(*color),
                         border_width: 1.5,
-                        corner_radius: corner_radii(node.chrome_radii.sm),
+                        corner_radius: corner_radii(node.chrome_radii.list_item),
                     },
                 ));
             }
@@ -84,7 +84,7 @@ pub(super) fn build(context: &GeometryPaintContext<'_>, emit: &mut impl FnMut(Sc
                         background: Some([r, g, b, a * 0.12]),
                         border_color: Some(*color),
                         border_width: 2.0,
-                        corner_radius: corner_radii(node.chrome_radii.sm),
+                        corner_radius: corner_radii(node.chrome_radii.list_item),
                     },
                 ));
             }

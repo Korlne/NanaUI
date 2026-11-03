@@ -38,13 +38,21 @@ pub enum ShapeRole {
     /// A segmented control's track. The selected option's pill is cut from
     /// the track's resolved corner, so it stays concentric with it.
     Segmented,
-    /// An option row in a dropdown: a `Select`'s list and the rows of a
-    /// menu surface (action, context and popover menus).
+    /// An option row in a dropdown: a `Select`'s list, the rows of a menu
+    /// surface (action, context and popover menus) and a command palette's
+    /// result rows.
     MenuRow,
+    /// A tab in a `Tabs` strip.
+    Tab,
+    /// A row of a radio group: its hover and press fill.
+    RadioRow,
+    /// A `TreeView` row's hover and selected fill, and the outline of the
+    /// row a drag would drop into.
+    TreeRow,
 }
 
 impl ShapeRole {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 11] = [
         Self::Button,
         Self::IconButton,
         Self::Tag,
@@ -53,6 +61,9 @@ impl ShapeRole {
         Self::ListItem,
         Self::Segmented,
         Self::MenuRow,
+        Self::Tab,
+        Self::RadioRow,
+        Self::TreeRow,
     ];
 }
 
@@ -69,6 +80,9 @@ pub struct ShapeRecipe {
     pub list_item: RadiusTier,
     pub segmented: RadiusTier,
     pub menu_row: RadiusTier,
+    pub tab: RadiusTier,
+    pub radio_row: RadiusTier,
+    pub tree_row: RadiusTier,
 }
 
 impl ShapeRecipe {
@@ -81,6 +95,9 @@ impl ShapeRecipe {
         list_item: RadiusTier::Sm,
         segmented: RadiusTier::Sm,
         menu_row: RadiusTier::Sm,
+        tab: RadiusTier::Sm,
+        radio_row: RadiusTier::Sm,
+        tree_row: RadiusTier::Sm,
     };
 
     /// Every role on `tier`: `ShapeRecipe::uniform(RadiusTier::Full)` makes
@@ -96,6 +113,9 @@ impl ShapeRecipe {
             list_item: tier,
             segmented: tier,
             menu_row: tier,
+            tab: tier,
+            radio_row: tier,
+            tree_row: tier,
         }
     }
 
@@ -110,6 +130,9 @@ impl ShapeRecipe {
             ShapeRole::ListItem => self.list_item = tier,
             ShapeRole::Segmented => self.segmented = tier,
             ShapeRole::MenuRow => self.menu_row = tier,
+            ShapeRole::Tab => self.tab = tier,
+            ShapeRole::RadioRow => self.radio_row = tier,
+            ShapeRole::TreeRow => self.tree_row = tier,
         }
         self
     }
@@ -125,6 +148,9 @@ impl ShapeRecipe {
             ShapeRole::ListItem => self.list_item,
             ShapeRole::Segmented => self.segmented,
             ShapeRole::MenuRow => self.menu_row,
+            ShapeRole::Tab => self.tab,
+            ShapeRole::RadioRow => self.radio_row,
+            ShapeRole::TreeRow => self.tree_row,
         }
     }
 

@@ -628,6 +628,14 @@ fn segmented_option_style(size: ControlSize, chrome: SelectionChrome, fill: bool
     };
     NodeStyle {
         layout: Arc::new(layout),
+        // A tab and a radio row stand alone, so the recipe gives their step.
+        // A segmented pill has no role: it is cut from its track's corner at
+        // projection.
+        shape: match chrome {
+            SelectionChrome::Segmented => None,
+            SelectionChrome::Tabs => Some(nana_ui_core::ShapeRole::Tab),
+            SelectionChrome::Radio => Some(nana_ui_core::ShapeRole::RadioRow),
+        },
         foreground: Some(if radio {
             SemanticColorRole::Text
         } else {
@@ -708,7 +716,8 @@ impl ComponentView for SegmentedOption {
     }
 
     /// A segmented pill is cut from its track's corner, which the shape
-    /// recipe decides.
+    /// recipe decides. (A tab or radio row names its role on its style and
+    /// needs no reprojection.)
     fn wants_recipe_reproject() -> bool {
         true
     }
@@ -736,15 +745,16 @@ impl ComponentView for SegmentedOption {
         }
         let mut effective_style = self.style.clone();
         let metrics = world.theme_metrics();
-        let radius = match self.chrome {
-            SelectionChrome::Segmented => (segmented_track_radius(id, self.track, world)
-                - segmented_pill_inset(world))
-            .max(0.0),
-            SelectionChrome::Tabs | SelectionChrome::Radio => metrics.radius_sm,
-        };
+        // A tab or radio row resolves its `shape` like any node; only a
+        // segmented pill spends a number here, cut from its track.
+        let pill = matches!(self.chrome, SelectionChrome::Segmented).then(|| {
+            (segmented_track_radius(id, self.track, world) - segmented_pill_inset(world)).max(0.0)
+        });
         {
             let layout = Arc::make_mut(&mut effective_style.layout);
-            layout.border_radius = Some(radius);
+            if let Some(radius) = pill {
+                layout.border_radius = Some(radius);
+            }
             if matches!(self.chrome, SelectionChrome::Segmented) {
                 let height = Some(LengthSpec::Px(
                     (self.size.height_in(metrics) - world.theme().spacing().sm).max(0.0),

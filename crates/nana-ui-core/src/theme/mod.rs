@@ -618,9 +618,14 @@ pub struct ChromeRadii {
     /// A dropdown's option rows, at the step the installed
     /// [`ShapeRecipe`] gives [`ShapeRole::MenuRow`].
     pub menu_row: f32,
-    /// A search field a menu surface paints, at the step the installed
-    /// [`ShapeRecipe`] gives [`ShapeRole::Field`].
+    /// A search field a menu surface or command palette paints, at the
+    /// step the installed [`ShapeRecipe`] gives [`ShapeRole::Field`].
     pub field: f32,
+    /// A `TreeView`'s rows, at the step [`ShapeRole::TreeRow`] takes.
+    pub tree_row: f32,
+    /// A `ReorderList`'s row fills, at the step [`ShapeRole::ListItem`]
+    /// takes.
+    pub list_item: f32,
 }
 
 impl ChromeRadii {
@@ -634,6 +639,8 @@ impl ChromeRadii {
             lg: metrics.radius_lg,
             menu_row: shape.resolve(ShapeRole::MenuRow, metrics),
             field: shape.resolve(ShapeRole::Field, metrics),
+            tree_row: shape.resolve(ShapeRole::TreeRow, metrics),
+            list_item: shape.resolve(ShapeRole::ListItem, metrics),
         }
     }
 }

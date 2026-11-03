@@ -96,11 +96,14 @@ CSS 的单层 `box-shadow`（支持 outset 与 inset）与 `text-shadow`（仅 o
 | `Button` | `button` | `Button`（各种 `ButtonKind`）、`Popover` 的触发按钮 |
 | `IconButton` | `icon_button` | `IconButton`（含 `IconButton::tool`） |
 | `Tag` | `tag` | `tag` / `tag_frame` |
-| `Field` | `field` | `TextInput`、`NumberInput`、`TextArea`，颜色、尺寸、拖动数值与路径字段的外框，菜单面板里的搜索框 |
+| `Field` | `field` | `TextInput`、`NumberInput`、`TextArea`，颜色、尺寸、拖动数值与路径字段的外框，菜单面板里的搜索框与命令面板的输入框 |
 | `Select` | `select` | `Select`（以及共用其样式的 `Dropdown`、`SearchDropdown`）的触发框 |
-| `ListItem` | `list_item` | `ListItem` 行的悬停、按下与选中底 |
+| `ListItem` | `list_item` | `ListItem` 行的悬停、按下与选中底，`ReorderList` 场景绘制的选中底、拖动原位框与放入框 |
 | `Segmented` | `segmented` | 分段控件的轨道；选中的药丸按轨道解析出的圆角减去内缩，始终同心 |
-| `MenuRow` | `menu_row` | 下拉选项行：`Select` 的列表、菜单面板的选项行与 `ActionMenuItem` |
+| `MenuRow` | `menu_row` | 下拉选项行：`Select` 的列表、菜单面板的选项行、`ActionMenuItem` 与命令面板的结果行 |
+| `Tab` | `tab` | `Tabs` 的每个标签 |
+| `RadioRow` | `radio_row` | 单选组（`SegmentedControl::radio_group`）每一行的悬停与按下底 |
+| `TreeRow` | `tree_row` | `TreeView` 行的悬停与选中底、拖动时「放进这一行」的框 |
 
 内置配方每项都是 `RadiusTier::Sm`，与引入配方之前一致。设计系统要改时，在自己的主题定义上改配方，而不是逐个改写组件：
 
@@ -116,7 +119,7 @@ let halo = ThemeDefinition::NANA_DARK.with_shape(ShapeRecipe {
 // 全部改：ShapeRecipe::uniform(RadiusTier::Full)——字段、列表行、菜单行也会一起变
 ```
 
-配方在样式解析时读安装的主题，换主题后已在屏的控件原地跟上；下拉选项行与菜单搜索框由场景绘制，经 `ChromeRadii::menu_row` / `field` 每次提取时读配方。焦点环与悬停底色跟随节点解析出的圆角。节点自己写的 `radius` / `corner_radii` 档位，或调用方样式写的圆角数字，仍然优先。**只清 `radius` 不会去掉 `shape`**：要直角用 `NodeStyle::clear_corners()`，它同时清掉 `radius`、`corner_radii` 与 `shape`；在 `paint.border_radii` 写了自己的圆角时，那组数字照旧在绘制时优先。
+配方在样式解析时读安装的主题，换主题后已在屏的控件原地跟上；下拉选项行、菜单与命令面板的搜索框、树行和 `ReorderList` 的行底由场景绘制，经 `ChromeRadii` 的 `menu_row` / `field` / `tree_row` / `list_item` 每次提取时读配方。焦点环与悬停底色跟随节点解析出的圆角。节点自己写的 `radius` / `corner_radii` 档位，或调用方样式写的圆角数字，仍然优先。**只清 `radius` 不会去掉 `shape`**：要直角用 `NodeStyle::clear_corners()`，它同时清掉 `radius`、`corner_radii` 与 `shape`；在 `paint.border_radii` 写了自己的圆角时，那组数字照旧在绘制时优先。
 
 当两个块拼接成一个整体时，用 `corner_radii` 按「左上、右上、右下、左下」分别指定四个角的档位（`None` 表示直角）：外侧保留圆角，**接缝处必须设为直角（`None`）**——哪怕给接缝处留了极小的 `Xs` 圆角，两段圆弧交界处也会露出缺口。
 

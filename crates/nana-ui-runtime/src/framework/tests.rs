@@ -8135,6 +8135,158 @@ fn a_corner_the_caller_names_or_clears_wins_over_the_control_shapes() {
     }
 }
 
+/// Tabs, radio rows and the rows a scene paints without nodes of their own
+/// (tree rows, reorder-list fills, command palette rows and field).
+struct ShapedRows {
+    tab: StableNodeId,
+    radio: StableNodeId,
+    any: StableNodeId,
+}
+
+fn mount_shaped_rows(context: &mut AppContext, document: DocumentId) -> ShapedRows {
+    let tabs = context
+        .create_component(
+            document,
+            Tabs::new("code").options([
+                crate::TabOption::new("code", "Code"),
+                crate::TabOption::new("docs", "Docs"),
+            ]),
+        )
+        .unwrap();
+    let tab = context.read(tabs, |tabs| tabs.option_nodes()[0].1).unwrap();
+    let group = context
+        .create_component(document, SegmentedControl::radio_group())
+        .unwrap();
+    let radio = context
+        .create_detached_component(
+            document,
+            SegmentedOption::new("One").surface(
+                nana_ui_core::ControlSize::Medium,
+                crate::SelectionChrome::Radio,
+                false,
+            ),
+        )
+        .unwrap();
+    context
+        .set_segmented_options(group, vec![radio], Some(radio))
+        .unwrap();
+    ShapedRows {
+        tab,
+        radio: radio.stable_id(),
+        any: group.stable_id(),
+    }
+}
+
+#[test]
+fn a_shape_recipe_left_alone_keeps_tabs_radio_and_painted_rows_where_they_were() {
+    use nana_ui_core::{ThemeDefinition, UI_METRICS};
+    let mut context = AppContext::new();
+    let document = DocumentId::new(1).unwrap();
+    let rows = mount_shaped_rows(&mut context, document);
+    for definition in [ThemeDefinition::NANA_DARK, ThemeDefinition::NANA_LIGHT] {
+        context.set_theme_definition(&definition).unwrap();
+        assert_eq!(
+            extracted_radius(&context, rows.tab),
+            Some(UI_METRICS.radius_sm)
+        );
+        assert_eq!(
+            extracted_radius(&context, rows.radio),
+            Some(UI_METRICS.radius_sm)
+        );
+        let chrome = context.world().extract_nodes(&[rows.any])[0].chrome_radii;
+        assert_eq!(chrome.tree_row, UI_METRICS.radius_sm);
+        assert_eq!(chrome.list_item, UI_METRICS.radius_sm);
+        assert_eq!(chrome.menu_row, UI_METRICS.radius_sm);
+        assert_eq!(chrome.field, UI_METRICS.radius_sm);
+    }
+}
+
+#[test]
+fn an_installed_shape_recipe_reaches_tabs_radio_and_painted_rows() {
+    use nana_ui_core::{RadiusTier, ShapeRecipe, ShapeRole, ThemeDefinition, UI_METRICS};
+    let mut context = AppContext::new();
+    let document = DocumentId::new(1).unwrap();
+    let rows = mount_shaped_rows(&mut context, document);
+    let recipe = ShapeRecipe::DEFAULT
+        .with(ShapeRole::Tab, RadiusTier::Lg)
+        .with(ShapeRole::RadioRow, RadiusTier::Md)
+        .with(ShapeRole::TreeRow, RadiusTier::Xs)
+        .with(ShapeRole::ListItem, RadiusTier::Full);
+    assert!(
+        context
+            .set_theme_definition(&ThemeDefinition::NANA_DARK.with_shape(recipe))
+            .unwrap()
+    );
+    assert_eq!(
+        extracted_radius(&context, rows.tab),
+        Some(UI_METRICS.radius_lg)
+    );
+    assert_eq!(
+        extracted_radius(&context, rows.radio),
+        Some(UI_METRICS.radius_md)
+    );
+    let chrome = context.world().extract_nodes(&[rows.any])[0].chrome_radii;
+    assert_eq!(chrome.tree_row, UI_METRICS.radius_xs);
+    assert_eq!(chrome.list_item, nana_ui_core::FULL_RADIUS);
+    assert_eq!(chrome.menu_row, UI_METRICS.radius_sm);
+
+    assert!(
+        context
+            .set_theme_definition(&ThemeDefinition::NANA_LIGHT)
+            .unwrap()
+    );
+    assert_eq!(
+        extracted_radius(&context, rows.tab),
+        Some(UI_METRICS.radius_sm)
+    );
+    assert_eq!(
+        extracted_radius(&context, rows.radio),
+        Some(UI_METRICS.radius_sm)
+    );
+    let chrome = context.world().extract_nodes(&[rows.any])[0].chrome_radii;
+    assert_eq!(chrome.tree_row, UI_METRICS.radius_sm);
+    assert_eq!(chrome.list_item, UI_METRICS.radius_sm);
+}
+
+#[test]
+fn a_corner_the_caller_names_or_clears_wins_over_a_radio_row_shape() {
+    use nana_ui_core::{RadiusTier, ShapeRecipe, ThemeDefinition, UI_METRICS};
+    let mut context = AppContext::new();
+    let document = DocumentId::new(1).unwrap();
+    let group = context
+        .create_component(document, SegmentedControl::radio_group())
+        .unwrap();
+    let radio_option = || {
+        SegmentedOption::new("One").surface(
+            nana_ui_core::ControlSize::Medium,
+            crate::SelectionChrome::Radio,
+            false,
+        )
+    };
+    let mut stepped = radio_option();
+    stepped.style.radius = Some(RadiusTier::Xs);
+    let stepped = context
+        .create_detached_component(document, stepped)
+        .unwrap();
+    let mut square = radio_option();
+    square.style.clear_corners();
+    let square = context.create_detached_component(document, square).unwrap();
+    context
+        .set_segmented_options(group, vec![stepped, square], Some(stepped))
+        .unwrap();
+    for definition in [
+        ThemeDefinition::NANA_DARK,
+        ThemeDefinition::NANA_DARK.with_shape(ShapeRecipe::uniform(RadiusTier::Full)),
+    ] {
+        context.set_theme_definition(&definition).unwrap();
+        assert_eq!(
+            extracted_radius(&context, stepped.stable_id()),
+            Some(UI_METRICS.radius_xs)
+        );
+        assert_eq!(extracted_radius(&context, square.stable_id()), None);
+    }
+}
+
 /// The 2xl step is a tier like the others: a node that names it follows the
 /// A node that names a type step and spacing steps follows the installed
 /// theme's scales, as a radius step follows its metrics.
