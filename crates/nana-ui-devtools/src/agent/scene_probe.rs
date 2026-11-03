@@ -45,7 +45,7 @@ pub fn probe(
     viewport_height: f32,
     hit_at: impl Fn(f32, f32) -> Vec<HitDump>,
 ) -> Option<SceneProbeDump> {
-    let draw = scene.node_bounds(id);
+    let draw = scene.node_layout_bounds(id);
     let primitives: Vec<_> = scene
         .primitives()
         .filter(|primitive| primitive.node == id)

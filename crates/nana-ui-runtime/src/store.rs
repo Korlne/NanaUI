@@ -861,6 +861,11 @@ impl NodeStore {
         self.open_select_menus.iter().copied()
     }
 
+    /// Nodes with a visual, in no particular order.
+    pub(crate) fn visual_nodes(&self) -> impl Iterator<Item = StableNodeId> + '_ {
+        self.visuals.keys().copied()
+    }
+
     pub(crate) fn has_text_inputs(&self) -> bool {
         !self.editors.is_empty()
     }

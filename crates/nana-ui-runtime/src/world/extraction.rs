@@ -112,6 +112,8 @@ impl UiWorld {
             document,
             layout_padding,
             preserve_newlines,
+            local_layout,
+            layout_frame,
         ) = {
             let node = self.nodes.get(id)?;
             let kind = Arc::clone(&node.kind);
@@ -132,6 +134,8 @@ impl UiWorld {
                 node.document,
                 node.layout_padding,
                 node.style.layout.white_space.preserve_newlines(),
+                node.local_layout,
+                node.layout_frame,
             )
         };
         // Extraction also runs during retained writeback, before the next
@@ -285,6 +289,8 @@ impl UiWorld {
             parent: hierarchy_parent,
             children: hierarchy_children,
             layout,
+            local_layout,
+            layout_frame,
             scroll_offset: self.rich_editor_scroll_offset(id).unwrap_or(scroll_offset),
             z_index: self.stacking_z_index_memo(id, memo),
             source_style,
@@ -702,11 +708,13 @@ impl UiWorld {
     ///
     /// `previous` answers the record the renderer holds for a node: the one
     /// the last call gave it. A node that layout only moved since the last
-    /// call -- its result placed again from its own geometry, and no other
-    /// render mark -- comes back as a move, its new box and result, and the
-    /// renderer keeps the rest of its record. Anything else, or a node
-    /// `previous` does not know, is extracted in full. The record is not
-    /// read: it is cold, and reading it costs what extracting it does.
+    /// call -- its local box changed, its result did not, and no other
+    /// render mark -- comes back as a move, where it is now measured from,
+    /// and the renderer keeps the rest of its record, in the space it was
+    /// extracted in. What the node holds moved with it and is not marked at
+    /// all: only the root of a moved subtree comes back. Anything else, or a
+    /// node `previous` does not know, is extracted in full. The record is
+    /// not read: it is cold, and reading it costs what extracting it does.
     pub fn extract_nodes_reusing<'a>(
         &self,
         ids: &[StableNodeId],
@@ -718,8 +726,10 @@ impl UiWorld {
         let mut moved = Vec::new();
         for &id in ids {
             // A component's geometry (a button's label region, a field's
-            // caret) is derived in page space, so a moved one is extracted
-            // again rather than kept.
+            // caret) is derived on the page, and a record the renderer
+            // places again where it stands paints what a cold one does only
+            // with the geometry a cold extraction gives: such a node is
+            // extracted again rather than kept.
             if self.only_moved_since(id, epoch)
                 && let Some(held) = previous(id)
                 && held.component_geometry.is_none()
@@ -752,19 +762,28 @@ impl UiWorld {
         if !self.presence_live_memo(id, memo) {
             return None;
         }
+        let record = self.nodes.get(id)?;
         let moved = ExtractedMove {
             id,
-            layout: self.component_layout_box(id)?,
+            layout: self.record_layout_box(record),
+            local_layout: record.local_layout,
+            layout_frame: record.layout_frame,
             layout_result: self.local_layout_result(id).cloned(),
         };
         #[cfg(any(test, feature = "layout-verify"))]
         {
             let mut reused = held.clone();
-            reused.layout = moved.layout;
+            reused.local_layout = moved.local_layout;
+            reused.layout_frame = moved.layout_frame;
             reused.layout_result = moved.layout_result.clone();
-            let full = self
+            let mut full = self
                 .extract_node_memo(id, &mut AncestorMemo::default())
                 .expect("a live node extracts");
+            // The kept record stays in the space it was extracted in: its
+            // page box differs from a fresh one's by where the box moved, at
+            // the same size.
+            full.layout.x = held.layout.x;
+            full.layout.y = held.layout.y;
             let differs = extracted_fields_differ(&reused, &full);
             assert!(
                 differs.is_empty(),
@@ -787,6 +806,8 @@ fn extracted_fields_differ(a: &ExtractedNode, b: &ExtractedNode) -> Vec<&'static
         parent,
         children,
         layout,
+        local_layout,
+        layout_frame,
         scroll_offset,
         source_style,
         style,
@@ -826,6 +847,8 @@ fn extracted_fields_differ(a: &ExtractedNode, b: &ExtractedNode) -> Vec<&'static
     check("parent", *parent == b.parent);
     check("children", *children == b.children);
     check("layout", bits(layout) == bits(&b.layout));
+    check("local_layout", bits(local_layout) == bits(&b.local_layout));
+    check("layout_frame", *layout_frame == b.layout_frame);
     check("scroll_offset", *scroll_offset == b.scroll_offset);
     check("source_style", *source_style == b.source_style);
     check("style", *style == b.style);

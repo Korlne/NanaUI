@@ -74,9 +74,9 @@ Taffy 做同一次编辑只要 0.48 ms。真正重新排布的只有约 1 000 �
 - 帧路径上的消费者读本地值：
   - `ContentBoundsIndex` 每条按自己节点的原点存，父节点读子节点时加上子节点的本地偏移；携带给包含块的范围按落地的包含块的坐标存，所以平移的子树里条目全部不动。落地点可能变的两种情况（`position` 在是否建立包含块之间变化、子树换父节点）会让子树里携带范围的条目重读子节点（`reland`）。
   - 粘性定位从本地盒子和本地结果算，所有盒子都相对节点自己的原点，`StickyAncestor.result` 约定为祖先自己坐标里的结果，按 `bounds` 的原点放置。
-  - 提取：`ExtractedNode.layout_result` / `ExtractedMove.layout_result` 改为本地结果（共享同一个 `Arc`，不复制）；`ExtractedNode.layout` 仍是推导出的绝对盒子，这是 Scene 第 3 阶段的事。Scene 读结果的地方只有裁剪链、参与方式、滚动指标（与坐标无关）和粘性定位（已按上面的约定改）。
+  - 提取：`ExtractedNode.layout_result` / `ExtractedMove.layout_result` 改为本地结果（共享同一个 `Arc`，不复制）；`ExtractedNode.layout` 仍是提取时推导出的绝对盒子，第 3 阶段另加 `local_layout` / `layout_frame`（见 3.5）。Scene 读结果的地方只有裁剪链、参与方式、滚动指标（与坐标无关）和粘性定位（已按上面的约定改）。
   - 无障碍见 3.7。
-- **第 1 阶段的过渡**（第 2 阶段后只剩 Scene 和无障碍在用）：命中索引和 Scene 仍按绝对盒子工作。提交时 `spread_layout_moves` 从原点变了的盒子往下走，把随之平移的后代标成「只是移动」（INPUT、RENDER，`render_moved_epoch`、`translated_hit`），参照系在子树外的盒子（`fixed`、包含块在外的绝对定位）不动；后代的最近裁剪容器也在动时再标 ACCESSIBILITY。第 2、3 阶段各自本地化后删掉这一步。
+- **第 1 阶段的过渡**（已在第 3 阶段删除）：提交时 `spread_layout_moves` 从原点变了的盒子往下走，把随之平移的后代标成「只是移动」。现在提交只标写回的盒子本身（`settle_layout_moves`）：只挪了位置的根可以沿用提取记录，原点变了的根另记 `DirtyMask::MOVED`，进 `SystemWork::layout_moved`；后代一个不标。
 
 ### 3.4 命中索引（第 2 阶段，已落地）
 
@@ -87,18 +87,19 @@ Taffy 做同一次编辑只要 0.48 ms。真正重新排布的只有约 1 000 �
 - **钉住的条目**（`HitEntry.pinned`）：读了自身偏移以外的几何——跨参照系求差的偏移、#201 逃逸的桥接变换、组件几何（选择框菜单、悬停卡连接线、模态框的 surface/body 裁剪，都从页面坐标减去本节点原点）、粘性定位。祖先一动它们就可能变，所以 `HitIndex.pinned` 单独记着；打补丁时，脏节点下面的钉住条目即使没被标脏也重建（`pinned_hit_entries_under`，O(钉住数 × 深度)）。
 - 合成层叠加时的查询（`visit_presentation_hits`）仍按页面坐标现算变换，读条目里的本地矩形前先乘上「本地 → 页面」的平移；`pointer_layout_position`、`layout_pointer_position`、`menu_region_contains` 同样在本地与页面坐标之间换一次。附带修正：`clip-path` 的命中以前拿页面坐标去比盒子本地的裁剪形状，盒子不在原点时错位，现在两边都在本地坐标里。
 - 冷对照：`check_moved_hit_entries` 在所有补丁打完后，对被替换的条目**及其下面所有没被滚动平移过的条目**逐字段（含 `origin`、`pinned`、包围盒）比对全量重建；`reflow_oracle` 的命中几何加上 `entry_offset`。
-- 与 `spread_layout_moves` 的关系：命中索引不再读后代的盒子，`translated_hit` 删除。后代仍被标 INPUT，因为无障碍把「只因移动而标 INPUT」的节点当作移动种子（`accessibility_moved`）；命中索引用 `layout_followers` 跳过其中不是钉住的条目（同一节点再被别的原因标 INPUT 时移出集合）。参照系没跟着动的后代（包含块在外的绝对定位）现在也标 INPUT（`fixed` 除外），因为它们离命中父节点的偏移变了。
+- 第 3 阶段起后代不再标 INPUT，`layout_followers` 删除：平移子树下需要重建的条目只靠 `pinned_hit_entries_under` 找（参照系没跟着动的后代离命中父节点的偏移靠跨参照系求差得出，本来就是钉住的）。
 
-### 3.5 提取与 Scene
+### 3.5 提取与 Scene（第 3 阶段，已落地）
 
-- 提取记录和图元都改为节点本地坐标，节点原点放进节点变换（`node_scene_transform`），平移原点同样走 CSS 变换的轴心。
-- 运行时每棵被挪动的子树只发一条根平移，不再每个后代各发一条 `ExtractedMove`。
-- Scene 收到根平移时，按 `scroll_translations` 的方式处理：抬 `attribute_epoch`，靠投影重定基，可见性索引做 `translate_subtree`，子孙图元不重建。
-- 绘制时仍要按绝对坐标读几何的地方，统一经 `draw_node_rect` 取绝对值，不再直接读 `bounds`：
-  - painter 的分组和边缘渐隐；
-  - devtools 的 `scene_probe`；
-  - `GlyphObject`、`EdgeFadeMask`、`InsetShadowOverlay`、`CompositorLayer.clip`；
-  - 动效的轴心。
+落地的做法与最初设想（图元一律改本地坐标、原点进节点变换）不同，原因在 painter：它把纯平移变换吸附到整设备像素（#223，合成滚动的语义），文字的亚像素相位只取图元自身的位置。图元若靠变换平移，挪了小数像素的子树就画得和冷场景不一样——快照 `area-layout/maximized` 上文字整体偏了 0.28 px。所以：
+
+- **记录**：`ExtractedNode` 新增 `local_layout` 与 `layout_frame`（与 `UiWorld::local_layout_box` / `layout_frame` 相同）；`layout` 仍是提取那一刻的页面盒子，也是这份记录、它的组件几何和由它建的图元所在的空间。`ExtractedMove` 同样带 `local_layout` / `layout_frame`，只给平移的根发。
+- **放置**：Scene 按参照系链从上往下累加本地偏移得到每个节点现在的页面原点（`placed_origin`，与运行时 `record_layout_origin` 同样的加法顺序，按 `placement_epoch` 记忆）。新提取的记录这个值与 `layout` 逐位相等（调试构建在有平移时断言）。两者之差就是这份记录自提取以来被挪的量（`layout_shift`）。
+- **平移的根**：只换本地盒子、参照系和结果，记入 `moved_roots`，抬 `attribute_epoch`，不重建图元。变换分两种：交给子节点的一律在页面空间、轴心按现在的位置（`*_page_transform`）；节点自己的记录与图元在提取时的空间里，所以自己的变换和它的裁剪再右乘 `layout_shift` 的平移（`record_space`）。没被挪过的记录平移为零，变换与改造前逐位相同。`draw_node_rect` / `draw_node_bounds`、投影重定基、粘性、合成层（层快照的轴心、GPU 动效的父变换）都按这个约定。
+- **画东西的记录重新放置**：根下面有图元的记录，以及它到页面之间被挪过的祖先，在同一次 delta 里把 `layout` 换成现在的页面盒子（逐位等于冷提取）并重建图元（`place_painted_records`；有可见性索引时只看根下面的图元，`painted_under`，否则扫一遍图元表）。图元和冷场景逐位相同，painter 不需要知道发生过平移。只有不画东西的盒子（页面上的大多数容器）留在提取时的空间里。
+- **组件几何**：仍按页面坐标现算（`derive_component_geometry`）。重新放置要求记录上没有页面空间的东西，所以带组件几何的节点在平移时仍完整重新提取：根上由 `extract_nodes_reusing` 的 `component_geometry.is_none()` 守卫，根下面的由 `settle_layout_moves` 按 visual 表找出标 RENDER（O(visual 数)，按祖先记忆）。本地版本的组件几何要让冷提取也按「原点 + 本地」相加，会改动冷场景的末位，和 painter 的相位一起属于第 4 阶段。
+- **可见性**：平移的根自身 `update`，后代 `refresh_subtree`（不画东西的子树没有操作，代价为零），逃逸的盒子单独刷新。
+- **公开语义**：`UiScene::extracted_node(id).layout` 与 `node_bounds` 是记录所在的空间（即提取时的页面盒子）；现在的位置用新增的 `node_layout_bounds`，绘制位置仍用 `draw_node_bounds`。devtools 的 `scene_probe` 改读 `node_layout_bounds`。
 
 ### 3.6 painter：先测量，再决定
 
@@ -108,7 +109,7 @@ Taffy 做同一次编辑只要 0.48 ms。真正重新排布的只有约 1 000 �
 
 ### 3.7 无障碍
 
-`AccessibilityNode.bounds` 已经是相对父节点的（47aa93fb2）。改成相对布局后，发布时的那次判断（`boxes_keeping_parent_offset`、推迟标记）去掉了：写回时本地偏移变了的盒子直接标 ACCESSIBILITY，随父节点平移的后代本地偏移不变、不写回也不标；参照系不跟着动的子节点（`fixed` 等）相对父节点的偏移变了，由 `spread_layout_moves` 补标。
+`AccessibilityNode.bounds` 已经是相对父节点的（47aa93fb2）。写回时本地偏移变了的盒子直接标 ACCESSIBILITY，随父节点平移的后代不写回也不标。第 3 阶段起无障碍只看平移的根（`SystemWork::layout_moved`）：`reach_moved_subtree` 从每个根往下走一遍记录（不读盒子、不进记忆表），找出没跟着动的（参照系在根外：`fixed`、包含块在根上面的绝对定位）、裁剪溢出的（视口坐标的裁剪从它而来，整棵子树重投影），以及从页面到它一路有变换、滚动、粘性或特殊 visual 的（交给 `keeps_relative_bounds` 精确判定）；走到另一个平移根就停。只改了尺寸的根（不在 `layout_moved` 里）只在自身带变换时重投影子节点。`check_kept_accessibility` 照旧在小世界里对没投影的节点逐个比对冷投影。
 
 ## 4. 验证
 
@@ -132,5 +133,7 @@ Taffy 做同一次编辑只要 0.48 ms。真正重新排布的只有约 1 000 �
 第 1 阶段已落地：42 001 盒改行高，布局 16.4 → 3.9 ms，整帧 29.9 → 17.8 ms，每次编辑指令 296 M → 166 M（数字与做法见 `resource-budgets.md`）。
 
 第 2 阶段已落地：命中 3.6 → 0.66 ms，整帧 17.3 → 13.8 ms，每次编辑指令 168 M → 140 M；改宽度、改控件文字持平（做法见 3.4，数字见 `resource-budgets.md`）。
+
+第 3 阶段已落地：提取 3.74 → 0.08 ms（其中 Scene 的 delta 约 1.95 → 0.05 ms），无障碍 2.86 → 0.80 ms，布局 2.06 → 0.47 ms（`spread_layout_moves` 删除），命中 0.65 → 0.24 ms，整帧 11.7 → 1.7 ms，每次编辑指令 127 M → 32 M；改宽度、改控件文字持平（做法见 3.5、3.7，数字见 `resource-budgets.md`）。第 4 阶段的起点：painter 已有每节点的文字平移行（`text_presentation_upload_bytes`），挪动 1 万个标签的帧 `batch` 约 2.5 ms、不重建实例；平移子树里画东西的记录目前仍在 Scene 重建，要让它们也只改一个偏移，painter 得按最终页面位置取文字相位、不再把布局平移当滚动吸附。
 
 **目标**：改行高时整帧和 Taffy 布局在同一数量级，个位数毫秒；改宽度和改控件文字不回退。

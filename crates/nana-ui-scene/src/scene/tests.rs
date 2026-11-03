@@ -37,6 +37,8 @@ fn node(value: u64, parent: Option<u64>, children: &[u64]) -> ExtractedNode {
             width: 100.0,
             height: 80.0,
         },
+        local_layout: Default::default(),
+        layout_frame: nana_ui_runtime::LayoutFrame::Page,
         scroll_offset: nana_ui_runtime::ScrollOffset::default(),
         source_style: NodeStyle::default(),
         style: Arc::new(ComputedStyle::default()),

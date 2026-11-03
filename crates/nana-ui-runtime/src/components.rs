@@ -4782,7 +4782,20 @@ pub struct ExtractedNode {
     pub parent: Option<StableNodeId>,
     /// Shared with retained hierarchy. Idle extract does not clone the child list.
     pub children: Arc<Vec<StableNodeId>>,
+    /// Where the box stood on the page when this record was extracted, and
+    /// the space every page-space rectangle of the record is in (its
+    /// [`Self::component_geometry`] among them). A renderer that keeps the
+    /// record of a node only moved since ([`ExtractedMove`]) keeps it in this
+    /// space and places it from [`Self::local_layout`] instead.
     pub layout: LayoutBox,
+    /// The box measured from the origin of [`Self::layout_frame`], as
+    /// [`crate::UiWorld::local_layout_box`] keeps it: what stays put when a
+    /// box above this one moves. The frame's page origin plus this, summed
+    /// down from the top one axis at a time, is [`Self::layout`] of a fresh
+    /// extraction to the bit.
+    pub local_layout: LayoutBox,
+    /// What [`Self::local_layout`] is measured from.
+    pub layout_frame: crate::LayoutFrame,
     pub scroll_offset: ScrollOffset,
     pub source_style: NodeStyle,
     /// Shared with `UiWorld` resolved style. Copy-on-write when a dirty node mutates.
@@ -4848,12 +4861,18 @@ pub struct ExtractedNode {
 }
 
 /// A node layout only moved since the renderer's last extraction: its
-/// record is the one the renderer holds, but for its box and layout result
-/// (see [`crate::UiWorld::extract_nodes_reusing`]).
+/// record is the one the renderer holds, but for where it is measured from
+/// (see [`crate::UiWorld::extract_nodes_reusing`]). Only the root of a moved
+/// subtree comes as one; what it holds moves with it and is not listed.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExtractedMove {
     pub id: StableNodeId,
+    /// Where the box now stands on the page. The renderer's record keeps
+    /// the [`ExtractedNode::layout`] it was extracted with: its rectangles
+    /// are in that space.
     pub layout: LayoutBox,
+    pub local_layout: LayoutBox,
+    pub layout_frame: crate::LayoutFrame,
     pub layout_result: Option<Arc<crate::LayoutResult>>,
 }
 

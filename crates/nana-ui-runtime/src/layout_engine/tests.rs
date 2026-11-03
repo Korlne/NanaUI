@@ -726,7 +726,9 @@ fn scoped_layout_touches_only_the_change_closure_and_matches_full_recompute() {
     assert!(!written.contains(&shifted_label));
     assert!(extract.render_extraction.contains(&changed_row));
     assert!(extract.render_extraction.contains(&shifted_row));
-    assert!(extract.render_extraction.contains(&shifted_label));
+    // Nor is it marked: its record moves with the row's.
+    assert!(!extract.render_extraction.contains(&shifted_label));
+    assert!(extract.layout_moved.contains(&shifted_row));
     assert!(
         !written.contains(&changed_label),
         "bit-identical label of the changed row must not be written"

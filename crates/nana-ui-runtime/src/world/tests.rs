@@ -10842,7 +10842,10 @@ fn write_layout_does_not_extract_bit_identical_descendants() {
     assert!(work.render_extraction.contains(&node(2)));
     assert!(work.render_extraction.contains(&node(5)));
     assert!(work.render_extraction.contains(&node(7)));
-    assert!(work.render_extraction.contains(&node(8)));
+    // Written where the row it is measured from carries it: its record
+    // moves with the row's.
+    assert!(!work.render_extraction.contains(&node(8)));
+    assert!(work.layout_moved.contains(&node(7)));
     assert!(!work.render_extraction.contains(&node(3)));
     assert!(!work.render_extraction.contains(&node(4)));
     assert!(

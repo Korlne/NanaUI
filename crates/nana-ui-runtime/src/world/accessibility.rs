@@ -1167,10 +1167,11 @@ impl UiWorld {
         // shifted descendants included.
         //
         // Bounds are relative to the parent's, so a box layout moved with its
-        // parent keeps them: the publish leaves its ACCESSIBILITY bit off and
-        // lists it in `accessibility_moved`. Such a node is no subtree seed;
-        // of what it holds, only a child layout left where it stood moved
-        // relative to it.
+        // parent keeps them, and nothing marks it: only the box layout wrote
+        // with a new origin is listed (`layout_moved`, `accessibility_moved`).
+        // Such a node is no subtree seed; of what it holds, only what did not
+        // move with it, or does not keep its offset to the bit, projects
+        // again (`reach_moved_subtree`).
         //
         // These sets exist to produce a sorted, de-duplicated id sequence. A
         // `BTreeSet` pays a tree insert and node allocation per id to do that;
@@ -1197,6 +1198,40 @@ impl UiWorld {
         let (moved_seeds, mut pending): (Vec<StableNodeId>, Vec<StableNodeId>) =
             work.input_hit_test.iter().partition(|id| carries(id));
         pending.extend(&work.transform);
+        let mut memo = ProjectionMemo::default();
+        // A plain tree places every box in flow, from its parent, and has
+        // no clip, transform or scroll: what a moved box holds keeps its
+        // bounds.
+        if !tree_plain {
+            for &id in &moved_seeds {
+                if work.layout_moved.binary_search(&id).is_ok() {
+                    self.reach_moved_subtree(
+                        id,
+                        &work.layout_moved,
+                        &mut affected,
+                        &mut pending,
+                        &mut memo,
+                    );
+                } else if let Some(node) = self.nodes.get(id) {
+                    // Resized where it stood: what it holds stays on the
+                    // page, unless its own transform turns about a centre
+                    // the new size moved.
+                    let style = node.resolved_layout.as_ref();
+                    if style.transform.is_some()
+                        || style.transform_3d.is_some()
+                        || style.css_perspective.is_some()
+                    {
+                        affected.extend(
+                            node.hierarchy
+                                .children
+                                .iter()
+                                .copied()
+                                .filter(|child| !moved(child)),
+                        );
+                    }
+                }
+            }
+        }
         // `visited` is membership-only, so it does not need ordering at all.
         let mut visited = hashbrown::HashSet::new();
         while let Some(id) = pending.pop() {
@@ -1208,20 +1243,8 @@ impl UiWorld {
                 pending.extend(node.hierarchy.children.iter().copied());
             }
         }
-        for &id in &moved_seeds {
-            if let Some(node) = self.nodes.get(id) {
-                affected.extend(
-                    node.hierarchy
-                        .children
-                        .iter()
-                        .copied()
-                        .filter(|child| !moved(child)),
-                );
-            }
-        }
         affected.sort_unstable();
         affected.dedup();
-        let mut memo = ProjectionMemo::default();
         // A moved box keeps the bounds it was handed only where they are its
         // layout box, and its parent's are too: what a transform or a scroll
         // above makes of a box is not moved with it to the bit.
@@ -1264,6 +1287,133 @@ impl UiWorld {
             generation: work.generation,
             updated,
             removed,
+        }
+    }
+
+    /// What under `root`, a box layout moved, projects again although nothing
+    /// marked it, into `affected`, and the boxes whose whole subtree does
+    /// into `pending`. Everything under `root` moved with it and kept its
+    /// offset from its parent but for:
+    ///
+    /// - a box measured from a frame that did not move (a `fixed` box, an
+    ///   absolute one whose containing block is above `root`): it stayed on
+    ///   the page, so its offset from its parent changed;
+    /// - a box that clips what it holds, which is where the viewport-space
+    ///   clips of its subtree come from (and a clip visual anywhere): its
+    ///   subtree projects again, as a non-carrying seed's does;
+    /// - a box whose bounds, or its parent's, are not its layout box
+    ///   (a transform, a scroll or a sticky offset on the way down, a
+    ///   virtual or modal visual): what moved them does not move them by
+    ///   the same offset to the bit ([`Self::keeps_relative_bounds`]).
+    ///
+    /// The walk stops at a box layout moved itself (in `layout_moved`): it
+    /// is walked as a root of its own. It reads each box's record and
+    /// nothing else on the common path -- no box, no memo -- which is what
+    /// lets a moved column of rows cost a pass over records rather than a
+    /// projection per box.
+    fn reach_moved_subtree(
+        &self,
+        root: StableNodeId,
+        layout_moved: &[StableNodeId],
+        affected: &mut Vec<StableNodeId>,
+        pending: &mut Vec<StableNodeId>,
+        memo: &mut ProjectionMemo,
+    ) {
+        let Some(record) = self.nodes.get(root) else {
+            return;
+        };
+        // Whether nothing from the page down to a box changes where its
+        // accessible box lands: then its bounds are its layout box. Motion
+        // overlays can transform any box, so they leave only the exact
+        // check.
+        let plain_motion = self.presentation.is_empty() && self.layout_length_tracks.is_empty();
+        let clean = |record: &NodeRecord| {
+            let style = record.resolved_layout.as_ref();
+            record.scroll_offset == ScrollOffset::default()
+                && style.transform.is_none()
+                && style.transform_3d.is_none()
+                && style.css_perspective.is_none()
+                && !style.preserve_3d
+                && matches!(
+                    style.position,
+                    PositionSpec::Static | PositionSpec::Relative
+                )
+        };
+        let root_identity = plain_motion
+            && std::iter::successors(Some(record), |record| {
+                record
+                    .hierarchy
+                    .parent
+                    .and_then(|parent| self.nodes.get(parent))
+            })
+            .all(clean);
+        let special = |id: StableNodeId| {
+            self.nodes.has_visuals()
+                && matches!(
+                    self.nodes.visual(id),
+                    Some(
+                        StandardVisual::Select { .. }
+                            | StandardVisual::TreeView { .. }
+                            | StandardVisual::MenuSurface { .. }
+                            | StandardVisual::ModalFrame { .. }
+                    )
+                )
+        };
+        let modal = |id: StableNodeId| {
+            self.nodes.has_visuals()
+                && matches!(
+                    self.nodes.visual(id),
+                    Some(StandardVisual::ModalFrame { .. })
+                )
+        };
+        // Whether `block` moved with `root`: it is `root` or under it.
+        let inside = |block: StableNodeId| {
+            std::iter::successors(Some(block), |&at| self.parent_id(at)).any(|at| at == root)
+        };
+        let parent_identity = root_identity && !modal(root);
+        let mut open: Vec<(StableNodeId, bool)> = record
+            .hierarchy
+            .children
+            .iter()
+            .map(|&child| (child, parent_identity))
+            .collect();
+        while let Some((id, parent_identity)) = open.pop() {
+            let Some(record) = self.nodes.get(id) else {
+                continue;
+            };
+            let follows = match record.layout_frame {
+                crate::LayoutFrame::Parent => true,
+                crate::LayoutFrame::Block(block) => inside(block),
+                crate::LayoutFrame::Page => false,
+            };
+            if !follows {
+                affected.push(id);
+                continue;
+            }
+            if layout_moved.binary_search(&id).is_ok() {
+                continue;
+            }
+            if self.clip_visuals != 0 || record.resolved_layout.clips_overflow() {
+                pending.push(id);
+                continue;
+            }
+            let identity = parent_identity && clean(record);
+            let keeps = if identity && !special(id) {
+                true
+            } else {
+                self.keeps_relative_bounds(id, memo)
+            };
+            if !keeps {
+                affected.push(id);
+            }
+            let handed = identity && !modal(id);
+            open.extend(
+                record
+                    .hierarchy
+                    .children
+                    .iter()
+                    .map(|&child| (child, handed)),
+            );
         }
     }
 

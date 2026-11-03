@@ -187,6 +187,7 @@ impl RuntimeDocument {
         let mut hit_geometry_changed = false;
         let mut accessibility_subtrees = BTreeSet::new();
         let mut accessibility_moved = BTreeSet::new();
+        let mut layout_moved: Vec<StableNodeId> = Vec::new();
 
         self.context.begin_frame_profile();
         loop {
@@ -243,6 +244,7 @@ impl RuntimeDocument {
                 }
             }
             accessibility_subtrees.extend(work.transform.iter().copied());
+            layout_moved.extend(work.layout_moved.iter().copied());
 
             accessibility_dirty.extend(work.accessibility.iter().copied());
             accessibility_removed.extend(work.accessibility_removals.iter().copied());
@@ -271,6 +273,11 @@ impl RuntimeDocument {
                     .difference(&accessibility_subtrees)
                     .copied()
                     .collect(),
+                layout_moved: {
+                    layout_moved.sort_unstable();
+                    layout_moved.dedup();
+                    layout_moved
+                },
                 input_hit_test: accessibility_subtrees
                     .union(&accessibility_moved)
                     .copied()

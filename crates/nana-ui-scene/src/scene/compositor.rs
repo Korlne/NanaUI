@@ -392,7 +392,13 @@ impl UiScene {
                 }
                 continue;
             };
-            let snapshot = layer_snapshot(extracted, store, now, descriptors);
+            let snapshot = layer_snapshot(
+                extracted,
+                self.placed_layout(extracted),
+                store,
+                now,
+                descriptors,
+            );
             if snapshot.has_opacity
                 && (super::has_extracted_child(&self.nodes, extracted)
                     || extracted.custom_paint.is_some()
@@ -621,7 +627,19 @@ impl UiScene {
         }
     }
 
+    /// [`Self::resolved_page_transform`] for `node`'s own record, which is in
+    /// the space it was extracted in ([`Self::record_space`]).
     pub(super) fn resolved_local_transform(
+        &self,
+        node: &ExtractedNode,
+        block_3d: bool,
+    ) -> AffineTransform {
+        self.record_space(node, self.resolved_page_transform(node, block_3d))
+    }
+
+    /// `node`'s own presented transform on the page, as its children are
+    /// handed it: about where its box stands now.
+    pub(super) fn resolved_page_transform(
         &self,
         node: &ExtractedNode,
         block_3d: bool,
@@ -641,7 +659,11 @@ impl UiScene {
             .transform(node.id)
             .filter(|_| !super::is_triggered_menu(node))
             .unwrap_or_else(|| {
-                node_scene_transform(node.source_style.layout.as_ref(), node.layout, block_3d)
+                node_scene_transform(
+                    node.source_style.layout.as_ref(),
+                    self.placed_layout(node),
+                    block_3d,
+                )
             });
         self.with_sticky_translation(node, transform)
     }
@@ -660,8 +682,13 @@ impl UiScene {
         let presented = self.compositor.transform(menu)?;
         // An opacity-only layer holds the logical transform, which the
         // viewport-fixed overlay never inherited.
-        (presented != node_scene_transform(node.source_style.layout.as_ref(), node.layout, false))
-            .then_some(presented)
+        (presented
+            != node_scene_transform(
+                node.source_style.layout.as_ref(),
+                self.placed_layout(node),
+                false,
+            ))
+        .then_some(presented)
     }
 
     /// The transform the viewport-fixed branch rooted at `fixed` starts from:
@@ -894,6 +921,8 @@ impl UiScene {
             return (composed, [0.0, 0.0]);
         };
         let (parent, _, _, _) = self.draw_ancestor_state(extracted);
+        // The pivot is in the record's space, as the primitives it turns.
+        let parent = self.record_space(extracted, parent);
         let layout = extracted.layout;
         let [ox, oy] = presentation_pivot(extracted).unwrap_or_else(|| {
             extracted
@@ -1063,8 +1092,10 @@ struct LayerSnapshot {
     bindings: Vec<CompositorMotionBinding>,
 }
 
+/// `placed` is where `node`'s box stands now ([`UiScene::placed_layout`]).
 fn layer_snapshot(
     node: &ExtractedNode,
+    placed: nana_ui_runtime::LayoutBox,
     store: &PresentationStore,
     now: Duration,
     descriptors: Option<&MotionDescriptorStore>,
@@ -1152,8 +1183,8 @@ fn layer_snapshot(
         CompositorLayerKind::TransformOpacity
     };
     let transform = match presentation_transform {
-        Some(value) => affine_from_paint(node, value),
-        None => node_scene_transform(node.source_style.layout.as_ref(), node.layout, false),
+        Some(value) => affine_from_paint(node, placed, value),
+        None => node_scene_transform(node.source_style.layout.as_ref(), placed, false),
     };
     let opacity = presentation_opacity.unwrap_or_else(|| local_opacity(node));
     LayerSnapshot {
@@ -1169,7 +1200,12 @@ fn layer_snapshot(
     }
 }
 
-fn affine_from_paint(node: &ExtractedNode, transform: PaintTransform) -> AffineTransform {
+/// `transform` about `node`'s pivot, on the page, its box at `placed`.
+fn affine_from_paint(
+    node: &ExtractedNode,
+    placed: nana_ui_runtime::LayoutBox,
+    transform: PaintTransform,
+) -> AffineTransform {
     let mut layout = (*node.source_style.layout).clone();
     layout.transform = Some(transform);
     if let Some([x, y]) = presentation_pivot(node) {
@@ -1178,7 +1214,7 @@ fn affine_from_paint(node: &ExtractedNode, transform: PaintTransform) -> AffineT
             y: nana_ui_core::LengthSpec::Px(y),
         });
     }
-    node_scene_transform(&layout, node.layout, false)
+    node_scene_transform(&layout, placed, false)
 }
 
 /// Where a presentation transform of `node` pivots, when its geometry says
@@ -1219,6 +1255,8 @@ mod tests {
                 width: 100.0,
                 height: 80.0,
             },
+            local_layout: Default::default(),
+            layout_frame: nana_ui_runtime::LayoutFrame::Page,
             scroll_offset: nana_ui_runtime::ScrollOffset::default(),
             source_style: NodeStyle::default(),
             style: Arc::new(ComputedStyle {

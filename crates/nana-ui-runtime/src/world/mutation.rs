@@ -3215,7 +3215,7 @@ impl UiWorld {
         // Containers this commit resized read their rules now: a variant
         // that changed is a style change the frame's next round lays out.
         self.evaluate_responsive();
-        self.spread_layout_moves();
+        self.settle_layout_moves();
         self.publish_layout_results(
             &layout_result_ids,
             crate::LayoutResultSource::CompatibilityWrite,
@@ -3652,7 +3652,11 @@ impl UiWorld {
         // Padding and fragment changes that keep this border box are
         // scheduled when their result publishes. Accessible bounds are the
         // offset from the parent's: a box that moved changed them.
-        let bits = DirtyMask::INPUT | DirtyMask::RENDER | DirtyMask::ACCESSIBILITY;
+        let mut bits = DirtyMask::INPUT | DirtyMask::RENDER | DirtyMask::ACCESSIBILITY;
+        if moved {
+            // What it holds moved with it, unmarked (`settle_layout_moves`).
+            bits |= DirtyMask::MOVED;
+        }
         if resized || moved {
             self.layout_written.insert(id);
         }
@@ -3668,86 +3672,67 @@ impl UiWorld {
         }
     }
 
-    /// The boxes under the ones the commit moved stand elsewhere on the page
-    /// although none of them was written: their local boxes, results, hit
-    /// entries and content extents hold, but the scene still reads document
-    /// boxes. Each is marked as moved for it (and for accessibility, which
-    /// reads the INPUT mark as a moved box); one whose nearest clip
-    /// container moved with it has a new accessible clip too. A box hung
-    /// from a frame that did not move stays where it is on the page, and its
-    /// offset from its parent, which its accessible bounds and hit entry
-    /// are, changed. The hit index finds the entries under a moved box that
-    /// read more than their own offset itself ([`HitEntry::pinned`]).
-    pub(super) fn spread_layout_moves(&mut self) {
+    /// The boxes the commit moved, each the root of what moves with it:
+    /// nothing under one is marked. Every consumer keeps what a moved box
+    /// holds in that box's coordinates -- hit entries, accessible bounds
+    /// (relative to the parent's) and scene records -- and finds by itself
+    /// what under it reads more than its own offset (pinned hit entries,
+    /// [`UiWorld::project_accessibility_delta`]'s walk, the scene's frame
+    /// chain). A root that only moved may keep its extracted record; a node
+    /// below one with a visual is extracted again: its component geometry
+    /// is derived on the page, and a renderer that places what paints where
+    /// it stands now needs the geometry a cold extraction gives.
+    pub(super) fn settle_layout_moves(&mut self) {
         let written = std::mem::take(&mut self.layout_written);
         let roots = std::mem::take(&mut self.layout_moved_roots);
         if roots.is_empty() {
             return;
         }
         let epoch = self.render_epoch.get();
-        let mut moved: NodeSet = roots.iter().map(|&(root, _)| root).collect();
-        let mut open: Vec<StableNodeId> = Vec::new();
         for &(root, only_moved) in &roots {
-            if !written.contains(&root) || !self.nodes.contains(root) {
-                continue;
-            }
             // Nothing but where it stands changed: the record extraction
             // made of it last may be reused with its new box.
-            if only_moved {
+            if only_moved && written.contains(&root) && self.nodes.contains(root) {
                 self.record_mut(root).render_moved_epoch = epoch;
             }
-            open.extend(self.record(root).hierarchy.children.iter().copied());
         }
-        let mut spread = 0usize;
-        while let Some(id) = open.pop() {
-            let Some(record) = self.nodes.get(id) else {
-                continue;
-            };
-            let follows = match record.layout_frame {
-                crate::LayoutFrame::Parent => true,
-                crate::LayoutFrame::Block(block) => moved.contains(&block),
-                crate::LayoutFrame::Page => false,
-            };
-            if !follows {
-                // A fixed box hangs from the viewport in the hit index too.
-                let hit = if self.hit_motion_layout(id).position == PositionSpec::Fixed {
-                    0
-                } else {
-                    DirtyMask::INPUT
+        if self.nodes.has_visuals() {
+            // Whether a box is a moved root or under one, remembered for
+            // every box an answer passed: a page of controls walks each box
+            // once, not once per control under it.
+            let moved_roots: NodeSet = roots.iter().map(|&(root, _)| root).collect();
+            let mut under: NodeMap<bool> = moved_roots.iter().map(|&root| (root, true)).collect();
+            let mut chain = Vec::new();
+            let mut reread = Vec::new();
+            for id in self.nodes.visual_nodes() {
+                // A moved root's own record is decided where it is extracted.
+                if moved_roots.contains(&id) {
+                    continue;
+                }
+                let mut cursor = self.parent_id(id);
+                let moved = loop {
+                    let Some(at) = cursor else {
+                        break false;
+                    };
+                    if let Some(&known) = under.get(&at) {
+                        break known;
+                    }
+                    chain.push(at);
+                    cursor = self.parent_id(at);
                 };
-                self.mark_moved_by_layout(id, DirtyMask::ACCESSIBILITY | hit, true);
-                continue;
+                for at in chain.drain(..) {
+                    under.insert(at, moved);
+                }
+                if moved {
+                    reread.push(id);
+                }
             }
-            if !moved.insert(id) {
-                continue;
+            for id in reread {
+                self.mark(id, DirtyMask::RENDER);
             }
-            open.extend(record.hierarchy.children.iter().copied());
-            if written.contains(&id) {
-                continue;
-            }
-            let clip_moved = self
-                .layout_results
-                .get(&id)
-                .and_then(|held| held.local.clip)
-                .is_some_and(|clip| moved.contains(&clip));
-            let accessibility = if clip_moved {
-                DirtyMask::ACCESSIBILITY
-            } else {
-                0
-            };
-            // INPUT for accessibility, which takes a box marked so as a
-            // moved seed; the hit index passes over it.
-            self.layout_followers.insert(id);
-            self.mark_moved_by_layout(
-                id,
-                DirtyMask::INPUT | DirtyMask::RENDER | accessibility,
-                true,
-            );
-            self.record_mut(id).render_moved_epoch = epoch;
-            spread += 1;
         }
         self.bump_last_counters(|counters| {
-            counters.record_layout_translations(roots.len(), spread);
+            counters.record_layout_translations(roots.len(), 0);
         });
     }
 }

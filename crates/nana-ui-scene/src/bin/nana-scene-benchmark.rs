@@ -190,6 +190,8 @@ fn leaf(value: u64, shade: f32) -> ExtractedNode {
             width: 160.0,
             height: 2.0,
         },
+        local_layout: Default::default(),
+        layout_frame: nana_ui_runtime::LayoutFrame::Page,
         scroll_offset: nana_ui_runtime::ScrollOffset::default(),
         source_style: NodeStyle {
             layout: Arc::new(LayoutStyle {

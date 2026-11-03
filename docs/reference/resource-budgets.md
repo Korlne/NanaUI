@@ -288,7 +288,26 @@ Scene（2026-11-03）：图元是用绝对坐标的布局盒（加祖先变换�
 | width | 布局 / 整帧 | 760 / 776 | 762 / 778 |
 | 控件页 text | 布局 / 整帧 | 10 / 22 | 10 / 22 |
 
-每次编辑的指令（`RUNS=240` 与 `RUNS=40` 两次 `time -l` 之差除以 200）：height 167.7 M → 139.5 M（−17%）。命中阶段剩下的 0.66 ms：1 012 个写回的行各重建自己那一条（`hit_test_entries_moved` 1 008，`hit_test_nodes_rebuilt` 1 012）、按深度刷新祖先包围盒，以及在约 2 万个仍标 INPUT 的后代里跳过随父节点平移的那些（`layout_followers`；这些 INPUT 标记现在只是给无障碍的移动种子用的，第 3 阶段之后无障碍不再需要时一起去掉）。
+每次编辑的指令（`RUNS=240` 与 `RUNS=40` 两次 `time -l` 之差除以 200）：height 167.7 M → 139.5 M（−17%）。命中阶段剩下的 0.66 ms：1 012 个写回的行各重建自己那一条（`hit_test_entries_moved` 1 008，`hit_test_nodes_rebuilt` 1 012）、按深度刷新祖先包围盒，以及在约 2 万个仍标 INPUT 的后代里跳过随父节点平移的那些（`layout_followers`，第 3 阶段已随这些标记一起去掉）。
+
+相对几何第 3 阶段（2026-11-03）：提交不再把平移子树的后代标脏（`spread_layout_moves`、`layout_followers` 删除），只发平移的根。Scene 按参照系链放置记录，不画东西的记录留在提取时的空间、靠变换跟上，画东西的记录在 Scene 里重新放置并重建（painter 把纯平移吸附到整像素，见 [relative-geometry.md](relative-geometry.md) 3.5）；无障碍只从平移的根往下走一遍记录。42 001 盒（与 715cc0331 交替 8 轮、每轮交换先后读最小值，负载 3.3–4.1，µs；Scene 一行是另做的临时计时，提取阶段里 `apply_delta_with_moves` 那一段，6 轮）：
+
+| 编辑 | 阶段 | 715cc0331 | 第 3 阶段 |
+| --- | --- | ---: | ---: |
+| height | 布局 | 2 059 | 470 |
+| height | 命中 | 648 | 244 |
+| height | 无障碍 | 2 856 | 795 |
+| height | 提取（含 Scene） | 3 735 | 80 |
+| height | 其中 Scene | 1 954 | 48 |
+| height | 整帧 | 11 650 | 1 695 |
+| width | 布局 / 整帧 | 105 / 120 | 108 / 121 |
+| 控件页 text | 布局 / 整帧 | 10 / 22 | 10 / 22 |
+
+每次编辑的指令（`RUNS=240` 与 `RUNS=40` 两次 `time -l` 之差除以 200）：height 127.1 M → 32.0 M（−75%）。无障碍剩下的 0.8 ms 里约 0.17 ms 是往下走的那一遍，其余是 1 008 个平移的行本身的重投影。
+
+画东西的子树平移时（控件页 `CONTROLS=1 edits 2000 height`，62 001 节点，每行 10 个标签加按钮；读最小值，3 轮）：带可见性索引（每帧后调 `visible_operations`，即有 painter 时）整帧 81.6 → 66.2 ms，Scene 54.6 → 50.7 ms，无障碍 9.7 → 2.9 ms；不带可见性索引的无头运行 Scene 27.3 → 34.1 ms，多出的是 `place_painted_records` 扫一遍整张图元表（约 7.6 ms），有 painter 的路径只看根下面的图元。按钮这类带组件几何的节点在平移时仍完整重新提取。painter 段（`nana-text-paint-benchmark --workload reflow`，新增：首个标签高度每帧来回 0.5 px，下面的标签全部平移）：1 000 标签 `batch` p50 0.15 ms、10 000 标签 2.5 ms，前后一致；不重建文字实例（`text_instance_rebuilds` 0），每帧只上传每节点的平移行（10 000 标签 478 KB `text_presentation_upload_bytes`）；`flush` 10 000 标签 26.4 → 27.7 ms（每个标签都是直接平移的根，没有可省的子树）。
+
+公开接口变化：`ExtractedNode` 新增 `local_layout`、`layout_frame`（字面量构造要补上）；`ExtractedMove` 新增同名两项，只给平移的根发；`SystemWork` 新增 `layout_moved`；`UiScene` 新增 `node_layout_bounds`。`UiScene::extracted_node(id).layout` 与 `node_bounds` 现在是记录所在的空间，平移子树里不画东西的记录可能停在提取时的位置；现在的位置用 `node_layout_bounds`，绘制位置仍是 `draw_node_bounds` / `draw_primitive`。
 
 `component-gallery` 的语义快照另有 8 个与此无关的差异（对话框、空状态等文字的 `line_height` 由 `Relative` 变为 `normal`），来自 b1bc92819，不含这些改动的树上同样出现，基线没有重录。
 

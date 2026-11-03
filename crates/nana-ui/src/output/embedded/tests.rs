@@ -37,6 +37,8 @@ fn node(id: u64, bounds: [f32; 4], background: Option<[f32; 4]>) -> ExtractedNod
             width: bounds[2],
             height: bounds[3],
         },
+        local_layout: Default::default(),
+        layout_frame: nana_ui_runtime::LayoutFrame::Page,
         scroll_offset: Default::default(),
         source_style: NodeStyle::default(),
         style: Arc::new(ComputedStyle {

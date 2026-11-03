@@ -5,13 +5,15 @@ impl UiScene {
         if node.source_style.layout.position != nana_ui_core::PositionSpec::Sticky {
             return [0.0; 2];
         }
+        // Boxes where they stand now: a record a move kept is still in the
+        // space it was extracted in.
         let ancestors = node
             .parent
             .into_iter()
             .flat_map(|parent| ancestor_nodes(&self.nodes, parent))
             .map(|(_, ancestor)| nana_ui_runtime::StickyAncestor {
                 style: &ancestor.source_style.layout,
-                bounds: ancestor.layout,
+                bounds: self.placed_layout(ancestor),
                 result: ancestor.layout_result.as_deref(),
                 scroll: ancestor.scroll_offset,
                 font_size: ancestor.style.font_size,
@@ -19,7 +21,7 @@ impl UiScene {
             });
         nana_ui_runtime::sticky_translation(
             &node.source_style.layout,
-            node.layout,
+            self.placed_layout(node),
             node.style.font_size,
             node.style.writing_context(),
             ancestors,
@@ -35,14 +37,30 @@ impl UiScene {
         AffineTransform::from_matrix([1.0, 0.0, 0.0, 1.0, x, y]).then(transform)
     }
 
-    pub(super) fn logical_local_transform(
+    /// `node`'s own logical transform on the page, as its children are
+    /// handed it: about where its box stands now.
+    pub(super) fn logical_page_transform(
         &self,
         node: &ExtractedNode,
         blocks_3d: bool,
     ) -> AffineTransform {
         self.with_sticky_translation(
             node,
-            node_scene_transform(&node.source_style.layout, node.layout, blocks_3d),
+            node_scene_transform(
+                &node.source_style.layout,
+                self.placed_layout(node),
+                blocks_3d,
+            ),
         )
+    }
+
+    /// [`Self::logical_page_transform`] for `node`'s own record, which is in
+    /// the space it was extracted in ([`Self::record_space`]).
+    pub(super) fn logical_local_transform(
+        &self,
+        node: &ExtractedNode,
+        blocks_3d: bool,
+    ) -> AffineTransform {
+        self.record_space(node, self.logical_page_transform(node, blocks_3d))
     }
 }

@@ -81,7 +81,8 @@ impl UiScene {
         super::visibility::transform(self.node_bounds(id)?, transform)
     }
 
-    /// [`Self::draw_node_bounds`] of `rect`, given in `id`'s layout space.
+    /// [`Self::draw_node_bounds`] of `rect`, given in `id`'s layout space
+    /// ([`Self::node_bounds`]): any rectangle of its record or primitives.
     pub fn draw_node_rect(&self, id: StableNodeId, rect: SceneRect) -> Option<SceneRect> {
         let node = self.nodes.get(&id)?;
         let (parent, _, _, blocks_3d) = self.draw_ancestor_state(node);
@@ -265,6 +266,8 @@ mod tests {
                 width: 100.0,
                 height: 80.0,
             },
+            local_layout: Default::default(),
+            layout_frame: nana_ui_runtime::LayoutFrame::Page,
             scroll_offset: Default::default(),
             source_style: NodeStyle::default(),
             style: Arc::new(ComputedStyle {

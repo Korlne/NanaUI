@@ -586,7 +586,9 @@ struct Cost {
     /// resolving their own style.
     measured: usize,
     placed: usize,
-    /// Boxes a container that only moved took along without placing them.
+    /// Boxes a container that only moved took along without placing them:
+    /// counted by the gates from the boxes (`carried`), as nothing visits
+    /// them to count.
     translated: usize,
     origin_only: usize,
     children_walked: usize,
@@ -662,6 +664,28 @@ impl Cost {
     }
 }
 
+/// Boxes `id` of `order` names: each one's local box.
+fn local_boxes(world: &UiWorld, order: &[StableNodeId]) -> Vec<Option<LayoutBox>> {
+    order.iter().map(|id| world.local_layout_box(*id)).collect()
+}
+
+/// Of the boxes that `moved` on the page, those that kept their local box
+/// (`before` against now): a box above took them along, and nothing visits
+/// them for it -- not layout, and not what reads it.
+fn carried(
+    world: &UiWorld,
+    order: &[StableNodeId],
+    before: &[Option<LayoutBox>],
+    moved: &[bool],
+) -> usize {
+    order
+        .iter()
+        .zip(before)
+        .zip(moved)
+        .filter(|((id, before), moved)| **moved && world.local_layout_box(**id) == **before)
+        .count()
+}
+
 /// One case run on a page: what the frame cost and how many boxes it moved.
 struct Case {
     cost: Cost,
@@ -671,16 +695,21 @@ struct Case {
 
 fn run_case(page: &mut Page, scenario: Scenario, position: Position, seeds: u64) -> Case {
     let groups = page.groups_at(position, seeds);
+    let order = page.world().document_order(page.document);
     let before = page.boxes();
+    let before_local = local_boxes(page.world(), &order);
     page.edit(scenario, &groups);
     let counters = page.frame();
-    let moved = before
+    let moved: Vec<bool> = before
         .iter()
         .zip(page.boxes())
-        .filter(|(old, new)| **old != *new)
-        .count();
+        .map(|(old, new)| *old != new)
+        .collect();
+    let mut cost = Cost::from(counters);
+    cost.translated = carried(page.world(), &order, &before_local, &moved);
+    let moved = moved.iter().filter(|moved| **moved).count();
     Case {
-        cost: Cost::from(counters),
+        cost,
         stats: page.context.layout_frontier_stats(page.document),
         moved,
     }
@@ -1608,6 +1637,7 @@ fn issue259_a_label_costs_its_column_not_the_groups_after_it() {
                     .collect::<Vec<_>>()
             };
             let before = boxes(&context);
+            let before_local = local_boxes(context.world(), &order);
             let passes = context.layout_invocations();
             let mut queue = MutationQueue::new();
             queue.set_text(
@@ -1624,7 +1654,8 @@ fn issue259_a_label_costs_its_column_not_the_groups_after_it() {
                 .zip(boxes(&context))
                 .map(|(old, new)| *old != new)
                 .collect();
-            let cost = Cost::from(counters);
+            let mut cost = Cost::from(counters);
+            cost.translated = carried(context.world(), &order, &before_local, &moved);
             if grows {
                 // Every group moved, and only once.
                 assert!(moved[groups..].iter().all(|moved| *moved), "{label_case}");
@@ -1757,6 +1788,7 @@ fn issue259_a_child_list_edit_costs_its_parent_not_the_groups_after_it() {
             for inserting in [true, false] {
                 let case = format!("{case}, inserting {inserting}, {nodes} nodes");
                 let before = boxes(&context);
+                let before_local = local_boxes(context.world(), &order);
                 let passes = context.layout_invocations();
                 let mut queue = MutationQueue::new();
                 if inserting {
@@ -1784,7 +1816,8 @@ fn issue259_a_child_list_edit_costs_its_parent_not_the_groups_after_it() {
                         .any(|id| reflow_oracle::admitted(&context, *id)),
                     "{case}"
                 );
-                let cost = Cost::from(counters);
+                let mut cost = Cost::from(counters);
+                cost.translated = carried(context.world(), &order, &before_local, &moved);
                 let shifted = if grows { order.len() - moving } else { 0 };
                 assert_eq!(cost.origin_only + cost.translated, shifted, "{case}");
                 let moved = moved.iter().filter(|moved| **moved).count();
@@ -1903,6 +1936,7 @@ fn issue259_a_child_list_edit_in_the_page_measures_the_edit_not_the_page() {
                     if leaves { "leaves" } else { "arrives" }
                 );
                 let previous = boxes(&context);
+                let before_local = local_boxes(context.world(), &order);
                 let passes = context.layout_invocations();
                 let mut queue = MutationQueue::new();
                 if leaves {
@@ -1927,7 +1961,8 @@ fn issue259_a_child_list_edit_in_the_page_measures_the_edit_not_the_page() {
                         .any(|id| reflow_oracle::admitted(&context, *id)),
                     "{label}"
                 );
-                let cost = Cost::from(counters);
+                let mut cost = Cost::from(counters);
+                cost.translated = carried(context.world(), &order, &before_local, &moved);
                 let shifted = if head { order.len() - after } else { 0 };
                 assert_eq!(cost.origin_only + cost.translated, shifted, "{label}");
                 let moved = moved.iter().filter(|moved| **moved).count();

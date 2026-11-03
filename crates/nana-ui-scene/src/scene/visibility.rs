@@ -486,6 +486,25 @@ impl VisibilityIndex {
         self.translate_range(at * 2 + 1, mid, end, range, offset);
         self.bounds[at] = union(self.bounds[at * 2], self.bounds[at * 2 + 1]);
     }
+    /// The nodes with a primitive under `root` (`root` among them), in no
+    /// particular order and possibly repeated, into `out`. Viewport-fixed
+    /// descendants are not among them: nothing above them moves them.
+    pub(super) fn painted_under(&self, root: StableNodeId, out: &mut Vec<StableNodeId>) {
+        if self.nodes.contains_key(&root) {
+            out.push(root);
+        }
+        let Some(ranges) = self.descendants.get(&root) else {
+            return;
+        };
+        for range in ranges {
+            for operation in &self.plan.operations[range.clone()] {
+                if let RenderOperation::Draw(id) | RenderOperation::InvokeCustom(id) = operation {
+                    out.push(id.node);
+                }
+            }
+        }
+    }
+
     pub(super) fn translate_subtree(&mut self, root: StableNodeId, offset: [f32; 2]) {
         if let Some(ranges) = self.descendants.get(&root).cloned() {
             #[cfg(debug_assertions)]

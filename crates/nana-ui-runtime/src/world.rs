@@ -953,16 +953,10 @@ pub struct UiWorld {
     /// [`Self::layout_result`]'s answers: each result placed where its box
     /// stands on the page, while it and its box hold.
     page_layout_results: RefCell<crate::NodeMap<PageLayoutResult>>,
-    /// Boxes the commit moved with a box above it and nothing else
-    /// ([`Self::spread_layout_moves`]). Their INPUT marks are for
-    /// accessibility's moved seeds; their hit entries, in their own boxes'
-    /// coordinates, hold, so the coming hit patch passes over them but the
-    /// pinned.
-    layout_followers: NodeSet,
     /// Boxes the commit being applied wrote with a new origin, and whether
     /// that is all that changed, and every box it wrote with a new origin or
     /// size: the boxes under the first move with them
-    /// ([`Self::spread_layout_moves`]).
+    /// ([`Self::settle_layout_moves`]).
     layout_moved_roots: Vec<(StableNodeId, bool)>,
     layout_written: NodeSet,
     /// Document boxes the commit being applied wrote, placed in their frames
@@ -1255,7 +1249,6 @@ impl UiWorld {
             layout_results: crate::NodeMap::default(),
             layout_results_suppressed: NodeSet::default(),
             page_layout_results: RefCell::default(),
-            layout_followers: NodeSet::default(),
             layout_moved_roots: Vec::new(),
             layout_written: NodeSet::default(),
             pending_document_layouts: Vec::new(),
@@ -3291,6 +3284,7 @@ impl UiWorld {
             focus_ime: Vec::new(),
             accessibility: Vec::new(),
             accessibility_moved: Vec::new(),
+            layout_moved: Vec::new(),
             accessibility_removals: sorted_unique(std::mem::take(
                 &mut self.pending_accessibility_removals,
             )),
@@ -6212,10 +6206,7 @@ impl UiWorld {
             self.note_layout_source_change();
         }
         let bits = if bits & DirtyMask::INPUT != 0 && !self.marking_layout_move {
-            // Marked for more than a move: its hit entry is built again.
-            if !self.layout_followers.is_empty() {
-                self.layout_followers.remove(&id);
-            }
+            // Marked for more than a move.
             bits | DirtyMask::INPUT_ELSEWHERE
         } else {
             bits

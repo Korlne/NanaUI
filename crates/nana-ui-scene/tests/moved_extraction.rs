@@ -11,7 +11,7 @@ use nana_ui_runtime::{
     DocumentId, LayoutViewport, MeasureTextShaper, MutationQueue, NodeKind, NodeStyle,
     StableNodeId, TextContent,
 };
-use nana_ui_scene::{RuntimeDocument, UiScene};
+use nana_ui_scene::{AffineTransform, RuntimeDocument, SceneRect, UiScene};
 
 const ROWS: usize = 8;
 const ROOT: u64 = 1;
@@ -44,6 +44,15 @@ fn column_style(padding: f32) -> NodeStyle {
         }),
         ..NodeStyle::default()
     }
+}
+
+fn row_style() -> Arc<LayoutStyle> {
+    Arc::new(LayoutStyle {
+        width: Some(LengthSpec::Px(300.0)),
+        height: Some(LengthSpec::Px(20.0)),
+        direction: Some(FlexDirection::Row),
+        ..LayoutStyle::default()
+    })
 }
 
 fn label_style(foreground: SemanticColorRole) -> NodeStyle {
@@ -103,12 +112,7 @@ fn document() -> RuntimeDocument {
         queue.set_style(
             row_id(row),
             NodeStyle {
-                layout: Arc::new(LayoutStyle {
-                    width: Some(LengthSpec::Px(300.0)),
-                    height: Some(LengthSpec::Px(20.0)),
-                    direction: Some(FlexDirection::Row),
-                    ..LayoutStyle::default()
-                }),
+                layout: row_style(),
                 ..NodeStyle::default()
             },
         );
@@ -125,22 +129,133 @@ fn flush(runtime: &mut RuntimeDocument) {
         .unwrap();
 }
 
+/// `rect` through `transform`, as its bounding box.
+fn drawn(rect: SceneRect, transform: AffineTransform) -> [f32; 4] {
+    let [a, b, c, d, e, f] = transform.0;
+    let corners = [
+        (rect.x, rect.y),
+        (rect.x + rect.width, rect.y),
+        (rect.x, rect.y + rect.height),
+        (rect.x + rect.width, rect.y + rect.height),
+    ]
+    .map(|(x, y)| (a * x + c * y + e, b * x + d * y + f));
+    let left = corners.iter().map(|p| p.0).fold(f32::INFINITY, f32::min);
+    let top = corners.iter().map(|p| p.1).fold(f32::INFINITY, f32::min);
+    let right = corners
+        .iter()
+        .map(|p| p.0)
+        .fold(f32::NEG_INFINITY, f32::max);
+    let bottom = corners
+        .iter()
+        .map(|p| p.1)
+        .fold(f32::NEG_INFINITY, f32::max);
+    [left, top, right, bottom]
+}
+
+fn near(a: [f32; 4], b: [f32; 4]) -> bool {
+    a.iter().zip(b).all(|(a, b)| (a - b).abs() <= 1e-3)
+}
+
 /// Every record the scene holds is a cold extraction of its node, and it
 /// paints what a scene built from a cold extraction paints.
+///
+/// A record a layout move kept -- the root of the moved subtree and every
+/// record under it that paints nothing -- stays in the space it was
+/// extracted in and is placed where its frames stand now when it is read.
+/// So it is its node's cold record but for its page box, and it stands where
+/// the cold one does to the bit. Whatever paints is in page space and
+/// paints exactly the cold primitives, each drawn where the cold scene's is,
+/// through the clips the cold one is cut by.
 fn assert_scene_is_cold(runtime: &RuntimeDocument, frame: &str) {
     let world = runtime.context().world();
     let document = DocumentId::new(1).unwrap();
+    let scene = runtime.scene();
     let mut cold = UiScene::new();
     cold.apply_delta(world.extract_document(document), []);
-    assert!(
-        runtime.scene().primitives().eq(cold.primitives()),
-        "{frame}: the scene paints other than a cold one"
+    let ids: Vec<_> = scene.primitives().map(|primitive| primitive.id).collect();
+    let cold_ids: Vec<_> = cold.primitives().map(|primitive| primitive.id).collect();
+    assert_eq!(
+        ids, cold_ids,
+        "{frame}: the scene paints other primitives than a cold one"
     );
+    for (held, fresh) in scene.primitives().zip(cold.primitives()) {
+        let node = held.node;
+        let kept = scene.node_bounds(node) != scene.node_layout_bounds(node);
+        let (draw, cold_draw) = (
+            scene.draw_primitive(held.id).unwrap(),
+            cold.draw_primitive(fresh.id).unwrap(),
+        );
+        assert!(
+            near(
+                drawn(held.bounds, draw.transform),
+                drawn(fresh.bounds, cold_draw.transform)
+            ),
+            "{frame}: {:?} draws at {:?}, a cold scene at {:?}",
+            held.id,
+            drawn(held.bounds, draw.transform),
+            drawn(fresh.bounds, cold_draw.transform),
+        );
+        assert_eq!(
+            draw.clips.len(),
+            cold_draw.clips.len(),
+            "{frame}: {:?} clips",
+            held.id
+        );
+        for (clip, cold_clip) in draw.clips.iter().zip(cold_draw.clips.iter()) {
+            assert!(
+                near(
+                    drawn(clip.bounds, clip.transform),
+                    drawn(cold_clip.bounds, cold_clip.transform)
+                ),
+                "{frame}: {:?} is cut other than in a cold scene",
+                held.id
+            );
+        }
+        // What paints is placed again where it stands: the painter puts a
+        // translation on whole pixels, so a primitive drawn through one is
+        // not the cold one under a fractional move.
+        assert!(
+            !kept,
+            "{frame}: {:?} paints from a record kept where it was extracted",
+            held.id
+        );
+        // Where it draws and what cuts it are checked above: a scroll
+        // rebases both without rebuilding the primitive.
+        let mut held = held.clone();
+        held.clips = fresh.clips.clone();
+        held.transform = fresh.transform;
+        assert_eq!(
+            &held, fresh,
+            "{frame}: {:?} is not a cold primitive",
+            held.id
+        );
+    }
     for node in world.document_order(document) {
         let cold = world.extract_nodes(&[node]);
+        let (Some(held), Some(cold)) = (scene.extracted_node(node), cold.first()) else {
+            assert_eq!(
+                scene.extracted_node(node).is_some(),
+                cold.first().is_some(),
+                "{frame}: {node:?} is extracted in one scene only"
+            );
+            continue;
+        };
+        let placed = scene.node_layout_bounds(node).unwrap();
         assert_eq!(
-            runtime.scene().extracted_node(node),
-            cold.first(),
+            [placed.x, placed.y, placed.width, placed.height].map(f32::to_bits),
+            [
+                cold.layout.x,
+                cold.layout.y,
+                cold.layout.width,
+                cold.layout.height
+            ]
+            .map(f32::to_bits),
+            "{frame}: {node:?} stands other than where a cold extraction does"
+        );
+        let mut held = held.clone();
+        held.layout = cold.layout;
+        assert_eq!(
+            &held, cold,
             "{frame}: the scene's record for {node:?} is not a cold extraction"
         );
     }
@@ -254,5 +369,201 @@ fn a_button_moved_by_an_inserted_row_paints_like_a_cold_scene() {
         runtime.context_mut().commit_mutations(queue).unwrap();
         flush(&mut runtime);
         assert_scene_is_cold(&runtime, "row inserted");
+    }
+}
+
+fn boxed(layout: LayoutStyle, background: Option<SemanticColorRole>) -> NodeStyle {
+    NodeStyle {
+        layout: Arc::new(layout),
+        background,
+        ..NodeStyle::default()
+    }
+}
+
+fn px(value: f32) -> Option<LengthSpec> {
+    Some(LengthSpec::Px(value))
+}
+
+/// The rows below the column's padding move under a transformed column, and
+/// what they hold reads more than its own offset: a `fixed` box and an
+/// absolute one whose containing block is the page stay where they are, an
+/// absolute one measured from its row's grandparent frame moves with it, a
+/// scrolled container and the sticky box in it move with their row, and so
+/// do a text field and a button. After every frame the scene paints what a
+/// cold one does.
+#[test]
+fn a_moved_subtree_that_reads_the_page_paints_like_a_cold_scene() {
+    use nana_ui_core::{OverflowSpec, PaintTransform, PositionSpec};
+    use nana_ui_runtime::{Button, ScrollOffset, TextInput};
+    let document_id = DocumentId::new(1).unwrap();
+    let mut runtime = document();
+    let mut queue = MutationQueue::new();
+    let element = |queue: &mut MutationQueue, node: u64, parent: StableNodeId, style| {
+        queue.create(
+            id(node),
+            document_id,
+            NodeKind::Element { tag: "div".into() },
+        );
+        queue.insert(parent, id(node), None);
+        queue.set_style(id(node), style);
+    };
+    let column_style = |padding: f32| {
+        let mut style = self::column_style(padding);
+        let layout = Arc::make_mut(&mut style.layout);
+        layout.transform = Some(PaintTransform {
+            a: 0.9,
+            b: 0.1,
+            c: -0.1,
+            d: 0.9,
+            e: 4.0,
+            f: 2.0,
+        });
+        style
+    };
+    queue.set_style(id(COLUMN), column_style(0.0));
+    element(
+        &mut queue,
+        700,
+        row_id(4),
+        boxed(
+            LayoutStyle {
+                position: PositionSpec::Fixed,
+                offset_top: px(5.0),
+                offset_left: px(200.0),
+                width: px(10.0),
+                height: px(10.0),
+                ..LayoutStyle::default()
+            },
+            Some(SemanticColorRole::Danger),
+        ),
+    );
+    element(
+        &mut queue,
+        701,
+        row_id(4),
+        boxed(
+            LayoutStyle {
+                position: PositionSpec::Absolute,
+                offset_top: px(300.0),
+                offset_left: px(220.0),
+                width: px(10.0),
+                height: px(10.0),
+                ..LayoutStyle::default()
+            },
+            Some(SemanticColorRole::Accent),
+        ),
+    );
+    // Row 5 is the containing block of a box inside a static wrapper.
+    let mut relative = (*row_style()).clone();
+    relative.position = PositionSpec::Relative;
+    queue.set_style(row_id(5), boxed(relative, None));
+    element(
+        &mut queue,
+        702,
+        row_id(5),
+        boxed(
+            LayoutStyle {
+                width: px(30.0),
+                height: px(10.0),
+                ..LayoutStyle::default()
+            },
+            None,
+        ),
+    );
+    element(
+        &mut queue,
+        703,
+        id(702),
+        boxed(
+            LayoutStyle {
+                position: PositionSpec::Absolute,
+                offset_top: px(2.0),
+                offset_left: px(150.0),
+                width: px(8.0),
+                height: px(8.0),
+                ..LayoutStyle::default()
+            },
+            Some(SemanticColorRole::Accent),
+        ),
+    );
+    // A scrolled container in row 6, with a sticky box in it.
+    element(
+        &mut queue,
+        704,
+        row_id(6),
+        boxed(
+            LayoutStyle {
+                width: px(60.0),
+                height: px(16.0),
+                direction: Some(FlexDirection::Column),
+                overflow_y: OverflowSpec::Auto,
+                ..LayoutStyle::default()
+            },
+            Some(SemanticColorRole::Text),
+        ),
+    );
+    element(
+        &mut queue,
+        705,
+        id(704),
+        boxed(
+            LayoutStyle {
+                position: PositionSpec::Sticky,
+                offset_top: px(0.0),
+                width: px(40.0),
+                height: px(4.0),
+                ..LayoutStyle::default()
+            },
+            Some(SemanticColorRole::Danger),
+        ),
+    );
+    element(
+        &mut queue,
+        706,
+        id(704),
+        boxed(
+            LayoutStyle {
+                width: px(50.0),
+                height: px(60.0),
+                ..LayoutStyle::default()
+            },
+            Some(SemanticColorRole::Accent),
+        ),
+    );
+    runtime.context_mut().commit_mutations(queue).unwrap();
+    let field = runtime
+        .context_mut()
+        .create_detached_component(document_id, TextInput::new("moved text"))
+        .unwrap()
+        .stable_id();
+    let button = runtime
+        .context_mut()
+        .create_detached_component(document_id, Button::new("Go"))
+        .unwrap()
+        .stable_id();
+    let mut queue = MutationQueue::new();
+    queue.insert(row_id(7), field, None);
+    queue.insert(row_id(7), button, None);
+    runtime.context_mut().commit_mutations(queue).unwrap();
+    flush(&mut runtime);
+    let mut queue = MutationQueue::new();
+    queue.set_scroll_offset(id(704), ScrollOffset { x: 0.0, y: 7.0 });
+    runtime.context_mut().commit_mutations(queue).unwrap();
+    flush(&mut runtime);
+    assert_scene_is_cold(&runtime, "first frame");
+    for (frame, padding, scroll) in [
+        ("moved", 3.0, None),
+        ("moved again", 7.5, None),
+        ("moved and scrolled", 2.25, Some(12.0)),
+        ("back", 0.0, Some(0.0)),
+    ] {
+        let mut queue = MutationQueue::new();
+        queue.set_style(id(COLUMN), column_style(padding));
+        if let Some(y) = scroll {
+            queue.set_scroll_offset(id(704), ScrollOffset { x: 0.0, y });
+        }
+        runtime.context_mut().commit_mutations(queue).unwrap();
+        flush(&mut runtime);
+        assert_scene_is_cold(&runtime, frame);
     }
 }

@@ -19,6 +19,8 @@ fn quad(layout: LayoutStyle) -> ExtractedNode {
             width: 40.0,
             height: 40.0,
         },
+        local_layout: Default::default(),
+        layout_frame: nana_ui_runtime::LayoutFrame::Page,
         scroll_offset: Default::default(),
         style: Arc::new(ComputedStyle {
             background: layout.background,

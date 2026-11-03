@@ -2930,24 +2930,6 @@ impl UiWorld {
         if !self.hit_test_index.contains_key(&document) {
             return false;
         }
-        // A box that only moved with one above it keeps its entry, in its
-        // own box's coordinates, unless that entry is pinned.
-        let followers = std::mem::take(&mut self.layout_followers);
-        let kept_dirty;
-        let dirty = if followers.is_empty() {
-            dirty
-        } else {
-            let index = &self.hit_test_index[&document];
-            kept_dirty = dirty
-                .iter()
-                .copied()
-                .filter(|id| {
-                    !followers.contains(id)
-                        || index.entries.get(id).is_none_or(|hit| hit.entry.pinned)
-                })
-                .collect::<Vec<_>>();
-            kept_dirty.as_slice()
-        };
         // A plain entry is built again on its own, in place; the rest patch
         // the subtrees over them. Entries below a dirty one keep theirs,
         // being in their own boxes' coordinates, but for the pinned.
@@ -3113,7 +3095,6 @@ impl UiWorld {
     /// or layout work. Pointer dispatch walks that tree in z/order with clip
     /// early-out instead of flattening and sorting every query.
     pub fn rebuild_hit_test(&mut self, document: DocumentId) {
-        self.layout_followers.clear();
         let roots = self.document_roots(document);
         let seeds = roots
             .iter()

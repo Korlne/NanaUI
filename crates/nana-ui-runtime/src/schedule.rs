@@ -27,6 +27,9 @@ impl DirtyMask {
     /// Set with every INPUT mark but a layout move's: a node whose INPUT
     /// lacks it moved with its box alone ([`SystemWork::accessibility_moved`]).
     pub(crate) const INPUT_ELSEWHERE: u16 = 1 << 9;
+    /// Layout wrote the box with a new origin: what it holds moved with it
+    /// ([`SystemWork::layout_moved`]).
+    pub(crate) const MOVED: u16 = 1 << 10;
     pub(crate) const ALL: u16 = Self::STYLE
         | Self::TEXT
         | Self::LAYOUT
@@ -36,7 +39,8 @@ impl DirtyMask {
         | Self::ACCESSIBILITY
         | Self::STATE
         | Self::TRANSFORM
-        | Self::INPUT_ELSEWHERE;
+        | Self::INPUT_ELSEWHERE
+        | Self::MOVED;
 
     pub(crate) const fn all() -> Self {
         Self(Self::ALL)
@@ -89,6 +93,11 @@ pub struct SystemWork {
     /// subtree moved with it. Empty never narrows anything: every node of
     /// `input_hit_test` not listed here projects its whole subtree again.
     pub accessibility_moved: Vec<StableNodeId>,
+    /// The boxes layout wrote with a new origin, sorted: each the root of a
+    /// subtree that moved with it, none of which is marked. Consumers that
+    /// keep a moved box's descendants in its coordinates read what under one
+    /// stands elsewhere from here (accessibility's walk below each).
+    pub layout_moved: Vec<StableNodeId>,
     pub accessibility_removals: Vec<StableNodeId>,
     pub render_extraction: Vec<StableNodeId>,
     pub render_removals: Vec<StableNodeId>,
@@ -294,6 +303,9 @@ pub(crate) fn push_work(work: &mut SystemWork, id: StableNodeId, bits: u16) {
             work.accessibility_moved.push(id);
         }
     }
+    if bits & DirtyMask::MOVED != 0 {
+        work.layout_moved.push(id);
+    }
     if bits & DirtyMask::FOCUS_IME != 0 {
         work.focus_ime.push(id);
     }
@@ -354,10 +366,12 @@ mod tests {
         }
         let union = NAMED_BITS.iter().fold(0, |acc, (_, bit)| acc | bit);
         assert_eq!(union & DirtyMask::INPUT_ELSEWHERE, 0);
+        assert_eq!(union & DirtyMask::MOVED, 0);
         assert_eq!(
-            union | DirtyMask::LAYOUT | DirtyMask::INPUT_ELSEWHERE,
+            union | DirtyMask::LAYOUT | DirtyMask::INPUT_ELSEWHERE | DirtyMask::MOVED,
             DirtyMask::ALL,
-            "ALL must include the typed layout lane and mark INPUT as not a layout move's"
+            "ALL must include the typed layout lane, mark INPUT as not a layout \
+             move's and name the boxes layout moved"
         );
         assert!(DirtyMask::all().has(DirtyMask::ALL));
     }

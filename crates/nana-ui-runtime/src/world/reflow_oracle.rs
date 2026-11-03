@@ -254,6 +254,7 @@ fn frame(
                 .extend(&work.accessibility_removals);
             drained.input_hit_test.extend(&work.input_hit_test);
             drained.transform.extend(&work.transform);
+            drained.layout_moved.extend(&work.layout_moved);
             for id in &work.input_hit_test {
                 if work.accessibility_moved.binary_search(id).is_ok() {
                     drained.accessibility_moved.push(*id);
@@ -312,6 +313,8 @@ fn frame(
             .retain(|id| !seeded_input.contains(id));
         drained.accessibility_moved.sort_unstable();
         drained.accessibility_moved.dedup();
+        drained.layout_moved.sort_unstable();
+        drained.layout_moved.dedup();
     }
     // `last_work_counters` keeps the last frame that drained work across idle
     // frames, which reads as that work repeating (#397); an idle frame

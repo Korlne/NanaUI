@@ -149,6 +149,12 @@ enum Workload {
     /// The container zooms from 1x to 2x: a scene scale animation, which may
     /// re-rasterize at a few half-octave steps and never once per frame.
     Zoom,
+    /// The ticker above every label grows and shrinks by half a pixel, so
+    /// every label below moves by a fraction of one and nothing else about
+    /// it changes: a reflow that only moves what it reaches. What the
+    /// painter redoes for it is what relative geometry leaves to the painter
+    /// (`docs/reference/relative-geometry.md`, phase 4).
+    Reflow,
     /// Every label types itself out over a panel, the way a dialogue box
     /// prints a line: a per-glyph reveal. Presentation only: the scene stands
     /// still and only the motion clock moves, so this is the frame a
@@ -176,10 +182,11 @@ impl Workload {
             Self::MultiWindow => "multi-window",
             Self::Zoom => "zoom",
             Self::Reveal => "reveal",
+            Self::Reflow => "reflow",
         }
     }
 
-    const ALL: [Self; 17] = [
+    const ALL: [Self; 18] = [
         Self::Static,
         Self::StaticUnique,
         Self::Color,
@@ -197,6 +204,7 @@ impl Workload {
         Self::MultiWindow,
         Self::Zoom,
         Self::Reveal,
+        Self::Reflow,
     ];
 
     /// Frames before the sampled ones. The churn a settling workload stops
@@ -932,6 +940,10 @@ fn mutate(
         }
         // The clock moves; see `run`.
         Workload::Reveal => {}
+        Workload::Reflow => {
+            let grown = if frame.is_multiple_of(2) { 0.5 } else { 0.0 };
+            queue.set_style(ticker, label_style([LABEL[0], LABEL[1] + grown]));
+        }
         Workload::Zoom => {
             let factor = 1.0 + (frame % 60) as f32 / 60.0;
             let zoomed = Some(PaintTransform {

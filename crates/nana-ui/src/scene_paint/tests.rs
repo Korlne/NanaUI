@@ -5483,6 +5483,8 @@ fn overflow_parent(
             width,
             height,
         },
+        local_layout: Default::default(),
+        layout_frame: nana_ui_runtime::LayoutFrame::Page,
         scroll_offset: nana_ui_runtime::ScrollOffset::default(),
         source_style: NodeStyle {
             layout: Arc::new(nana_ui_core::LayoutStyle {
@@ -5545,6 +5547,8 @@ fn translucent_parent(
             width,
             height,
         },
+        local_layout: Default::default(),
+        layout_frame: nana_ui_runtime::LayoutFrame::Page,
         scroll_offset: nana_ui_runtime::ScrollOffset::default(),
         source_style: NodeStyle {
             layout: Arc::new(nana_ui_core::LayoutStyle {
@@ -5599,6 +5603,8 @@ fn overflowing_text_child(
             width,
             height,
         },
+        local_layout: Default::default(),
+        layout_frame: nana_ui_runtime::LayoutFrame::Page,
         scroll_offset: nana_ui_runtime::ScrollOffset::default(),
         source_style: NodeStyle::default(),
         style: Arc::new(ComputedStyle {
@@ -5667,6 +5673,8 @@ fn host_texture_child(
             width,
             height,
         },
+        local_layout: Default::default(),
+        layout_frame: nana_ui_runtime::LayoutFrame::Page,
         scroll_offset: nana_ui_runtime::ScrollOffset::default(),
         source_style: NodeStyle::default(),
         style: Arc::new(ComputedStyle::default()),
@@ -5736,6 +5744,8 @@ fn extracted_div(
             width,
             height,
         },
+        local_layout: Default::default(),
+        layout_frame: nana_ui_runtime::LayoutFrame::Page,
         scroll_offset: nana_ui_runtime::ScrollOffset::default(),
         source_style: NodeStyle {
             layout: Arc::new(layout),
