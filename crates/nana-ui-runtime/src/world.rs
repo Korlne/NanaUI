@@ -6452,7 +6452,40 @@ fn layout_result_projects_new_geometry(
     previous.child_placements = std::sync::Arc::clone(&next.child_placements);
     previous.containing_block = next.containing_block;
     previous.dependencies = std::sync::Arc::clone(&next.dependencies);
+    // A container's record of where its children sit projects nothing of
+    // its own: a child whose box moved publishes and projects itself. Kept
+    // in the comparison, one child resized marks its parent, and the hit
+    // index then patches the parent's whole subtree -- the document, for a
+    // row of the root.
+    if previous.fragments != next.fragments
+        && own_fragments(&previous.fragments).eq(own_fragments(&next.fragments))
+    {
+        previous.fragments = next.fragments.clone();
+    }
+    if previous.parts != next.parts && own_parts(&previous.parts).eq(own_parts(&next.parts)) {
+        previous.parts = next.parts.clone();
+    }
     !previous.geometry_eq(next)
+}
+
+/// The fragments of a result other than its children's placements.
+fn own_fragments(
+    fragments: &[crate::LayoutFragment],
+) -> impl Iterator<Item = &crate::LayoutFragment> {
+    use crate::LayoutFragmentKind as Kind;
+    fragments.iter().filter(|fragment| {
+        !matches!(
+            fragment.kind,
+            Kind::FlexChildPlacement | Kind::GridChildPlacement | Kind::ChildPlacement
+        )
+    })
+}
+
+/// The parts of a result other than its children's placements.
+fn own_parts(parts: &[crate::LayoutPart]) -> impl Iterator<Item = &crate::LayoutPart> {
+    parts
+        .iter()
+        .filter(|part| part.kind != crate::LayoutPartKind::ChildPlacement)
 }
 
 /// Classify a style mutation at the layout authority boundary: the

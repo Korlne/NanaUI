@@ -11,6 +11,7 @@
 //! FRAME_PATH=1 cargo run --release -- wide  # the product frame's first layout
 //!                                          # (`layout_document_for_viewport`), not a full pass
 //! CONTROLS=1 cargo run --release -- wide    # a page of labels and buttons instead of bare boxes
+//! cargo run --release -- edits 200,2000   # one edit a product frame: layout and frame time
 //! cargo run --release -- stages 250,500    # a deep frame's least time per stage
 //! ```
 //!
@@ -29,8 +30,8 @@ use std::time::Instant;
 use nana_ui_core::{LayoutStyle, LengthSpec};
 use nana_ui_runtime::view::{IntoView, text, widget};
 use nana_ui_runtime::{
-    AppContext, Button, ComputedStyle, DocumentId, LayoutViewport, StableNodeId, Stack, Text,
-    TextContent, TextMetrics, TextShapeConstraints, TextShaper,
+    AppContext, Button, ComputedStyle, DocumentId, FrameStage, LayoutViewport, MutationQueue,
+    StableNodeId, Stack, Text, TextContent, TextMetrics, TextShapeConstraints, TextShaper,
 };
 use nana_ui_scene::RuntimeDocument;
 
@@ -74,29 +75,23 @@ unsafe impl GlobalAlloc for Counting {
 #[global_allocator]
 static GLOBAL: Counting = Counting;
 
-/// A page-shaped tree: `rows` rows of `cells` cells under one column, each
-/// cell a column holding a row (four levels, `1 + rows * (1 + 2 * cells)`
-/// boxes). Returns the microseconds the layout took and those the build and
-/// layout took together, the live heap bytes
-/// the laid-out tree holds and the allocation calls the layout made, the
-/// first and last without building it.
-fn nana_wide(rows: usize, cells: usize) -> (f64, f64, isize, isize) {
-    let document = DocumentId::new(1).unwrap();
-    let before = LIVE.load(Ordering::Relaxed);
-    let built = Instant::now();
-    let mut cx = AppContext::new();
+/// The wide page: a 1280 px column of `rows` rows of `cells` cells. Returns
+/// the middle row's sixth cell's leaf (its label on a controls page), which
+/// `edits` changes.
+fn nana_page(cx: &mut AppContext, document: DocumentId, rows: usize, cells: usize) -> StableNodeId {
+    let mut target = None;
     let root = cx
         .create_component(document, Stack::column(0.0).width(LengthSpec::Px(1280.0)))
         .unwrap();
     // `CONTROLS=1`: a page of controls, not bare boxes -- every cell holds a
     // label and a button, so the passes meet visuals, text and their tables.
     let controls = std::env::var_os("CONTROLS").is_some();
-    for _ in 0..rows {
+    for r in 0..rows {
         let row = cx
             .create_detached_component(document, Stack::row(4.0))
             .unwrap();
         cx.append_child(root, row).unwrap();
-        for _ in 0..cells {
+        for c in 0..cells {
             if controls {
                 let cell = cx
                     .create_detached_component(document, Stack::column(2.0))
@@ -106,6 +101,9 @@ fn nana_wide(rows: usize, cells: usize) -> (f64, f64, isize, isize) {
                     .create_detached_component(document, Text::new("Label"))
                     .unwrap();
                 cx.append_child(cell, label).unwrap();
+                if (r, c) == (rows / 2, cells / 2) {
+                    target = Some(label.stable_id());
+                }
                 let button = cx
                     .create_detached_component(document, Button::new("Go"))
                     .unwrap();
@@ -128,8 +126,26 @@ fn nana_wide(rows: usize, cells: usize) -> (f64, f64, isize, isize) {
                 )
                 .unwrap();
             cx.append_child(cell, leaf).unwrap();
+            if (r, c) == (rows / 2, cells / 2) {
+                target = Some(leaf.stable_id());
+            }
         }
     }
+    target.unwrap()
+}
+
+/// A page-shaped tree: `rows` rows of `cells` cells under one column, each
+/// cell a column holding a row (four levels, `1 + rows * (1 + 2 * cells)`
+/// boxes). Returns the microseconds the layout took and those the build and
+/// layout took together, the live heap bytes
+/// the laid-out tree holds and the allocation calls the layout made, the
+/// first and last without building it.
+fn nana_wide(rows: usize, cells: usize) -> (f64, f64, isize, isize) {
+    let document = DocumentId::new(1).unwrap();
+    let before = LIVE.load(Ordering::Relaxed);
+    let built = Instant::now();
+    let mut cx = AppContext::new();
+    nana_page(&mut cx, document, rows, cells);
     let calls = CALLS.load(Ordering::Relaxed);
     let start = Instant::now();
     // `SKIP_LAYOUT` leaves the build alone in a `reps` run: subtracting it
@@ -153,11 +169,11 @@ fn nana_wide(rows: usize, cells: usize) -> (f64, f64, isize, isize) {
 }
 
 /// The same page laid out by Taffy.
-fn taffy_wide(rows: usize, cells: usize) -> (f64, f64, isize, isize) {
+/// [`nana_page`] in Taffy: the tree, its root and the leaf `edits` changes.
+fn taffy_page(rows: usize, cells: usize) -> (taffy::TaffyTree<()>, taffy::NodeId, taffy::NodeId) {
     use taffy::prelude::*;
-    let before = LIVE.load(Ordering::Relaxed);
-    let built = Instant::now();
     let mut tree: TaffyTree<()> = TaffyTree::new();
+    let mut target = None;
     let padding = Rect {
         left: length(0.25_f32),
         right: length(0.25_f32),
@@ -165,9 +181,9 @@ fn taffy_wide(rows: usize, cells: usize) -> (f64, f64, isize, isize) {
         bottom: length(0.25_f32),
     };
     let mut row_nodes = Vec::with_capacity(rows);
-    for _ in 0..rows {
+    for r in 0..rows {
         let mut cell_nodes = Vec::with_capacity(cells);
-        for _ in 0..cells {
+        for c in 0..cells {
             let leaf = tree
                 .new_leaf(Style {
                     size: Size {
@@ -181,6 +197,9 @@ fn taffy_wide(rows: usize, cells: usize) -> (f64, f64, isize, isize) {
                     ..Default::default()
                 })
                 .unwrap();
+            if (r, c) == (rows / 2, cells / 2) {
+                target = Some(leaf);
+            }
             let cell = tree
                 .new_with_children(
                     Style {
@@ -220,6 +239,14 @@ fn taffy_wide(rows: usize, cells: usize) -> (f64, f64, isize, isize) {
             &row_nodes,
         )
         .unwrap();
+    (tree, root, target.unwrap())
+}
+
+fn taffy_wide(rows: usize, cells: usize) -> (f64, f64, isize, isize) {
+    use taffy::prelude::*;
+    let before = LIVE.load(Ordering::Relaxed);
+    let built = Instant::now();
+    let (mut tree, root, _) = taffy_page(rows, cells);
     let calls = CALLS.load(Ordering::Relaxed);
     let start = Instant::now();
     tree.compute_layout(
@@ -236,6 +263,104 @@ fn taffy_wide(rows: usize, cells: usize) -> (f64, f64, isize, isize) {
     let held = LIVE.load(Ordering::Relaxed) - before;
     drop(tree);
     (took, total, held, calls)
+}
+
+/// One edit to the [`nana_page`] at a time, each in a product frame
+/// (`RuntimeDocument::flush`) after the first: the least layout stage and
+/// the least whole flush over `runs` edits, in microseconds. `width` and
+/// `height` toggle the target leaf's width or minimum height (the second
+/// moves every row below it); `text` toggles a controls page's label.
+fn nana_edits(rows: usize, cells: usize, edit: &str, runs: usize) -> (f64, f64) {
+    let document = DocumentId::new(1).unwrap();
+    let mut runtime = RuntimeDocument::new(document);
+    let target = nana_page(runtime.context_mut(), document, rows, cells);
+    let viewport = LayoutViewport::new(1280.0, 800.0);
+    runtime.flush(viewport, &mut FixedShaper).unwrap();
+    let (mut layout, mut whole) = (f64::INFINITY, f64::INFINITY);
+    for run in 0..runs {
+        let on = run % 2 == 0;
+        let cx = runtime.context_mut();
+        let mut queue = MutationQueue::new();
+        if edit == "text" {
+            let value = if on { "Label two" } else { "Label" };
+            queue.set_text(
+                target,
+                TextContent {
+                    value: value.into(),
+                },
+            );
+        } else {
+            let mut style = cx.world().node_style(target).unwrap().clone();
+            let spec = std::sync::Arc::make_mut(&mut style.layout);
+            match edit {
+                "width" => spec.width = Some(LengthSpec::Px(if on { 32.0 } else { 24.0 })),
+                "height" => spec.min_height = Some(LengthSpec::Px(if on { 24.0 } else { 16.0 })),
+                other => panic!("unknown edit {other}"),
+            }
+            queue.set_style(target, style);
+        }
+        cx.commit_mutations(queue).unwrap();
+        let start = Instant::now();
+        runtime.flush(viewport, &mut FixedShaper).unwrap();
+        whole = whole.min(start.elapsed().as_secs_f64() * 1e6);
+        let stage: f64 = runtime
+            .context()
+            .last_frame_profile()
+            .stages
+            .iter()
+            .filter(|timing| timing.stage == FrameStage::Layout)
+            .map(|timing| timing.duration.as_secs_f64() * 1e6)
+            .sum();
+        layout = layout.min(stage);
+        if run + 1 == runs && std::env::var_os("PRINT_COUNTERS").is_some() {
+            let w = runtime.context().last_work_counters();
+            eprintln!(
+                "{edit}: seeds {} full {} local {} measure {} hits {} misses {} place {} reused {} changed {} origin {} commits {} children {} plans {}/{} suffix {}",
+                w.layout_frontier_seeds,
+                w.layout_full_document_fallbacks,
+                w.layout_local_subtree_fallbacks,
+                w.layout_measure_nodes,
+                w.layout_measure_cache_hits,
+                w.layout_measure_cache_misses,
+                w.layout_placement_nodes,
+                w.layout_result_reused,
+                w.layout_result_changed,
+                w.layout_origin_only_updates,
+                w.layout_delta_commits,
+                w.layout_result_children_visited,
+                w.layout_placement_plans_reused,
+                w.layout_measure_plans_reused,
+                w.layout_suffixes_replayed,
+            );
+        }
+    }
+    (layout, whole)
+}
+
+/// [`nana_edits`] in Taffy: the least `compute_layout` after each edit.
+fn taffy_edits(rows: usize, cells: usize, edit: &str, runs: usize) -> f64 {
+    use taffy::prelude::*;
+    let (mut tree, root, target) = taffy_page(rows, cells);
+    let available = Size {
+        width: AvailableSpace::Definite(1280.0),
+        height: AvailableSpace::Definite(800.0),
+    };
+    tree.compute_layout(root, available).unwrap();
+    let mut least = f64::INFINITY;
+    for run in 0..runs {
+        let on = run % 2 == 0;
+        let mut style = tree.style(target).unwrap().clone();
+        match edit {
+            "width" => style.size.width = length(if on { 32.0_f32 } else { 24.0 }),
+            "height" => style.min_size.height = length(if on { 24.0_f32 } else { 16.0 }),
+            other => panic!("unknown edit {other}"),
+        }
+        tree.set_style(target, style).unwrap();
+        let start = Instant::now();
+        tree.compute_layout(root, available).unwrap();
+        least = least.min(start.elapsed().as_secs_f64() * 1e6);
+    }
+    least
 }
 
 struct FixedShaper;
@@ -559,6 +684,36 @@ fn main() {
                         whole / boxes as f64,
                         held / boxes as isize,
                         calls as f64 / boxes as f64
+                    );
+                }
+            }
+        }
+        Some("edits") => {
+            // One edit a frame on the wide page: `edits 200,2000 [width,height]`.
+            // A controls page (`CONTROLS=1`) edits its label's text.
+            let rows: Vec<usize> = match arg(1) {
+                Some(list) => list.split(',').map(|r| r.parse().unwrap()).collect(),
+                None => vec![200, 2000, 6400],
+            };
+            let controls = std::env::var_os("CONTROLS").is_some();
+            let edits: Vec<&str> = match arg(2) {
+                Some(list) => list.split(',').collect(),
+                None if controls => vec!["text"],
+                None => vec!["width", "height"],
+            };
+            println!("| engine | boxes | edit | layout | whole frame | taffy layout |");
+            println!("| --- | ---: | --- | ---: | ---: | ---: |");
+            for rows in rows {
+                let boxes = 1 + rows * (1 + if controls { 3 } else { 2 } * 10);
+                for edit in &edits {
+                    let (layout, whole) = nana_edits(rows, 10, edit, 40);
+                    let taffy = if controls {
+                        "-".to_owned()
+                    } else {
+                        format!("{:.1} µs", taffy_edits(rows, 10, edit, 40))
+                    };
+                    println!(
+                        "| nana | {boxes} | {edit} | {layout:.1} µs | {whole:.1} µs | {taffy} |"
                     );
                 }
             }

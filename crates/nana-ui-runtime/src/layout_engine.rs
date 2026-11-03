@@ -253,6 +253,7 @@ impl RuntimeLayoutEngine {
                 retained.container_plans.clear();
                 retained.remote_overlays.clear();
                 retained.measure_plans.clear();
+                retained.line_boxes.clear();
                 retained.materialized_inputs = emitted.len();
                 return Ok(emitted);
             }
@@ -321,6 +322,20 @@ impl RuntimeLayoutEngine {
         }
         frontier.note_dependency_walk(metric_edges);
         retained.frontier_stats = LayoutFrontierStats::from_frontier(&frontier);
+        // Whether a box holds a line box changes with it or with something
+        // inside it: drop the answer up every affected node's ancestors. The
+        // walk does not stop at a box with no answer, since one holding a
+        // line box of its own settles without asking its children; it stops
+        // where an earlier walk already went up.
+        let mut cleared = crate::NodeSet::default();
+        for &id in &affected {
+            let mut cursor = Some(id);
+            while let Some(node) = cursor.filter(|node| cleared.insert(*node)) {
+                retained.line_boxes.remove(&node);
+                cursor = world.parent_id(node);
+            }
+        }
+        nodes.line_boxes = std::cell::RefCell::new(std::mem::take(&mut retained.line_boxes));
         // Used-size memos on the measure frontier are stale. Intrinsic facts
         // stay until publication so an identical recompute does not bump generation.
         for id in frontier.measure_nodes() {
@@ -491,6 +506,7 @@ impl RuntimeLayoutEngine {
         // A first layout's retained tables are empty: they take the pass's
         // tables whole instead of copying them entry by entry.
         retained.used_padding.absorb(&mut nodes.used_padding);
+        retained.line_boxes = nodes.line_boxes.take();
         retained.far_start.absorb(&mut nodes.far_start);
         retained.contexts.absorb(&mut nodes.contexts);
         retained.inline_objects.extend(nodes.inline_objects.drain());
@@ -642,6 +658,7 @@ impl RuntimeLayoutEngine {
             retained
                 .applied_adjustments
                 .retain(|id, _| world.contains(*id));
+            retained.line_boxes.retain(|id, _| world.contains(*id));
         }
         if retained.intrinsics.len() > universe.saturating_mul(2) {
             retained.intrinsics.retain(|id, _| world.contains(*id));
@@ -1020,6 +1037,12 @@ struct DocumentLayoutCache {
     line_solves: HashMap<StableNodeId, dynamic::RetainedLineSolve>,
     /// What each box a line shrank resolved inside itself.
     applied_adjustments: HashMap<StableNodeId, dynamic::AppliedAdjustment>,
+    /// Which boxes hold an in-flow line box ([`UiWorld::holds_line_box_in`]),
+    /// kept across passes. The answer reads only a box and what is inside
+    /// it, so a pass drops it for its affected nodes and their ancestors and
+    /// keeps the rest: asking it of the document's root after one edit would
+    /// otherwise walk the whole tree again.
+    line_boxes: crate::NodeMap<bool>,
     frontier_stats: LayoutFrontierStats,
     /// The frontier of the most recent pass, so diagnostics can say why a
     /// node was laid out again. Empty after a full pass.
@@ -1289,6 +1312,7 @@ impl DocumentLayoutCache {
         self.envelopes.clear();
         self.line_solves.clear();
         self.applied_adjustments.clear();
+        self.line_boxes.clear();
         self.frontier_stats = LayoutFrontierStats::default();
         self.last_frontier = LayoutFrontier::default();
         self.execution_stats = LayoutExecutionStats::default();
@@ -2583,22 +2607,39 @@ impl<'a> LayoutInputMap<'a> {
     }
 
     /// Whether `id` holds an in-flow line box: [`UiWorld::holds_line_box_in`]
-    /// on this pass's memo.
+    /// on the retained memo.
     fn holds_line_box(&self, id: StableNodeId) -> bool {
-        self.world
-            .holds_line_box_in(id, &mut self.line_boxes.borrow_mut())
+        self.checked_line_boxes(id, UiWorld::holds_line_box_in)
     }
 
-    /// [`UiWorld::line_boxes_are_descendants_in`] on this pass's memo.
+    /// [`UiWorld::line_boxes_are_descendants_in`] on the retained memo.
     fn line_boxes_are_descendants(&self, id: StableNodeId) -> bool {
-        self.world
-            .line_boxes_are_descendants_in(id, &mut self.line_boxes.borrow_mut())
+        self.checked_line_boxes(id, UiWorld::line_boxes_are_descendants_in)
     }
 
-    /// [`UiWorld::atom_sits_on_line_box`] on this pass's memo.
+    /// [`UiWorld::atom_sits_on_line_box`] on the retained memo.
     fn atom_sits_on_line_box(&self, id: StableNodeId) -> bool {
-        self.world
-            .atom_sits_on_line_box_in(id, &mut self.line_boxes.borrow_mut())
+        self.checked_line_boxes(id, UiWorld::atom_sits_on_line_box_in)
+    }
+
+    /// `ask` on the line-box memo. The memo outlives the pass, so a test
+    /// build checks its answer against a fresh walk wherever that walk
+    /// stays cheap.
+    fn checked_line_boxes(
+        &self,
+        id: StableNodeId,
+        ask: fn(&UiWorld, StableNodeId, &mut crate::NodeMap<bool>) -> bool,
+    ) -> bool {
+        let answer = ask(self.world, id, &mut self.line_boxes.borrow_mut());
+        #[cfg(any(test, feature = "layout-verify"))]
+        if self.world.len() <= 4096 {
+            assert_eq!(
+                answer,
+                ask(self.world, id, &mut crate::NodeMap::default()),
+                "{id:?}: the retained line-box answer is stale"
+            );
+        }
+        answer
     }
 
     /// Whether `id` aligns by its border-box bottom rather than a text
