@@ -7056,12 +7056,22 @@ fn an_unfocused_field_shows_its_start_and_its_focusing_click_lands_there() {
         "the caret is left at the end"
     );
     assert!(context.focus_node(document, node).unwrap());
-    assert!(text_x(&mut context) < start, "focused, it shows the caret at the end");
+    assert!(
+        text_x(&mut context) < start,
+        "focused, it shows the caret at the end"
+    );
     assert!(context.clear_focus(document).unwrap());
-    assert_eq!(text_x(&mut context), start, "unfocused, it shows its start again");
+    assert_eq!(
+        text_x(&mut context),
+        start,
+        "unfocused, it shows its start again"
+    );
 
     let mut adapter = TestInput::default();
-    for (gesture, at) in [(pointer_down(3.0, 10.0), 1_000), (pointer_up(3.0, 10.0), 1_010)] {
+    for (gesture, at) in [
+        (pointer_down(3.0, 10.0), 1_000),
+        (pointer_up(3.0, 10.0), 1_010),
+    ] {
         adapter
             .dispatch_with_shaper(
                 &mut context,
@@ -7074,5 +7084,8 @@ fn an_unfocused_field_shows_its_start_and_its_focusing_click_lands_there() {
     }
     assert_eq!(context.world().focused(document), Some(node));
     let caret = context.world().text_input(node).unwrap().selection.focus;
-    assert!(caret <= 1, "the click lands at the start it saw, not at {caret}");
+    assert!(
+        caret <= 1,
+        "the click lands at the start it saw, not at {caret}"
+    );
 }
