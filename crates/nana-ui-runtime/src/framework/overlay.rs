@@ -473,7 +473,7 @@ impl AppContext {
                 button.project(target, &self.world, &mut mutations);
                 button
             });
-            mutations.set_overlay_host(target, crate::OverlayHostState::default());
+            mutations.set_overlay_host(lifecycle.host, crate::OverlayHostState::default());
             closed_tooltips.push((target, button));
         }
         let captures = self.world.pointer_captures(document);

@@ -590,6 +590,10 @@ enum LoadingComponent {
 
 #[derive(Debug, Clone, Copy)]
 struct TooltipLifecycle {
+    /// The overlay host the tooltip hangs under: the target itself, or for
+    /// a target with children of its own (a [`crate::ListItem`]'s slots) a
+    /// zero-size anchor under it, since a host shows only its active child.
+    host: StableNodeId,
     overlay: StableNodeId,
     show_at: Option<Duration>,
     open: bool,
@@ -4290,9 +4294,9 @@ impl AppContext {
         self.child_structure_owners
             .retain(|node, owner| !removed.contains(node) && !removed.contains(owner));
         self.pending_modal_syncs.retain(|id| !removed.contains(id));
-        self.component_lifecycle
-            .tooltips
-            .retain(|_, tooltip| !removed.contains(&tooltip.overlay));
+        self.component_lifecycle.tooltips.retain(|_, tooltip| {
+            !removed.contains(&tooltip.overlay) && !removed.contains(&tooltip.host)
+        });
         self.assembled.retain(|parent, slots| {
             if removed.contains(parent) {
                 return false;

@@ -733,15 +733,37 @@ impl AppContext {
                 let tooltip =
                     Tooltip::with_config(Arc::clone(&configured.label), configured.config);
                 let mut mutations = MutationQueue::new();
+                // A host shows only its active child: a row hangs the
+                // tooltip under an anchor of its own, so its slots stay.
+                let host = if self
+                    .views
+                    .get(&id)
+                    .is_some_and(|view| view.is::<ListItem>())
+                {
+                    let anchor = self.allocate_id();
+                    mutations.create(
+                        anchor,
+                        document,
+                        crate::NodeKind::Element {
+                            tag: TOOLTIP_ANCHOR_TAG.into(),
+                        },
+                    );
+                    mutations.set_style(anchor, tooltip_anchor_style());
+                    mutations.insert(id, anchor, None);
+                    anchor
+                } else {
+                    id
+                };
                 mutations.create(overlay, document, tooltip.node_kind());
                 tooltip.project(overlay, &self.world, &mut mutations);
-                mutations.insert(id, overlay, None);
-                mutations.set_overlay_host(id, crate::OverlayHostState::default());
+                mutations.insert(host, overlay, None);
+                mutations.set_overlay_host(host, crate::OverlayHostState::default());
                 self.world.commit(mutations)?;
                 self.install_view(overlay, tooltip);
                 self.component_lifecycle.tooltips.insert(
                     id,
                     TooltipLifecycle {
+                        host,
                         overlay,
                         show_at: None,
                         open: false,
@@ -764,8 +786,12 @@ impl AppContext {
             }
             (None, Some(existing)) => {
                 let mut mutations = MutationQueue::new();
-                mutations.set_overlay_host(id, crate::OverlayHostState::default());
-                mutations.despawn_subtree(existing.overlay);
+                if existing.host == id {
+                    mutations.set_overlay_host(id, crate::OverlayHostState::default());
+                    mutations.despawn_subtree(existing.overlay);
+                } else {
+                    mutations.despawn_subtree(existing.host);
+                }
                 self.world.commit(mutations)?;
                 self.views.remove(&existing.overlay);
                 self.component_lifecycle.tooltips.remove(&id);
@@ -1220,9 +1246,14 @@ impl AppContext {
                 button.tooltip_open = overlay.is_some();
             })?;
         }
+        let host = self
+            .component_lifecycle
+            .tooltips
+            .get(&target)
+            .map_or(target, |lifecycle| lifecycle.host);
         let mut mutations = MutationQueue::new();
         mutations.set_overlay_host(
-            target,
+            host,
             crate::OverlayHostState {
                 active: overlay,
                 restore_focus: None,
@@ -1700,6 +1731,20 @@ impl AppContext {
         })?;
         Ok(())
     }
+}
+
+/// The tag of the node a [`ListItem`] hangs its tooltip under.
+pub(crate) const TOOLTIP_ANCHOR_TAG: &str = "tooltip-anchor";
+
+/// Out of the row's flow and boxless: the tooltip places itself in the
+/// viewport.
+fn tooltip_anchor_style() -> crate::NodeStyle {
+    let mut style = crate::NodeStyle::default();
+    let layout = Arc::make_mut(&mut style.layout);
+    layout.position = nana_ui_core::PositionSpec::Absolute;
+    layout.width = Some(LengthSpec::Px(0.0));
+    layout.height = Some(LengthSpec::Px(0.0));
+    style
 }
 
 /// The per-type upkeep [`crate::ComponentView::lifecycle`] names, as free

@@ -6990,6 +6990,7 @@ mod issue394;
 mod issue396;
 mod issue397;
 mod issue398;
+mod list_item_tooltip;
 mod reflow_oracle;
 #[cfg(test)]
 mod tests;

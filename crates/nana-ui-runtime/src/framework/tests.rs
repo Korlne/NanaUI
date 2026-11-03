@@ -9661,9 +9661,13 @@ fn list_item_tooltip_opens_on_hover_even_when_read_only() {
         )
         .unwrap();
     context.advance_animations(Duration::from_millis(360));
+    // The row hangs it under an anchor of its own, leaving its slots shown.
+    let tooltip = context.component_tooltip(row).unwrap().unwrap().stable_id();
+    let host = context.world().parent_id(tooltip).unwrap();
+    assert_eq!(context.world().parent_id(host), Some(row.stable_id()));
     let overlay = context
         .world()
-        .overlay_host(row.stable_id())
+        .overlay_host(host)
         .unwrap()
         .active
         .expect("the row's tooltip is open");
@@ -9680,12 +9684,10 @@ fn list_item_tooltip_opens_on_hover_even_when_read_only() {
             .unwrap()
             .pointer_events
     );
-    assert_eq!(
-        context
-            .world()
-            .overlay_host(row.stable_id())
-            .and_then(|host| host.active),
-        None
+    assert!(context.component_tooltip(row).unwrap().is_none());
+    assert!(
+        context.world().node(host).is_none(),
+        "the anchor goes with it"
     );
 }
 

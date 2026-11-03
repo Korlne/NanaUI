@@ -36,7 +36,7 @@ list_item("设置").detail("外观").selected(current).on_activate(open)
 
 `note` 画在主文本后面，和 `detail` 同字号、同取色，同样不改变行高。适合主文本是名称、`note` 写标识这类成对的名字：`list_item("Angle X").note("ParamAngleX")`。
 
-悬停气泡用组件上的 `ListItem::with_tooltip`（`tooltip: Option<IconButtonTooltip>`，配置同 `IconButton`），指针停在行本身（不在前导、尾随槽里）超过延迟就出现，适合放主文本以外的补充说明。空标签或 `None` 没有气泡；禁用的行不显示。只读行有气泡时仍接指针来显示它，但不悬停高亮、不进 Tab、不发 `Activate`。
+悬停气泡用组件上的 `ListItem::with_tooltip`（`tooltip: Option<IconButtonTooltip>`，配置同 `IconButton`），指针停在行本身（不在前导、尾随槽里）超过延迟就出现，适合放主文本以外的补充说明。空标签或 `None` 没有气泡；禁用的行不显示。只读行有气泡时仍接指针来显示它，但不悬停高亮、不进 Tab、不发 `Activate`。气泡挂在行下一个零尺寸的锚点上（`AppContext::component_tooltip` 查询），所以有气泡的行照样画出前导、内容与尾随槽。
 
 宽度先给主文本和行尾的 `detail`，`note` 只用两者之间剩下的地方，放不下时省略；剩下的连一小段都不够时不画。挂了 content 槽时和 `detail` 一样不画。
 
