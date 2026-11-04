@@ -87,11 +87,13 @@ impl<P: RuntimeProgram> HeadlessHost<P> {
     ) -> Result<(Size<u32>, Vec<u8>), AgentError> {
         let error = |error: &dyn std::fmt::Display| AgentError(error.to_string());
         self.runtime.present(id);
-        let geometry = self
+        // Painted as the native host paints it: in the window's content
+        // geometry, so a content zoom shows.
+        let window = self
             .runtime
             .window(id)
-            .ok_or_else(|| AgentError(format!("no window {}", id.0)))?
-            .geometry;
+            .ok_or_else(|| AgentError(format!("no window {}", id.0)))?;
+        let geometry = window.geometry.content(window.content_zoom);
         let size = Size::new(geometry.physical_size.0, geometry.physical_size.1);
         let gpu = self.runtime.gpu().clone();
         let texture = gpu

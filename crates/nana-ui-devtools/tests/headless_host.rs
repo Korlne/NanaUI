@@ -23,6 +23,7 @@ enum Message {
     AuxCreated(Result<WindowId, String>),
     Browse,
     Export,
+    Zoom(f32),
 }
 
 #[derive(Default)]
@@ -121,6 +122,13 @@ impl RuntimeProgram for Probe {
                 window_commands: vec![WindowCommand::OpenFileDialog {
                     id: WindowId::PRIMARY,
                     request: FileDialogRequest::new(7, FileDialogKind::OpenFile),
+                }],
+                ..RuntimeProgramUpdate::default()
+            },
+            Message::Zoom(zoom) => RuntimeProgramUpdate {
+                window_commands: vec![WindowCommand::SetContentZoom {
+                    id: WindowId::PRIMARY,
+                    zoom,
                 }],
                 ..RuntimeProgramUpdate::default()
             },
@@ -321,4 +329,46 @@ fn a_screenshot_paints_the_primary_document() {
         .map(|pixel| [pixel[0], pixel[1], pixel[2]])
         .collect();
     assert!(colors.len() > 8, "only {} colours painted", colors.len());
+}
+
+/// The right and bottom edges of what is not the clear colour.
+fn painted_extent(size: (u32, u32), pixels: &[u8]) -> (u32, u32) {
+    let mut extent = (0, 0);
+    for (index, pixel) in pixels.chunks(4).enumerate() {
+        if pixel[..3] != [0, 0, 0] {
+            let (x, y) = (index as u32 % size.0, index as u32 / size.0);
+            extent = (extent.0.max(x + 1), extent.1.max(y + 1));
+        }
+    }
+    extent
+}
+
+/// A content zoom paints as the native host does: what the document draws
+/// in its smaller content viewport comes out twice as large on the same
+/// surface, not at its old size in the top-left corner.
+#[test]
+fn a_screenshot_paints_at_the_content_zoom() {
+    let Some(mut host) = host() else { return };
+    host.turn();
+    let (size, plain) = host
+        .screenshot(WindowId::PRIMARY, [0.0, 0.0, 0.0, 1.0])
+        .unwrap();
+    host.dispatch(Message::Zoom(2.0));
+    host.turn();
+    assert_eq!(host.window(WindowId::PRIMARY).unwrap().content_zoom, 2.0);
+    let (zoomed_size, zoomed) = host
+        .screenshot(WindowId::PRIMARY, [0.0, 0.0, 0.0, 1.0])
+        .unwrap();
+    assert_eq!((zoomed_size.width, zoomed_size.height), (320, 200));
+    let surface = (size.width, size.height);
+    let plain = painted_extent(surface, &plain);
+    let zoomed = painted_extent(surface, &zoomed);
+    assert!(plain.0 > 0 && plain.1 > 0, "nothing painted");
+    // The bottom edge moves out to about twice as far (or to the surface's
+    // edge). Widths reflow in the narrower content viewport, so they are not
+    // compared.
+    assert!(
+        zoomed.1 + 3 >= (plain.1 * 2).min(surface.1),
+        "{plain:?} -> {zoomed:?}"
+    );
 }
