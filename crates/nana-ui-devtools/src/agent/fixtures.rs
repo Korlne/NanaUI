@@ -45,6 +45,11 @@ const FIXTURES: &[Fixture] = &[
         build: occlusion,
     },
     Fixture {
+        name: "value-slider",
+        summary: "ranges with the value in the thumb, bounds and a reset button",
+        build: value_slider,
+    },
+    Fixture {
         name: "dialog",
         summary: "a modal dialog over content; exercises modal projection",
         build: dialog,
@@ -98,6 +103,44 @@ fn form_controls(document: &mut RuntimeDocument, id: DocumentId) {
             ))
         })
         .expect("form fixture");
+}
+
+fn value_slider(document: &mut RuntimeDocument, id: DocumentId) {
+    document
+        .context_mut()
+        .mount_view_root(id, || {
+            widget(Stack::column(12.0).width(LengthSpec::Px(360.0)))
+                .key("root")
+                .children((
+                    widget(
+                        RangeField::new(137.0, 0.0, 200.0, 1.0)
+                            .label("Zoom")
+                            .show_label(false)
+                            .unit("%")
+                            .value_thumb(true)
+                            .show_bounds(true)
+                            .default_value(Some(100.0)),
+                    )
+                    .key("zoom"),
+                    widget(
+                        RangeField::new(1.0, 0.0, 2.0, 0.1)
+                            .label("Fade")
+                            .unit("s")
+                            .value_thumb(true)
+                            .show_bounds(true)
+                            .default_value(Some(1.0)),
+                    )
+                    .key("fade"),
+                    widget(
+                        RangeField::new(40.0, 0.0, 100.0, 1.0)
+                            .label("Volume")
+                            .value_thumb(true)
+                            .disabled(true),
+                    )
+                    .key("disabled"),
+                ))
+        })
+        .expect("value slider fixture");
 }
 
 fn scroll_list(document: &mut RuntimeDocument, id: DocumentId) {

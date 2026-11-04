@@ -35,7 +35,7 @@ context.set_framework_strings(strings)?;
 | `calendar.*`、`date_picker.*` | 日历热力图（`CalendarHeatmap`）与日期选择器（`DatePicker`）的月份/星期格式 |
 | `command_palette.*`、`menu.search` | 命令面板（`CommandPalette`）与可搜索菜单的搜索框占位符 |
 | `theme.*`、`material.*`、`settings.*` | 内置外观设置页的主题、材质与配置项标签 |
-| 其余独立键 | `chip.remove`、`file_tab.close`、`color_field.label`、`path_field.*`、`browser_view.label`、`dynamic_form.auto` |
+| 其余独立键 | `chip.remove`、`range_field.reset`、`file_tab.close`、`color_field.label`、`path_field.*`、`browser_view.label`、`dynamic_form.auto` |
 
 CI 中的 `scripts/audit-framework-strings.py` 会扫描框架源码：任何新增在内置控件代码里的中文界面字面量都必须收入 `FrameworkStrings` 表，不得散落在组件实现中。
 
