@@ -2055,6 +2055,8 @@ impl UiWorld {
             let project = requested_here
                 && previous
                     .is_none_or(|previous| layout_result_projects_new_geometry(previous, result));
+            let reshaped =
+                project && previous.is_none_or(|previous| layout_result_reshapes(previous, result));
             result.generation = generation;
             result.dependency_generation = generation;
             held.insert_entry(retained);
@@ -2066,11 +2068,11 @@ impl UiWorld {
                 self.mark(id, DirtyMask::TEXT);
             }
             if project {
-                self.mark_moved_by_layout(
-                    id,
-                    DirtyMask::INPUT | DirtyMask::RENDER | DirtyMask::ACCESSIBILITY,
-                    false,
-                );
+                let mut bits = DirtyMask::INPUT | DirtyMask::RENDER | DirtyMask::ACCESSIBILITY;
+                if reshaped {
+                    bits |= DirtyMask::RESHAPED;
+                }
+                self.mark_moved_by_layout(id, bits, false);
             }
             if sticky_changed {
                 self.mark(id, DirtyMask::RENDER);
@@ -3297,6 +3299,7 @@ impl UiWorld {
             accessibility: Vec::new(),
             accessibility_moved: Vec::new(),
             layout_moved: Vec::new(),
+            layout_reshaped: Vec::new(),
             accessibility_removals: sorted_unique(std::mem::take(
                 &mut self.pending_accessibility_removals,
             )),
@@ -7040,6 +7043,25 @@ fn layout_result_projects_new_geometry(
     // index then patches the parent's whole subtree -- the document, for a
     // row of the root.
     own_changed
+        || (previous.fragments != next.fragments
+            && !own_fragments(&previous.fragments).eq(own_fragments(&next.fragments)))
+        || (previous.parts != next.parts && !own_parts(&previous.parts).eq(own_parts(&next.parts)))
+}
+
+/// Whether `next` changes more of [`layout_result_projects_new_geometry`]
+/// than the scroll extent, scroll metrics, overflow and baselines: the box,
+/// its inner boxes, its clip links, its context or its own fragments and
+/// parts. A result that changes only those leaves what the box clips cut by
+/// the same box.
+fn layout_result_reshapes(previous: &crate::LayoutResult, next: &crate::LayoutResult) -> bool {
+    previous.bounds != next.bounds
+        || previous.border_box != next.border_box
+        || previous.padding_box != next.padding_box
+        || previous.content_box != next.content_box
+        || previous.clip != next.clip
+        || previous.clip_parent != next.clip_parent
+        || previous.formatting_context != next.formatting_context
+        || previous.participation != next.participation
         || (previous.fragments != next.fragments
             && !own_fragments(&previous.fragments).eq(own_fragments(&next.fragments)))
         || (previous.parts != next.parts && !own_parts(&previous.parts).eq(own_parts(&next.parts)))

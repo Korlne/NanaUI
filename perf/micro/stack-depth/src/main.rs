@@ -14,6 +14,8 @@
 //! CONTROLS=1 MIXED=1 cargo run --release -- edits 2000 height
 //!                                          # closed selects among the buttons
 //! VISIBLE=1 cargo run --release -- edits    # cull the scene after each frame, as a painter does
+//! SCROLLED=1 cargo run --release -- edits 2000 height
+//!                                          # the rows in a scroller scrolled before the edits
 //! cargo run --release -- edits 200,2000   # one edit a product frame: layout and frame time
 //! RUNS=240 /usr/bin/time -l target/release/nana-stack-depth edits 2000 height
 //!                                          # 240 edits; less RUNS=40, over 200: one edit's instructions
@@ -39,6 +41,11 @@ use nana_ui_runtime::{
     StableNodeId, Stack, Text, TextContent, TextMetrics, TextShapeConstraints, TextShaper,
 };
 use nana_ui_scene::RuntimeDocument;
+
+thread_local! {
+    /// The scroller a `SCROLLED=1` page holds its rows in.
+    static SCROLLER: std::cell::Cell<Option<StableNodeId>> = const { std::cell::Cell::new(None) };
+}
 
 const ENGINES: [&str; 3] = ["nana-layout", "nana-frame", "taffy"];
 
@@ -85,9 +92,27 @@ static GLOBAL: Counting = Counting;
 /// `edits` changes.
 fn nana_page(cx: &mut AppContext, document: DocumentId, rows: usize, cells: usize) -> StableNodeId {
     let mut target = None;
-    let root = cx
-        .create_component(document, Stack::column(0.0).width(LengthSpec::Px(1280.0)))
-        .unwrap();
+    // `SCROLLED=1`: the rows stand in a column inside a scroller a window
+    // tall, which `edits` scrolls before it edits.
+    let scrolled = std::env::var_os("SCROLLED").is_some();
+    let page = Stack::column(0.0).width(LengthSpec::Px(1280.0));
+    let page = if scrolled {
+        page.with_layout(|layout| {
+            layout.height = Some(LengthSpec::Px(800.0));
+            layout.overflow_y = nana_ui_core::OverflowSpec::Auto;
+        })
+    } else {
+        page
+    };
+    let mut root = cx.create_component(document, page).unwrap();
+    if scrolled {
+        let list = cx
+            .create_detached_component(document, Stack::column(0.0).width(LengthSpec::Px(1280.0)))
+            .unwrap();
+        cx.append_child(root, list).unwrap();
+        SCROLLER.with(|scroller| scroller.set(Some(root.stable_id())));
+        root = list;
+    }
     // `CONTROLS=1`: a page of controls, not bare boxes -- every cell holds a
     // label and a button, so the passes meet visuals, text and their tables.
     let controls = std::env::var_os("CONTROLS").is_some();
@@ -308,6 +333,18 @@ fn nana_edits(rows: usize, cells: usize, edit: &str, runs: usize) -> (f64, f64) 
         }
     };
     runtime.flush(viewport, &mut FixedShaper).unwrap();
+    if let Some(scroller) = SCROLLER.with(|scroller| scroller.get()) {
+        let mut queue = MutationQueue::new();
+        queue.set_scroll_offset(
+            scroller,
+            nana_ui_runtime::ScrollOffset {
+                x: 0.0,
+                y: 12_345.5,
+            },
+        );
+        runtime.context_mut().commit_mutations(queue).unwrap();
+        runtime.flush(viewport, &mut FixedShaper).unwrap();
+    }
     cull(&runtime);
     let (mut layout, mut whole) = (f64::INFINITY, f64::INFINITY);
     // The least time each stage took over the runs, by stage.

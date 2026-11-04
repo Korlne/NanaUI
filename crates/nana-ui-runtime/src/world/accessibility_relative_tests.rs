@@ -132,10 +132,21 @@ fn edit(
     for node in delta.updated {
         retained.insert(node.id, node);
     }
+    let full = snapshot(&page.context);
+    for (id, node) in &full {
+        assert_eq!(
+            retained.get(id),
+            Some(node),
+            "{at}: the delta left {id:?} unlike a full projection"
+        );
+    }
+    // A closed menu's options are no one's children any more: a platform
+    // tree drops them with the field's new child list, not by tombstone.
+    retained.retain(|id, _| full.contains_key(id) || page.context.world().nodes.contains(*id));
     assert_eq!(
-        *retained,
-        snapshot(&page.context),
-        "{at}: the delta left the tree unlike a full projection"
+        retained.len(),
+        full.len(),
+        "{at}: the delta left nodes a full projection does not have"
     );
     updated
 }
@@ -442,6 +453,405 @@ fn boxes_moved_by_an_uneven_step_keep_a_cold_projection_to_the_bit() {
                     "{at}: a leaf is handed its offset in its cell"
                 );
             }
+        }
+    }
+}
+
+/// `rows` rows standing in `list` under `root`, each a row holding a cell
+/// (padded unevenly) holding a leaf; the rows are `relative` when `placed`.
+fn uneven_rows(b: &mut Builder, list: StableNodeId, rows: usize) -> Vec<[StableNodeId; 3]> {
+    (0..rows)
+        .map(|_| {
+            let row = b.element(
+                list,
+                LayoutStyle {
+                    flex_shrink: Some(0.0),
+                    position: PositionSpec::Relative,
+                    ..fixed(300.0, 20.0)
+                },
+            );
+            let cell = b.element(
+                row,
+                LayoutStyle {
+                    padding_left: Some(LengthSpec::Px(1.3)),
+                    padding_top: Some(LengthSpec::Px(2.5)),
+                    ..fixed(100.0, 14.0)
+                },
+            );
+            let leaf = b.element(cell, fixed(50.0, 5.0));
+            [row, cell, leaf]
+        })
+        .collect()
+}
+
+fn laid_out(b: Builder, rows: Vec<[StableNodeId; 3]>, list: StableNodeId) -> Page {
+    let mut context = AppContext::new();
+    context.commit_mutations(b.queue).unwrap();
+    product_frame(
+        &mut context,
+        document(),
+        viewport(),
+        &mut bundled_face_shaper(),
+    );
+    Page {
+        context,
+        rows,
+        hanging: None,
+        list,
+    }
+}
+
+/// Grow the first row by an uneven step `steps` times, each a frame whose
+/// delta must match a full projection; what the moved rows hold must not
+/// project again. `each` sees the page after every step.
+fn grow_unevenly(
+    page: &mut Page,
+    retained: &mut BTreeMap<StableNodeId, AccessibilityNode>,
+    steps: usize,
+    label: &str,
+    mut each: impl FnMut(&Page, &BTreeMap<StableNodeId, AccessibilityNode>, &[StableNodeId], &str),
+) {
+    let mut height = 20.0;
+    for step in 0..steps {
+        height += 1.37;
+        let at = format!("{label}, step {step}");
+        let mut queue = MutationQueue::new();
+        row_height(&mut queue, page.rows[0][0], height);
+        let updated = edit(page, retained, queue, &at);
+        for [row, cell, leaf] in &page.rows[1..] {
+            assert!(updated.contains(row), "{at}: a moved row projects again");
+            assert!(
+                !updated.contains(cell) && !updated.contains(leaf),
+                "{at}: what a moved row holds moved with it"
+            );
+        }
+        each(page, retained, &updated, &at);
+    }
+}
+
+/// Rows in a list scrolled by an uneven amount, grown by an uneven step again
+/// and again. Scrolling only translates, so a moved row is handed its offset
+/// less the list's scroll and what it holds its offset: the delta projects
+/// the moved rows alone, from the pins, and what they kept is a cold
+/// projection's to the bit -- with a visual on the page too, and after the
+/// list scrolls again in a frame that also moves them.
+#[test]
+fn boxes_moved_in_a_scrolled_list_keep_a_cold_projection_to_the_bit() {
+    for visual in [false, true] {
+        let (mut b, root) = Builder::page(document(), 1, 400.0);
+        let list = b.element(
+            root,
+            LayoutStyle {
+                overflow_x: OverflowSpec::Auto,
+                overflow_y: OverflowSpec::Auto,
+                direction: Some(FlexDirection::Column),
+                flex_shrink: Some(0.0),
+                ..fixed(300.0, 120.0)
+            },
+        );
+        let rows = uneven_rows(&mut b, list, 12);
+        if visual {
+            b.queue
+                .set_standard_visual(rows[11][2], Some(StandardVisual::KeymapLayer));
+        }
+        let mut page = laid_out(b, rows, list);
+        let mut retained = snapshot(&page.context);
+        let mut scroll = 30.37;
+        let mut queue = MutationQueue::new();
+        queue.set_scroll_offset(page.list, ScrollOffset { x: 0.0, y: scroll });
+        edit(&mut page, &mut retained, queue, "scrolled");
+        for round in 0..2 {
+            let label = format!("visual {visual}, round {round}");
+            grow_unevenly(
+                &mut page,
+                &mut retained,
+                6,
+                &label,
+                |page, retained, _, at| {
+                    let world = page.context.world();
+                    for [row, _, leaf] in &page.rows[1..] {
+                        let local = world.local_layout_box(*leaf).unwrap();
+                        let bounds = retained[leaf].bounds;
+                        assert_eq!(
+                            (bounds.x.to_bits(), bounds.y.to_bits()),
+                            (local.x.to_bits(), local.y.to_bits()),
+                            "{at}: a leaf is handed its offset in its cell"
+                        );
+                        let local = world.local_layout_box(*row).unwrap();
+                        let bounds = retained[row].bounds;
+                        assert_eq!(
+                            (bounds.y.to_bits(), bounds.height.to_bits()),
+                            ((local.y - scroll).to_bits(), local.height.to_bits()),
+                            "{at}: a row is handed its offset less the scroll"
+                        );
+                    }
+                },
+            );
+            // Scroll and move in one frame, then go on from there.
+            scroll += 11.13;
+            let mut queue = MutationQueue::new();
+            queue.set_scroll_offset(page.list, ScrollOffset { x: 0.0, y: scroll });
+            row_height(&mut queue, page.rows[0][0], 20.0);
+            edit(
+                &mut page,
+                &mut retained,
+                queue,
+                &format!("{label}: scrolled and moved"),
+            );
+        }
+    }
+}
+
+/// Rows under an ancestor that scales and translates them, moved by an uneven
+/// step: a positive scale multiplies every offset by the same factor
+/// wherever the boxes stand, so the moved rows' contents keep their bounds
+/// to the bit. Under a rotation the bounds are the box around turned
+/// corners, which no offset gives: those take the walk, and still match a
+/// full projection.
+#[test]
+fn boxes_moved_under_a_transformed_ancestor_match_a_cold_projection() {
+    let (sin, cos) = 0.3f32.sin_cos();
+    for (name, transform, offsets) in [
+        (
+            "scaled",
+            PaintTransform {
+                a: 1.5,
+                d: 1.25,
+                e: 3.3,
+                f: 7.1,
+                ..Default::default()
+            },
+            true,
+        ),
+        (
+            "rotated",
+            PaintTransform {
+                a: cos,
+                b: sin,
+                c: -sin,
+                d: cos,
+                e: 2.0,
+                f: 1.0,
+            },
+            false,
+        ),
+    ] {
+        let (mut b, root) = Builder::page(document(), 1, 400.0);
+        let wrapper = b.element(
+            root,
+            LayoutStyle {
+                transform: Some(transform),
+                ..fixed(320.0, 500.0)
+            },
+        );
+        let list = b.element(wrapper, column(Some(300.0)));
+        let rows = uneven_rows(&mut b, list, 12);
+        let mut page = laid_out(b, rows, list);
+        let mut retained = snapshot(&page.context);
+        if offsets {
+            grow_unevenly(
+                &mut page,
+                &mut retained,
+                12,
+                name,
+                |page, retained, _, at| {
+                    for [_, _, leaf] in &page.rows[1..] {
+                        let local = page.context.world().local_layout_box(*leaf).unwrap();
+                        let bounds = retained[leaf].bounds;
+                        assert_eq!(
+                            [bounds.x, bounds.y, bounds.width, bounds.height].map(f32::to_bits),
+                            [
+                                transform.a * local.x,
+                                transform.d * local.y,
+                                transform.a * local.width,
+                                transform.d * local.height,
+                            ]
+                            .map(f32::to_bits),
+                            "{at}: a leaf is handed its scaled offset"
+                        );
+                    }
+                },
+            );
+        } else {
+            let mut height = 20.0;
+            for step in 0..12 {
+                height += 1.37;
+                let mut queue = MutationQueue::new();
+                row_height(&mut queue, page.rows[0][0], height);
+                edit(
+                    &mut page,
+                    &mut retained,
+                    queue,
+                    &format!("{name}, step {step}"),
+                );
+            }
+        }
+    }
+}
+
+/// Pins below pinned boxes that still hand their children offsets -- a
+/// scaled box, a sticky one, and an absolute box measured from the moved row
+/// above its parent -- are found from the pins too: each holds a box that
+/// clips (whose subtree projects again) and a plain one (which keeps its
+/// bounds).
+#[test]
+fn pins_under_boxes_that_hand_offsets_are_found_from_the_pins() {
+    let (mut b, root) = Builder::page(document(), 1, 400.0);
+    let list = b.element(root, column(Some(300.0)));
+    let rows = uneven_rows(&mut b, list, 12);
+    let holders = [
+        LayoutStyle {
+            transform: Some(PaintTransform {
+                a: 2.0,
+                d: 0.5,
+                e: 1.25,
+                ..Default::default()
+            }),
+            ..fixed(40.0, 8.0)
+        },
+        LayoutStyle {
+            position: PositionSpec::Sticky,
+            offset_top: Some(LengthSpec::Px(0.0)),
+            ..fixed(40.0, 8.0)
+        },
+        // The cell is static, so this one is measured from the row.
+        LayoutStyle {
+            position: PositionSpec::Absolute,
+            offset_left: Some(LengthSpec::Px(60.0)),
+            offset_top: Some(LengthSpec::Px(2.0)),
+            ..fixed(30.0, 10.0)
+        },
+    ];
+    let mut held = Vec::new();
+    for (index, style) in holders.into_iter().enumerate() {
+        let cell = rows[4 + index][1];
+        let holder = b.element(cell, style);
+        let clip = b.element(
+            holder,
+            LayoutStyle {
+                overflow_x: OverflowSpec::Hidden,
+                overflow_y: OverflowSpec::Hidden,
+                ..fixed(20.0, 6.0)
+            },
+        );
+        let clipped = b.element(clip, fixed(4.0, 3.0));
+        let plain = b.element(holder, fixed(5.0, 2.0));
+        held.push([holder, clip, clipped, plain]);
+    }
+    let mut page = laid_out(b, rows, list);
+    assert!(matches!(
+        page.context.world().layout_frame(held[2][0]),
+        Some(crate::LayoutFrame::Block(_))
+    ));
+    let mut retained = snapshot(&page.context);
+    grow_unevenly(&mut page, &mut retained, 6, "held", |_, _, updated, at| {
+        for (index, [_, clip, clipped, plain]) in held.iter().enumerate() {
+            assert!(
+                updated.contains(clip) && updated.contains(clipped),
+                "{at}: a moved clip projects what it holds again"
+            );
+            // A sticky box is marked whenever its scroller's geometry
+            // changes, and projects its subtree again.
+            if index != 1 {
+                assert!(
+                    !updated.contains(plain),
+                    "{at}: a plain box kept its bounds"
+                );
+            }
+        }
+    });
+}
+
+/// A closed select projects its field alone, placed as any box is, so it
+/// moves with its row and keeps its node; an open one places its list box
+/// and options from its geometry, which is on the page, and projects again
+/// under every move -- in a scrolled list, by an uneven step.
+#[test]
+fn a_closed_select_moves_with_its_row_and_an_open_one_projects_again() {
+    let mut page = page(12, true, false);
+    let mut select = crate::Select::new(Some("a"));
+    select.options = vec![
+        crate::SelectOption::new("a", "Alpha"),
+        crate::SelectOption::new("b", "Beta"),
+    ];
+    let select = page
+        .context
+        .create_detached_component(document(), select)
+        .unwrap();
+    let field = select.stable_id();
+    let mut queue = MutationQueue::new();
+    queue.insert(page.rows[6][0], field, None);
+    queue.set_scroll_offset(page.list, ScrollOffset { x: 0.0, y: 30.37 });
+    let mut retained = snapshot(&page.context);
+    edit(&mut page, &mut retained, queue, "placed");
+    let pinned = |page: &Page| {
+        page.context
+            .world()
+            .nodes
+            .accessibility_pins()
+            .any(|id| id == field)
+    };
+    let mut height = 20.0;
+    for (opened, at) in [(false, "closed"), (true, "open"), (false, "closed again")] {
+        if opened != retained[&field].expanded.unwrap_or(false) {
+            page.context.toggle_select(select).unwrap();
+            edit(
+                &mut page,
+                &mut retained,
+                MutationQueue::new(),
+                &format!("{at}: toggled"),
+            );
+        }
+        assert_eq!(pinned(&page), opened, "{at}: only an open select pins");
+        for step in 0..3 {
+            height += 1.37;
+            let mut queue = MutationQueue::new();
+            row_height(&mut queue, page.rows[0][0], height);
+            let updated = edit(
+                &mut page,
+                &mut retained,
+                queue,
+                &format!("{at}, step {step}"),
+            );
+            assert_eq!(
+                updated.contains(&field),
+                opened,
+                "{at}, step {step}: a select projects again under a move only while open"
+            );
+        }
+    }
+}
+
+/// A box that clips, resized where it stands as the rows in it grow, cuts
+/// what it holds by a new box: its whole subtree projects again, though it
+/// did not move. (A scroller whose content grew keeps its box, and cuts
+/// as before: see the scrolled list above.)
+#[test]
+fn a_clip_resized_in_place_projects_what_it_holds_again() {
+    let (mut b, root) = Builder::page(document(), 1, 400.0);
+    let list = b.element(
+        root,
+        LayoutStyle {
+            overflow_x: OverflowSpec::Hidden,
+            overflow_y: OverflowSpec::Hidden,
+            ..column(Some(300.0))
+        },
+    );
+    let rows = uneven_rows(&mut b, list, 6);
+    let mut page = laid_out(b, rows, list);
+    let mut retained = snapshot(&page.context);
+    let mut height = 20.0;
+    for step in 0..4 {
+        height += 1.37;
+        let at = format!("step {step}");
+        let mut queue = MutationQueue::new();
+        row_height(&mut queue, page.rows[0][0], height);
+        let updated = edit(&mut page, &mut retained, queue, &at);
+        for [_, cell, leaf] in &page.rows {
+            assert!(
+                updated.contains(cell) && updated.contains(leaf),
+                "{at}: what a resized clip holds is cut by its new box"
+            );
         }
     }
 }

@@ -3665,6 +3665,7 @@ impl UiWorld {
             bits |= DirtyMask::MOVED;
         }
         if resized || moved {
+            bits |= DirtyMask::RESHAPED;
             self.layout_written.insert(id);
         }
         if resized {

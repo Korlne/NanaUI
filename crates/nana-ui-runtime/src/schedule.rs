@@ -30,6 +30,10 @@ impl DirtyMask {
     /// Layout wrote the box with a new origin: what it holds moved with it
     /// ([`SystemWork::layout_moved`]).
     pub(crate) const MOVED: u16 = 1 << 10;
+    /// Layout wrote the box with a new origin or size, or published a result
+    /// whose own geometry changed beyond its scroll extent: what the box
+    /// clips is cut differently ([`SystemWork::layout_reshaped`]).
+    pub(crate) const RESHAPED: u16 = 1 << 11;
     pub(crate) const ALL: u16 = Self::STYLE
         | Self::TEXT
         | Self::LAYOUT
@@ -40,7 +44,8 @@ impl DirtyMask {
         | Self::STATE
         | Self::TRANSFORM
         | Self::INPUT_ELSEWHERE
-        | Self::MOVED;
+        | Self::MOVED
+        | Self::RESHAPED;
 
     pub(crate) const fn all() -> Self {
         Self(Self::ALL)
@@ -98,6 +103,14 @@ pub struct SystemWork {
     /// keep a moved box's descendants in its coordinates read what under one
     /// stands elsewhere from here (accessibility's walk below each).
     pub layout_moved: Vec<StableNodeId>,
+    /// The boxes layout wrote with a new origin or size, or whose published
+    /// result changed beyond its scroll extent, sorted. A box of
+    /// [`Self::accessibility_moved`] left out of this list stands where it
+    /// stood at the size it had, cutting what it clips by the same box (a
+    /// scroller whose content grew, say), so what it holds keeps its clip.
+    /// Work built by hand that lists a box in `accessibility_moved` lists it
+    /// here too unless layout left its box alone.
+    pub layout_reshaped: Vec<StableNodeId>,
     pub accessibility_removals: Vec<StableNodeId>,
     pub render_extraction: Vec<StableNodeId>,
     pub render_removals: Vec<StableNodeId>,
@@ -306,6 +319,9 @@ pub(crate) fn push_work(work: &mut SystemWork, id: StableNodeId, bits: u16) {
     if bits & DirtyMask::MOVED != 0 {
         work.layout_moved.push(id);
     }
+    if bits & DirtyMask::RESHAPED != 0 {
+        work.layout_reshaped.push(id);
+    }
     if bits & DirtyMask::FOCUS_IME != 0 {
         work.focus_ime.push(id);
     }
@@ -367,11 +383,16 @@ mod tests {
         let union = NAMED_BITS.iter().fold(0, |acc, (_, bit)| acc | bit);
         assert_eq!(union & DirtyMask::INPUT_ELSEWHERE, 0);
         assert_eq!(union & DirtyMask::MOVED, 0);
+        assert_eq!(union & DirtyMask::RESHAPED, 0);
         assert_eq!(
-            union | DirtyMask::LAYOUT | DirtyMask::INPUT_ELSEWHERE | DirtyMask::MOVED,
+            union
+                | DirtyMask::LAYOUT
+                | DirtyMask::INPUT_ELSEWHERE
+                | DirtyMask::MOVED
+                | DirtyMask::RESHAPED,
             DirtyMask::ALL,
             "ALL must include the typed layout lane, mark INPUT as not a layout \
-             move's and name the boxes layout moved"
+             move's and name the boxes layout moved or reshaped"
         );
         assert!(DirtyMask::all().has(DirtyMask::ALL));
     }
