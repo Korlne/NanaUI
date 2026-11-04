@@ -118,15 +118,54 @@ impl MaxTree {
     fn total(&self) -> Extent {
         self.values.get(1).copied().unwrap_or(Extent::EMPTY)
     }
-    fn set(&mut self, index: usize, value: Extent) -> usize {
-        let mut at = self.leaf + index;
+    /// Write slot `index`'s value and note its leaf in `touched`; the
+    /// nodes above it are derived by [`Self::rederive`].
+    fn write(&mut self, index: usize, value: Extent, touched: &mut Vec<usize>) {
+        let at = self.leaf + index;
         self.values[at] = value;
-        let mut work = 1;
-        while at > 1 {
-            at /= 2;
-            self.values[at] = self.values[at * 2].merge(self.values[at * 2 + 1]);
-            work += 1;
+        touched.push(at);
+    }
+
+    /// Derive every node above the leaves `touched` holds past `start` once,
+    /// a level at a time: a run of k neighbouring slots costs about
+    /// k + log n merges, where a path per slot costs k · log n. A node is
+    /// merged from its two children as a fill merges it, so the tree is the
+    /// one a [`Self::refill`] over the same values builds. Leaves `touched`
+    /// cut back to `start`: a refresh nested in another's reads uses the
+    /// same list above the outer one's leaves.
+    fn rederive(&mut self, touched: &mut Vec<usize>, start: usize) -> usize {
+        let level = &mut touched[start..];
+        if !level.is_sorted() {
+            level.sort_unstable();
         }
+        let mut len = level.len();
+        let mut work = 0;
+        // Every leaf is on the same level, so all of them reach the root
+        // together, and a sorted level stays sorted halved.
+        let mut first = true;
+        while len > 0 && (first || level[0] > 1) {
+            let mut kept = 0;
+            for index in 0..len {
+                let at = if first {
+                    level[index]
+                } else {
+                    level[index] / 2
+                };
+                if kept == 0 || level[kept - 1] != at {
+                    level[kept] = at;
+                    kept += 1;
+                }
+            }
+            len = kept;
+            work += kept;
+            if !first {
+                for &at in &level[..len] {
+                    self.values[at] = self.values[at * 2].merge(self.values[at * 2 + 1]);
+                }
+            }
+            first = false;
+        }
+        touched.truncate(start);
         work
     }
 }
@@ -282,8 +321,8 @@ struct Placement {
 
 impl Placement {
     fn of(world: &UiWorld, id: StableNodeId, record: &NodeRecord) -> Self {
-        let lands = if world.is_document_node(id)
-            || world.clip_position(id).establishes_containing_block()
+        let lands = if matches!(record.kind.as_ref(), NodeKind::Document)
+            || record_clip_position(world, id, record).establishes_containing_block()
         {
             Some(true)
         } else if record.hierarchy.parent.is_none() {
@@ -315,6 +354,8 @@ pub(super) struct ContentBoundsIndex {
     /// Entries whose extent was recomputed since the world last folded them
     /// into `WorkCounters::scroll_content_extent_recomputes`.
     refreshed: usize,
+    /// Leaves an incremental refresh wrote, kept for the next one.
+    touched: Vec<usize>,
     #[cfg(any(test, feature = "benchmark"))]
     range_updates: usize,
 }
@@ -460,11 +501,15 @@ impl ContentBoundsIndex {
     /// containing block (`absolute`) or nowhere (`fixed`), as the clip
     /// chain reads its position. The boxes it carries up go on either way.
     fn read(&mut self, world: &UiWorld, child: StableNodeId) -> Read {
-        let extent = self.refresh(world, child);
-        let pending = self
-            .entries
-            .get(&child)
-            .map_or(Extent::EMPTY, |entry| entry.pending);
+        let record = world.nodes.get(child);
+        let (extent, pending) = self.refresh_record(world, child, record);
+        let Some(record) = record else {
+            // Gone from the world: nothing in flow, what it carried as left.
+            return Read {
+                in_flow: Extent::EMPTY,
+                carried: pending,
+            };
+        };
         // From the child's origin to the origin of the box it adds to: its
         // parent's, or, carried, its containing block's.
         let from = |owner: Option<StableNodeId>| {
@@ -472,7 +517,7 @@ impl ContentBoundsIndex {
                 .and_then(|owner| world.layout_box_from(owner, child))
                 .map_or([0.0, 0.0], |layout| [layout.x, layout.y])
         };
-        match world.clip_position(child) {
+        match record_clip_position(world, child, record) {
             PositionSpec::Absolute => Read {
                 in_flow: Extent::EMPTY,
                 carried: extent
@@ -483,16 +528,60 @@ impl ContentBoundsIndex {
                 in_flow: Extent::EMPTY,
                 carried: pending,
             },
-            _ => Read {
-                in_flow: extent.translated(from(world.parent_id(child))),
-                carried: pending,
-            },
+            _ => {
+                // A box measured from its parent stands at its local offset
+                // ([`UiWorld::layout_box_from`] without looking it up again).
+                let offset = match (record.layout_frame, record.hierarchy.parent) {
+                    (crate::LayoutFrame::Parent, Some(_)) => {
+                        [record.local_layout.x, record.local_layout.y]
+                    }
+                    (_, parent) => from(parent),
+                };
+                // The shortcut is the authority's answer to the bit: a fresh
+                // index takes it too, so the cold check alone would not see
+                // it drift.
+                #[cfg(any(test, feature = "layout-verify"))]
+                assert_eq!(
+                    offset.map(f32::to_bits),
+                    from(record.hierarchy.parent).map(f32::to_bits),
+                    "{child:?}: its offset from its parent"
+                );
+                Read {
+                    in_flow: extent.translated(offset),
+                    carried: pending,
+                }
+            }
         }
     }
 
     fn refresh(&mut self, world: &UiWorld, id: StableNodeId) -> Extent {
+        self.refresh_record(world, id, world.nodes.get(id)).0
+    }
+
+    /// [`Self::refresh`] for `record`, `id`'s, with what `id` carries past
+    /// its parent ([`Entry::pending`]).
+    fn refresh_record(
+        &mut self,
+        world: &UiWorld,
+        id: StableNodeId,
+        record: Option<&NodeRecord>,
+    ) -> (Extent, Extent) {
         let (changed, rebuild) = match self.entries.get_mut(&id) {
-            Some(entry) if !entry.dirty => return entry.extent,
+            Some(entry) if !entry.dirty => return (entry.extent, entry.pending),
+            // Only this node's own box moved (every box a relayout writes,
+            // each row a shifted list moves), or its position or clip: one
+            // lookup of the entry, settled where it is.
+            Some(entry)
+                if !entry.rebuild
+                    && entry.changed.as_slice().is_empty()
+                    && let Some(record) = record
+                    && Arc::ptr_eq(&entry.children, &record.hierarchy.children) =>
+            {
+                entry.dirty = false;
+                self.refreshed += 1;
+                entry.settle(&Placement::of(world, id, record));
+                return (entry.extent, entry.pending);
+            }
             Some(entry) => {
                 entry.dirty = false;
                 (
@@ -502,21 +591,18 @@ impl ContentBoundsIndex {
             }
             None => (Changed::None, false),
         };
-        let Some(record) = world.nodes.get(id) else {
-            return Extent::EMPTY;
+        let Some(record) = record else {
+            let pending = self
+                .entries
+                .get(&id)
+                .map_or(Extent::EMPTY, |entry| entry.pending);
+            return (Extent::EMPTY, pending);
         };
         self.refreshed += 1;
         let place = Placement::of(world, id, record);
         let incremental = match (rebuild, self.entries.get_mut(&id)) {
-            (false, Some(entry)) if Arc::ptr_eq(&entry.children, &record.hierarchy.children) => {
-                if changed.as_slice().is_empty() {
-                    // Only this node's own box moved (every leaf a relayout
-                    // writes), or its position or clip.
-                    entry.settle(&place);
-                    return entry.extent;
-                }
-                true
-            }
+            // Some children moved (with none, it settled above).
+            (false, Some(entry)) => Arc::ptr_eq(&entry.children, &record.hierarchy.children),
             _ => false,
         };
         if !incremental {
@@ -527,58 +613,55 @@ impl ContentBoundsIndex {
                 .map(|child| self.read(world, *child))
                 .collect::<Vec<_>>();
             let entry = Entry::fresh(children, reads, &place);
-            let extent = entry.extent;
+            let read = (entry.extent, entry.pending);
             self.entries.insert(id, entry);
-            return extent;
+            return read;
         }
-        // The entry stays where it is: children are refreshed first, then
-        // their extents land in the tree in place — a relayout refreshes every
-        // row of a list, so taking each entry out and back adds up.
-        let children = &record.hierarchy.children;
-        let changed = changed.as_slice();
-        let work = if changed.len() > 1 && changed.len().saturating_mul(4) >= children.len() {
-            // A relayout moved a large share of the children (a list shifted
-            // below an edited row): refill the tree once, O(n), instead of
-            // O(log n) per moved child. The tree is lent out while the
-            // children refresh straight into it.
+        // The entry stays where it is. Only the children that moved are
+        // read, their leaves written in place, then the nodes above them
+        // derived once: a relayout that shifts a list below an edited row
+        // costs the rows it moved and about as many merges, not a read of
+        // every row and a refill.
+        let start = self.touched.len();
+        for child in changed.as_slice() {
+            let read = self.read(world, *child);
             let entry = self.entries.get_mut(&id).expect("incremental entry");
-            let mut maxima = std::mem::take(&mut entry.maxima);
-            let mut carried = std::mem::take(&mut entry.carried);
-            carried.clear();
-            let work = maxima.refill(children.iter().map(|child| {
-                let read = self.read(world, *child);
-                if !read.carried.is_empty() {
-                    carried.push((*child, read.carried));
-                }
-                read.in_flow
-            }));
-            let entry = self.entries.get_mut(&id).expect("incremental entry");
-            entry.maxima = maxima;
-            entry.carried = carried;
-            work
-        } else {
-            let mut work = 0;
-            for child in changed {
-                let read = self.read(world, *child);
-                let entry = self.entries.get_mut(&id).expect("incremental entry");
-                if let Some(&slot) = entry.slots.get(child) {
-                    work += entry.maxima.set(slot, read.in_flow);
-                    entry.carry(*child, read.carried);
-                }
+            if let Some(&slot) = entry.slots.get(child) {
+                entry.maxima.write(slot, read.in_flow, &mut self.touched);
+                entry.carry(*child, read.carried);
             }
-            work
-        };
+        }
+        let mut touched = std::mem::take(&mut self.touched);
+        let entry = self.entries.get_mut(&id).expect("incremental entry");
+        let work = entry.maxima.rederive(&mut touched, start);
+        self.touched = touched;
         let entry = self.entries.get_mut(&id).expect("incremental entry");
         entry.settle(&place);
-        let extent = entry.extent;
+        let read = (entry.extent, entry.pending);
         #[cfg(any(test, feature = "benchmark"))]
         {
             self.range_updates += work;
         }
         #[cfg(not(any(test, feature = "benchmark")))]
         let _ = work;
-        extent
+        read
     }
+}
+
+/// [`UiWorld::clip_position`] for `record`, `id`'s, without looking it up
+/// again. Only an open triggered menu places a child `fixed`, so with none
+/// open the box's own position is the answer.
+fn record_clip_position(world: &UiWorld, id: StableNodeId, record: &NodeRecord) -> PositionSpec {
+    let position = if !world.triggered_overlays.is_empty()
+        && world.nodes.has_visuals()
+        && world.parent_triggered_overlay(id).is_some()
+    {
+        PositionSpec::Fixed
+    } else {
+        record.resolved_layout.position
+    };
+    debug_assert_eq!(position, world.clip_position(id), "{id:?}");
+    position
 }
 
 /// Where the boxes `child` carries land (see [`Placement::lands`]): the
@@ -627,7 +710,32 @@ impl UiWorld {
 
     /// [`Self::scroll_content_extent`] measured from `id`'s own origin.
     pub(crate) fn scroll_content_extent_local(&self, id: StableNodeId) -> Extent {
-        self.scroll_content_bounds.borrow_mut().content(self, id)
+        let extent = self.scroll_content_bounds.borrow_mut().content(self, id);
+        #[cfg(any(test, feature = "layout-verify"))]
+        self.check_scroll_content_extent(id, extent);
+        extent
+    }
+
+    /// The cold check: what the retained index answers is what an index
+    /// built from nothing reads off the world, to the bit. Each entry's
+    /// leaves are its children's extents moved by their offsets and the
+    /// tree above them merges in the same shape whatever wrote which leaf,
+    /// so nothing is allowed to differ. Skipped past a few thousand nodes,
+    /// where a fresh build per query would dominate a test.
+    #[cfg(any(test, feature = "layout-verify"))]
+    fn check_scroll_content_extent(&self, id: StableNodeId, extent: Extent) {
+        if self.len() > 4096 {
+            return;
+        }
+        let fresh = ContentBoundsIndex::default().content(self, id);
+        let bits = |extent: Extent| {
+            [extent.left, extent.top, extent.right, extent.bottom].map(f32::to_bits)
+        };
+        assert_eq!(
+            bits(extent),
+            bits(fresh),
+            "{id:?}: the retained content extent {extent:?} is not a fresh index's {fresh:?}"
+        );
     }
 
     /// Extent recomputes not yet folded into the work counters.
@@ -1038,10 +1146,11 @@ mod tests {
         (extent.right, extent.bottom)
     }
 
-    /// A relayout that shifts most of a list refills its tree once, and the
-    /// result is the traversal's — shrinking, growing and past the leaf count.
+    /// A relayout that shifts most of a list writes the leaves it moved and
+    /// derives the nodes above them once, and the result is the
+    /// traversal's — shrinking, growing and past the leaf count.
     #[test]
-    fn shifting_most_siblings_refills_the_tree_and_matches_traversal() {
+    fn shifting_most_siblings_derives_the_tree_once_and_matches_traversal() {
         let mut world = fixture(1_000);
         assert_eq!(far(&world, id(1)), (10.0, 10_000.0));
         for (shift, count) in [(-5.0, 1_000), (7.0, 900), (-3.0, 400)] {
@@ -1062,8 +1171,198 @@ mod tests {
             }
             world.commit(mutations).unwrap();
             assert_eq!(world.scroll_content_extent(id(1)), brute(&world, id(1)));
-            // One refill of the 1,024-leaf tree, not 1,000 root-to-leaf paths.
-            assert_eq!(world.scroll_content_bounds.borrow().range_updates, 2_048);
+            // A run of `count` leaves and the nodes above them once: about
+            // 2 · count, not `count` root-to-leaf paths of 11 nodes.
+            let work = world.scroll_content_bounds.borrow().range_updates;
+            assert!(work <= 2 * count as usize + 11, "{count}: {work}");
+        }
+    }
+
+    /// A list in a scroller shifted below an edited row, again and again by
+    /// steps that do not land on a whole number (1.37 px), rows written in
+    /// either order, with scrolls, inserts and removals between: every read
+    /// is a fresh index's to the bit (the cold check in
+    /// [`UiWorld::scroll_content_extent_local`]), and a shift costs the rows
+    /// it moved, not the list.
+    #[test]
+    fn a_list_shifted_by_uneven_steps_matches_a_fresh_index_to_the_bit() {
+        use crate::LayoutFrame;
+        let document = crate::DocumentId::new(1).unwrap();
+        let rows = 400u64;
+        let row = |index: u64| id(100 + index);
+        let label = |index: u64| id(10_000 + index);
+        let mut world = UiWorld::new();
+        let mut mutations = MutationQueue::new();
+        mutations.create(id(1), document, NodeKind::Document);
+        for (child, parent) in [(2, 1), (3, 2)] {
+            mutations.create(id(child), document, NodeKind::Element { tag: "div".into() });
+            mutations.insert(id(parent), id(child), None);
+        }
+        let mut scroller = NodeStyle::default();
+        Arc::make_mut(&mut scroller.layout).overflow_y = nana_ui_core::OverflowSpec::Auto;
+        mutations.set_style(id(2), scroller);
+        let at = |x: f32, y: f32, width: f32, height: f32| crate::LayoutBox {
+            x,
+            y,
+            width,
+            height,
+        };
+        mutations.place_layout(id(2), at(0.0, 0.0, 300.0, 200.0), LayoutFrame::Page);
+        // Each row a height of its own; every seventh label hangs past its
+        // row, so the far edge is not always the last row's.
+        let mut heights: Vec<f32> = (0..rows).map(|i| 10.0 + (i % 3) as f32 * 0.5).collect();
+        // Every row 300 px wide but the last one edited, which stands out
+        // past the others: its own box, not its offset, sets the right edge.
+        let mut widths: Vec<f32> = vec![300.0; rows as usize];
+        let mut order: Vec<u64> = (0..rows).collect();
+        for &index in &order {
+            mutations.create(
+                row(index),
+                document,
+                NodeKind::Element { tag: "div".into() },
+            );
+            mutations.insert(id(3), row(index), None);
+            mutations.create(label(index), document, NodeKind::Text);
+            mutations.insert(row(index), label(index), None);
+            let hang = if index % 7 == 0 { 30.0 } else { 4.0 };
+            mutations.place_layout(
+                label(index),
+                at(2.0, 1.0, 20.0 + index as f32 * 0.01, hang),
+                LayoutFrame::Parent,
+            );
+        }
+        // Lay the rows out top to bottom, writing only those whose box
+        // changed, in `reverse` order or not; the list takes their height.
+        let place = |mutations: &mut MutationQueue,
+                     order: &[u64],
+                     heights: &[f32],
+                     widths: &[f32],
+                     previous: &mut Vec<(u64, f32, f32, f32)>,
+                     reverse: bool| {
+            let mut y = 0.0f32;
+            let mut placed = Vec::with_capacity(order.len());
+            for (slot, &index) in order.iter().enumerate() {
+                placed.push((index, y, heights[index as usize], slot));
+                y += heights[index as usize];
+            }
+            let mut moved = 0;
+            let mut write = |&(index, y, height, _): &(u64, f32, f32, usize)| {
+                let width = widths[index as usize];
+                if previous.contains(&(index, y, width, height)) {
+                    return;
+                }
+                moved += 1;
+                mutations.place_layout(row(index), at(0.0, y, width, height), LayoutFrame::Parent);
+            };
+            if reverse {
+                placed.iter().rev().for_each(&mut write);
+            } else {
+                placed.iter().for_each(&mut write);
+            }
+            mutations.place_layout(id(3), at(0.0, 0.0, 300.0, y), LayoutFrame::Parent);
+            *previous = placed
+                .iter()
+                .map(|&(index, y, height, _)| (index, y, widths[index as usize], height))
+                .collect();
+            moved
+        };
+        let mut previous = Vec::new();
+        place(
+            &mut mutations,
+            &order,
+            &heights,
+            &widths,
+            &mut previous,
+            false,
+        );
+        world.commit(mutations).unwrap();
+        let read = |world: &UiWorld| {
+            // Both go through the cold check.
+            world.scroll_content_extent_local(id(3));
+            world.scroll_content_extent_local(id(2))
+        };
+        let first = read(&world);
+        assert!(first.bottom > 4_000.0, "{first:?}");
+        let mut next = rows;
+        for step in 0..24u64 {
+            let mut mutations = MutationQueue::new();
+            match step % 6 {
+                // Scroll: the range does not move.
+                2 => mutations.set_scroll_offset(
+                    id(2),
+                    crate::ScrollOffset {
+                        x: 0.0,
+                        y: 137.0 * step as f32 + 0.37,
+                    },
+                ),
+                // A row comes in after another, and the rows below shift.
+                3 => {
+                    let after = order[(step as usize * 37) % order.len()];
+                    let before = order
+                        .iter()
+                        .position(|&index| index == after)
+                        .and_then(|at| order.get(at + 1))
+                        .map(|&index| row(index));
+                    mutations.create(row(next), document, NodeKind::Element { tag: "div".into() });
+                    mutations.insert(id(3), row(next), before);
+                    mutations.create(label(next), document, NodeKind::Text);
+                    mutations.insert(row(next), label(next), None);
+                    mutations.place_layout(
+                        label(next),
+                        at(2.0, 1.0, 20.0, 4.0),
+                        LayoutFrame::Parent,
+                    );
+                    heights.push(11.37);
+                    widths.push(300.0);
+                    let at = order.iter().position(|&index| index == after).unwrap();
+                    order.insert(at + 1, next);
+                    next += 1;
+                }
+                // A row goes, and the rows below shift up.
+                5 => {
+                    let gone = order.remove((step as usize * 53) % order.len());
+                    mutations.despawn_subtree(row(gone));
+                }
+                // An uneven step: one row grows or shrinks by 1.37 px times
+                // a few, and every row below it shifts by as much.
+                _ => {
+                    let edited = order[(step as usize * 97 + 11) % (order.len() / 2)];
+                    let sign = if step % 2 == 0 { 1.0 } else { -1.0 };
+                    heights[edited as usize] += sign * 1.37 * (1 + step % 3) as f32;
+                    widths.fill(300.0);
+                    widths[edited as usize] = 300.0 + 1.37 * step as f32;
+                }
+            }
+            let moved = place(
+                &mut mutations,
+                &order,
+                &heights,
+                &widths,
+                &mut previous,
+                step % 2 == 1,
+            );
+            {
+                let mut index = world.scroll_content_bounds.borrow_mut();
+                index.range_updates = 0;
+            }
+            world.commit(mutations).unwrap();
+            read(&world);
+            if matches!(step % 6, 0 | 1 | 4) {
+                assert!(moved > 1, "step {step}: an edit moves the rows below it");
+            }
+            if !matches!(step % 6, 3 | 5) {
+                // The moved rows' leaves and about as many nodes above them
+                // (with the list and its parent), not a refill of the list.
+                let work = world.scroll_content_bounds.borrow().range_updates;
+                assert!(
+                    work <= 2 * moved + 2 * 10 + 4,
+                    "step {step}: {work} for {moved} moved rows"
+                );
+            }
+            assert!(
+                world.scroll_content_bounds.borrow().settled(),
+                "step {step}"
+            );
         }
     }
 

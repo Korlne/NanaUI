@@ -247,24 +247,42 @@ impl UiWorld {
             return self.visible_accessibility_bounds(id, memo).is_some();
         };
         let above = self.motion_free_unclipped() && self.chain_hands_offsets(parent, memo);
-        self.has_accessibility_bounds_under(id, record, parent, above, memo)
+        let handed = self.handed_transform(parent, above, memo);
+        self.has_accessibility_bounds_under(id, record, parent, above, handed, memo)
+    }
+
+    /// What `parent` hands the children that stand at their offsets in it
+    /// ([`Self::has_accessibility_bounds_under`]), when its transform is
+    /// known and its chain hands offsets (`above`): looked up once for all
+    /// of its children.
+    fn handed_transform(
+        &self,
+        parent: StableNodeId,
+        above: bool,
+        memo: &ProjectionMemo,
+    ) -> Option<AccessibleTransform> {
+        if !above || self.geometry_frame.get().is_some() {
+            return None;
+        }
+        memo.transforms.get(&parent).copied()
     }
 
     /// [`Self::has_accessibility_bounds`] for `record`, `id`'s, with whether
-    /// the chain above hands offsets already answered (`above`). The child's
-    /// page box is its local offset from `parent`'s origin, which the
-    /// parent's transform already holds.
+    /// the chain above hands offsets already answered (`above`), and
+    /// `parent`'s transform when that is known (`handed`,
+    /// [`Self::handed_transform`]). The child's page box is its local offset
+    /// from `parent`'s origin, which the parent's transform already holds.
     fn has_accessibility_bounds_under(
         &self,
         id: StableNodeId,
         record: &NodeRecord,
         parent: StableNodeId,
         above: bool,
+        handed: Option<AccessibleTransform>,
         memo: &mut ProjectionMemo,
     ) -> bool {
-        if let Some(&transform) = memo.transforms.get(&parent)
+        if let Some(transform) = handed
             && record.hierarchy.parent == Some(parent)
-            && self.geometry_frame.get().is_none()
             && self.offset_placed_under(id, record, above)
         {
             let ([a, b, c, d, e, f], [g, h]) = transform.children;
@@ -275,12 +293,11 @@ impl UiWorld {
                     y: transform.origin[1] + local.y,
                     ..local
                 };
-                let finite = [
-                    (bounds.x, bounds.y),
-                    (bounds.x + bounds.width, bounds.y + bounds.height),
-                ]
-                .into_iter()
-                .all(|(x, y)| (a * x + c * y + e).is_finite() && (b * x + d * y + f).is_finite());
+                let corner = |x: f32, y: f32| {
+                    (a * x + c * y + e).is_finite() && (b * x + d * y + f).is_finite()
+                };
+                let finite = corner(bounds.x, bounds.y)
+                    && corner(bounds.x + bounds.width, bounds.y + bounds.height);
                 #[cfg(any(test, feature = "layout-verify"))]
                 {
                     assert_eq!(
@@ -748,6 +765,7 @@ impl UiWorld {
             let mut kept = Vec::with_capacity(children.len());
             if !children.is_empty() {
                 let chain = self.child_chain(id, memo);
+                let mut handed = self.handed_transform(id, chain.hands_offsets, memo);
                 kept.extend(children.iter().copied().filter(|&child| {
                     let Some(node) = self.nodes.get(child) else {
                         return false;
@@ -758,14 +776,21 @@ impl UiWorld {
                         && !(chain.hidden
                             || node.accessibility.hidden
                             || self.inline_box_omitted(child))
-                        && (self.axis_aligned_under(child, node, chain.aligned, memo)
-                            || self.has_accessibility_bounds_under(
+                        && (self.axis_aligned_under(child, node, chain.aligned, memo) || {
+                            // A child off the offset path memoizes the
+                            // transform on its way: the next one uses it.
+                            if handed.is_none() {
+                                handed = self.handed_transform(id, chain.hands_offsets, memo);
+                            }
+                            self.has_accessibility_bounds_under(
                                 child,
                                 node,
                                 id,
                                 chain.hands_offsets,
+                                handed,
                                 memo,
-                            ));
+                            )
+                        });
                     #[cfg(any(test, feature = "layout-verify"))]
                     assert_eq!(
                         kept,

@@ -329,33 +329,50 @@ impl UiWorld {
             return true;
         }
         // Post-order: a box is settled once every child it depends on is.
-        let mut open = vec![(id, false)];
-        while let Some((node, expanded)) = open.pop() {
+        // Each box reads its children once: a child that holds a line box,
+        // or one already known to hold one, settles it; otherwise it waits
+        // for the blocks not yet known (`unknown[from..to]`), and the ones
+        // known not to hold any are not read again. A list of rows under an
+        // edited one asks its rows once, not twice.
+        let mut unknown = Vec::new();
+        let mut open = vec![(id, None::<(usize, usize)>)];
+        while let Some((node, waiting)) = open.pop() {
             if memo.contains_key(&node) {
                 continue;
             }
-            let children = self.child_ids(node);
-            if !expanded {
-                if self.lays_out_own_line(node)
-                    || children
-                        .iter()
-                        .any(|&child| matches!(bears(child), Bears::Holds))
-                {
-                    memo.insert(node, true);
-                    continue;
-                }
-                open.push((node, true));
-                for &child in children.iter() {
-                    if matches!(bears(child), Bears::IfItHolds) && !memo.contains_key(&child) {
-                        open.push((child, false));
-                    }
-                }
+            if let Some((from, to)) = waiting {
+                let holds = unknown[from..to]
+                    .iter()
+                    .any(|child| memo.get(child) == Some(&true));
+                memo.insert(node, holds);
                 continue;
             }
-            let holds = children.iter().any(|&child| {
-                matches!(bears(child), Bears::IfItHolds) && memo.get(&child) == Some(&true)
-            });
-            memo.insert(node, holds);
+            if self.lays_out_own_line(node) {
+                memo.insert(node, true);
+                continue;
+            }
+            let from = unknown.len();
+            let mut holds = false;
+            for &child in self.child_ids(node).iter() {
+                match bears(child) {
+                    Bears::No => {}
+                    Bears::Holds => holds = true,
+                    Bears::IfItHolds => match memo.get(&child) {
+                        Some(&known) => holds |= known,
+                        None => unknown.push(child),
+                    },
+                }
+                if holds {
+                    break;
+                }
+            }
+            if holds || unknown.len() == from {
+                unknown.truncate(from);
+                memo.insert(node, holds);
+                continue;
+            }
+            open.push((node, Some((from, unknown.len()))));
+            open.extend(unknown[from..].iter().map(|&child| (child, None)));
         }
         memo[&id]
     }
