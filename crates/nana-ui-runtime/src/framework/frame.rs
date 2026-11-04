@@ -262,6 +262,15 @@ impl AppContext {
         self.layout_cache.frontier_stats(document)
     }
 
+    /// Work the most recent layout pass for `document` ran.
+    #[cfg(test)]
+    pub(crate) fn layout_execution_stats(
+        &self,
+        document: DocumentId,
+    ) -> crate::layout_engine::LayoutExecutionStats {
+        self.layout_cache.execution_stats(document)
+    }
+
     /// What the retained layout cache holds for `document`.
     #[cfg(test)]
     pub(crate) fn retained_layout_footprint(

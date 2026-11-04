@@ -221,6 +221,8 @@ impl RuntimeLayoutEngine {
             force_full,
         )?;
         #[cfg(any(test, feature = "layout-verify"))]
+        verify::retained_line_boxes_are_fresh(world, document, retained);
+        #[cfg(any(test, feature = "layout-verify"))]
         verify::retained_matches_full_layout(
             self,
             world,
@@ -378,18 +380,38 @@ impl RuntimeLayoutEngine {
         frontier.note_dependency_walk(metric_edges);
         retained.frontier_stats = LayoutFrontierStats::from_frontier(&frontier);
         // Whether a box holds a line box changes with it or with something
-        // inside it: drop the answer up every affected node's ancestors. The
-        // walk does not stop at a box with no answer, since one holding a
-        // line box of its own settles without asking its children; it stops
-        // where an earlier walk already went up.
+        // inside it: drop the answer up the ancestors of every node where
+        // what it reads may have changed. A seed that only sized, spaced,
+        // aligned, scrolled or turned a box changed nothing it reads
+        // (`may_move_line_boxes`), and neither did a node the frontier
+        // reached through a dependency edge from it. A structural seed
+        // (`moves_line_boxes_below`) may hide or show a whole subtree
+        // through state the subtree's boxes derive from their ancestors
+        // (mounted, an overlay branch, a menu open), so a pass holding one
+        // drops the answers up every affected node, as for any seed before.
+        // The walk does not stop at a box with no answer, since one holding
+        // a line box of its own settles without asking its children; it
+        // stops where an earlier walk already went up.
+        let seeds = typed_seeds
+            .iter()
+            .filter(|seed| world.document_of(seed.node) == Some(document));
+        let structural = seeds
+            .clone()
+            .any(|seed| moves_line_boxes_below(seed.invalidation));
         let mut cleared = crate::NodeSet::default();
-        for &id in &affected {
+        let mut clear_up = |id: StableNodeId| {
             let mut cursor = Some(id);
             while let Some(node) = cursor.filter(|node| cleared.insert(*node)) {
                 retained.line_boxes.remove(&node);
                 cursor = world.parent_id(node);
             }
+        };
+        if structural {
+            affected.iter().copied().for_each(&mut clear_up);
         }
+        seeds
+            .filter(|seed| may_move_line_boxes(seed.invalidation))
+            .for_each(|seed| clear_up(seed.node));
         nodes.line_boxes = std::cell::RefCell::new(std::mem::take(&mut retained.line_boxes));
         // Used-size memos on the measure frontier are stale. Intrinsic facts
         // stay until publication so an identical recompute does not bump generation.
@@ -673,6 +695,7 @@ impl RuntimeLayoutEngine {
         intrinsic.execution_stats.measure_stack_per_level = intrinsic.measure_levels.per_level;
         intrinsic.execution_stats.placement_stack_per_level = intrinsic.placement_levels.per_level;
         let intrinsic_counters = intrinsic.counters();
+        intrinsic.execution_stats.line_boxes_settled = nodes.line_boxes_settled.get();
         retained.execution_stats = intrinsic.execution_stats;
         let universe = if force_full { nodes.len() } else { world.len() };
         if force_full {
@@ -2565,6 +2588,58 @@ struct LayoutInputMap<'a> {
     /// ([`UiWorld::holds_line_box_in`]); exact for the same reason as
     /// [`Self::styles`].
     line_boxes: RefCell<crate::NodeMap<bool>>,
+    /// Boxes this pass's line-box questions settled by walking.
+    line_boxes_settled: Cell<usize>,
+}
+
+/// Whether a seed may change which boxes hold an in-flow line box
+/// ([`UiWorld::holds_line_box_in`]), at its node or at an ancestor.
+///
+/// The answer reads a box's own text, text layout, inline record and visual,
+/// its child list, and of each child whether it omits its box, leaves the
+/// flow (positioned or floated), is inline-level or is replaced. A style
+/// write classifies every changed field ([`nana_ui_core::LayoutStyleChange`]):
+/// `display` and isolation as flow, `position` and `float` as position,
+/// `hidden` as visibility; text, child lists, inline atoms and replaced
+/// content come with reasons and fields of their own. Only a seed that
+/// sized, spaced, aligned, scrolled or turned a box, or changed what it
+/// takes pointer input for, for a reason that names none of those, keeps the
+/// answers: everything else drops them.
+pub(crate) fn may_move_line_boxes(invalidation: nana_ui_core::LayoutInvalidation) -> bool {
+    use nana_ui_core::{InvalidationKind, InvalidationReason, LayoutFieldMask};
+    const KEEPS_FIELDS: LayoutFieldMask = LayoutFieldMask::SIZING
+        .union(LayoutFieldMask::SPACING)
+        .union(LayoutFieldMask::ALIGNMENT)
+        .union(LayoutFieldMask::SCROLL)
+        .union(LayoutFieldMask::TRANSFORM)
+        .union(LayoutFieldMask::INTERACTION);
+    const KEEPS_REASONS: InvalidationReason = InvalidationReason::STYLE
+        .union(InvalidationReason::PARENT_CONSTRAINT)
+        .union(InvalidationReason::CONTAINING_BLOCK)
+        .union(InvalidationReason::SIBLING)
+        .union(InvalidationReason::CONTEXT)
+        .union(InvalidationReason::SCROLL)
+        .union(InvalidationReason::VIEWPORT);
+    // A seed that names no field or no reason says nothing of what it kept.
+    invalidation.changed_inputs == LayoutFieldMask::NONE
+        || invalidation.reason.is_empty()
+        || !KEEPS_FIELDS.contains(invalidation.changed_inputs)
+        || !KEEPS_REASONS.contains(invalidation.reason)
+        || invalidation.kind.intersects(InvalidationKind::TOPOLOGY)
+}
+
+/// Whether a seed may change, besides its own node's answer, whether boxes
+/// below it omit theirs: a child list, a box shown or hidden, a cause it
+/// does not name. The boxes below derive hidden from their ancestors
+/// (`UiWorld::effective_layout_style`), so their own answers move without a
+/// seed of their own.
+pub(crate) fn moves_line_boxes_below(invalidation: nana_ui_core::LayoutInvalidation) -> bool {
+    use nana_ui_core::{InvalidationKind, InvalidationReason, LayoutFieldMask};
+    invalidation.kind.intersects(InvalidationKind::TOPOLOGY)
+        || invalidation
+            .changed_inputs
+            .intersects(LayoutFieldMask::VISIBILITY)
+        || invalidation.reason.intersects(InvalidationReason::UNKNOWN)
 }
 
 fn derived_baseline_key(id: StableNodeId, used: Size) -> (StableNodeId, u32, u32) {
@@ -2626,6 +2701,7 @@ impl<'a> LayoutInputMap<'a> {
             measure_plans: Default::default(),
             derived_baselines: HashMap::new(),
             line_boxes: RefCell::default(),
+            line_boxes_settled: Cell::new(0),
         }
     }
 
@@ -2727,7 +2803,14 @@ impl<'a> LayoutInputMap<'a> {
         id: StableNodeId,
         ask: fn(&UiWorld, StableNodeId, &mut crate::NodeMap<bool>) -> bool,
     ) -> bool {
-        let answer = ask(self.world, id, &mut self.line_boxes.borrow_mut());
+        let answer = {
+            let mut memo = self.line_boxes.borrow_mut();
+            let known = memo.len();
+            let answer = ask(self.world, id, &mut memo);
+            self.line_boxes_settled
+                .set(self.line_boxes_settled.get() + (memo.len() - known));
+            answer
+        };
         #[cfg(any(test, feature = "layout-verify"))]
         if self.world.len() <= 4096 {
             assert_eq!(
@@ -3347,6 +3430,10 @@ pub(crate) struct LayoutExecutionStats {
     pub placement_stack_per_level: usize,
     /// Subtrees placed from the boundary queue. See `recursion`.
     pub placement_boundaries: usize,
+    /// Boxes a line-box question settled by walking rather than from the
+    /// retained memo ([`UiWorld::holds_line_box_in`]): what a seed that drops
+    /// the memo up its ancestors costs the next pass.
+    pub line_boxes_settled: usize,
 }
 
 /// Per-pass used-size memo.  The public [`crate::IntrinsicCache`] owns the

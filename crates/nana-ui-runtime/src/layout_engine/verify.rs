@@ -107,3 +107,35 @@ pub(super) fn retained_matches_full_layout(
         shown.join("\n")
     );
 }
+
+/// Every line-box answer `document`'s cache keeps equals a fresh walk's: the
+/// recompute-and-compare guard for which seeds drop them
+/// ([`super::may_move_line_boxes`]). Reading an answer checks it too
+/// (`checked_line_boxes`), but only the ones a pass asks; this checks the
+/// ones a later pass would read. One fresh memo serves every entry, so the
+/// audit walks each box once. It runs under [`skip_layout_verify`] as well:
+/// it costs a walk, not a layout.
+pub(super) fn retained_line_boxes_are_fresh(
+    world: &UiWorld,
+    document: DocumentId,
+    retained: &RetainedLayoutCache,
+) {
+    let Some(cache) = retained.documents.get(&document) else {
+        return;
+    };
+    // A box out of the document (detached, parked) is asked nothing until it
+    // comes back, and it comes back with a structural seed that drops what
+    // is kept below it.
+    let mounted: crate::NodeSet = world.document_order(document).into_iter().collect();
+    let mut fresh = crate::NodeMap::default();
+    for (&id, &kept) in cache.line_boxes.iter() {
+        if !mounted.contains(&id) || !world.presence_live(id) {
+            continue;
+        }
+        assert_eq!(
+            kept,
+            world.holds_line_box_in(id, &mut fresh),
+            "{id:?}: the retained line-box answer is stale after the pass"
+        );
+    }
+}
