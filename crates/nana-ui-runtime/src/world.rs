@@ -494,6 +494,11 @@ struct HitEntry {
     pinned: bool,
     transform: [f32; 6],
     persp: [f32; 2],
+    /// The scroll offset the index holds this entry's children at: the live
+    /// one when it was built, moved by every scroll shift since. An entry
+    /// built again in place over its children must find the live offset
+    /// here, or a scroll the index has not taken yet would be lost.
+    scroll: [f32; 2],
     /// Clips applied to this node's own hit (and therefore its subtree).
     self_clips: Vec<(LayoutBox, [f32; 6])>,
     /// Extra clips applied to descendants only (overflow / visual frames).

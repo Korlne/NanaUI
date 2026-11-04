@@ -195,19 +195,6 @@ pub(super) struct IndexedHit {
     sibling_slot: usize,
 }
 
-/// An entry that is its box and nothing the box gives it: no transform of
-/// its own or above it, no clip, no shape, no menu or painter, not escaped.
-fn plain_hit_entry(entry: &HitEntry) -> bool {
-    entry.transform == IDENTITY_AFFINE
-        && entry.persp == [0.0, 0.0]
-        && entry.self_clips.is_empty()
-        && entry.child_clips.is_empty()
-        && entry.path_clips.is_empty()
-        && entry.menu.is_none()
-        && entry.painter.is_none()
-        && !entry.escaped
-}
-
 fn hit_bounds(entry: &HitEntry) -> Bounds {
     if !entry.hittable && entry.menu.is_none() {
         return Bounds::Inactive;
@@ -1885,6 +1872,8 @@ impl UiWorld {
         let [a, b, c, d, _, _] = node.entry.transform;
         node.shift[0] += a * delta[0] + c * delta[1];
         node.shift[1] += b * delta[0] + d * delta[1];
+        node.entry.scroll[0] -= delta[0];
+        node.entry.scroll[1] -= delta[1];
         index.refresh_bounds(scroller);
         // Ordinary descendants share one lazy scroll shift. Sticky branches
         // additionally change their local placement, so rebase just those
@@ -2161,6 +2150,7 @@ impl UiWorld {
                         pinned,
                         transform: IDENTITY_AFFINE,
                         persp: [0.0, 0.0],
+                        scroll: [0.0, 0.0],
                         self_clips: Vec::new(),
                         child_clips: Vec::new(),
                         path_clips: Vec::new(),
@@ -2363,6 +2353,7 @@ impl UiWorld {
                     pinned: reads_page,
                     transform,
                     persp,
+                    scroll: [scroll.x, scroll.y],
                     self_clips,
                     child_clips,
                     path_clips,
@@ -2734,57 +2725,111 @@ impl UiWorld {
 }
 
 impl UiWorld {
-    /// `id`'s entry built again on its own, when the one held is plain (see
-    /// [`plain_hit_entry`]) under plain entries without scroll, and so is the
-    /// new one, over the same children. Such an entry hands its children
-    /// nothing a change of it could alter, so they keep theirs; anything
-    /// else patches the subtree.
-    fn rebuilt_plain_hit_entry(&self, document: DocumentId, id: StableNodeId) -> Option<HitEntry> {
+    /// `id`'s entry built again on its own, when it hands its children what
+    /// the one held does: the same transform and scroll, no perspective or
+    /// 3D context, over the same children, from its tree parent. Such an
+    /// entry hands its children nothing a change of it could alter, so they
+    /// keep theirs; anything else patches the subtree.
+    ///
+    /// It is built as [`Self::patch_hit_branch`] would build it -- from the
+    /// parent's live transform and scroll, brought back into the space the
+    /// index holds it in by the scroll shifts above it -- so under a scroll
+    /// that space is not the live one, and the transform is compared there.
+    fn rebuilt_hit_entry_in_place(
+        &self,
+        document: DocumentId,
+        id: StableNodeId,
+    ) -> Option<HitEntry> {
         let index = self.hit_test_index.get(&document)?;
         let hit = index.entries.get(&id)?;
-        if !plain_hit_entry(&hit.entry)
-            || hit.shift != [0.0, 0.0]
+        let held = &hit.entry;
+        // A build seeded at a box does not look for the clip parent it
+        // escapes to (#201): the branch patch hangs it there.
+        // Under a scale, rotation or skew an entry's bounds are the box
+        // around turned corners, merged with its children's: built again
+        // over children kept from another build they come out an ulp from a
+        // fresh one. Such branches patch whole, as they did.
+        if held.escaped
+            || held.persp != [0.0, 0.0]
+            || held.transform[..4] != [1.0, 0.0, 0.0, 1.0]
             || hit.parent != self.parent_id(id)
-            || index.inherited_shift(id) != [0.0, 0.0]
+            || self.clip_escape(id).is_some()
         {
             return None;
         }
-        if let Some(parent) = hit.parent
-            && (!index
-                .entries
-                .get(&parent)
-                .is_some_and(|parent| plain_hit_entry(&parent.entry))
-                || self.record(parent).scroll_offset != crate::ScrollOffset::default())
-        {
+        // What the parent hands its children, live: its entry's transform
+        // with the scroll shifts above it, then its own scroll.
+        // `find_hit_transform` and `child_shift` from one walk up: the shift
+        // above the parent, and the parent's own on top for its children.
+        let (seed, offset) = match hit.parent {
+            Some(parent) => {
+                let parent_hit = index.entries.get(&parent)?;
+                if parent_hit.entry.persp != [0.0, 0.0] {
+                    return None;
+                }
+                let above = index.inherited_shift(parent);
+                let mut transform = parent_hit.entry.transform;
+                transform[4] += above[0];
+                transform[5] += above[1];
+                let scroll = self.record(parent).scroll_offset;
+                (
+                    then_affine(transform, [1.0, 0.0, 0.0, 1.0, -scroll.x, -scroll.y]),
+                    [
+                        above[0] + parent_hit.shift[0],
+                        above[1] + parent_hit.shift[1],
+                    ],
+                )
+            }
+            None => (IDENTITY_AFFINE, [0.0, 0.0]),
+        };
+        // A 3D context changes what the children are built from without
+        // showing in this entry; the seed does not carry one either.
+        let style = &self.record(id).resolved_layout;
+        if style.transform_3d.is_some() || style.fails_closed_3d_context() {
             return None;
         }
         let (mut built, deferred) =
-            self.build_hit_entries_reaching(vec![(id, IDENTITY_AFFINE, hit.parent)], false);
+            self.build_hit_entries_reaching(vec![(id, seed, hit.parent)], false);
         if !deferred.is_empty() || built.len() != 1 {
             return None;
         }
         let mut fresh = built.pop()?.entry;
+        // Into the space the index holds the entry in, as `insert_tree`
+        // takes a patched branch there.
+        fresh.transform[4] -= offset[0];
+        fresh.transform[5] -= offset[1];
+        for (_, transform) in fresh
+            .self_clips
+            .iter_mut()
+            .chain(fresh.child_clips.iter_mut())
+        {
+            transform[4] -= offset[0];
+            transform[5] -= offset[1];
+        }
         // A box that turns fixed hangs from the viewport, and one whose
         // stacking moved takes another place among its siblings: both are
         // structural, for the subtree patch.
-        if !plain_hit_entry(&fresh)
-            || !Arc::ptr_eq(&fresh.source_children, &hit.entry.source_children)
-            || fresh.z_index != hit.entry.z_index
+        if fresh.escaped
+            || fresh.persp != [0.0, 0.0]
+            || fresh.transform != held.transform
+            || fresh.scroll != held.scroll
+            || !Arc::ptr_eq(&fresh.source_children, &held.source_children)
+            || fresh.z_index != held.z_index
             || self
                 .layout_style(id)
                 .is_none_or(|style| style.position == PositionSpec::Fixed)
         {
             return None;
         }
-        fresh.order = hit.entry.order;
+        fresh.order = held.order;
         Some(fresh)
     }
 
-    /// Put the plain entries built again on their own (see
-    /// [`Self::rebuilt_plain_hit_entry`]) in place over their children, and
+    /// Put the entries built again on their own (see
+    /// [`Self::rebuilt_hit_entry_in_place`]) in place over their children, and
     /// refresh the bounds above them once each. An entry that only moved
     /// takes a new origin this way; what hangs below it keeps its own.
-    fn replace_plain_hit_entries(
+    fn replace_hit_entries_in_place(
         &mut self,
         document: DocumentId,
         rebuilt: Vec<(StableNodeId, HitEntry)>,
@@ -2852,9 +2897,12 @@ impl UiWorld {
             .collect()
     }
 
-    /// A moved entry, and every entry below it that no scroll since its
-    /// build has shifted, is what a rebuild of the whole index makes of it,
-    /// wherever that rebuild stays cheap.
+    /// A moved entry, and every entry below it, is what a rebuild of the
+    /// whole index makes of it, wherever that rebuild stays cheap. Bit for
+    /// bit where no scroll since its build has shifted it or what is above
+    /// it; under a shift the index holds it in the space of the scroll it
+    /// was built at, so its transforms and bounds are brought into the live
+    /// space and compared to rounding there.
     #[cfg(any(test, feature = "layout-verify"))]
     fn check_moved_hit_entries(&self, document: DocumentId, moved: &[StableNodeId]) {
         if self.len() > 4096 {
@@ -2867,47 +2915,79 @@ impl UiWorld {
             let Some(hit) = index.entries.get(&id) else {
                 continue;
             };
-            if hit.shift != [0.0, 0.0] {
-                continue;
-            }
             below.push(id);
             open.extend(hit.children.iter().flatten().copied());
         }
-        let moved = below.as_slice();
         let seeds = self
             .document_roots(document)
             .iter()
             .map(|&id| (id, IDENTITY_AFFINE, None))
             .collect::<Vec<_>>();
         let fresh = HitIndex::from_entries(self.build_hit_entries(seeds));
-        let index = &self.hit_test_index[&document];
-        for id in moved {
-            let (Some(ours), Some(theirs)) = (index.entries.get(id), fresh.entries.get(id)) else {
+        let near =
+            |a: f32, b: f32| a == b || (a - b).abs() <= (a.abs().max(b.abs()) * 1e-6).max(1e-4);
+        let near_affine = |a: [f32; 6], b: [f32; 6], shift: [f32; 2]| {
+            (0..4).all(|i| a[i] == b[i])
+                && near(a[4] + shift[0], b[4])
+                && near(a[5] + shift[1], b[5])
+        };
+        let near_bounds = |a: Bounds, b: Bounds, shift: [f32; 2]| match (a.translated(shift), b) {
+            (Bounds::Known(a), Bounds::Known(b)) => {
+                near(a.x, b.x)
+                    && near(a.y, b.y)
+                    && near(a.width, b.width)
+                    && near(a.height, b.height)
+            }
+            (a, b) => a == b,
+        };
+        let near_clips = |a: &[(LayoutBox, [f32; 6])], b: &[(LayoutBox, [f32; 6])], shift| {
+            a.len() == b.len()
+                && a.iter()
+                    .zip(b)
+                    .all(|((a, at), (b, bt))| a == b && near_affine(*at, *bt, shift))
+        };
+        for &id in &below {
+            let (Some(ours), Some(theirs)) = (index.entries.get(&id), fresh.entries.get(&id))
+            else {
                 panic!("{id:?}: a moved hit entry has no counterpart in a rebuild");
             };
             let (a, b) = (&ours.entry, &theirs.entry);
+            let shift = index.inherited_shift(id);
+            let placed = if shift == [0.0, 0.0] && ours.shift == [0.0, 0.0] {
+                ours.bounds == theirs.bounds
+                    && a.transform == b.transform
+                    && a.scroll == b.scroll
+                    && a.self_clips == b.self_clips
+                    && a.child_clips == b.child_clips
+                    && hit_bounds(a) == hit_bounds(b)
+            } else {
+                near_bounds(ours.bounds, theirs.bounds, shift)
+                    && near_affine(a.transform, b.transform, shift)
+                    && near(a.scroll[0], b.scroll[0])
+                    && near(a.scroll[1], b.scroll[1])
+                    && near_clips(&a.self_clips, &b.self_clips, shift)
+                    && near_clips(&a.child_clips, &b.child_clips, shift)
+                    && near_bounds(hit_bounds(a), hit_bounds(b), shift)
+            };
             assert!(
-                ours.parent == theirs.parent
+                placed
+                    && ours.parent == theirs.parent
                     && a.layout == b.layout
                     && a.origin == b.origin
                     && a.pinned == b.pinned
-                    && ours.bounds == theirs.bounds
-                    && a.transform == b.transform
                     && a.persp == b.persp
                     && a.hittable == b.hittable
                     && a.z_index == b.z_index
                     && a.menu == b.menu
                     && a.escaped == b.escaped
-                    && a.self_clips == b.self_clips
-                    && a.child_clips == b.child_clips
-                    && a.path_clips.is_empty() == b.path_clips.is_empty()
-                    && hit_bounds(a) == hit_bounds(b),
+                    && a.path_clips.is_empty() == b.path_clips.is_empty(),
                 "{id:?}: a moved hit entry differs from a rebuilt one: {a:?} != {b:?} \
-                 (bounds {:?} != {:?}, parent {:?} != {:?})",
+                 (bounds {:?} != {:?}, parent {:?} != {:?}, scroll shift {shift:?} / {:?})",
                 ours.bounds,
                 theirs.bounds,
                 ours.parent,
-                theirs.parent
+                theirs.parent,
+                ours.shift,
             );
         }
     }
@@ -2930,19 +3010,19 @@ impl UiWorld {
         if !self.hit_test_index.contains_key(&document) {
             return false;
         }
-        // A plain entry is built again on its own, in place; the rest patch
-        // the subtrees over them. Entries below a dirty one keep theirs,
+        // An entry that hands its children what it handed them is built
+        // again on its own, in place; the rest patch the subtrees over them. Entries below a dirty one keep theirs,
         // being in their own boxes' coordinates, but for the pinned.
         let mut rest = self.pinned_hit_entries_under(document, dirty);
         let mut rebuilt = Vec::new();
         for &id in dirty {
-            if let Some(entry) = self.rebuilt_plain_hit_entry(document, id) {
+            if let Some(entry) = self.rebuilt_hit_entry_in_place(document, id) {
                 rebuilt.push((id, entry));
             } else {
                 rest.push(id);
             }
         }
-        let _replaced = self.replace_plain_hit_entries(document, rebuilt);
+        let _replaced = self.replace_hit_entries_in_place(document, rebuilt);
         let dirty = rest.as_slice();
         let Some(roots) = self.minimal_hit_patch_roots(document, dirty) else {
             return false;
@@ -3123,6 +3203,10 @@ mod build_tests;
 #[cfg(test)]
 #[path = "hit_test/presentation_tests.rs"]
 mod presentation_tests;
+
+#[cfg(test)]
+#[path = "hit_test/moved_scroll_tests.rs"]
+mod moved_scroll_tests;
 
 #[cfg(test)]
 mod connector_tests {
