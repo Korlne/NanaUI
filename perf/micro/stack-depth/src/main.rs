@@ -11,6 +11,8 @@
 //! FRAME_PATH=1 cargo run --release -- wide  # the product frame's first layout
 //!                                          # (`layout_document_for_viewport`), not a full pass
 //! CONTROLS=1 cargo run --release -- wide    # a page of labels and buttons instead of bare boxes
+//! CONTROLS=1 MIXED=1 cargo run --release -- edits 2000 height
+//!                                          # closed selects among the buttons
 //! VISIBLE=1 cargo run --release -- edits    # cull the scene after each frame, as a painter does
 //! cargo run --release -- edits 200,2000   # one edit a product frame: layout and frame time
 //! RUNS=240 /usr/bin/time -l target/release/nana-stack-depth edits 2000 height
@@ -89,6 +91,9 @@ fn nana_page(cx: &mut AppContext, document: DocumentId, rows: usize, cells: usiz
     // `CONTROLS=1`: a page of controls, not bare boxes -- every cell holds a
     // label and a button, so the passes meet visuals, text and their tables.
     let controls = std::env::var_os("CONTROLS").is_some();
+    // `MIXED=1` with it: every odd cell's button is a closed select, a
+    // visual whose geometry once read the page.
+    let mixed = controls && std::env::var_os("MIXED").is_some();
     for r in 0..rows {
         let row = cx
             .create_detached_component(document, Stack::row(4.0))
@@ -106,6 +111,16 @@ fn nana_page(cx: &mut AppContext, document: DocumentId, rows: usize, cells: usiz
                 cx.append_child(cell, label).unwrap();
                 if (r, c) == (rows / 2, cells / 2) {
                     target = Some(label.stable_id());
+                }
+                if mixed && c % 2 == 1 {
+                    let mut select = nana_ui_runtime::Select::new(Some("a"));
+                    select.options = vec![
+                        nana_ui_runtime::SelectOption::new("a", "Alpha"),
+                        nana_ui_runtime::SelectOption::new("b", "Beta"),
+                    ];
+                    let select = cx.create_detached_component(document, select).unwrap();
+                    cx.append_child(cell, select).unwrap();
+                    continue;
                 }
                 let button = cx
                     .create_detached_component(document, Button::new("Go"))

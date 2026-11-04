@@ -2197,7 +2197,9 @@ impl UiWorld {
                     &source,
                     self.style_model,
                     self.theme.recipes().scrollbar(),
-                    self.document_viewport_of(id),
+                    // Only an open menu is fitted to the viewport: a closed
+                    // field is derived in its own coordinates.
+                    opened.then(|| self.document_viewport_of(id)).flatten(),
                     *checkable,
                     &parts,
                     self.chrome_text_measure(id),

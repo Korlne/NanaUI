@@ -1672,9 +1672,15 @@ pub struct UiScene {
     /// the bit.
     placement_live: bool,
     /// Nodes whose last build read where they stand -- a transform a painter
-    /// applies about the node's corner, an icon centred on its parent's
-    /// text -- and so are built again when they or a box above them move.
+    /// applies about the node's corner, an icon centred on the text of a
+    /// parent it is not measured from -- and so are built again when they
+    /// or a box above them move.
     origin_bound: NodeSet,
+    /// Nodes whose last build read their own offset from their parent and
+    /// nothing else that a move changes -- an icon centred on its parent's
+    /// text, in its parent's coordinates -- and so are built again when they
+    /// are the root of a move, not when a box above them moves.
+    offset_bound: NodeSet,
     /// Nodes measured from a frame other than their parent, or sticking to
     /// a scroller: what a move of a box above them does not carry along.
     unfollowing: NodeSet,
@@ -1774,6 +1780,7 @@ impl Default for UiScene {
             escaped_nodes: NodeSet::default(),
             placement_live: false,
             origin_bound: NodeSet::default(),
+            offset_bound: NodeSet::default(),
             unfollowing: NodeSet::default(),
             placement_epoch: 0,
             placed_origins: std::sync::Mutex::new(NodeMap::default()),
@@ -1816,6 +1823,7 @@ impl Clone for UiScene {
             escaped_nodes: self.escaped_nodes.clone(),
             placement_live: self.placement_live,
             origin_bound: self.origin_bound.clone(),
+            offset_bound: self.offset_bound.clone(),
             unfollowing: self.unfollowing.clone(),
             placement_epoch: self.placement_epoch,
             placed_origins: std::sync::Mutex::new(
@@ -2155,6 +2163,7 @@ impl UiScene {
                 self.projections.remove(&id);
                 self.unadjustable_projections.remove(&id);
                 self.origin_bound.remove(&id);
+                self.offset_bound.remove(&id);
                 self.unfollowing.remove(&id);
                 self.placed_origins
                     .get_mut()
@@ -2488,6 +2497,14 @@ impl UiScene {
                     changed.push(id);
                 }
             }
+            if !self.offset_bound.is_empty() {
+                changed.extend(
+                    layout_moves
+                        .iter()
+                        .copied()
+                        .filter(|id| self.offset_bound.contains(id)),
+                );
+            }
         }
         let unfollowing_moved: Vec<StableNodeId> = if moved_set.is_empty() || !track_shifts {
             Vec::new()
@@ -2689,6 +2706,10 @@ impl UiScene {
             self.instance = next_scene_instance();
         }
         #[cfg(debug_assertions)]
+        if !layout_moves.is_empty() {
+            self.audit_moved_primitives(&layout_moves);
+        }
+        #[cfg(debug_assertions)]
         self.audit_retained_projection();
         // The counter is what lets `opacity_groups` answer without touching the
         // node map, so a path that edits it without maintaining the counter
@@ -2841,6 +2862,97 @@ impl UiScene {
         }
     }
 
+    /// The cold check of a move: every primitive of a node at or under a
+    /// root that moved in this delta draws what a scene that built it again
+    /// now draws, to the bit -- the same geometry in the node's own
+    /// coordinates, put at the same origin, through the same translation
+    /// and cut by the same clips. A node whose build read where it stood
+    /// ([`Self::origin_bound`], [`Self::offset_bound`]) and was not built
+    /// again fails here.
+    ///
+    /// A transform that is more than a translation is rebased through an
+    /// inverse and lands an ulp off a fresh composition whether or not
+    /// anything moved, so only where it is put is compared for it. Inline
+    /// objects a presentation is moving are written by the presenter after
+    /// they are built, and are left out.
+    ///
+    /// Rebuilds the whole scene, so it runs on the trees unit tests build.
+    #[cfg(debug_assertions)]
+    fn audit_moved_primitives(&self, roots: &[StableNodeId]) {
+        if self.nodes.len() > RETAINED_AUDIT_LIMIT {
+            return;
+        }
+        let mut cold = self.clone();
+        let ids: Vec<StableNodeId> = cold.nodes.keys().copied().collect();
+        for id in ids {
+            cold.rebuild_node_primitives(id);
+        }
+        let under_move =
+            |id: StableNodeId| roots.iter().any(|&root| self.node_descends_from(id, root));
+        let rect_bits =
+            |rect: SceneRect| [rect.x, rect.y, rect.width, rect.height].map(f32::to_bits);
+        let translation = |transform: AffineTransform| {
+            transform.0[..4] == [1.0, 0.0, 0.0, 1.0] && transform.1 == [0.0, 0.0]
+        };
+        for (&id, held) in &self.primitives {
+            let node = held.primitive.node;
+            if self.glyph_objects.contains_key(&node) || !under_move(node) {
+                continue;
+            }
+            let fresh = cold
+                .primitives
+                .get(&id)
+                .unwrap_or_else(|| panic!("{id:?}: kept under a move, a rebuild drops it"));
+            let (Some(draw), Some(cold_draw)) = (self.draw_primitive(id), cold.draw_primitive(id))
+            else {
+                continue;
+            };
+            assert_eq!(
+                draw.origin.map(f32::to_bits),
+                cold_draw.origin.map(f32::to_bits),
+                "{id:?}: kept under a move, it is put at {:?}, a rebuild at {:?}",
+                draw.origin,
+                cold_draw.origin
+            );
+            if translation(cold_draw.transform) {
+                assert!(
+                    draw.transform.0.map(f32::to_bits) == cold_draw.transform.0.map(f32::to_bits)
+                        && draw.transform.1.map(f32::to_bits)
+                            == cold_draw.transform.1.map(f32::to_bits),
+                    "{id:?}: kept under a move, it is drawn through {:?}, a rebuild through {:?}",
+                    draw.transform,
+                    cold_draw.transform
+                );
+            }
+            assert!(
+                draw.clips.len() == cold_draw.clips.len()
+                    && draw
+                        .clips
+                        .iter()
+                        .zip(cold_draw.clips.iter())
+                        .all(|(clip, cold)| rect_bits(clip.bounds) == rect_bits(cold.bounds)),
+                "{id:?}: kept under a move, it is cut by {:?}, a rebuild by {:?}",
+                draw.clips,
+                cold_draw.clips
+            );
+            let mut kept = held.primitive.clone();
+            kept.clips = fresh.primitive.clips.clone();
+            kept.transform = fresh.primitive.transform;
+            assert!(
+                kept == fresh.primitive,
+                "{id:?}: kept under a move, it is not the primitive a rebuild makes:\n\
+                 kept {kept:?}\nbuilt {:?}",
+                fresh.primitive
+            );
+        }
+        for (&id, fresh) in &cold.primitives {
+            assert!(
+                self.primitives.contains_key(&id) || !under_move(fresh.primitive.node),
+                "{id:?}: under a move, a rebuild paints it and the kept scene does not"
+            );
+        }
+    }
+
     /// What a frame plan reads out of a primitive beyond its identity.
     fn custom_binding(kind: &ScenePrimitiveKind) -> Option<(&Arc<str>, &Arc<str>)> {
         match kind {
@@ -2922,18 +3034,19 @@ impl UiScene {
 
     /// Compact leading glyphs share the parent (or own) text line-box center.
     ///
-    /// The second half of the answer is whether it read the parent's text
-    /// box, which stands where the node does not move with it: the node is
-    /// built again when it moves ([`Self::origin_bound`]).
+    /// The second half of the answer is what of where the node stands it
+    /// read: nothing, its own offset in its parent's coordinates (it is built
+    /// again when it is the root of a move, [`Self::offset_bound`]), or the
+    /// page (when it or a box above it moves, [`Self::origin_bound`]).
     fn icon_y_aligned_to_adjacent_text(
         &self,
         node: &ExtractedNode,
         icon_bounds: SceneRect,
         extent: f32,
-    ) -> (f32, bool) {
+    ) -> (f32, PlacementRead) {
         let geometric = icon_bounds.y + (icon_bounds.height - extent) / 2.0;
         if node.layout.height > extent + 0.5 || node.layout.width > extent + 0.5 {
-            return (geometric, false);
+            return (geometric, PlacementRead::None);
         }
         let host = if node
             .text
@@ -2955,7 +3068,7 @@ impl UiScene {
                 {
                     parent
                 }
-                _ => return (geometric, false),
+                _ => return (geometric, PlacementRead::None),
             }
         };
         // In the space the host's record is in.
@@ -2968,15 +3081,17 @@ impl UiScene {
         };
         // Into this node's: a child measured from its parent stands at its
         // local box in the parent's coordinates, wherever the two stand.
-        let reads_parent = host.id != node.id;
-        if reads_parent {
+        let mut read = PlacementRead::None;
+        if host.id != node.id {
             if node.layout_frame == nana_ui_runtime::LayoutFrame::Parent
                 && !record_on_page(host)
                 && !record_on_page(node)
             {
                 text_box.y -= node.local_layout.y;
+                read = PlacementRead::Offset;
             } else {
                 text_box.y += self.paint_origin(host)[1] - self.paint_origin(node)[1];
+                read = PlacementRead::Page;
             }
         }
         let centered = matches!(
@@ -2992,9 +3107,20 @@ impl UiScene {
                 centered,
                 extent,
             ),
-            reads_parent,
+            read,
         )
     }
+}
+
+/// What of where a node stands its build read
+/// ([`UiScene::icon_y_aligned_to_adjacent_text`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PlacementRead {
+    None,
+    /// Its own offset in its parent's coordinates.
+    Offset,
+    /// Where it stands on the page, or where another node does.
+    Page,
 }
 
 fn node_scene_transform(

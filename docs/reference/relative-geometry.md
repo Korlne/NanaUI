@@ -95,12 +95,19 @@ Taffy 做同一次编辑只要 0.48 ms。真正重新排布的只有约 1 000 �
 
 - **记录**：`ExtractedNode` 带 `local_layout` 与 `layout_frame`（与 `UiWorld::local_layout_box` / `layout_frame` 相同）；`layout` 是提取那一刻的页面盒子，只作参考。`ExtractedMove` 同样带 `local_layout` / `layout_frame`，只给平移的根发。
 - **组件几何本地化**：`ExtractedNode.component_geometry` 在节点自己的坐标里（边框盒在原点）。运行时用同一份 `derive_component_geometry` 求它：`UiWorld::local_component_geometry` 把 `geometry_frame` 设成这个节点，期间 `record_layout_origin` 沿参照系链求和时走到这个节点就停（它自己的原点记 0），所以内容盒、部件、子孙的盒子都是相对这个节点的、和节点站在哪无关；链上碰不到它（读了外面的盒子）或读了视口（`document_viewport_of`）就记 `geometry_read_page`，调试构建断言。对外的 `UiWorld::component_geometry` 不设 frame，仍是页面坐标，逐位和改造前相同，命中、IME、无障碍都读它。
-- **读页面的 visual**（`StandardVisual::geometry_reads_page`）：Select（菜单贴视口）、MenuSurface（菜单项放在页面上）和 NativeMarkdown 仍在页面坐标里推导，记录在页面上，节点或它上面的盒子一动就重新提取（`extract_nodes_reusing` 的守卫与 `settle_layout_moves` 的 visual 扫描只看这几种）。Markdown 本身不读页面，但它把整篇文档从内容盒往下排，按页面坐标一路累加和按本地累加再放到页面上在末位不同，Mermaid 图的曲线抗锯齿会差 1 级（`gallery-rich-text` 两张快照 7 个像素），为保持冷场景逐位不变留在页面上。其余带组件几何的节点（按钮、输入框等）平移时直接沿用记录。
+- **读页面的 visual**（`StandardVisual::geometry_reads_page`）：只剩打开的 Select（菜单贴视口）和打开的 MenuSurface（菜单项放在页面上）。它们仍在页面坐标里推导、记录在页面上，节点或它上面的盒子一动就重新提取：`NodeStore` 在 `set_visual` 时把它们记进 `page_geometry`，`settle_layout_moves` 只扫这个集合（原来扫所有带 visual 的节点），`extract_nodes_reusing` 的守卫看记录的 visual。关着的 Select 只有标签、提示和把手，推导时不再读视口（`document_viewport_of` 只在打开时调）；关着的 MenuSurface 够不到它的菜单项（`closed_menu_hides`），表面是空框——两者都按本地坐标推导，平移时沿用记录。打开、关上都改 visual，节点整个重新提取，记录在页面与本地之间切换。NativeMarkdown（收尾一步起）也在本地坐标里：整篇文档从本地内容盒往下排，冷场景同样如此，所以平移后和冷场景逐位一致；与改造前按页面累加的结果在末位不同，Mermaid 曲线的抗锯齿让 `gallery-rich-text-dark` / `-light` 两张基线变了几个像素，已重录。其余带组件几何的节点（按钮、输入框等）平移时直接沿用记录。
 - **图元本地化**：`build_node_primitives` 以 `UiScene::record_box`（本地记录为 `(0, 0, 宽, 高)`，页面记录为提取时的页面盒子）为 `bounds` 建图元，所有坐标——`bounds`、批量矩形、笔画点、`Path` / `Chart` 的 `origin`、图层裁剪、节点自己的裁剪（`clips` 里继承部分之后的那些）——都在节点自己的坐标里；`transform` 是页面上的变换（祖先的变换、滚动、节点自己绕现在位置的变换），不含原点。
 - **放置**：节点现在的页面原点按参照系链从上往下累加本地偏移（`placed_origin`，与运行时 `record_layout_origin` 同样的加法顺序，按 `placement_epoch` 记忆；第一次平移之前直接取 `layout`，`placement_live`）。新提取的记录这个值与 `layout` 逐位相等（调试构建断言）。`paint_origin` 是图元的落点：本地记录取 `placed_origin`，页面记录取 0。
 - **绘制**：`draw_primitive` 给出 `SceneDraw { origin, transform, clips }`：几何先加 `origin`（每个坐标一次加法），再过 `transform`；`clips` 全在页面上——继承的那些由 `fold_ancestor` 从祖先现在的页面盒子（`placed_layout`，组件裁剪是本地几何加 `paint_origin`）现算，节点自己的加上 `origin`（按图元、revision、两个 epoch 缓存在 `placed_clips`）。冷场景走同一个公式，所以平移后的子树画出来和冷场景逐位相同：几何是同一份本地值，原点是同一个链和，变换是同一个页面变换。保留投影（`Retained`，自建图元以来没有任何会改原点的变化）直接用建图元时记下的原点（`RetainedPrimitive::origin`，调试构建断言与现算相同）；重定基（`Rebased`）的原点和继承裁剪一起记在 `DrawAttributes`。
 - **平移的根**：只换本地盒子、参照系和结果，抬 `attribute_epoch` 与 `placement_epoch`，图元不动；尺寸或结果变了才重建。整节点重新提取、但只挪了位置且结果相同的（`moved_in_place`）同样不重建。
-- **读了自己位置的节点**（`origin_bound`）：画家（`Painter`）的局部变换绕节点的页面角点、对齐父节点文字的小图标（读父节点文字框相对自己的偏移）、图表悬停指示线（对齐页面半像素）、逐字形呈现的行内对象（绕页面上的中心缩放）和带转场视口的文字。它们自己或上面的盒子平移时整节点重建，O(集合大小 × 深度)。
+- **读了自己位置的节点**：分两种。
+  - `offset_bound`：只读了自己在父节点坐标里的偏移。对齐父节点文字的小图标在参照系是父节点、两边记录都是本地时，用父节点的本地文字框减自己的 `local_layout.y`，和祖先站在哪无关；祖先平移时沿用，只有它自己是平移的根（偏移变了）时重建，查的是本次的平移根，O(平移根数)。
+  - `origin_bound`：读了页面位置，它自己或上面的盒子平移时整节点重建，O(集合大小 × 深度)。剩下的都保持重建，因为改成本地会改变数值末位或语义：
+    - 画家（`Painter`）的局部变换绕记录在页面上的角点（`about_origin`，`e + ox - (a·ox + c·oy)`），平移量是页面坐标的函数；改成绕本地角点再放到原点在末位不同。只有非恒等的局部变换才进集合。
+    - 图标在参照系不是父节点或宿主记录在页面上时，按两边的页面原点求差。
+    - 图表悬停指示线对齐页面半像素：吸附是页面位置的函数，只在指针悬停时存在。
+    - 逐字形呈现的行内对象：`present_inline_objects` 把绕页面中心的缩放写进图元的变换，只在呈现时更新，平移后不重算就会停在旧位置。
+    - 带转场视口的文字：视口是页面上的裁剪与文字框求交，裁剪不一定跟着平移。
 - **可见性**：平移的根（含整节点重新提取、位置变了的）在剔除索引里整棵子树平移（`translate_subtree`，与滚动同一条路，嵌套的根只补自己多出来的那一段），根自己的图元重算；参照系不是父节点或粘性定位的（`unfollowing`：逃逸的绝对定位、`fixed`、菜单项、`sticky`）在平移根下面时重算自己和子树。所有平移先做、再做任何重算，重算出来的边界不会被再平移一次。`inherited_transform_changed` 不再把“位置变了”算作变换变了，只改尺寸或位置的祖先不再重算整棵子树的边界。
 - **公开语义**：`ScenePrimitive` 的几何在节点自己的坐标里（读页面的 visual 除外）；页面上的位置用 `UiScene::primitive_layout_bounds` / `place_rect`，或 `SceneDraw::placed_bounds` / `place`；`SceneDraw::geometry_transform` 是“先放到原点再变换”的合成矩阵，给不吸附网格的读者。`node_bounds` 与 `node_layout_bounds` 相同，都是现在的页面盒子。
 
@@ -125,6 +132,11 @@ Taffy 做同一次编辑只要 0.48 ms。真正重新排布的只有约 1 000 �
 - **端到端**：`crates/nana-ui-scene/tests/moved_extraction.rs` 加入组件（按钮、输入框）、滚动容器、`fixed`、逃逸绝对定位、粘性、变换祖先等场景。
 - **基准**：改行高、改宽度、改控件文字三组交替跑 A/B，读最小值，再加 `RUNS=240 /usr/bin/time -l` 的 instructions retired。
 - **快照套件**：预期零像素变化。第 4 阶段改动后与 3e9c83b80 的输出逐字节相同（`gallery-sidebar-collapsed-dark` 为已知抖动）。
+- **平移的冷对照**（收尾一步）：
+  - 运行时：测试与 `layout-verify` 下 1 024 个节点以内的世界，`extract_nodes_reusing` 每次结束时找出本次批里盒子相对渲染器所持记录变了的节点，对它下面所有这次没重新提取、渲染器仍持有记录的节点逐个冷提取，除提取时的页面盒子外逐字段比对（`check_records_kept_under_moves`）。
+  - Scene：调试构建下 512 个节点以内的场景，每个带平移的 delta 之后克隆一份、全部重建图元，对平移根及其下面的每个图元比对放置原点、纯平移变换、裁剪矩形（逐位）和图元本身（`audit_moved_primitives`）。
+  - 端到端：`moved_extraction.rs` 的 `moved_controls_that_read_little_of_the_page_keep_what_they_built`：关着的 Select、Popover、对齐父节点文字的图标、带 Mermaid 图的 Markdown（`rich-text`）随行平移，断言不重建图元、每帧与冷场景逐位一致；再让图标在行内自己平移，最后打开 Select 和 Popover 再平移。
+  - 变异实验：去掉 `settle_layout_moves` 对 `page_geometry` 的重新标记，运行时冷对照报打开的 Select 的 `component_geometry` 与冷提取不同；去掉 `offset_bound` 的重建，Scene 冷对照报图标图元的 `y` 与重建不同；把打开的 Select 当本地推导，`local_component_geometry` 的断言报它读了页面。
 - **painter 冷对照**：`rows_a_reflow_moves_by_a_fraction_paint_what_a_cold_scene_does`（见 3.6）；`moved_extraction.rs` 逐位比对 `SceneDraw` 的原点、纯平移变换、裁剪矩形和剔除结果。
 
 ## 5. 分阶段
@@ -148,5 +160,7 @@ Taffy 做同一次编辑只要 0.48 ms。真正重新排布的只有约 1 000 �
 第 4 阶段已落地：图元、节点自己的裁剪和组件几何改为本地坐标，painter 先把几何放到节点原点再变换（3.5、3.6）；`place_painted_records` 与 `component_geometry.is_none()` 守卫删除，平移的子树一个图元也不重建，剔除索引整棵平移。控件页（`CONTROLS=1 edits 2000 height`，62 001 节点）改行高的提取段 59.7 → 0.4 ms、整帧 67 → 4 ms，无头运行提取段 41 → 0.3 ms；简单页提取段 79 → 60 µs；`nana-text-paint-benchmark --workload reflow` 的 flush+batch 合计下降（数字见 `resource-budgets.md`）。快照与 3e9c83b80 逐像素相同。
 
 收尾·无障碍已落地：平移的根下面只处理钉住的盒子，`axis_aligned` 不再因为有 visual 就整体退回变换链现算（3.7）。与 6838427fb 交替 8 轮读最小值：控件页改行高无障碍 3.17 → 0.64 ms、整帧 5.8 → 2.6 ms，简单页无障碍 1.11 → 0.36 ms，每次编辑指令控件页 55 M → 26 M、简单页 31 M → 23 M；改宽度、改控件文字持平（数字见 `resource-budgets.md`）。
+
+收尾·读页面的节点已落地：只有打开的 Select / MenuSurface 仍按页面推导，NativeMarkdown、关着的 Select 与 MenuSurface 改为本地；对齐父节点文字的图标只在自己是平移根时重建（`offset_bound`）；`settle_layout_moves` 只扫 `page_geometry`（3.5）。与 7fa3b81b4 交替 8 轮、每轮交换先后读最小值：每个奇数格换成关着的 Select、每行第一格换成一段 Markdown 的控件页（`CONTROLS=1 MIXED=1`；Markdown 那一格用加了 `rich-text` 特性的临时副本）改行高，提取 24.8 → 0.18 ms、布局 2.9 → 1.1 ms、整帧 34.2 → 5.8 ms；普通控件页布局 0.65 → 0.53 ms、整帧 1.52 → 1.39 ms；简单页、改控件文字持平（数字见 `resource-budgets.md`）。
 
 **目标**：改行高时整帧和 Taffy 布局在同一数量级，个位数毫秒；改宽度和改控件文字不回退。

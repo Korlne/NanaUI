@@ -726,9 +726,9 @@ impl UiWorld {
         let mut moved = Vec::new();
         for &id in ids {
             // A component's geometry (a button's label region, a field's
-            // caret) is in its own coordinates and moves with it. Only one
-            // that reads the page (a select's menu, fitted to the viewport)
-            // is extracted again rather than kept.
+            // caret, a Markdown document) is in its own coordinates and moves
+            // with it. Only one that reads the page (an open select's menu,
+            // fitted to the viewport) is extracted again rather than kept.
             if self.only_moved_since(id, epoch)
                 && let Some(held) = previous(id)
                 && !held
@@ -741,9 +741,63 @@ impl UiWorld {
                 extracted.extend(self.extract_node_memo(id, &mut memo));
             }
         }
+        #[cfg(any(test, feature = "layout-verify"))]
+        self.check_records_kept_under_moves(ids, &previous);
         // Marks from here on say why the next call's nodes are dirty.
         self.render_epoch.set(epoch.wrapping_add(1));
         (extracted, moved)
+    }
+
+    /// The cold check of what a move keeps: under every node of `ids` whose
+    /// box moved since the record the renderer holds, each record the
+    /// renderer keeps -- a node this call does not extract -- is what a cold
+    /// extraction gives, but for the page box it was extracted at (which a
+    /// record in its own coordinates only carries for reference). A node
+    /// below a move whose geometry reads the page and was not extracted
+    /// again holds where it stood, and fails here.
+    ///
+    /// Linear in the moved subtrees, so it runs on worlds the size tests
+    /// build ([`KEPT_RECORD_AUDIT_LIMIT`]).
+    #[cfg(any(test, feature = "layout-verify"))]
+    fn check_records_kept_under_moves<'a>(
+        &self,
+        ids: &[StableNodeId],
+        previous: &impl Fn(StableNodeId) -> Option<&'a ExtractedNode>,
+    ) {
+        if self.nodes.len() > KEPT_RECORD_AUDIT_LIMIT {
+            return;
+        }
+        let batch: NodeSet = ids.iter().copied().collect();
+        let mut seen = NodeSet::default();
+        for &root in ids {
+            let (Some(held), Some(record)) = (previous(root), self.nodes.get(root)) else {
+                continue;
+            };
+            if held.local_layout == record.local_layout && held.layout_frame == record.layout_frame
+            {
+                continue;
+            }
+            for id in self.subtree_ids(root) {
+                if id == root || batch.contains(&id) || !seen.insert(id) {
+                    continue;
+                }
+                let Some(held) = previous(id) else {
+                    continue;
+                };
+                let Some(mut cold) = self.extract_node_memo(id, &mut AncestorMemo::default())
+                else {
+                    continue;
+                };
+                cold.layout.x = held.layout.x;
+                cold.layout.y = held.layout.y;
+                let differs = extracted_fields_differ(held, &cold);
+                assert!(
+                    differs.is_empty(),
+                    "{id:?}: kept under {root:?}, which moved, its record differs from a \
+                     cold extraction in {differs:?}"
+                );
+            }
+        }
     }
 
     fn only_moved_since(&self, id: StableNodeId, epoch: u64) -> bool {
@@ -797,6 +851,10 @@ impl UiWorld {
         Some(moved)
     }
 }
+
+/// The largest world [`UiWorld::check_records_kept_under_moves`] checks.
+#[cfg(any(test, feature = "layout-verify"))]
+const KEPT_RECORD_AUDIT_LIMIT: usize = 1024;
 
 /// The fields of two records that are not equal, by name. Layout boxes
 /// compare to the bit.

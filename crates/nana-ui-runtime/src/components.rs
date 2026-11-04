@@ -4912,24 +4912,22 @@ impl StandardVisual {
     /// Whether this visual's [`ComponentGeometry`] is derived on the page
     /// rather than in its node's own coordinates.
     ///
-    /// A select menu fits the viewport and a triggered menu places its items
-    /// on the page: their geometry depends on where the node stands. A
-    /// Markdown document lays a whole document out from its content box, and
-    /// a position summed down that layout from the page's origin is not, to
-    /// the last bit, the one summed from the box's own and then put on the
-    /// page: a diagram's curves would shift by an ulp, which their
-    /// anti-aliasing shows. Both are carried on the page
-    /// ([`ExtractedNode::component_geometry`]) and their node is extracted
-    /// again whenever it or a box above it moves.
+    /// An open select menu fits the viewport and an open menu surface places
+    /// its items on the page: their geometry depends on where the node
+    /// stands. It is carried on the page ([`ExtractedNode::component_geometry`])
+    /// and its node is extracted again whenever it or a box above it moves.
+    /// Closed, neither reads more than its own box: the field is its label,
+    /// hint and handle, and a closed surface reaches none of its items.
     ///
-    /// Every other visual's geometry is in its node's own coordinates, its
-    /// border box at the origin, and a node that only moved keeps it.
+    /// Every other visual's geometry -- a Markdown document's among them --
+    /// is in its node's own coordinates, its border box at the origin, and a
+    /// node that only moved keeps it.
     pub fn geometry_reads_page(&self) -> bool {
-        #[cfg(feature = "rich-text")]
-        if matches!(self, Self::NativeMarkdown { .. }) {
-            return true;
+        match self {
+            Self::Select { opened, .. } => *opened,
+            Self::MenuSurface { open, .. } => *open,
+            _ => false,
         }
-        matches!(self, Self::Select { .. } | Self::MenuSurface { .. })
     }
 
     /// The overlay of a triggered menu (Popover, ActionMenu, HoverCard): an

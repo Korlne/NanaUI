@@ -166,6 +166,15 @@ fn near(a: [f32; 4], b: [f32; 4]) -> bool {
 /// by the cold clips: a painter that snaps the transform's translation and
 /// takes text phase from where the geometry lands draws the cold pixels.
 fn assert_scene_is_cold(runtime: &RuntimeDocument, frame: &str) {
+    assert_scene_paints_cold(runtime, frame, true);
+}
+
+/// [`assert_scene_is_cold`], the culling half only when `culling` asks for
+/// it. Opening a popover leaves the retained culling index answering its
+/// trigger for a viewport the trigger is not in (a superset, which a
+/// painter clips away), with or without a move: a known gap in the index,
+/// not in what a move keeps.
+fn assert_scene_paints_cold(runtime: &RuntimeDocument, frame: &str, culling: bool) {
     let world = runtime.context().world();
     let document = DocumentId::new(1).unwrap();
     let scene = runtime.scene();
@@ -268,6 +277,7 @@ fn assert_scene_is_cold(runtime: &RuntimeDocument, frame: &str) {
     // What a painter culls to: a scene that keeps its culling bounds through
     // moves (it built them on the first frame, below) answers what a fresh
     // one does, at the viewport edges included.
+    let viewports = if culling { 3 } else { 0 };
     for viewport in [
         SceneRect {
             x: 0.0,
@@ -287,7 +297,10 @@ fn assert_scene_is_cold(runtime: &RuntimeDocument, frame: &str) {
             width: 20.0,
             height: 7.0,
         },
-    ] {
+    ]
+    .into_iter()
+    .take(viewports)
+    {
         assert_eq!(
             scene.visible_operations(viewport).unwrap(),
             cold.visible_operations(viewport).unwrap(),
@@ -629,5 +642,131 @@ fn a_moved_subtree_that_reads_the_page_paints_like_a_cold_scene() {
         runtime.context_mut().commit_mutations(queue).unwrap();
         flush(&mut runtime);
         assert_scene_is_cold(&runtime, frame);
+    }
+}
+
+/// Controls whose geometry reads little of the page move with their rows and
+/// keep everything: a closed select (its menu, fitted to the viewport, is
+/// the part that reads the page), a closed popover (its items are placed on
+/// the page), an icon centred on its parent's text (it reads its offset in
+/// its parent's coordinates) and, with rich text, a Markdown document with
+/// a diagram. A pure move rebuilds no primitive, and after every frame the
+/// scene paints what a cold one does -- the select and the popover opened,
+/// their records on the page and extracted again under every move, too.
+#[test]
+fn moved_controls_that_read_little_of_the_page_keep_what_they_built() {
+    use nana_ui_core::Icon;
+    use nana_ui_runtime::{Popover, Select, SelectOption, StandardVisual};
+    let document_id = DocumentId::new(1).unwrap();
+    let mut runtime = document();
+    let mut select = Select::new(Some("a"));
+    select.options = vec![
+        SelectOption::new("a", "Alpha"),
+        SelectOption::new("b", "Beta"),
+    ];
+    let select = runtime
+        .context_mut()
+        .create_detached_component(document_id, select)
+        .unwrap();
+    let popover = runtime
+        .context_mut()
+        .create_detached_component(document_id, Popover::new().trigger("More"))
+        .unwrap();
+    let mut queue = MutationQueue::new();
+    queue.insert(row_id(1), select.stable_id(), None);
+    queue.insert(row_id(2), popover.stable_id(), None);
+    // A row of text with a leading icon its own size, centred on that text.
+    let (host, icon) = (id(710), id(711));
+    for node in [host, icon] {
+        queue.create(node, document_id, NodeKind::Element { tag: "div".into() });
+    }
+    queue.insert(row_id(3), host, None);
+    queue.insert(host, icon, None);
+    queue.set_text(host, TextContent { value: "Ab".into() });
+    let host_style = |padding: f32| {
+        boxed(
+            LayoutStyle {
+                width: px(120.0),
+                height: px(18.0),
+                padding_left: px(3.25),
+                padding_top: px(padding),
+                ..LayoutStyle::default()
+            },
+            None,
+        )
+    };
+    queue.set_style(host, host_style(2.5));
+    queue.set_style(
+        icon,
+        boxed(
+            LayoutStyle {
+                width: px(12.0),
+                height: px(12.0),
+                ..LayoutStyle::default()
+            },
+            None,
+        ),
+    );
+    queue.set_standard_visual(
+        icon,
+        Some(StandardVisual::Icon {
+            icon: Icon::Add,
+            size: 12.0,
+            tooltip: None,
+        }),
+    );
+    runtime.context_mut().commit_mutations(queue).unwrap();
+    #[cfg(feature = "rich-text")]
+    {
+        let markdown = runtime
+            .context_mut()
+            .create_detached_component(
+                document_id,
+                nana_ui_runtime::NativeMarkdown::from_source(
+                    "# Title\n\nSome *body* text.\n\n```mermaid\ngraph LR\n  A --> B\n```\n",
+                ),
+            )
+            .unwrap();
+        let mut queue = MutationQueue::new();
+        queue.insert(row_id(6), markdown.stable_id(), None);
+        runtime.context_mut().commit_mutations(queue).unwrap();
+    }
+    flush(&mut runtime);
+    assert_scene_is_cold(&runtime, "first frame");
+    let mut padding = 0.0;
+    let mut step = |runtime: &mut RuntimeDocument, frame: &str, culling: bool| {
+        padding += 1.25;
+        let mut queue = MutationQueue::new();
+        queue.set_style(id(COLUMN), column_style(padding));
+        runtime.context_mut().commit_mutations(queue).unwrap();
+        let update = runtime
+            .flush(LayoutViewport::new(300.0, 800.0), &mut MeasureTextShaper)
+            .unwrap();
+        assert_scene_paints_cold(runtime, frame, culling);
+        update.scene.stats
+    };
+    for frame in ["moved", "moved again", "moved a third time"] {
+        let stats = step(&mut runtime, frame, true);
+        assert_eq!(
+            stats.rebuilt_primitives, 0,
+            "{frame}: a pure move rebuilt primitives ({stats:?})"
+        );
+    }
+    // The icon itself moves, inside its row: it is built again, where it
+    // now stands from its parent's text.
+    let mut queue = MutationQueue::new();
+    queue.set_style(host, host_style(1.75));
+    runtime.context_mut().commit_mutations(queue).unwrap();
+    flush(&mut runtime);
+    assert_scene_is_cold(&runtime, "icon moved in its row");
+    runtime.context_mut().toggle_select(select).unwrap();
+    runtime
+        .context_mut()
+        .update_component(popover, |popover, _| popover.open = true)
+        .unwrap();
+    flush(&mut runtime);
+    assert_scene_paints_cold(&runtime, "opened", false);
+    for frame in ["opened and moved", "opened and moved again"] {
+        step(&mut runtime, frame, false);
     }
 }

@@ -70,6 +70,7 @@ impl UiScene {
         self.unadjustable_projections.remove(&id);
         // Written again below when what it builds reads where it stands.
         self.origin_bound.remove(&id);
+        self.offset_bound.remove(&id);
         // Written again below when the node still presents per glyph.
         self.glyph_live.remove(&id);
         self.chart_live.remove(&id);
@@ -1717,10 +1718,15 @@ impl UiScene {
                 Some(StandardVisual::Icon { icon, size, .. }) => own_frame(|| {
                     let extent = size.max(0.0).min(bounds.width).min(bounds.height);
                     let x = bounds.x + (bounds.width - extent) / 2.0;
-                    let (y, reads_parent) =
-                        self.icon_y_aligned_to_adjacent_text(&node, bounds, extent);
-                    if reads_parent {
-                        self.origin_bound.insert(id);
+                    let (y, read) = self.icon_y_aligned_to_adjacent_text(&node, bounds, extent);
+                    match read {
+                        super::PlacementRead::None => {}
+                        super::PlacementRead::Offset => {
+                            self.offset_bound.insert(id);
+                        }
+                        super::PlacementRead::Page => {
+                            self.origin_bound.insert(id);
+                        }
                     }
                     self.insert_primitive(ScenePrimitive {
                         id: PrimitiveId { node: id, slot: 3 },

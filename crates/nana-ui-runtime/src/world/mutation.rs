@@ -3686,9 +3686,10 @@ impl UiWorld {
     /// what under it reads more than its own offset (pinned hit entries,
     /// [`UiWorld::project_accessibility_delta`]'s walk, the scene's frame
     /// chain). A root that only moved may keep its extracted record; a node
-    /// below one with a visual is extracted again: its component geometry
-    /// is derived on the page, and a renderer that places what paints where
-    /// it stands now needs the geometry a cold extraction gives.
+    /// below one whose visual's geometry reads the page
+    /// ([`StandardVisual::geometry_reads_page`]) is extracted again: a
+    /// renderer that places what paints where it stands now needs the
+    /// geometry a cold extraction gives.
     pub(super) fn settle_layout_moves(&mut self) {
         let written = std::mem::take(&mut self.layout_written);
         let roots = std::mem::take(&mut self.layout_moved_roots);
@@ -3704,23 +3705,19 @@ impl UiWorld {
             }
         }
         // A component's geometry is in its own coordinates and moves with it,
-        // except for one that reads the page (a select's menu, fitted to the
-        // viewport): that is extracted again under a moved box.
-        if self.nodes.has_visuals() {
+        // except for one that reads the page (an open select's menu, fitted
+        // to the viewport): that is extracted again under a moved box. The
+        // store keeps those few apart, so no other visual is looked at.
+        if self.nodes.has_page_geometry() {
             // Whether a box is a moved root or under one, remembered for
             // every box an answer passed.
             let moved_roots: NodeSet = roots.iter().map(|&(root, _)| root).collect();
             let mut under: NodeMap<bool> = moved_roots.iter().map(|&root| (root, true)).collect();
             let mut chain = Vec::new();
             let mut reread = Vec::new();
-            for id in self.nodes.visual_nodes() {
+            for id in self.nodes.page_geometry_nodes() {
                 // A moved root's own record is decided where it is extracted.
-                if moved_roots.contains(&id)
-                    || !self
-                        .nodes
-                        .visual(id)
-                        .is_some_and(StandardVisual::geometry_reads_page)
-                {
+                if moved_roots.contains(&id) {
                     continue;
                 }
                 let mut cursor = self.parent_id(id);

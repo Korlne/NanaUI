@@ -344,6 +344,23 @@ painter 段（`nana-text-paint-benchmark --workload reflow`，交替 8 轮读最
 
 分段（临时计时，负载 4–8，读最小值）：控件页原来往下走的那一遍 680 µs → 16 µs，1 013 个平移行的投影 1 833 → 595 µs；简单页 210 → 14 µs、635 → 344 µs。每次编辑的指令（`RUNS=240` 与 `RUNS=40` 之差除以 200）：控件页改行高 55 M → 26 M，简单页 31 M → 23 M。无障碍剩下的是每个平移行自己的投影（相对偏移确实变了）：节点本身、十个子节点的隐藏与对齐判定、放进 delta 的整份 `AccessibilityNode`。
 
+相对几何收尾·读页面的节点（2026-11-04）：NativeMarkdown、关着的 Select 与 MenuSurface 的组件几何改为本地坐标，平移时沿用记录；只有打开的 Select / MenuSurface 记在 `NodeStore` 的 `page_geometry` 里，`settle_layout_moves` 只扫这个集合（原来每次平移扫所有带 visual 的节点）。做法见 [relative-geometry.md](relative-geometry.md) 3.5。与 7fa3b81b4 交替 8 轮、每轮交换先后读最小值（负载 7–14，µs，`RUNS=40 PRINT_STAGES=1 edits 2000 height`）：
+
+| 页面 | 阶段 | 7fa3b81b4 | 本次 |
+| --- | --- | ---: | ---: |
+| 控件页 62 001 节点 | 布局 | 650 | 529 |
+| 控件页 | 整帧 | 1 525 | 1 389 |
+| 控件页 VISIBLE=1 | 整帧 | 1 760 | 1 579 |
+| 混合页（`MIXED=1`，`rich-text`） | 提取 | 24 818 | 183 |
+| 混合页 | 布局 | 2 946 | 1 106 |
+| 混合页 | 无障碍 | 4 280 | 3 688 |
+| 混合页 | 整帧 | 34 237 | 5 802 |
+| 混合页 VISIBLE=1 | 整帧 | 45 030 | 5 690 |
+| 简单页 42 001 盒 | 整帧 | 1 212 | 1 245 |
+| 控件页 | text 整帧 | 23.2 | 23.5 |
+
+混合页是控件页每个奇数格的按钮换成关着的 Select、每行第一格换成一段 Markdown（Markdown 那一格要用 `--features rich-text` 构建临时副本，提交的基准只带 Select）。简单页没有 visual，两边走同一条路径，差别在噪声内。混合页的无障碍仍是大头：Select 从几何派生虚拟节点，是钉住的盒子（3.7）。
+
 已做的（2026-11-02）：发布阶段每个结果的四个切片在复用的暂存表里建好、按最终长度一次分配，空切片不分配（`Arc::<[T]>::default()`），按父分组的子集改为一张排序表，不再每个父节点一个 `Vec`；意图缓存键的环境哈希从 SipHash 换成固定种子的 foldhash，`seeded_intrinsic` 换成 hashbrown；`ConstraintClass` 的相等与哈希一趟读出归一化后的标签与值，不再各自归一化两遍；`RetainedIntrinsicMetrics` 每个内容的变体表按一增长（首个 push 原本预留 4 个，320 B 只用 80 B）；`MeasurePlanSlots` 的两个槽装箱（原本每个容器 528 B 内联在表里，通常只用一个槽）；整页 pass 按节点数和容器数预先给各表留好容量；锚点记忆表在父节点已结算时不再分配。
 
 ## 待办

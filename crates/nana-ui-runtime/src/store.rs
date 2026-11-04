@@ -721,6 +721,10 @@ pub(crate) struct NodeStore {
     /// menu: the few a layout pass gives a new room (see
     /// [`crate::SelectMenuRoom`]).
     open_select_menus: hashbrown::HashSet<StableNodeId>,
+    /// Nodes whose visual's geometry reads the page
+    /// ([`StandardVisual::geometry_reads_page`]): the few a move above them
+    /// extracts again.
+    page_geometry: hashbrown::HashSet<StableNodeId>,
     /// Nodes whose accessible bounds, or those of the boxes under them, may
     /// not keep their offset from their parent's when a box above them moves
     /// ([`NodeRecord::pins_accessibility`]). A superset: an entry is noted
@@ -876,6 +880,7 @@ impl NodeStore {
         let record = self.nodes.remove(id)?;
         self.visuals.remove(&id);
         self.open_select_menus.remove(&id);
+        self.page_geometry.remove(&id);
         self.accessibility_pins.remove(&id);
         self.custom_render.remove(&id);
         self.event_listeners.remove(&id);
@@ -926,9 +931,14 @@ impl NodeStore {
         self.open_select_menus.iter().copied()
     }
 
-    /// Nodes with a visual, in no particular order.
-    pub(crate) fn visual_nodes(&self) -> impl Iterator<Item = StableNodeId> + '_ {
-        self.visuals.keys().copied()
+    /// Nodes whose visual's geometry reads the page
+    /// ([`StandardVisual::geometry_reads_page`]), in no particular order.
+    pub(crate) fn page_geometry_nodes(&self) -> impl Iterator<Item = StableNodeId> + '_ {
+        self.page_geometry.iter().copied()
+    }
+
+    pub(crate) fn has_page_geometry(&self) -> bool {
+        !self.page_geometry.is_empty()
     }
 
     pub(crate) fn has_text_inputs(&self) -> bool {
@@ -950,6 +960,14 @@ impl NodeStore {
             self.open_select_menus.insert(id);
         } else {
             self.open_select_menus.remove(&id);
+        }
+        if value
+            .as_ref()
+            .is_some_and(StandardVisual::geometry_reads_page)
+        {
+            self.page_geometry.insert(id);
+        } else {
+            self.page_geometry.remove(&id);
         }
         if let Some(value) = value {
             self.visuals.insert(id, value);
