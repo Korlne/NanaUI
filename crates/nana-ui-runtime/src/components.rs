@@ -3863,17 +3863,19 @@ pub struct AccessibilityNode {
     /// ([`AccessibilityPlacements`]); [`crate::UiWorld::project_accessibility_in_viewport`]
     /// gives the box around it directly.
     pub bounds: LayoutBox,
-    /// The turn, skew or flip from this node's space into its parent's,
-    /// applied before the move by `bounds`' `(x, y)`: node space to parent
-    /// space is `translate(x, y) · transform`. Set where a rotation, a skew
-    /// or a flip (a box's own `transform`, scaled by what is above it) turns
-    /// the node's box from its parent's axes; its `bounds` size is then its
+    /// The scale, turn, skew or flip from this node's space into its
+    /// parent's, applied before the move by `bounds`' `(x, y)`: node space to
+    /// parent space is `translate(x, y) · transform`. Set where the node's
+    /// own `transform` does more than move its box -- a positive scale
+    /// (`diag(a, d)`, no move), a rotation, a skew or a flip -- and on a node
+    /// placed from the viewport (the page's root, a `fixed` or `sticky` box,
+    /// an absolute box escaping its clip) that a 2D chain turns or scales,
+    /// or that stands in such a node's space: its `bounds` size is then its
     /// own layout box, and its children's bounds are offsets in it, so they
-    /// keep them when the node moves or turns. `None` on every node whose
-    /// space is its parent's moved -- a chain of translations, scrolls and
-    /// positive scales, which `bounds` carries as scaled offsets -- and on
-    /// nodes inside a 3D context, whose `bounds` are the box around their
-    /// projected corners, as in the viewport.
+    /// keep them when the node moves, turns or scales. `None` on every node
+    /// whose space is its parent's moved -- a chain of translations and
+    /// scrolls -- and on nodes inside a 3D context, whose `bounds` are the
+    /// box around their projected corners, as in the viewport.
     pub transform: Option<nana_ui_core::PaintTransform>,
     /// What the node's clip chain leaves of the viewport, in viewport
     /// coordinates: the overflow containers whose clip reaches it (#201),

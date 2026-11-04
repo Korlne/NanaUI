@@ -24,6 +24,17 @@ struct ProjectionMemo {
     space_chain: Vec<StableNodeId>,
 }
 
+impl ProjectionMemo {
+    /// Room for `nodes` more projected nodes in the tables each one fills.
+    fn reserve(&mut self, nodes: usize) {
+        self.transforms.reserve(nodes);
+        self.bounds.reserve(nodes);
+        self.hidden.reserve(nodes);
+        self.aligned.reserve(nodes);
+        self.offsets.reserve(nodes);
+    }
+}
+
 /// How a node's accessible space -- what its children's bounds are offsets
 /// in ([`AccessibilityNode::transform`]) -- stands to its own box and to the
 /// viewport.
@@ -35,14 +46,25 @@ struct AccessibleSpace {
     /// The positive per-axis scale from its own layout px to its space,
     /// where its box stands upright in it: its children placed by their
     /// offsets stand at those offsets less its scroll, scaled by this.
-    /// `None` where its box is turned or projected in the viewport and it is
-    /// not placed by its offset: its children are placed from their
-    /// viewport boxes.
+    /// `None` where its box is projected in the viewport through a 3D
+    /// context, a modal frame or a motion overlay, or turned below one: its
+    /// children are placed from their viewport boxes.
     unit: Option<[f32; 2]>,
-    /// Its space is turned from the viewport's axes: a rotation, a skew or
-    /// a flip at or above it among boxes placed by their offsets. A box
-    /// placed from its viewport box under it is handed the inverse turn.
-    turned: bool,
+    /// Its space is not the viewport's moved: a box at or above it hands
+    /// its own frame -- a rotation, a skew, a flip or a scale other than one
+    /// of its own transform ([`UiWorld::local_placement`]), or a turn or
+    /// scale of the chain above a box placed from the viewport
+    /// ([`UiWorld::frames_from_viewport`]) -- so the space is that box's
+    /// layout px, turned or scaled from the viewport's. A box placed from
+    /// its viewport box under it hands a frame of its own, or is handed the
+    /// inverse map.
+    framed: bool,
+}
+
+/// Whether the linear part `(a, b, c, d)` is the identity: a transform with
+/// it only moves.
+fn moves_only(a: f32, b: f32, c: f32, d: f32) -> bool {
+    a == 1.0 && b == 0.0 && c == 0.0 && d == 1.0
 }
 
 #[derive(Clone, Copy)]
@@ -54,6 +76,51 @@ struct AccessibleTransform {
     /// a child measured from it stands its local offset away, by the same
     /// addition [`UiWorld::record_layout_origin`] makes.
     origin: [f32; 2],
+    /// Whether that addition is the child's page origin: the node is no
+    /// document (whose children's origins are their offsets alone) and no
+    /// component's geometry is being derived in its own coordinates.
+    stacks: bool,
+}
+
+/// What a parent hands the children placed by their offsets in it
+/// ([`UiWorld::has_accessibility_bounds_under`]'s fast path), read once for
+/// them all: its affine map for its children (no perspective row), and its
+/// page origin, which a child measured from it stands its offset away from.
+#[derive(Clone, Copy)]
+struct HandedMap {
+    map: [f32; 6],
+    origin: [f32; 2],
+}
+
+impl HandedMap {
+    fn of(transform: AccessibleTransform) -> Option<Self> {
+        let (map, [g, h]) = transform.children;
+        (g == 0.0 && h == 0.0 && transform.stacks).then_some(Self {
+            map,
+            origin: transform.origin,
+        })
+    }
+
+    /// Whether `record`, a child of `parent` placed by its offset with no
+    /// transform of its own, has a viewport box: its page box's corners are
+    /// finite through the map. `None` for any other child, which takes the
+    /// full test.
+    #[inline]
+    fn finite_under(&self, record: &NodeRecord, parent: StableNodeId) -> Option<bool> {
+        if record.hierarchy.parent != Some(parent)
+            || record.resolved_layout.transform.is_some()
+            || !record.placed_by_accessibility_offset()
+            || matches!(record.kind.as_ref(), NodeKind::Document)
+        {
+            return None;
+        }
+        let [a, b, c, d, e, f] = self.map;
+        let local = record.local_layout;
+        let (x, y) = (self.origin[0] + local.x, self.origin[1] + local.y);
+        let corner =
+            |x: f32, y: f32| (a * x + c * y + e).is_finite() && (b * x + d * y + f).is_finite();
+        Some(corner(x, y) && corner(x + local.width, y + local.height))
+    }
 }
 
 /// What a projected node's chain answers for every child it holds, asked
@@ -76,12 +143,13 @@ fn upright(a: f32, b: f32, c: f32, d: f32) -> bool {
 /// Whether a box whose transform style went from `before` to `after` hands
 /// the accessible bounds of what it holds the same space
 /// ([`AccessibleSpace`]): no 3D context on either side, and its own 2D
-/// transform turns (a rotation, a skew or a flip: the space is its own
-/// layout px, whatever the turn) both times, or scales its box upright by
-/// the same factors both times (none, or a translation, is a scale of one).
-/// Then what it holds placed by its offset keeps its bounds to the bit, and
-/// only the box itself and the boxes placed from the viewport under it can
-/// project differently ([`crate::SystemWork::transform_kept`]).
+/// transform hands a frame of its own both times (a rotation, a skew, a
+/// flip or a scale other than one: the space is its own layout px, whatever
+/// the turn or the factor) or only moves both times (none, or a
+/// translation: the space is its parent's, moved). Then what it holds
+/// placed by its offset keeps its bounds to the bit, and only the box itself
+/// and the boxes placed from the viewport under it can project differently
+/// ([`crate::SystemWork::transform_kept`]).
 pub(super) fn keeps_accessible_space(
     before: &nana_ui_core::LayoutStyle,
     after: &nana_ui_core::LayoutStyle,
@@ -89,15 +157,12 @@ pub(super) fn keeps_accessible_space(
     let flat = |style: &nana_ui_core::LayoutStyle| {
         style.transform_3d.is_none() && style.css_perspective.is_none() && !style.preserve_3d
     };
-    // The scale it hands on, `None` where it turns.
-    let space = |style: &nana_ui_core::LayoutStyle| match style.transform {
-        None => Some([1.0f32.to_bits(); 2]),
-        Some(turn) if upright(turn.a, turn.b, turn.c, turn.d) => {
-            Some([turn.a.to_bits(), turn.d.to_bits()])
-        }
-        Some(_) => None,
+    let framed = |style: &nana_ui_core::LayoutStyle| {
+        style
+            .transform
+            .is_some_and(|turn| !moves_only(turn.a, turn.b, turn.c, turn.d))
     };
-    flat(before) && flat(after) && space(before) == space(after)
+    flat(before) && flat(after) && framed(before) == framed(after)
 }
 
 /// The inverse of the affine `[a, b, c, d, e, f]` (`x' = a·x + c·y + e`),
@@ -364,22 +429,17 @@ impl UiWorld {
             && self.geometry_frame.get().is_none()
             && self.offset_placed_under(id, record, true)
         {
-            let [ua, ud] = above.unit.unwrap_or([1.0, 1.0]);
             return match self.own_accessible_transform(id, record) {
-                None => AccessibleSpace {
-                    local: true,
-                    unit: above.unit,
-                    turned: above.turned,
-                },
-                Some([a, b, c, d, ..]) if upright(a, b, c, d) => AccessibleSpace {
-                    local: true,
-                    unit: Some([ua * a, ud * d]),
-                    turned: above.turned,
-                },
-                Some(_) => AccessibleSpace {
+                Some([a, b, c, d, ..]) if !moves_only(a, b, c, d) => AccessibleSpace {
                     local: true,
                     unit: Some([1.0, 1.0]),
-                    turned: true,
+                    framed: true,
+                },
+                // None, or a move: folded into the offset.
+                _ => AccessibleSpace {
+                    local: true,
+                    unit: above.unit,
+                    framed: above.framed,
                 },
             };
         }
@@ -393,11 +453,79 @@ impl UiWorld {
                 (g == 0.0 && h == 0.0 && upright(a, b, c, d)).then_some([a, d])
             })
             .flatten();
+        // A root is placed in the viewport, which is no frame.
+        let above = match record.hierarchy.parent {
+            None => Some(AccessibleSpace {
+                local: false,
+                unit: Some([1.0, 1.0]),
+                framed: false,
+            }),
+            Some(_) => above,
+        };
+        let framed = self.frames_from_viewport(id, record, above, memo);
         AccessibleSpace {
             local: false,
-            unit,
-            turned: false,
+            unit: if framed { Some([1.0, 1.0]) } else { unit },
+            framed,
         }
+    }
+
+    /// Whether `record`, `id`'s, placed from its viewport box under a
+    /// parent whose space is `above` (the viewport for a root; `None` where
+    /// the parent's map to the viewport is not known), hands its own frame:
+    /// its space is its own layout px, its bounds its layout box placed in
+    /// the parent's space by the map its whole chain takes it to the
+    /// viewport by ([`UiWorld::viewport_frame_in_parent`]). So it is where a 2D chain
+    /// with no 3D context, modal frame or motion overlay turns or scales
+    /// it: its own transform does more than move it, its box is not
+    /// upright in the viewport, or the parent's space is framed. A `fixed`
+    /// or `sticky` box, or an absolute one escaping its clip, still takes
+    /// its move from the viewport; what turns and scales it is handed on,
+    /// and what it holds is placed by offsets inside it, whatever page
+    /// position the chain gives it.
+    fn frames_from_viewport(
+        &self,
+        id: StableNodeId,
+        record: &NodeRecord,
+        above: Option<AccessibleSpace>,
+        memo: &mut ProjectionMemo,
+    ) -> bool {
+        let Some(above) = above else {
+            return false;
+        };
+        if !(self.motion_free_unclipped()
+            && self.geometry_frame.get().is_none()
+            && record.hands_accessibility_offsets()
+            && !matches!(record.kind.as_ref(), NodeKind::Document)
+            && !self.is_modal_frame(id)
+            && (self.triggered_overlays.is_empty() || self.parent_triggered_overlay(id).is_none()))
+        {
+            return false;
+        }
+        if self.accessibility_ancestor_transform(id, memo).is_none() {
+            return false;
+        }
+        let Some(transform) = memo.transforms.get(&id) else {
+            return false;
+        };
+        let ([a, b, c, d, ..], [g, h]) = transform.own;
+        if g != 0.0 || h != 0.0 {
+            return false;
+        }
+        let own_turn = record
+            .resolved_layout
+            .transform
+            .is_some_and(|turn| !moves_only(turn.a, turn.b, turn.c, turn.d));
+        let framed = own_turn || !upright(a, b, c, d) || above.framed;
+        // The parent's map must be one the box can be placed in.
+        framed
+            && record.hierarchy.parent.is_none_or(|parent| {
+                !above.framed
+                    || self
+                        .accessible_space_to_viewport(parent, memo)
+                        .and_then(invert_affine)
+                        .is_some()
+            })
     }
 
     /// `record`'s own 2D transform, `id`'s, in its own layout px (its box at
@@ -414,10 +542,12 @@ impl UiWorld {
     /// `id`'s bounds and transform in `parent`'s space, from its local box,
     /// its parent's scroll and its own transform, where `id` is placed by
     /// its offset ([`Self::offset_placed`]) and `unit` is its parent's
-    /// ([`AccessibleSpace::unit`]). An upright transform of its own (a
-    /// translation, a positive scale) is folded into the offset and the
-    /// size; any other is handed on, scaled by `unit`, with the box's own
-    /// size, so that what it holds is placed by offsets inside it.
+    /// ([`AccessibleSpace::unit`]). A transform of its own that only moves
+    /// it is folded into the offset; any other -- a scale, a rotation, a
+    /// skew, a flip -- is handed on, scaled by `unit`, with the box's own
+    /// size, so that what it holds is placed by offsets inside it. An
+    /// upright scale's move is folded into the offset, and it hands
+    /// `diag(ua·a, ud·d)`.
     fn local_placement(
         &self,
         id: StableNodeId,
@@ -438,14 +568,30 @@ impl UiWorld {
                 },
                 None,
             ),
+            Some([a, b, c, d, e, f]) if moves_only(a, b, c, d) => (
+                LayoutBox {
+                    x: ua * (x + e),
+                    y: ud * (y + f),
+                    width: ua * local.width,
+                    height: ud * local.height,
+                },
+                None,
+            ),
             Some([a, b, c, d, e, f]) if upright(a, b, c, d) => (
                 LayoutBox {
                     x: ua * (x + e),
                     y: ud * (y + f),
-                    width: (ua * a) * local.width,
-                    height: (ud * d) * local.height,
+                    width: local.width,
+                    height: local.height,
                 },
-                None,
+                Some(nana_ui_core::PaintTransform {
+                    a: ua * a,
+                    b: 0.0,
+                    c: 0.0,
+                    d: ud * d,
+                    e: 0.0,
+                    f: 0.0,
+                }),
             ),
             Some([a, b, c, d, e, f]) => (
                 LayoutBox {
@@ -677,17 +823,78 @@ impl UiWorld {
         let mut current = Some(id);
         let mut cumulative = (IDENTITY_AFFINE, [0.0, 0.0]);
         let mut blocks_3d = false;
+        // Where the box above the next one stands on the page, when a box
+        // measured from it stands at that origin and its own offset.
+        let mut above: Option<[f32; 2]> = None;
         while let Some(node) = current {
             if let Some(transform) = memo.transforms.get(&node) {
                 cumulative = transform.children;
                 blocks_3d = transform.blocks_3d;
+                above = transform.stacks.then_some(transform.origin);
                 break;
             }
             memo.chain.push(node);
             current = self.nodes.get(node)?.hierarchy.parent;
         }
+        // Nothing on the page but layout styles and records: a box in flow
+        // that neither transforms nor places itself is its parent's map,
+        // read without its page box's frame walk or the overlay, escape,
+        // sticky and transform lookups, which all answer "none" for it.
+        let plain_page = self.layout_length_tracks.is_empty()
+            && self.overlay_host_nodes.is_empty()
+            && self.z_index_nodes == 0
+            && self.detached_mounted.is_empty()
+            && !self.nodes.has_visuals()
+            && self.presentation.is_empty()
+            && self.geometry_frame.get().is_none();
         while let Some(node) = memo.chain.pop() {
             let record = self.nodes.get(node)?;
+            let stacks = self.geometry_frame.get().is_none()
+                && !matches!(record.kind.as_ref(), NodeKind::Document);
+            if plain_page
+                && let Some([ox, oy]) = above
+                && Self::plain_transform_step(record)
+            {
+                let local = record.local_layout;
+                let origin = [ox + local.x, oy + local.y];
+                #[cfg(any(test, feature = "layout-verify"))]
+                {
+                    let bounds = self.component_layout_box(node)?;
+                    assert_eq!(
+                        origin.map(f32::to_bits),
+                        [bounds.x, bounds.y].map(f32::to_bits),
+                        "{node:?}: its page origin is not its parent's and its offset"
+                    );
+                    let layout = self.hit_motion_layout(node);
+                    assert_eq!(
+                        self.input_local_scene_transform(node, &layout, bounds, blocks_3d),
+                        (IDENTITY_AFFINE, [0.0, 0.0]),
+                        "{node:?}: a plain box hands its parent's map on"
+                    );
+                    assert!(self.clip_escape(node).is_none());
+                    assert_eq!(self.sticky_translation(node), [0.0, 0.0]);
+                }
+                cumulative = then_hit(cumulative, (IDENTITY_AFFINE, [0.0, 0.0]));
+                let own = cumulative;
+                let scroll = record.scroll_offset;
+                cumulative = then_hit(
+                    cumulative,
+                    ([1.0, 0.0, 0.0, 1.0, -scroll.x, -scroll.y], [0.0, 0.0]),
+                );
+                blocks_3d |= record.resolved_layout.fails_closed_3d_context();
+                memo.transforms.insert(
+                    node,
+                    AccessibleTransform {
+                        own,
+                        children: cumulative,
+                        blocks_3d,
+                        origin,
+                        stacks,
+                    },
+                );
+                above = stacks.then_some(origin);
+                continue;
+            }
             let bounds = self.component_layout_box(node)?;
             let layout = self.hit_motion_layout(node);
             if layout.position == PositionSpec::Fixed {
@@ -726,10 +933,32 @@ impl UiWorld {
                     children: cumulative,
                     blocks_3d,
                     origin: [bounds.x, bounds.y],
+                    stacks,
                 },
             );
+            above = stacks.then_some([bounds.x, bounds.y]);
         }
         memo.transforms.get(&id).map(|transform| transform.own.0)
+    }
+
+    /// Whether `record`'s box, on a page with nothing but layout styles and
+    /// records ([`Self::accessibility_ancestor_transform`]'s `plain_page`),
+    /// takes its parent's map for its own: measured from its parent, in
+    /// flow or relative (not fixed, sticky or absolute: no hanging branch,
+    /// sticky offset or clip escape), shown, with physical box edges (its
+    /// resolved style is its effective one) and no transform of its own.
+    fn plain_transform_step(record: &NodeRecord) -> bool {
+        let style = record.resolved_layout.as_ref();
+        record.layout_frame == crate::LayoutFrame::Parent
+            && record.mount == crate::MountState::Mounted
+            && matches!(
+                style.position,
+                PositionSpec::Static | PositionSpec::Relative
+            )
+            && style.transform.is_none()
+            && style.transform_3d.is_none()
+            && !style.omits_box()
+            && !style.has_logical_box_edges()
     }
 
     /// AccessKit consumes document/viewport logical coordinates. Layout boxes
@@ -1036,6 +1265,12 @@ impl UiWorld {
             if !children.is_empty() {
                 let chain = self.child_chain(id, memo);
                 let mut handed = self.handed_transform(id, chain.hands_offsets, memo);
+                // The map and origin a child placed by its offset stands
+                // under, read once for every child: the per-child test is
+                // then its record and two corners
+                // ([`HandedMap::finite_under`]).
+                let offsets_free = chain.hands_offsets && self.triggered_overlays.is_empty();
+                let mut map = handed.filter(|_| offsets_free).and_then(HandedMap::of);
                 kept.extend(children.iter().copied().filter(|&child| {
                     let Some(node) = self.nodes.get(child) else {
                         return false;
@@ -1047,19 +1282,43 @@ impl UiWorld {
                             || node.accessibility.hidden
                             || self.inline_box_omitted(child))
                         && (self.axis_aligned_under(child, node, chain.aligned, memo) || {
-                            // A child off the offset path memoizes the
-                            // transform on its way: the next one uses it.
-                            if handed.is_none() {
-                                handed = self.handed_transform(id, chain.hands_offsets, memo);
+                            match map.as_ref().and_then(|map| map.finite_under(node, id)) {
+                                Some(finite) => {
+                                    #[cfg(any(test, feature = "layout-verify"))]
+                                    assert_eq!(
+                                        finite,
+                                        self.has_accessibility_bounds_under(
+                                            child,
+                                            node,
+                                            id,
+                                            chain.hands_offsets,
+                                            handed,
+                                            memo,
+                                        ),
+                                        "{child:?}: its corners under its parent's map"
+                                    );
+                                    finite
+                                }
+                                None => {
+                                    // A child off the offset path memoizes
+                                    // the transform on its way: the next
+                                    // one uses it.
+                                    if handed.is_none() {
+                                        handed =
+                                            self.handed_transform(id, chain.hands_offsets, memo);
+                                        map =
+                                            handed.filter(|_| offsets_free).and_then(HandedMap::of);
+                                    }
+                                    self.has_accessibility_bounds_under(
+                                        child,
+                                        node,
+                                        id,
+                                        chain.hands_offsets,
+                                        handed,
+                                        memo,
+                                    )
+                                }
                             }
-                            self.has_accessibility_bounds_under(
-                                child,
-                                node,
-                                id,
-                                chain.hands_offsets,
-                                handed,
-                                memo,
-                            )
                         });
                     #[cfg(any(test, feature = "layout-verify"))]
                     assert_eq!(
@@ -1687,13 +1946,14 @@ impl UiWorld {
         memo: &mut ProjectionMemo,
     ) {
         let owner = entries[0].id;
-        // Virtual nodes stand in their owner's space. Where that is turned
-        // from the viewport, they are placed in it from their page boxes,
-        // upright there as on the page; elsewhere from their viewport boxes.
+        // Virtual nodes stand in their owner's space. Where that is framed
+        // (turned or scaled from the viewport), they are placed in it from
+        // their page boxes, upright there as on the page; elsewhere from
+        // their viewport boxes.
         let turned = (entries.len() > 1 && !plain)
             .then(|| self.accessible_space(owner, memo))
             .flatten()
-            .filter(|space| space.turned)
+            .filter(|space| space.framed)
             .and_then(|space| Some((space.unit?, self.layout_origin(owner)?)));
         let in_owner = |page: LayoutBox| {
             let ([ua, ud], [ox, oy]) = turned.expect("placed in a turned owner");
@@ -1722,6 +1982,17 @@ impl UiWorld {
             .unwrap_or_default();
         for (index, entry) in entries.iter_mut().enumerate() {
             let Some(parent) = entry.parent else {
+                // A root stands in the viewport, framed or not.
+                if index == 0
+                    && !plain
+                    && let Some((bounds, transform)) =
+                        self.viewport_frame_in_parent(entry.id, None, memo)
+                {
+                    #[cfg(any(test, feature = "layout-verify"))]
+                    self.check_viewport_frame(entry.id, None, bounds, transform, memo);
+                    entry.bounds = bounds;
+                    entry.transform = Some(transform);
+                }
                 continue;
             };
             if index == 0 {
@@ -1732,9 +2003,19 @@ impl UiWorld {
                     entry.transform = transform;
                     continue;
                 }
+                if !plain
+                    && let Some((bounds, transform)) =
+                        self.viewport_frame_in_parent(entry.id, Some(parent), memo)
+                {
+                    #[cfg(any(test, feature = "layout-verify"))]
+                    self.check_viewport_frame(entry.id, Some(parent), bounds, transform, memo);
+                    entry.bounds = bounds;
+                    entry.transform = Some(transform);
+                    continue;
+                }
                 if !plain && let Some(inverse) = self.turned_space_inverse(parent, memo) {
-                    // Placed from its viewport box under a turned space: the
-                    // inverse turn brings that box back upright.
+                    // Placed from its viewport box under a framed space: the
+                    // inverse map brings that box back upright.
                     let [a, b, c, d, e, f] = inverse;
                     let (x, y) = (entry.bounds.x, entry.bounds.y);
                     entry.bounds.x = a * x + c * y + e;
@@ -1783,16 +2064,88 @@ impl UiWorld {
     }
 
     /// The map from the viewport into `id`'s accessible space, when that
-    /// space is turned from the viewport's axes ([`AccessibleSpace::turned`]).
+    /// space is framed: turned or scaled from the viewport's
+    /// ([`AccessibleSpace::framed`]).
     fn turned_space_inverse(
         &self,
         id: StableNodeId,
         memo: &mut ProjectionMemo,
     ) -> Option<[f32; 6]> {
-        if !self.accessible_space(id, memo)?.turned {
+        if !self.accessible_space(id, memo)?.framed {
             return None;
         }
         invert_affine(self.accessible_space_to_viewport(id, memo)?)
+    }
+
+    /// The map from `parent`'s accessible space to the viewport, for a box
+    /// placed in it from the viewport: the inverse-free move to its
+    /// accessible box where that space is the viewport's moved, its own map
+    /// where it is framed.
+    fn parent_space_to_viewport(
+        &self,
+        parent: Option<StableNodeId>,
+        memo: &mut ProjectionMemo,
+    ) -> Option<[f32; 6]> {
+        let Some(parent) = parent else {
+            return Some(IDENTITY_AFFINE);
+        };
+        if self.accessible_space(parent, memo)?.framed {
+            return self.accessible_space_to_viewport(parent, memo);
+        }
+        let origin = self
+            .accessible_viewport_bounds(parent, false, memo)
+            .map_or([0.0, 0.0], |bounds| [bounds.x, bounds.y]);
+        Some([1.0, 0.0, 0.0, 1.0, origin[0], origin[1]])
+    }
+
+    /// `id`'s bounds and transform in `parent`'s space where it is placed
+    /// from its viewport box and hands its own frame
+    /// ([`Self::frames_from_viewport`]): its layout box, at the origin of its
+    /// own space, which its chain's map to the viewport takes, after the
+    /// parent's space's inverse, to the parent's. The move of that map is its
+    /// offset, the rest its transform.
+    fn viewport_frame_in_parent(
+        &self,
+        id: StableNodeId,
+        parent: Option<StableNodeId>,
+        memo: &mut ProjectionMemo,
+    ) -> Option<(LayoutBox, nana_ui_core::PaintTransform)> {
+        let space = self.accessible_space(id, memo)?;
+        if space.local || !space.framed {
+            return None;
+        }
+        let record = self.nodes.get(id)?;
+        if record.hierarchy.parent != parent {
+            return None;
+        }
+        let [a, b, c, d, e, f] = self.accessible_space_to_viewport(id, memo)?;
+        let [ia, ib, ic, id_, ie, if_] =
+            invert_affine(self.parent_space_to_viewport(parent, memo)?)?;
+        let local = self.component_layout_box(id)?;
+        let placed = [
+            ia * a + ic * b,
+            ib * a + id_ * b,
+            ia * c + ic * d,
+            ib * c + id_ * d,
+            ia * e + ic * f + ie,
+            ib * e + id_ * f + if_,
+        ];
+        Some((
+            LayoutBox {
+                x: placed[4],
+                y: placed[5],
+                width: local.width,
+                height: local.height,
+            },
+            nana_ui_core::PaintTransform {
+                a: placed[0],
+                b: placed[1],
+                c: placed[2],
+                d: placed[3],
+                e: 0.0,
+                f: 0.0,
+            },
+        ))
     }
 
     /// `entry`'s bounds and transform in `parent`'s space, from its local
@@ -1846,9 +2199,13 @@ impl UiWorld {
             return Some(placed);
         }
         // Off those paths, only where what was projected for both is their
-        // layout boxes, as a cold projection finds them, and the parent's
-        // space is the viewport's, moved.
-        if above.is_some_and(|space| space.turned) {
+        // layout boxes, as a cold projection finds them, the parent's space
+        // is the viewport's, moved, and the box hands no frame of its own.
+        if above.is_some_and(|space| space.framed)
+            || self
+                .accessible_space(entry.id, memo)
+                .is_some_and(|space| space.framed)
+        {
             return None;
         }
         let own = self.record_layout_origin(record);
@@ -1972,6 +2329,7 @@ impl UiWorld {
                 && work.layout_moved.binary_search(&id).is_err()
                 && !self.clips_overflow(id)
                 && self.moved_root_hands_offsets(id, &mut memo)
+                && self.style_frames_its_space(id, &mut memo)
             {
                 turn_roots.push(id);
             } else {
@@ -2120,6 +2478,12 @@ impl UiWorld {
         }
         let mut removed = work.accessibility_removals.clone();
         let plain = affected.len() >= 64 && tree_plain;
+        // Each projected node memoizes its map, its box and its chain's
+        // answers for its children: sized once, the tables do not rehash
+        // as a thousand moved rows fill them.
+        if !plain {
+            memo.reserve(affected.len());
+        }
         let mut updated = Vec::with_capacity(affected.len());
         for id in affected {
             let entries = self.project_accessibility_entries(id, plain, true, &mut memo);
@@ -2187,6 +2551,26 @@ impl UiWorld {
             || self
                 .accessible_space(root, memo)
                 .is_some_and(|space| space.unit.is_some())
+    }
+
+    /// Whether `id`'s space is what [`keeps_accessible_space`] took it to be
+    /// from its style alone: its own layout px where its own transform does
+    /// more than move it, its parent's (or the viewport's) moved where it
+    /// does not. A box whose parent's map is not one it can be placed in (a
+    /// 3D context above) hands no frame however it scales: its space is the
+    /// viewport's scaled by its factor, which a new factor changes.
+    fn style_frames_its_space(&self, id: StableNodeId, memo: &mut ProjectionMemo) -> bool {
+        let Some(record) = self.nodes.get(id) else {
+            return false;
+        };
+        let framed_style = record
+            .resolved_layout
+            .transform
+            .is_some_and(|turn| !moves_only(turn.a, turn.b, turn.c, turn.d));
+        !framed_style
+            || self
+                .accessible_space(id, memo)
+                .is_some_and(|space| space.framed && space.unit == Some([1.0, 1.0]))
     }
 
     fn is_modal_frame(&self, id: StableNodeId) -> bool {
@@ -2473,10 +2857,13 @@ impl UiWorld {
         {
             return true;
         }
+        // Placed from the viewport in a framed space, or handing a frame of
+        // its own from there: its bounds are page positions through maps,
+        // which a move changes in the last bit.
         let parent = self.nodes.get(id).and_then(|node| node.hierarchy.parent);
-        if parent.is_some_and(|parent| {
-            self.accessible_space(parent, memo)
-                .is_some_and(|space| space.turned)
+        if [Some(id), parent].into_iter().flatten().any(|node| {
+            self.accessible_space(node, memo)
+                .is_some_and(|space| space.framed)
         }) {
             return false;
         }
@@ -2589,6 +2976,70 @@ impl UiWorld {
                 .all(|(got, want)| (got - want).abs() <= 2e-5 * scale),
             "{:?}: corners placed from its offset {got:?} are not where its turned box stands, {want:?}",
             entry.id
+        );
+    }
+
+    /// What [`Self::viewport_frame_in_parent`] makes of `id` puts the corners
+    /// of its own box, through its parent's space's map to the viewport,
+    /// where its chain of transforms takes its layout box's corners, up to
+    /// rounding.
+    fn check_viewport_frame(
+        &self,
+        id: StableNodeId,
+        parent: Option<StableNodeId>,
+        bounds: LayoutBox,
+        transform: nana_ui_core::PaintTransform,
+        memo: &mut ProjectionMemo,
+    ) {
+        let [a, b, c, d, e, f] = self
+            .parent_space_to_viewport(parent, memo)
+            .expect("a framed box's parent space reaches the viewport");
+        let mut own = transform;
+        own.e += bounds.x;
+        own.f += bounds.y;
+        let to_viewport = nana_ui_core::PaintTransform { a, b, c, d, e, f }.then(own);
+        let placed = |x: f32, y: f32| {
+            [
+                to_viewport.a * x + to_viewport.c * y + to_viewport.e,
+                to_viewport.b * x + to_viewport.d * y + to_viewport.f,
+            ]
+        };
+        self.accessibility_ancestor_transform(id, memo)
+            .expect("a framed box has a transform");
+        let ([ca, cb, cc, cd, ce, cf], _) = memo.transforms[&id].own;
+        let page = self
+            .component_layout_box(id)
+            .expect("a framed box has a box");
+        let cold = |x: f32, y: f32| [ca * x + cc * y + ce, cb * x + cd * y + cf];
+        let (w, h) = (bounds.width, bounds.height);
+        let got = [
+            placed(0.0, 0.0),
+            placed(w, 0.0),
+            placed(0.0, h),
+            placed(w, h),
+        ];
+        let want = [
+            cold(page.x, page.y),
+            cold(page.x + page.width, page.y),
+            cold(page.x, page.y + page.height),
+            cold(page.x + page.width, page.y + page.height),
+        ];
+        let scale = 1.0
+            + want
+                .iter()
+                .chain(&got)
+                .flatten()
+                .map(|value| value.abs())
+                .fold(0.0, f32::max)
+                * 4.0
+            + page.x.abs()
+            + page.y.abs();
+        assert!(
+            got.iter()
+                .flatten()
+                .zip(want.iter().flatten())
+                .all(|(got, want)| (got - want).abs() <= 2e-5 * scale),
+            "{id:?}: corners placed in its own frame {got:?} are not where its turned box stands, {want:?}"
         );
     }
 

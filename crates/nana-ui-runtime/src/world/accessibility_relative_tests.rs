@@ -603,11 +603,10 @@ fn boxes_moved_in_a_scrolled_list_keep_a_cold_projection_to_the_bit() {
 }
 
 /// Rows under an ancestor that scales and translates them, moved by an uneven
-/// step: a positive scale multiplies every offset by the same factor
-/// wherever the boxes stand, so the moved rows' contents keep their bounds
-/// to the bit. Under a rotation the bounds are the box around turned
-/// corners, which no offset gives: those take the walk, and still match a
-/// full projection.
+/// step: the scale is handed to the platform as the ancestor's own
+/// `diag(a, d)` transform, and every box under it is placed by its local
+/// offset inside it, so the moved rows' contents keep their bounds to the
+/// bit. Under a rotation the same holds; both match a full projection.
 #[test]
 fn boxes_moved_under_a_transformed_ancestor_match_a_cold_projection() {
     let (sin, cos) = 0.3f32.sin_cos();
@@ -660,16 +659,26 @@ fn boxes_moved_under_a_transformed_ancestor_match_a_cold_projection() {
                         let bounds = retained[leaf].bounds;
                         assert_eq!(
                             [bounds.x, bounds.y, bounds.width, bounds.height].map(f32::to_bits),
-                            [
-                                transform.a * local.x,
-                                transform.d * local.y,
-                                transform.a * local.width,
-                                transform.d * local.height,
-                            ]
-                            .map(f32::to_bits),
-                            "{at}: a leaf is handed its scaled offset"
+                            [local.x, local.y, local.width, local.height].map(f32::to_bits),
+                            "{at}: a leaf is handed its offset in the scaled space"
                         );
+                        assert_eq!(retained[leaf].transform, None, "{at}: an upright leaf");
                     }
+                    let wrapper = page
+                        .context
+                        .world()
+                        .nodes
+                        .get(page.list)
+                        .unwrap()
+                        .hierarchy
+                        .parent
+                        .unwrap();
+                    let handed = retained[&wrapper].transform.unwrap();
+                    assert_eq!(
+                        [handed.a, handed.b, handed.c, handed.d, handed.e, handed.f],
+                        [transform.a, 0.0, 0.0, transform.d, 0.0, 0.0],
+                        "{at}: the wrapper hands its scale as diag(a, d)"
+                    );
                 },
             );
         } else {
@@ -937,11 +946,10 @@ fn turned_page(transforms: &[PaintTransform], hanging: bool) -> (Page, Vec<Stabl
 }
 
 /// Rows under ancestors that rotate, skew, flip or nest a turn and a scale,
-/// moved again and again by an uneven step. The innermost turn is handed
-/// to the platform as its box's own transform, and every box under it is
-/// placed by its offset inside it -- its local offset, scaled by the
-/// upright scales below the turn -- so the moved rows project alone and
-/// what they hold keeps its bounds to the bit.
+/// moved again and again by an uneven step. The innermost turn or scale is
+/// handed to the platform as its box's own transform, and every box under
+/// it is placed by its local offset inside it, so the moved rows project
+/// alone and what they hold keeps its bounds to the bit.
 #[test]
 fn boxes_moved_under_a_turned_ancestor_keep_a_cold_projection_to_the_bit() {
     for (name, transforms, unit) in [
@@ -956,7 +964,7 @@ fn boxes_moved_under_a_turned_ancestor_keep_a_cold_projection_to_the_bit() {
         (
             "scaled in a rotation",
             vec![turn("rotated", 0.3), turn("scaled", 0.0)],
-            [1.5, 1.25],
+            [1.0, 1.0],
         ),
         (
             "rotated in a scale",
@@ -966,17 +974,12 @@ fn boxes_moved_under_a_turned_ancestor_keep_a_cold_projection_to_the_bit() {
     ] {
         let (mut page, wrappers) = turned_page(&transforms, false);
         let mut retained = snapshot(&page.context);
-        let turned = *wrappers
-            .iter()
-            .rev()
-            .find(|id| retained[id].transform.is_some())
-            .unwrap_or_else(|| panic!("{name}: no box hands its turn"));
-        assert_eq!(
-            retained[wrappers.last().unwrap()].transform.is_some(),
-            unit == [1.0, 1.0],
-            "{name}: an upright scale is folded into the offsets"
-        );
-        let _ = turned;
+        for id in &wrappers {
+            assert!(
+                retained[id].transform.is_some(),
+                "{name}: {id:?} hands its turn or scale"
+            );
+        }
         grow_unevenly(
             &mut page,
             &mut retained,
@@ -1017,11 +1020,11 @@ fn boxes_moved_under_a_turned_ancestor_keep_a_cold_projection_to_the_bit() {
 
 /// Boxes placed from their viewport boxes under a turn -- a sticky, a fixed
 /// and an absolute box measured from the row, each holding a plain one --
-/// are handed the inverse turn, found from the pins when their rows move,
-/// and match a full projection; what the moved rows hold otherwise does not
-/// project again. The absolute box turns with the row, so it does not stand
-/// upright in its own space: what it holds is placed from the viewport too,
-/// and projects again with it.
+/// are handed the map from the turned space to their own frames, found
+/// from the pins when their rows move, and match a full projection; what
+/// the moved rows hold otherwise does not project again. The sticky and the
+/// absolute box turn with the row: each hands its own frame, and what it
+/// holds is placed by its offset inside it, so it keeps its bounds.
 #[test]
 fn boxes_placed_from_the_viewport_under_a_turn_match_a_cold_projection() {
     for kind in ["rotated", "skewed", "flipped"] {
@@ -1065,8 +1068,14 @@ fn boxes_placed_from_the_viewport_under_a_turn_match_a_cold_projection() {
             })
             .collect();
         grow_unevenly(&mut page, &mut retained, 6, kind, |_, _, updated, at| {
-            for id in pinned.iter().chain(&held_by_absolute) {
+            for id in &pinned {
                 assert!(updated.contains(id), "{at}: {id:?} is placed from the page");
+            }
+            for id in &held_by_absolute {
+                assert!(
+                    !updated.contains(id),
+                    "{at}: {id:?} is placed by its offset in its holder's frame"
+                );
             }
         });
     }
@@ -1218,9 +1227,10 @@ fn assert_matches_viewport(
 
 /// The corners the transforms a relative projection hands put each box's
 /// own box at are the corners the old projection took the box around:
-/// the layout box's corners through every transform and scroll above it.
-/// Boxes placed from their viewport boxes are that box around, so only
-/// their boxes around are compared.
+/// the layout box's corners through every transform and scroll above it --
+/// for boxes placed by their offsets and for those placed from the viewport
+/// that hand their own frames alike. Every box's box around is the viewport
+/// projection's.
 #[test]
 fn placed_corners_are_the_turned_corners_of_a_cold_projection() {
     for (name, transforms) in [
@@ -1242,43 +1252,11 @@ fn placed_corners_are_the_turned_corners_of_a_cold_projection() {
         row_height(&mut queue, page.rows[0][0], 21.37);
         let mut retained = snapshot(&page.context);
         edit(&mut page, &mut retained, queue, name);
-        let world = page.context.world();
-        let placements = crate::AccessibilityPlacements::new(retained.values());
-        let mut memo = super::ProjectionMemo::default();
-        let mut compared = 0;
-        for (id, node) in &retained {
-            if world
-                .accessible_space(*id, &mut memo)
-                .is_none_or(|space| !space.local)
-            {
-                continue;
-            }
-            world
-                .accessibility_ancestor_transform(*id, &mut memo)
-                .unwrap();
-            let ([a, b, c, d, e, f], _) = memo.transforms[id].own;
-            let page_box = world.component_layout_box(*id).unwrap();
-            let turned = |x: f32, y: f32| [a * x + c * y + e, b * x + d * y + f];
-            let (x, y, w, h) = (page_box.x, page_box.y, page_box.width, page_box.height);
-            let want = [
-                turned(x, y),
-                turned(x + w, y),
-                turned(x + w, y + h),
-                turned(x, y + h),
-            ];
-            let got = placements.corners(*id).unwrap();
-            assert!(
-                got.iter()
-                    .flatten()
-                    .zip(want.iter().flatten())
-                    .all(|(got, want)| (got - want).abs() <= 2e-3),
-                "{name}: {id:?} ({:?}) placed at {got:?}, turned to {want:?}",
-                node.transform
-            );
-            compared += 1;
-        }
-        assert!(compared > 40, "{name}: compared {compared} boxes");
-        assert_matches_viewport(&page.context, &retained, name);
+        let framed = assert_turned_corners(&page.context, &retained, name);
+        assert_eq!(
+            framed, 9,
+            "{name}: the sticky, fixed and absolute boxes under the turn hand their own frames"
+        );
     }
 }
 
@@ -1335,5 +1313,711 @@ fn a_turned_box_resized_in_place_moves_its_space() {
                 "{at}: placed from the viewport"
             );
         }
+    }
+}
+
+/// What [`viewport_page`] holds.
+struct ViewportPage {
+    page: Page,
+    /// The page box: a root of the document of its own, placed from the
+    /// viewport, relative, so the escaping box is measured from it.
+    root: StableNodeId,
+    /// A sticky, a fixed and an absolute box measured from the root that
+    /// escapes the scroller's clip, each with a plain box inside.
+    placed: [StableNodeId; 3],
+    /// The scroller between the rows.
+    scroller: StableNodeId,
+}
+
+fn placed_style(position: PositionSpec, transform: Option<PaintTransform>) -> LayoutStyle {
+    LayoutStyle {
+        position,
+        offset_top: Some(LengthSpec::Px(1.0)),
+        offset_left: Some(LengthSpec::Px(7.0)),
+        transform,
+        ..fixed(12.0, 6.0)
+    }
+}
+
+fn root_style(transform: Option<PaintTransform>) -> LayoutStyle {
+    LayoutStyle {
+        position: PositionSpec::Relative,
+        padding_left: Some(LengthSpec::Px(1.3)),
+        padding_top: Some(LengthSpec::Px(2.1)),
+        transform,
+        ..column(Some(360.0))
+    }
+}
+
+/// A root page box of its own (no document node above it, as an
+/// application's page is) holding six rows, then a scroller of eight plain
+/// rows. The second row's cell holds a sticky and a fixed box, each turned,
+/// and the scroller's last row an absolute box, turned too, measured from
+/// the root, which escapes the scroller's clip (#201); each holds a plain
+/// box.
+fn viewport_page(root_turn: Option<PaintTransform>) -> ViewportPage {
+    let (mut b, _) = Builder::new(document(), 1);
+    let root = b.detached(root_style(root_turn));
+    let rows = uneven_rows(&mut b, root, 6);
+    let scroller = b.element(
+        root,
+        LayoutStyle {
+            overflow_x: OverflowSpec::Auto,
+            overflow_y: OverflowSpec::Auto,
+            direction: Some(FlexDirection::Column),
+            flex_shrink: Some(0.0),
+            ..fixed(300.0, 60.0)
+        },
+    );
+    let mut last = None;
+    for _ in 0..8 {
+        let row = b.element(
+            scroller,
+            LayoutStyle {
+                flex_shrink: Some(0.0),
+                ..fixed(300.0, 20.0)
+            },
+        );
+        let cell = b.element(row, fixed(100.0, 14.0));
+        b.element(cell, fixed(50.0, 5.0));
+        last = Some(cell);
+    }
+    let cell = rows[1][1];
+    let hold = |b: &mut Builder, parent, position, transform| {
+        let held = b.element(parent, placed_style(position, Some(transform)));
+        b.element(held, fixed(4.0, 3.0));
+        held
+    };
+    let placed = [
+        hold(&mut b, cell, PositionSpec::Sticky, turn("rotated", 0.25)),
+        hold(&mut b, cell, PositionSpec::Fixed, turn("skewed", 0.3)),
+        hold(
+            &mut b,
+            last.unwrap(),
+            PositionSpec::Absolute,
+            turn("rotated", -0.4),
+        ),
+    ];
+    ViewportPage {
+        page: laid_out(b, rows, scroller),
+        root,
+        placed,
+        scroller,
+    }
+}
+
+/// `id` and everything under it.
+fn subtree(context: &AppContext, id: StableNodeId) -> Vec<StableNodeId> {
+    let mut out = Vec::new();
+    let mut pending = vec![id];
+    while let Some(id) = pending.pop() {
+        out.push(id);
+        if let Some(node) = context.world().nodes.get(id) {
+            pending.extend(node.hierarchy.children.iter().copied());
+        }
+    }
+    out
+}
+
+/// Every box placed by its offset or handing its own frame stands, through
+/// the transforms the relative projection hands ([`crate::AccessibilityPlacements`]),
+/// where its layout box's corners stand through every transform and scroll
+/// above it; every box's box around matches a viewport projection. Returns
+/// how many framed boxes placed from the viewport were compared.
+fn assert_turned_corners(
+    context: &AppContext,
+    retained: &BTreeMap<StableNodeId, AccessibilityNode>,
+    at: &str,
+) -> usize {
+    let world = context.world();
+    let placements = crate::AccessibilityPlacements::new(retained.values());
+    let mut memo = super::ProjectionMemo::default();
+    let mut framed = 0;
+    for (id, node) in retained {
+        let Some(space) = world.accessible_space(*id, &mut memo) else {
+            continue;
+        };
+        if !space.local && !space.framed {
+            continue;
+        }
+        if !space.local {
+            framed += 1;
+        }
+        world
+            .accessibility_ancestor_transform(*id, &mut memo)
+            .unwrap();
+        let ([a, b, c, d, e, f], _) = memo.transforms[id].own;
+        let page_box = world.component_layout_box(*id).unwrap();
+        let turned = |x: f32, y: f32| [a * x + c * y + e, b * x + d * y + f];
+        let (x, y, w, h) = (page_box.x, page_box.y, page_box.width, page_box.height);
+        let want = [
+            turned(x, y),
+            turned(x + w, y),
+            turned(x + w, y + h),
+            turned(x, y + h),
+        ];
+        let got = placements.corners(*id).unwrap();
+        assert!(
+            got.iter()
+                .flatten()
+                .zip(want.iter().flatten())
+                .all(|(got, want)| (got - want).abs() <= 2e-3),
+            "{at}: {id:?} ({:?}) placed at {got:?}, turned to {want:?}",
+            node.transform
+        );
+    }
+    assert_matches_viewport(context, retained, at);
+    framed
+}
+
+/// A root page box, a fixed, a sticky and an escaping absolute box -- all
+/// placed from the viewport -- turned again and again, with the rows moved
+/// by an uneven step and the scroller scrolled between and in the same
+/// frames. Each hands its own frame, so a turn of it projects it and the
+/// pins under it, and what it holds by offsets keeps its bounds to the bit.
+#[test]
+fn boxes_placed_from_the_viewport_that_turn_keep_what_they_hold() {
+    let ViewportPage {
+        mut page,
+        root,
+        placed,
+        scroller,
+    } = viewport_page(Some(turn("rotated", 0.1)));
+    let mut retained = snapshot(&page.context);
+    assert!(
+        assert_turned_corners(&page.context, &retained, "built") >= 4,
+        "the root and the three placed boxes hand their own frames"
+    );
+    for id in std::iter::once(&root).chain(&placed) {
+        assert!(retained[id].transform.is_some(), "{id:?} hands its frame");
+    }
+    // What a turn of the root projects: it, and the pins under it -- the
+    // placed boxes and the scroller, whose clip in viewport coordinates
+    // cuts what it holds -- with what they hold.
+    let mut under_pins = vec![root];
+    for id in placed.iter().chain([&scroller]) {
+        under_pins.extend(subtree(&page.context, *id));
+    }
+    let mut height = 20.0;
+    let mut scroll = 0.0;
+    for step in 0..10 {
+        let angle = 0.1 + 0.137 * (step + 1) as f32;
+        let at = format!("step {step}");
+        // The root turned on its own.
+        let mut queue = MutationQueue::new();
+        queue.set_style(root, styled(root_style(Some(turn("rotated", angle)))));
+        let updated = edit(&mut page, &mut retained, queue, &format!("{at}: root"));
+        assert!(updated.contains(&root), "{at}: the root projects again");
+        assert!(
+            updated.iter().all(|id| under_pins.contains(id)),
+            "{at}: a turn of the root projected {updated:?}"
+        );
+        // Each placed box turned on its own: it alone projects again.
+        for (index, (&id, position)) in placed
+            .iter()
+            .zip([
+                PositionSpec::Sticky,
+                PositionSpec::Fixed,
+                PositionSpec::Absolute,
+            ])
+            .enumerate()
+        {
+            let mut queue = MutationQueue::new();
+            queue.set_style(
+                id,
+                styled(placed_style(
+                    position,
+                    Some(turn(
+                        ["rotated", "skewed", "flipped"][(index + step) % 3],
+                        angle * 0.7,
+                    )),
+                )),
+            );
+            let updated = edit(&mut page, &mut retained, queue, &format!("{at}: {id:?}"));
+            assert_eq!(
+                updated,
+                vec![id],
+                "{at}: a turn of {id:?} projects it alone"
+            );
+        }
+        // A move by an uneven step, alone and with a turn.
+        height += 1.37;
+        let mut queue = MutationQueue::new();
+        row_height(&mut queue, page.rows[0][0], height);
+        let updated = edit(&mut page, &mut retained, queue, &format!("{at}: moved"));
+        for [_, cell, leaf] in &page.rows[1..] {
+            assert!(
+                !updated.contains(cell) && !updated.contains(leaf),
+                "{at}: what a moved row holds moved with it"
+            );
+        }
+        // The sticky box's offset is worked out again whenever its rows
+        // move, which marks what it holds, and the escaping box is in the
+        // moved scroller, whose clip moved: the fixed box alone stays.
+        for id in &placed[1..2] {
+            let held = page
+                .context
+                .world()
+                .nodes
+                .get(*id)
+                .unwrap()
+                .hierarchy
+                .children[0];
+            assert!(
+                !updated.contains(&held),
+                "{at}: {held:?} keeps its offset in its holder's frame"
+            );
+        }
+        height += 1.37;
+        let mut queue = MutationQueue::new();
+        row_height(&mut queue, page.rows[0][0], height);
+        queue.set_style(root, styled(root_style(Some(turn("skewed", angle * 0.5)))));
+        edit(
+            &mut page,
+            &mut retained,
+            queue,
+            &format!("{at}: moved and turned"),
+        );
+        // A scroll between, and with a turn of the escaping box.
+        scroll += 3.37;
+        let mut queue = MutationQueue::new();
+        queue.set_scroll_offset(scroller, ScrollOffset { x: 0.0, y: scroll });
+        edit(&mut page, &mut retained, queue, &format!("{at}: scrolled"));
+        let mut queue = MutationQueue::new();
+        queue.set_scroll_offset(
+            scroller,
+            ScrollOffset {
+                x: 0.0,
+                y: scroll * 0.5,
+            },
+        );
+        queue.set_style(
+            placed[2],
+            styled(placed_style(
+                PositionSpec::Absolute,
+                Some(turn("rotated", -angle)),
+            )),
+        );
+        edit(
+            &mut page,
+            &mut retained,
+            queue,
+            &format!("{at}: scrolled and turned"),
+        );
+        assert!(assert_turned_corners(&page.context, &retained, &at) >= 4);
+    }
+    // The root goes upright, then turns again: its space changes, and all
+    // it holds projects again.
+    for (transform, at) in [(None, "upright"), (Some(turn("flipped", 0.0)), "flipped")] {
+        let mut queue = MutationQueue::new();
+        queue.set_style(root, styled(root_style(transform)));
+        let updated = edit(&mut page, &mut retained, queue, at);
+        assert!(
+            updated.contains(&page.rows[3][2]),
+            "{at}: the space changed under the rows"
+        );
+        assert_eq!(
+            retained[&root].transform.is_some(),
+            transform.is_some(),
+            "{at}"
+        );
+        assert_turned_corners(&page.context, &retained, at);
+    }
+}
+
+/// An upright scale `(a, d)`, with a move, as a CSS `matrix`.
+fn scale(a: f32, d: f32) -> PaintTransform {
+    PaintTransform {
+        a,
+        d,
+        e: 2.25,
+        f: -1.5,
+        ..Default::default()
+    }
+}
+
+/// Rows in a column under a scaled wrapper, holding a scaled box of rows of
+/// its own: each hands `diag(a, d)` and what it holds is placed by its
+/// local offsets inside it, so changing a factor -- larger, smaller, one
+/// axis only, all but zero -- projects that box alone, and moves under
+/// either keep what the moved rows hold. A scale of one on both axes only
+/// moves: the box hands no transform, and going to it or from it changes
+/// the space, so what it holds projects again.
+#[test]
+fn a_scale_changed_again_and_again_projects_the_box_alone() {
+    let (mut b, root) = Builder::page(document(), 1, 400.0);
+    let wrapper_style = |transform: Option<PaintTransform>| LayoutStyle {
+        transform,
+        padding_left: Some(LengthSpec::Px(1.3)),
+        padding_top: Some(LengthSpec::Px(2.1)),
+        ..fixed(340.0, 520.0)
+    };
+    let inner_style = |transform: Option<PaintTransform>| LayoutStyle {
+        transform,
+        padding_top: Some(LengthSpec::Px(0.7)),
+        direction: Some(FlexDirection::Column),
+        flex_shrink: Some(0.0),
+        ..fixed(300.0, 90.0)
+    };
+    let wrapper = b.element(root, wrapper_style(Some(scale(1.5, 1.25))));
+    let list = b.element(wrapper, column(Some(300.0)));
+    let rows = uneven_rows(&mut b, list, 8);
+    let inner = b.element(list, inner_style(Some(scale(0.8, 1.1))));
+    let inner_rows = uneven_rows(&mut b, inner, 3);
+    // A sticky box under the scales: placed from the viewport in a scaled
+    // space, it hands its own frame.
+    let sticky = b.element(rows[2][1], placed_style(PositionSpec::Sticky, None));
+    let held = b.element(sticky, fixed(4.0, 3.0));
+    let _ = held;
+    let mut page = laid_out(b, rows, list);
+    let mut retained = snapshot(&page.context);
+    let check_leaves =
+        |page: &Page, retained: &BTreeMap<StableNodeId, AccessibilityNode>, at: &str| {
+            for [_, cell, leaf] in page.rows[1..].iter().chain(&inner_rows) {
+                for id in [cell, leaf] {
+                    let local = page.context.world().local_layout_box(*id).unwrap();
+                    let node = &retained[id];
+                    assert_eq!(node.transform, None, "{at}: an upright box");
+                    assert_eq!(
+                        [
+                            node.bounds.x,
+                            node.bounds.y,
+                            node.bounds.width,
+                            node.bounds.height
+                        ]
+                        .map(f32::to_bits),
+                        [local.x, local.y, local.width, local.height].map(f32::to_bits),
+                        "{at}: {id:?} is handed its local offset in the scaled space"
+                    );
+                }
+            }
+        };
+    check_leaves(&page, &retained, "built");
+    let mut height = 20.0;
+    let steps = [
+        (Some(scale(1.37, 1.37)), Some(scale(0.8, 1.1)), true),
+        (Some(scale(1.37, 1.37)), Some(scale(2.0, 0.5)), true),
+        (Some(scale(0.5, 1.37)), Some(scale(2.0, 0.5)), true),
+        (Some(scale(1e-3, 1e-3)), Some(scale(1e-3, 2.0)), true),
+        (Some(scale(2.0, 1e-4)), Some(scale(0.9, 0.9)), true),
+        (Some(scale(-1.0, 1.0)), Some(scale(0.9, 0.9)), true),
+        (Some(scale(1.0, 1.0)), Some(scale(0.9, 0.9)), false),
+        (Some(scale(1.25, 1.0)), Some(scale(1.0, 1.0)), false),
+        (Some(scale(1.25, 1.0)), Some(scale(1.5, 1.5)), false),
+        (Some(scale(1.25, 1.0)), Some(scale(1.75, 1.5)), true),
+    ];
+    let (mut outer_was, mut inner_was) = (Some(scale(1.5, 1.25)), Some(scale(0.8, 1.1)));
+    for (step, (outer, inner_scale, kept)) in steps.into_iter().enumerate() {
+        let at = format!("step {step}");
+        let mut queue = MutationQueue::new();
+        if outer != outer_was {
+            queue.set_style(wrapper, styled(wrapper_style(outer)));
+        }
+        if inner_scale != inner_was {
+            queue.set_style(inner, styled(inner_style(inner_scale)));
+        }
+        let changed: Vec<StableNodeId> = [
+            (outer != outer_was, wrapper),
+            (inner_scale != inner_was, inner),
+        ]
+        .into_iter()
+        .filter_map(|(changed, id)| changed.then_some(id))
+        .collect();
+        (outer_was, inner_was) = (outer, inner_scale);
+        let updated = edit(&mut page, &mut retained, queue, &at);
+        if kept {
+            // The changed boxes, and the sticky box placed from the
+            // viewport under them.
+            assert!(
+                updated
+                    .iter()
+                    .all(|id| changed.contains(id) || *id == sticky || *id == held),
+                "{at}: a factor change projected {updated:?}"
+            );
+            for id in &changed {
+                assert!(updated.contains(id), "{at}: {id:?} projects again");
+                let handed = retained[id].transform.expect("a scale hands its frame");
+                if handed.a > 0.0 && handed.d > 0.0 {
+                    assert_eq!(
+                        (handed.b, handed.c, handed.e, handed.f),
+                        (0.0, 0.0, 0.0, 0.0),
+                        "{at}: an upright scale hands diag(a, d)"
+                    );
+                }
+            }
+        } else {
+            assert!(
+                updated.len() > changed.len() + 2,
+                "{at}: a change to or from a scale of one changes the space"
+            );
+        }
+        assert_eq!(
+            retained[&wrapper].transform.is_some(),
+            outer.is_some_and(|t| (t.a, t.d) != (1.0, 1.0)),
+            "{at}: a scale of one hands no transform"
+        );
+        check_leaves(&page, &retained, &at);
+        assert_turned_corners(&page.context, &retained, &at);
+        // A move under the new factors: what the moved rows hold stays.
+        height += 1.37;
+        let mut queue = MutationQueue::new();
+        row_height(&mut queue, page.rows[0][0], height);
+        let updated = edit(&mut page, &mut retained, queue, &format!("{at}: moved"));
+        for [_, cell, leaf] in page.rows[1..].iter().chain(&inner_rows) {
+            assert!(
+                !updated.contains(cell) && !updated.contains(leaf),
+                "{at}: what a moved row holds moved with it"
+            );
+        }
+        check_leaves(&page, &retained, &format!("{at}: moved"));
+    }
+}
+
+/// Children of boxes in a scrolled list, which the projection keeps or drops
+/// by whether they have a viewport box, tested once per parent's map: a box
+/// placed by its offset whose page box ends past the largest float under a
+/// scaled box, a hidden box and a box that lays out nothing; and a box in a
+/// header that sticks to the list's top. Across scrolls
+/// and moves by an uneven step, every parent lists the children a full
+/// projection does, and the overflowing box is not listed.
+#[test]
+fn children_under_a_scroll_chain_are_kept_as_their_viewport_boxes_say() {
+    let (mut b, root) = Builder::page(document(), 1, 400.0);
+    let list = b.element(
+        root,
+        LayoutStyle {
+            overflow_x: OverflowSpec::Auto,
+            overflow_y: OverflowSpec::Auto,
+            direction: Some(FlexDirection::Column),
+            flex_shrink: Some(0.0),
+            ..fixed(300.0, 120.0)
+        },
+    );
+    // A header that sticks to the list's top once it scrolls, holding a box:
+    // the map under it moves with the sticky offset.
+    let header = b.element(
+        list,
+        LayoutStyle {
+            position: PositionSpec::Sticky,
+            offset_top: Some(LengthSpec::Px(0.0)),
+            flex_shrink: Some(0.0),
+            ..fixed(300.0, 8.0)
+        },
+    );
+    let held = b.element(header, fixed(30.0, 4.0));
+    let rows = uneven_rows(&mut b, list, 8);
+    let cell = rows[2][1];
+    let scaled = b.element(
+        rows[3][1],
+        LayoutStyle {
+            transform: Some(scale(4.0, 4.0)),
+            direction: Some(FlexDirection::Column),
+            ..fixed(20.0, 10.0)
+        },
+    );
+    let wide = b.element(scaled, fixed(3e38, 5.0));
+    let beside = b.element(scaled, fixed(5.0, 5.0));
+    let hidden = b.element(cell, fixed(10.0, 10.0));
+    b.queue.set_accessibility(
+        hidden,
+        crate::AccessibilityState {
+            hidden: true,
+            ..Default::default()
+        },
+    );
+    let gone = b.element(
+        cell,
+        LayoutStyle {
+            display: Some(nana_ui_core::DisplaySpec::None),
+            ..fixed(10.0, 10.0)
+        },
+    );
+    let mut page = laid_out(b, rows, list);
+    let mut retained = snapshot(&page.context);
+    let check = |retained: &BTreeMap<StableNodeId, AccessibilityNode>, at: &str| {
+        let listed = &retained[&cell].children;
+        assert!(
+            listed.contains(&page_leaf(&retained[&cell])),
+            "{at}: the leaf stays"
+        );
+        for id in [hidden, gone] {
+            assert!(
+                !listed.contains(&id),
+                "{at}: {id:?} has no viewport box to keep"
+            );
+        }
+        assert_eq!(
+            retained[&scaled].children,
+            vec![beside],
+            "{at}: a box ending past the largest float has no viewport box"
+        );
+        assert!(!retained.contains_key(&wide), "{at}: nor a node");
+        assert_eq!(
+            retained[&header].children,
+            vec![held],
+            "{at}: the header's box"
+        );
+    };
+    check(&retained, "built");
+    let mut scroll = 0.0;
+    let mut height = 20.0;
+    for step in 0..8 {
+        let at = format!("step {step}");
+        scroll += 7.37;
+        let mut queue = MutationQueue::new();
+        queue.set_scroll_offset(list, ScrollOffset { x: 0.0, y: scroll });
+        edit(&mut page, &mut retained, queue, &format!("{at}: scrolled"));
+        check(&retained, &at);
+        height += 1.37;
+        let mut queue = MutationQueue::new();
+        row_height(&mut queue, page.rows[0][0], height);
+        if step % 2 == 1 {
+            queue.set_scroll_offset(
+                list,
+                ScrollOffset {
+                    x: 0.0,
+                    y: scroll * 0.5,
+                },
+            );
+        }
+        let updated = edit(&mut page, &mut retained, queue, &format!("{at}: moved"));
+        check(&retained, &format!("{at}: moved"));
+        assert!(
+            updated.contains(&page.rows[2][0]),
+            "{at}: a moved row projects again"
+        );
+    }
+}
+
+/// The first child of a cell node: its leaf.
+fn page_leaf(cell: &AccessibilityNode) -> StableNodeId {
+    cell.children[0]
+}
+
+/// Boxes placed from the viewport on a plain page whose own turn leaves
+/// their box around where it was -- a sticky box flipped about its centre,
+/// an absolute one in a cell measured from the row above it turned half
+/// round -- hand their
+/// own frames, placed in their parents' spaces through their page
+/// positions: when their rows move by an uneven step they project again,
+/// and match a cold projection to the bit.
+#[test]
+fn boxes_whose_turn_keeps_their_box_around_project_again_when_they_move() {
+    let (mut b, root) = Builder::page(document(), 1, 400.0);
+    let list = b.element(root, column(Some(300.0)));
+    let rows = uneven_rows(&mut b, list, 6);
+    let half = std::f32::consts::PI;
+    let placed = [
+        b.element(
+            rows[2][1],
+            placed_style(
+                PositionSpec::Sticky,
+                Some(PaintTransform {
+                    a: -1.0,
+                    ..Default::default()
+                }),
+            ),
+        ),
+        b.element(
+            rows[3][1],
+            placed_style(
+                PositionSpec::Absolute,
+                Some(PaintTransform {
+                    a: half.cos(),
+                    b: half.sin(),
+                    c: -half.sin(),
+                    d: half.cos(),
+                    ..Default::default()
+                }),
+            ),
+        ),
+    ];
+    for id in placed {
+        b.element(id, fixed(4.0, 3.0));
+    }
+    let mut page = laid_out(b, rows, list);
+    let mut retained = snapshot(&page.context);
+    for id in placed {
+        assert!(retained[&id].transform.is_some(), "{id:?} hands its frame");
+    }
+    grow_unevenly(
+        &mut page,
+        &mut retained,
+        12,
+        "flipped",
+        |page, retained, updated, at| {
+            for id in placed {
+                assert!(updated.contains(&id), "{at}: {id:?} projects again");
+            }
+            assert_turned_corners(&page.context, retained, at);
+        },
+    );
+}
+
+/// A scaled box under a 3D context: its parent's map to the viewport is not
+/// one a box can be placed in, so the box hands no frame of its own -- its
+/// space is the viewport's, scaled, and what it holds stands at scaled
+/// offsets. A change of its factor changes that space: what it holds
+/// projects again, and matches a cold projection.
+#[test]
+fn a_scale_under_a_3d_context_projects_what_it_holds_again() {
+    let (mut b, root) = Builder::page(document(), 1, 400.0);
+    let context = b.element(
+        root,
+        LayoutStyle {
+            preserve_3d: true,
+            direction: Some(FlexDirection::Column),
+            ..fixed(340.0, 400.0)
+        },
+    );
+    let scaled_style = |transform| LayoutStyle {
+        transform: Some(transform),
+        direction: Some(FlexDirection::Column),
+        padding_top: Some(LengthSpec::Px(0.7)),
+        ..fixed(300.0, 200.0)
+    };
+    let scaled = b.element(context, scaled_style(scale(1.5, 1.25)));
+    let list = b.element(scaled, column(Some(300.0)));
+    let rows = uneven_rows(&mut b, list, 4);
+    let mut page = laid_out(b, rows, list);
+    let mut retained = snapshot(&page.context);
+    for (step, factor) in [1.37_f32, 0.8, 2.0].into_iter().enumerate() {
+        let at = format!("step {step}");
+        let mut queue = MutationQueue::new();
+        queue.set_style(scaled, styled(scaled_style(scale(factor, 1.25))));
+        let updated = edit(&mut page, &mut retained, queue, &at);
+        assert!(
+            updated.contains(&page.rows[1][2]),
+            "{at}: the scaled space changed under the rows"
+        );
+        let leaf = page.rows[1][2];
+        let local = page.context.world().local_layout_box(leaf).unwrap();
+        assert_eq!(
+            retained[&leaf].bounds.width.to_bits(),
+            (factor * local.width).to_bits(),
+            "{at}: a leaf stands at its scaled offset"
+        );
+    }
+    // The column under it goes from no transform to a scale and back: in
+    // the scaled space above, a scale of its own is a frame of its own, so
+    // what it holds stands at its own offsets, then at scaled ones again.
+    for (step, transform) in [Some(scale(1.1, 1.1)), None, Some(scale(0.9, 1.2))]
+        .into_iter()
+        .enumerate()
+    {
+        let at = format!("column, step {step}");
+        let mut queue = MutationQueue::new();
+        queue.set_style(
+            list,
+            styled(LayoutStyle {
+                transform,
+                ..column(Some(300.0))
+            }),
+        );
+        let updated = edit(&mut page, &mut retained, queue, &at);
+        assert!(
+            updated.contains(&page.rows[1][2]),
+            "{at}: the column's space changed under the rows"
+        );
     }
 }
