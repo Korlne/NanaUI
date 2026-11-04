@@ -66,6 +66,7 @@ CATALOG = [
     ("Sun", "sun"),
     ("Webcam", "device-computer-camera"),
     ("Wind", "wind"),
+    ("Reset", "arrow-back-up"),
 ]
 
 NS = {"svg": "http://www.w3.org/2000/svg"}

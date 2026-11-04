@@ -80,6 +80,8 @@ framework_strings! {
     toast_percent = "toast.percent" => "{percent}%";
 
     chip_remove = "chip.remove" => "移除";
+    /// What a range's reset button is called: it puts the default value back.
+    range_field_reset = "range_field.reset" => "恢复默认";
     /// What assistive technology calls a Markdown diagram without a title.
     diagram_label = "diagram.label" => "图表";
     /// A diagram's element counts. `{nodes}`, `{edges}`.

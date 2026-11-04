@@ -2857,6 +2857,45 @@ static WIND: IconData = IconData {
     svg: WIND_SVG,
 };
 
+static RESET_PATH_0: &[IconPathCommand] = &[
+    IconPathCommand::MoveTo([9.0, 14.0]),
+    IconPathCommand::LineTo([5.0, 10.0]),
+    IconPathCommand::LineTo([9.0, 6.0]),
+];
+static RESET_PATH_1: &[IconPathCommand] = &[
+    IconPathCommand::MoveTo([5.0, 10.0]),
+    IconPathCommand::LineTo([16.0, 10.0]),
+    IconPathCommand::CubicTo {
+        control_a: [18.2091, 10.0],
+        control_b: [20.0, 11.7909],
+        to: [20.0, 14.0],
+    },
+    IconPathCommand::CubicTo {
+        control_a: [20.0, 16.2091],
+        control_b: [18.2091, 18.0],
+        to: [16.0, 18.0],
+    },
+    IconPathCommand::LineTo([15.0, 18.0]),
+];
+static RESET_SHAPES: &[IconShape] = &[IconShape::Path(RESET_PATH_0), IconShape::Path(RESET_PATH_1)];
+static RESET_SVG: &str = r#"<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+  class="icon icon-tabler icons-tabler-outline icon-tabler-arrow-back-up"
+><path stroke="none" d="M0 0h24v24H0z" fill="none" /><path d="M9 14l-4 -4l4 -4" /><path d="M5 10h11a4 4 0 1 1 0 8h-1" /></svg>"#;
+static RESET: IconData = IconData {
+    name: "arrow-back-up",
+    shapes: RESET_SHAPES,
+    svg: RESET_SVG,
+};
+
 #[allow(non_upper_case_globals)]
 impl Icon {
     pub const About: Self = Self(&ABOUT);
@@ -2903,4 +2942,5 @@ impl Icon {
     pub const Sun: Self = Self(&APPEARANCE);
     pub const Webcam: Self = Self(&WEBCAM);
     pub const Wind: Self = Self(&WIND);
+    pub const Reset: Self = Self(&RESET);
 }
