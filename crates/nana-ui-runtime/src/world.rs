@@ -494,6 +494,15 @@ struct HitEntry {
     pinned: bool,
     transform: [f32; 6],
     persp: [f32; 2],
+    /// Whether the entry hands its children its own layout coordinates
+    /// rather than the space `transform` maps them to: a box whose own 2D
+    /// transform scales, rotates, skews or flips, with no perspective or 3D
+    /// context on the way. Its children's entries then hold nothing of its
+    /// transform or of anything above it, so a turn, a move or a resize of
+    /// it (which moves its transform origin) builds its entry alone, and a
+    /// box moved under it is the upright move of an ordinary entry. A query
+    /// takes the point through the inverse of `transform` on the way down.
+    local_children: bool,
     /// The scroll offset the index holds this entry's children at: the live
     /// one when it was built, moved by every scroll shift since. An entry
     /// built again in place over its children must find the live offset

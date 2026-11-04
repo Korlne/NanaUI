@@ -249,14 +249,35 @@ fn hit_bounds(entry: &HitEntry) -> Bounds {
 }
 
 /// What an entry covers in its parent's children's space: its own hit and
-/// its children's, `shift` (its scroll) away, all [`HitEntry::origin`] away.
+/// its children's, `shift` (its scroll) away -- and, when it hands them its
+/// own layout coordinates, the box around their corners through its
+/// transform -- all [`HitEntry::origin`] away. A cold build and every
+/// refresh of a kept entry use this one formula, so they agree to the bit.
 fn entry_bounds(entry: &HitEntry, children: Option<Bounds>, shift: [f32; 2]) -> Bounds {
     let own = hit_bounds(entry);
     let merged = match children {
+        Some(children) if entry.local_children => {
+            own.merge(turned_bounds(children.translated(shift), entry.transform))
+        }
         Some(children) => own.merge(children.translated(shift)),
         None => own,
     };
     merged.translated(entry.origin)
+}
+
+/// `bounds` in an entry's layout coordinates as the box around their
+/// corners in the space its (perspective-free) `transform` maps them to.
+fn turned_bounds(bounds: Bounds, transform: [f32; 6]) -> Bounds {
+    match bounds {
+        Bounds::Known(bounds) => project_transformed_box(bounds, transform, [0.0, 0.0]).into(),
+        other => other,
+    }
+}
+
+/// What a box that hands its children its own layout coordinates hands
+/// them: its scroll, nothing of its transform.
+fn scroll_seed(scroll: [f32; 2]) -> [f32; 6] {
+    [1.0, 0.0, 0.0, 1.0, -scroll[0], -scroll[1]]
 }
 
 /// `offset` through the linear part of `transform`: where a box `offset`
@@ -353,10 +374,10 @@ impl HitIndex {
     fn escaped_hit_at(&self, x: f32, y: f32) -> bool {
         self.escaped.iter().any(|id| {
             self.entries.get(id).is_some_and(|indexed| {
-                indexed.entry.escaped && {
-                    let shift = self.inherited_offset(*id);
-                    indexed.bounds.contains(x - shift[0], y - shift[1])
-                }
+                indexed.entry.escaped
+                    && self
+                        .reach_point(*id, x, y)
+                        .is_some_and(|(x, y)| indexed.bounds.contains(x, y))
             })
         })
     }
@@ -510,11 +531,15 @@ impl HitIndex {
             bounds: Bounds,
             child_ids: Vec<Option<StableNodeId>>,
             children: std::iter::Enumerate<std::vec::IntoIter<HitEntry>>,
+            /// What its children's transforms take off: nothing below an
+            /// entry that hands them its own layout coordinates.
+            child_offset: [f32; 2],
         }
         let open = |index: &mut Self,
                     mut entry: HitEntry,
                     parent: Option<StableNodeId>,
-                    sibling_slot: usize| {
+                    sibling_slot: usize,
+                    offset: [f32; 2]| {
             if entry.escaped {
                 index.escaped.insert(entry.id);
             }
@@ -536,16 +561,22 @@ impl HitIndex {
                 bounds: Bounds::Empty,
                 child_ids: children.iter().map(|child| Some(child.id)).collect(),
                 children: children.into_iter().enumerate(),
+                child_offset: if entry.local_children {
+                    [0.0, 0.0]
+                } else {
+                    offset
+                },
                 entry,
                 parent,
                 sibling_slot,
             }
         };
-        let mut levels = vec![open(self, entry, parent, sibling_slot)];
+        let mut levels = vec![open(self, entry, parent, sibling_slot, offset)];
         while let Some(level) = levels.last_mut() {
             if let Some((slot, child)) = level.children.next() {
                 let parent = Some(level.entry.id);
-                let child = open(self, child, parent, slot);
+                let offset = level.child_offset;
+                let child = open(self, child, parent, slot, offset);
                 levels.push(child);
                 continue;
             }
@@ -582,6 +613,9 @@ impl HitIndex {
 
     /// The scroll the entries above `id` took since they were built: what
     /// a transform built against the live scroll has in it beyond theirs.
+    /// Up to the nearest entry that hands its children its own layout
+    /// coordinates ([`HitEntry::local_children`]), its own scroll included:
+    /// `id`'s transform holds nothing from above it.
     fn inherited_shift(&self, id: StableNodeId) -> [f32; 2] {
         let mut shift = [0.0, 0.0];
         let mut cursor = self.entries.get(&id).and_then(|n| n.parent);
@@ -591,48 +625,168 @@ impl HitIndex {
             };
             shift[0] += node.shift[0];
             shift[1] += node.shift[1];
+            if node.entry.local_children {
+                break;
+            }
             cursor = node.parent;
         }
         shift
     }
 
-    /// How far the space the walk reaches `id` in is from the window: the
-    /// origins and scroll of the entries above it, the walk's own order
-    /// (from `id`'s parent up) aside.
-    fn inherited_offset(&self, id: StableNodeId) -> [f32; 2] {
+    /// How far the space the walk reaches `id` in is from the space `id`'s
+    /// transform is held against: the origins and scroll of the entries
+    /// above it, the walk's own order (from `id`'s parent up) aside, up to
+    /// the nearest entry that hands its children its own layout coordinates
+    /// (its scroll alone counts). That entry is returned with it: `None`
+    /// when there is none and the offset is from the window.
+    fn inherited_offset(&self, id: StableNodeId) -> ([f32; 2], Option<StableNodeId>) {
         let mut offset = [0.0, 0.0];
         let mut cursor = self.entries.get(&id).and_then(|n| n.parent);
         while let Some(id) = cursor {
             let Some(node) = self.entries.get(&id) else {
                 break;
             };
+            if node.entry.local_children {
+                offset[0] += node.shift[0];
+                offset[1] += node.shift[1];
+                return (offset, Some(id));
+            }
             offset[0] += node.entry.origin[0] + node.shift[0];
             offset[1] += node.entry.origin[1] + node.shift[1];
             cursor = node.parent;
         }
-        offset
+        (offset, None)
     }
 
-    /// How far `id`'s own coordinates are from the window: what a point
-    /// there takes off before `id`'s transform maps it.
+    /// How far `id`'s own coordinates are from the space its transform is
+    /// held against: what a point there takes off before `id`'s transform
+    /// maps it. That space is the window's unless [`Self::entry_space`]
+    /// says otherwise.
+    #[cfg(test)]
     pub(super) fn entry_offset(&self, id: StableNodeId) -> [f32; 2] {
-        let mut offset = self.inherited_offset(id);
-        if let Some(node) = self.entries.get(&id) {
+        self.entry_space(id).0
+    }
+
+    /// [`Self::entry_offset`], and the map from the space it is measured in
+    /// to the window: the layout coordinates of the nearest entry above
+    /// that hands them to its children, through that entry's transform and
+    /// everything above it. `None`: the window's own space.
+    fn entry_space(&self, id: StableNodeId) -> ([f32; 2], Option<[f32; 6]>) {
+        self.space_of(id, true)
+    }
+
+    /// [`Self::entry_space`] for the space the walk reaches `id` in (where
+    /// its bounds are kept): `id`'s own origin left out, not taken back.
+    fn space_of(&self, id: StableNodeId, own: bool) -> ([f32; 2], Option<[f32; 6]>) {
+        let (mut offset, mut above) = self.inherited_offset(id);
+        if own && let Some(node) = self.entries.get(&id) {
             offset[0] += node.entry.origin[0];
             offset[1] += node.entry.origin[1];
         }
-        offset
+        let Some(first) = above else {
+            return (offset, None);
+        };
+        // The entries handing down their own coordinates, innermost first,
+        // each with where it stands in the one above's; composed outermost
+        // first, without recursion: they nest as deep as the tree does.
+        let mut chain = Vec::new();
+        above = Some(first);
+        while let Some(at) = above {
+            let (mut placed, next) = self.inherited_offset(at);
+            let entry = &self.entries[&at].entry;
+            placed[0] += entry.origin[0];
+            placed[1] += entry.origin[1];
+            chain.push(then_affine(
+                [1.0, 0.0, 0.0, 1.0, placed[0], placed[1]],
+                entry.transform,
+            ));
+            above = next;
+        }
+        let map = chain
+            .into_iter()
+            .rev()
+            .reduce(then_affine)
+            .expect("one entry at least");
+        (offset, Some(map))
     }
 
+    /// The window point `(x, y)` in `id`'s own coordinates, before its
+    /// transform: `None` where a turn above it cannot be undone.
+    fn own_point(&self, id: StableNodeId, x: f32, y: f32) -> Option<(f32, f32)> {
+        self.point_in(self.entry_space(id), x, y)
+    }
+
+    fn point_in(
+        &self,
+        (offset, map): ([f32; 2], Option<[f32; 6]>),
+        x: f32,
+        y: f32,
+    ) -> Option<(f32, f32)> {
+        let (x, y) = match map {
+            Some(map) => transformed_point(map, [0.0, 0.0], x, y)?,
+            None => (x, y),
+        };
+        Some((x - offset[0], y - offset[1]))
+    }
+
+    /// The window point `(x, y)` in the space the walk reaches `id` in:
+    /// where its bounds are kept.
+    fn reach_point(&self, id: StableNodeId, x: f32, y: f32) -> Option<(f32, f32)> {
+        self.point_in(self.space_of(id, false), x, y)
+    }
+
+    /// A point of `id`'s own coordinates, past its transform, in the window.
+    fn own_to_window(&self, id: StableNodeId, x: f32, y: f32) -> (f32, f32) {
+        let (offset, map) = self.entry_space(id);
+        let (x, y) = (x + offset[0], y + offset[1]);
+        match map {
+            Some([a, b, c, d, e, f]) => (a * x + c * y + e, b * x + d * y + f),
+            None => (x, y),
+        }
+    }
+
+    /// The shift the index holds `parent`'s children at: what a transform
+    /// built against the live scroll for one of them takes off.
     fn child_shift(&self, parent: Option<StableNodeId>) -> [f32; 2] {
         parent.map_or([0.0, 0.0], |id| {
-            let mut shift = self.inherited_shift(id);
-            if let Some(node) = self.entries.get(&id) {
-                shift[0] += node.shift[0];
-                shift[1] += node.shift[1];
-            }
+            let Some(node) = self.entries.get(&id) else {
+                return self.inherited_shift(id);
+            };
+            let mut shift = if node.entry.local_children {
+                [0.0, 0.0]
+            } else {
+                self.inherited_shift(id)
+            };
+            shift[0] += node.shift[0];
+            shift[1] += node.shift[1];
             shift
         })
+    }
+
+    /// What `parent` hands a child built now, against the live `scroll`, in
+    /// the space the index holds the parent's transform in (scroll shifts
+    /// above it put back), with the shift the index holds the child at
+    /// ([`Self::child_shift`]) for the caller to take off again.
+    fn live_child_seed(
+        &self,
+        parent: StableNodeId,
+        scroll: crate::ScrollOffset,
+    ) -> Option<([f32; 6], [f32; 2])> {
+        let node = self.entries.get(&parent)?;
+        if node.entry.local_children {
+            return Some((scroll_seed([scroll.x, scroll.y]), node.shift));
+        }
+        // `find_hit_transform` and `child_shift` from one walk up: the
+        // shift above the parent, and the parent's own on top for its
+        // children.
+        let above = self.inherited_shift(parent);
+        let mut transform = node.entry.transform;
+        transform[4] += above[0];
+        transform[5] += above[1];
+        Some((
+            then_affine(transform, [1.0, 0.0, 0.0, 1.0, -scroll.x, -scroll.y]),
+            [above[0] + node.shift[0], above[1] + node.shift[1]],
+        ))
     }
 
     // Only structural sibling changes rebuild a range index. Geometry and
@@ -944,11 +1098,23 @@ impl HitIndex {
         let menu_hit = node
             .menu
             .is_some_and(|menu| transformed_contains(menu, node.transform, node.persp, x, y));
-        let children_ok = node
+        let mut children_ok = node
             .child_clips
             .iter()
             .all(|(bounds, transform)| transformed_contains(*bounds, *transform, [0.0, 0.0], x, y));
-        let child_point = (x - indexed.shift[0], y - indexed.shift[1]);
+        // Children held in the entry's own layout coordinates take the
+        // point through the inverse of its transform first.
+        let child_point = if node.local_children {
+            match transformed_point(node.transform, [0.0, 0.0], x, y) {
+                Some((x, y)) => (x - indexed.shift[0], y - indexed.shift[1]),
+                None => {
+                    children_ok = false;
+                    (x, y)
+                }
+            }
+        } else {
+            (x - indexed.shift[0], y - indexed.shift[1])
+        };
         // The children the point can reach, topmost first, as the bounds
         // tree yields them.
         let children_start = children.len();
@@ -1275,15 +1441,10 @@ impl UiWorld {
         {
             // The entry maps its own box's coordinates; the answer is the
             // page's, where the box stands.
-            let shift = index.entry_offset(target);
+            let (x, y) = index.own_point(target, x, y)?;
             let [origin_x, origin_y] = self.layout_origin(target)?;
-            return transformed_point(
-                indexed.entry.transform,
-                indexed.entry.persp,
-                x - shift[0],
-                y - shift[1],
-            )
-            .map(|(x, y)| (x + origin_x, y + origin_y));
+            return transformed_point(indexed.entry.transform, indexed.entry.persp, x, y)
+                .map(|(x, y)| (x + origin_x, y + origin_y));
         }
         let (transform, persp) = self.layout_projection_transform(target)?;
         transformed_point(transform, persp, x, y)
@@ -1319,11 +1480,7 @@ impl UiWorld {
         if !w.is_finite() || w.abs() < 1e-8 {
             return None;
         }
-        let shift = index.entry_offset(target);
-        let result = (
-            (a * x + c * y + e) / w + shift[0],
-            (b * x + d * y + f) / w + shift[1],
-        );
+        let result = index.own_to_window(target, (a * x + c * y + e) / w, (b * x + d * y + f) / w);
         (result.0.is_finite() && result.1.is_finite()).then_some(result)
     }
 }
@@ -1482,7 +1639,6 @@ impl UiWorld {
     /// Whether `target`'s menu region (an open select menu, a hover card's
     /// connector strip) is at the window point `(x, y)`.
     fn menu_region_contains(&self, index: &HitIndex, target: StableNodeId, x: f32, y: f32) -> bool {
-        let shift = index.entry_offset(target);
         let has_overlay = self
             .document_of(target)
             .is_some_and(|document| self.has_compositor_transform_overlay_for(document));
@@ -1502,13 +1658,9 @@ impl UiWorld {
                             transformed_contains(menu, transform, persp, x, y)
                         })
                 } else {
-                    transformed_contains(
-                        menu,
-                        node.entry.transform,
-                        node.entry.persp,
-                        x - shift[0],
-                        y - shift[1],
-                    )
+                    index.own_point(target, x, y).is_some_and(|(x, y)| {
+                        transformed_contains(menu, node.entry.transform, node.entry.persp, x, y)
+                    })
                 }
             })
         })
@@ -1869,7 +2021,13 @@ impl UiWorld {
             self.rebuild_hit_test(document);
             return;
         }
-        let [a, b, c, d, _, _] = node.entry.transform;
+        // In the space its children are held in: its own layout coordinates
+        // when it hands them those.
+        let [a, b, c, d, _, _] = if node.entry.local_children {
+            IDENTITY_AFFINE
+        } else {
+            node.entry.transform
+        };
         node.shift[0] += a * delta[0] + c * delta[1];
         node.shift[1] += b * delta[0] + d * delta[1];
         node.entry.scroll[0] -= delta[0];
@@ -2150,6 +2308,7 @@ impl UiWorld {
                         pinned,
                         transform: IDENTITY_AFFINE,
                         persp: [0.0, 0.0],
+                        local_children: false,
                         scroll: [0.0, 0.0],
                         self_clips: Vec::new(),
                         child_clips: Vec::new(),
@@ -2261,12 +2420,25 @@ impl UiWorld {
                     .world_scene_transform(layout.x, layout.y, layout.width, layout.height)
                     .unwrap_or((IDENTITY_AFFINE, [0.0, 0.0]))
             };
-            let (transform, persp) = then_hit(parent_hit, self.with_sticky_translation(id, local));
-            let child_transform = then_hit(
-                (transform, persp),
-                ([1.0, 0.0, 0.0, 1.0, -scroll.x, -scroll.y], [0.0, 0.0]),
-            );
+            let local = self.with_sticky_translation(id, local);
+            let (transform, persp) = then_hit(parent_hit, local);
             let child_blocks_3d = parent_blocks_3d || node_style.fails_closed_3d_context();
+            // A box that scales, rotates, skews or flips in 2D hands its
+            // children its own layout coordinates: nothing of its transform
+            // or of what is above it reaches their entries. Under a
+            // perspective or in a 3D context they keep the composed one.
+            let local_children = local.0[..4] != [1.0, 0.0, 0.0, 1.0]
+                && local.1 == [0.0, 0.0]
+                && persp == [0.0, 0.0]
+                && !child_blocks_3d;
+            let child_transform = if local_children {
+                (scroll_seed([scroll.x, scroll.y]), [0.0, 0.0])
+            } else {
+                then_hit(
+                    (transform, persp),
+                    ([1.0, 0.0, 0.0, 1.0, -scroll.x, -scroll.y], [0.0, 0.0]),
+                )
+            };
             // The committed value, as pointer dispatch validates it: a commit
             // that turns it `none` withdraws entries before styles resolve.
             let used_pe = PointerEventsSpec::inherit_from(specified_pointer, parent_used_pe);
@@ -2353,6 +2525,7 @@ impl UiWorld {
                     pinned: reads_page,
                     transform,
                     persp,
+                    local_children,
                     scroll: [scroll.x, scroll.y],
                     self_clips,
                     child_clips,
@@ -2592,18 +2765,16 @@ impl UiWorld {
 
         // The parent's own entry supplies the inherited transform. Its scroll is
         // read live because scroll never invalidates the parent entry itself.
-        let Some(parent_transform) = self
+        let scroll = self.record(parent).scroll_offset;
+        let Some((child_transform, _)) = self
             .hit_test_index
             .get(&document)
-            .and_then(|forest| find_hit_transform(forest, parent))
+            .and_then(|forest| forest.live_child_seed(parent, scroll))
         else {
             // Parent is absent from the index. That is correct only when the
             // parent omits its layout subtree; otherwise the index is stale.
             return (!self.node_has_hit_box(parent)).then(Vec::new);
         };
-        let scroll = self.record(parent).scroll_offset;
-        let child_transform =
-            then_affine(parent_transform, [1.0, 0.0, 0.0, 1.0, -scroll.x, -scroll.y]);
         let siblings = &self.record(parent).hierarchy.children;
         let position = self
             .hit_test_index
@@ -2644,15 +2815,14 @@ impl UiWorld {
         root: StableNodeId,
         anchor: StableNodeId,
     ) -> Option<Vec<StableNodeId>> {
-        let Some(anchor_transform) = self
+        let scroll = self.record(anchor).scroll_offset;
+        let Some((base, _)) = self
             .hit_test_index
             .get(&document)
-            .and_then(|forest| find_hit_transform(forest, anchor))
+            .and_then(|forest| forest.live_child_seed(anchor, scroll))
         else {
             return (!self.node_has_hit_box(anchor)).then(Vec::new);
         };
-        let scroll = self.record(anchor).scroll_offset;
-        let base = then_affine(anchor_transform, [1.0, 0.0, 0.0, 1.0, -scroll.x, -scroll.y]);
         let (transform, _) = self.clip_bridge_transform_from(
             root,
             Some(anchor),
@@ -2729,7 +2899,9 @@ impl UiWorld {
     /// the one held does: the same transform and scroll, no perspective or
     /// 3D context, over the same children, from its tree parent. Such an
     /// entry hands its children nothing a change of it could alter, so they
-    /// keep theirs; anything else patches the subtree.
+    /// keep theirs; anything else patches the subtree. An entry that hands
+    /// its children its own layout coordinates ([`HitEntry::local_children`])
+    /// hands them its scroll alone, so its transform may change too.
     ///
     /// It is built as [`Self::patch_hit_branch`] would build it -- from the
     /// parent's live transform and scroll, brought back into the space the
@@ -2749,36 +2921,26 @@ impl UiWorld {
         // around turned corners, merged with its children's: built again
         // over children kept from another build they come out an ulp from a
         // fresh one. Such branches patch whole, as they did.
+        // An entry that hands its children its own layout coordinates hands
+        // them nothing of its transform, which may then be anything 2D.
         if held.escaped
             || held.persp != [0.0, 0.0]
-            || held.transform[..4] != [1.0, 0.0, 0.0, 1.0]
+            || (!held.local_children && held.transform[..4] != [1.0, 0.0, 0.0, 1.0])
             || hit.parent != self.parent_id(id)
             || self.clip_escape(id).is_some()
         {
             return None;
         }
         // What the parent hands its children, live: its entry's transform
-        // with the scroll shifts above it, then its own scroll.
-        // `find_hit_transform` and `child_shift` from one walk up: the shift
-        // above the parent, and the parent's own on top for its children.
+        // with the scroll shifts above it (or, when it hands them its own
+        // coordinates, nothing of it), then its own scroll; and the shift
+        // the index holds them at.
         let (seed, offset) = match hit.parent {
             Some(parent) => {
-                let parent_hit = index.entries.get(&parent)?;
-                if parent_hit.entry.persp != [0.0, 0.0] {
+                if index.entries.get(&parent)?.entry.persp != [0.0, 0.0] {
                     return None;
                 }
-                let above = index.inherited_shift(parent);
-                let mut transform = parent_hit.entry.transform;
-                transform[4] += above[0];
-                transform[5] += above[1];
-                let scroll = self.record(parent).scroll_offset;
-                (
-                    then_affine(transform, [1.0, 0.0, 0.0, 1.0, -scroll.x, -scroll.y]),
-                    [
-                        above[0] + parent_hit.shift[0],
-                        above[1] + parent_hit.shift[1],
-                    ],
-                )
+                index.live_child_seed(parent, self.record(parent).scroll_offset)?
             }
             None => (IDENTITY_AFFINE, [0.0, 0.0]),
         };
@@ -2811,7 +2973,8 @@ impl UiWorld {
         // structural, for the subtree patch.
         if fresh.escaped
             || fresh.persp != [0.0, 0.0]
-            || fresh.transform != held.transform
+            || fresh.local_children != held.local_children
+            || (!held.local_children && fresh.transform != held.transform)
             || fresh.scroll != held.scroll
             || !Arc::ptr_eq(&fresh.source_children, &held.source_children)
             || fresh.z_index != held.z_index
@@ -2946,6 +3109,23 @@ impl UiWorld {
                     .zip(b)
                     .all(|((a, at), (b, bt))| a == b && near_affine(*at, *bt, shift))
         };
+        // Whether an entry holds a scroll shift at or below it: its bounds
+        // merge what that shift holds in the space of another scroll, so
+        // they come to rounding only, though its own transform is exact.
+        // `below` lists each entry before what it holds.
+        let mut shifted_below: crate::NodeSet = crate::NodeSet::default();
+        for &id in below.iter().rev() {
+            let hit = &index.entries[&id];
+            if hit.shift != [0.0, 0.0]
+                || hit
+                    .children
+                    .iter()
+                    .flatten()
+                    .any(|child| shifted_below.contains(child))
+            {
+                shifted_below.insert(id);
+            }
+        }
         for &id in &below {
             let (Some(ours), Some(theirs)) = (index.entries.get(&id), fresh.entries.get(&id))
             else {
@@ -2954,8 +3134,11 @@ impl UiWorld {
             let (a, b) = (&ours.entry, &theirs.entry);
             let shift = index.inherited_shift(id);
             let placed = if shift == [0.0, 0.0] && ours.shift == [0.0, 0.0] {
-                ours.bounds == theirs.bounds
-                    && a.transform == b.transform
+                (if shifted_below.contains(&id) {
+                    near_bounds(ours.bounds, theirs.bounds, shift)
+                } else {
+                    ours.bounds == theirs.bounds
+                }) && a.transform == b.transform
                     && a.scroll == b.scroll
                     && a.self_clips == b.self_clips
                     && a.child_clips == b.child_clips
@@ -2976,6 +3159,7 @@ impl UiWorld {
                     && a.origin == b.origin
                     && a.pinned == b.pinned
                     && a.persp == b.persp
+                    && a.local_children == b.local_children
                     && a.hittable == b.hittable
                     && a.z_index == b.z_index
                     && a.menu == b.menu
@@ -3207,6 +3391,10 @@ mod presentation_tests;
 #[cfg(test)]
 #[path = "hit_test/moved_scroll_tests.rs"]
 mod moved_scroll_tests;
+
+#[cfg(test)]
+#[path = "hit_test/moved_turned_tests.rs"]
+mod moved_turned_tests;
 
 #[cfg(test)]
 mod connector_tests {
