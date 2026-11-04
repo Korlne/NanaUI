@@ -32,7 +32,7 @@ heading_row(
 
 标题行上不是工具、但和工具一样高的内容（名称旁的状态胶囊、紧凑按钮）用 `heading_hang(view)`：同样上下悬出，保持宽度，在行内居中。
 
-悬出量按主题的行盒（`LineRole::Line`）算，对应 `Meta` 到 `Body` 字号的标题。标题本身比目标高时（`Heading`、`Title`），写 `heading_tools(..).inline()`：工具留在行内，行高取两者中较高的。
+悬出量按主题的行盒（`LineRole::Line`）算，对应 `Meta` 到 `Body` 字号的标题。比行盒还矮的行（设置行的名称行，行高就是正文字号 13）用 `line_hang(view)`：和工具一样高（`COMPACT_TARGET`）的内容上下各悬出一半、完全不占行高，所在的行多高都不撑高它；行的上下要有内边距放得下悬出的部分。标题本身比目标高时（`Heading`、`Title`），写 `heading_tools(..).inline()`：工具留在行内，行高取两者中较高的。
 
 ## 样式
 
@@ -52,6 +52,7 @@ heading_row(
 | `heading_tools(tools)` | 标题工具栏，默认悬出 |
 | `HeadingTools::inline()` | 不悬出，行高随工具 |
 | `heading_hang(view)` | 把非工具内容挂在标题行上，同样悬出 |
+| `line_hang(view)` | 挂在任意高度的行上，完全不占行高（比标题行盒矮的行用它） |
 | `COMPACT_TARGET` | 紧凑工具的目标档位（`SpacingStep::Page`） |
 | `heading_overhang()` | 悬出量（主题表达式） |
 

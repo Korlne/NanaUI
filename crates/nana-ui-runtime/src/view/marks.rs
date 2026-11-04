@@ -423,6 +423,29 @@ pub fn heading_hang(view: impl IntoView) -> AnyView {
     .into_any()
 }
 
+/// `view`, as tall as a tool ([`COMPACT_TARGET`]), on a line of any height,
+/// hanging out of it evenly above and below and taking none of its height:
+/// a compact tool on a line shorter than a heading's line box, such as a
+/// settings row's name (13px at the default metrics), which
+/// [`heading_hang`] would raise to the line box. It keeps its width and is
+/// centred on the line; the line needs room around it for the overhang (a
+/// row's padding), as nothing clips it there.
+pub fn line_hang(view: impl IntoView) -> AnyView {
+    use nana_ui_core::{ThemeExpr, ThemeToken};
+    let half = ThemeExpr::from(ThemeToken::Space(COMPACT_TARGET)).scaled(-0.5);
+    widget(
+        Stack::row(0.0)
+            .shrink(0.0)
+            .align(AlignSpec::Center)
+            .with_layout(move |l| {
+                l.theme.margin_top = Some(half.clone());
+                l.theme.margin_bottom = Some(half.clone());
+            }),
+    )
+    .children(view)
+    .into_any()
+}
+
 /// A heading's tools ([`crate::IconButton::tool`], compact menus): a
 /// toolbar without chrome or vertical inset that hangs out of its heading
 /// line evenly above and below ([`heading_overhang`]) instead of raising it,

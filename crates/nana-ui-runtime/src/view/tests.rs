@@ -5788,6 +5788,42 @@ fn heading_tools_hang_out_of_the_heading_line() {
     assert_eq!(inline.height, 24.0);
 }
 
+/// A line hang takes none of the line's height on a line shorter than a
+/// heading's line box, where a heading hang would raise it.
+#[test]
+fn a_line_hang_keeps_a_short_line_short() {
+    let (mut cx, document, parent) = setup();
+    let short = 13.0;
+    let line = |hang: AnyView| {
+        widget(Stack::row(0.0).align(crate::AlignSpec::Center))
+            .children((widget(fixed(Some(60.0), short)), hang))
+    };
+    let view = cx
+        .mount_view(parent, move || {
+            column().children((
+                line(line_hang(widget(fixed(Some(24.0), 24.0)))),
+                line(heading_hang(widget(fixed(Some(24.0), 24.0)))),
+            ))
+        })
+        .unwrap();
+    let root = view.roots()[0];
+    cx.layout_document(document, LayoutViewport::new(320.0, 240.0))
+        .unwrap();
+    let rect = |id| cx.world().layout_box(id).unwrap();
+    let [hung, raised] = children(&cx, root)[..] else {
+        panic!("two lines");
+    };
+    let tool = children(&cx, children(&cx, hung)[1])[0];
+    let (hung, tool) = (rect(hung), rect(tool));
+    assert_eq!(hung.height, short, "the line keeps its height");
+    assert_eq!(tool.height, 24.0);
+    assert!(
+        ((tool.y + 12.0) - (hung.y + short / 2.0)).abs() < 0.5,
+        "{tool:?} centred on {hung:?}"
+    );
+    assert!(rect(raised).height > short, "a heading hang raises it");
+}
+
 /// A gutter runs the scrollport and its bar out into the container's margin
 /// while the content stays on the content line; heading room reaches up as
 /// far as heading tools hang; a content line insets across only.

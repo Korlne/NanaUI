@@ -74,8 +74,8 @@ pub use marks::{
     KeycapPainter, RaisedSurfacePainter, ScrollFootFade, SettingsGroupView, callout, chord,
     chord_joiner, chord_with, content_inset, content_line, expansion_body, footer_bar, group_block,
     group_row, group_row_on_line, heading_hang, heading_overhang, heading_row, heading_tools, kbd,
-    kbd_glyph, keycap_face, keycap_label, scroll_foot_fade, settings_group, tag, tag_frame,
-    tone_role,
+    kbd_glyph, keycap_face, keycap_label, line_hang, scroll_foot_fade, settings_group, tag,
+    tag_frame, tone_role,
 };
 #[doc(hidden)]
 pub use node::ViewSource;
