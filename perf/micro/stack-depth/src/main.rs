@@ -16,6 +16,8 @@
 //! VISIBLE=1 cargo run --release -- edits    # cull the scene after each frame, as a painter does
 //! SCROLLED=1 cargo run --release -- edits 2000 height
 //!                                          # the rows in a scroller scrolled before the edits
+//! ROTATED=1 cargo run --release -- edits 2000 height
+//!                                          # the rows in a column turned by 0.05 rad
 //! cargo run --release -- edits 200,2000   # one edit a product frame: layout and frame time
 //! RUNS=240 /usr/bin/time -l target/release/nana-stack-depth edits 2000 height
 //!                                          # 240 edits; less RUNS=40, over 200: one edit's instructions
@@ -105,12 +107,31 @@ fn nana_page(cx: &mut AppContext, document: DocumentId, rows: usize, cells: usiz
         page
     };
     let mut root = cx.create_component(document, page).unwrap();
-    if scrolled {
-        let list = cx
-            .create_detached_component(document, Stack::column(0.0).width(LengthSpec::Px(1280.0)))
-            .unwrap();
+    // `ROTATED=1`: the rows stand in a column turned by 0.05 rad, so every
+    // box under it hangs from a rotation.
+    let rotated = std::env::var_os("ROTATED").is_some();
+    if scrolled || rotated {
+        let list = Stack::column(0.0).width(LengthSpec::Px(1280.0));
+        let list = if rotated {
+            let (sin, cos) = 0.05_f32.sin_cos();
+            list.with_layout(|layout| {
+                layout.transform = Some(nana_ui_core::PaintTransform {
+                    a: cos,
+                    b: sin,
+                    c: -sin,
+                    d: cos,
+                    e: 0.0,
+                    f: 0.0,
+                });
+            })
+        } else {
+            list
+        };
+        let list = cx.create_detached_component(document, list).unwrap();
         cx.append_child(root, list).unwrap();
-        SCROLLER.with(|scroller| scroller.set(Some(root.stable_id())));
+        if scrolled {
+            SCROLLER.with(|scroller| scroller.set(Some(root.stable_id())));
+        }
         root = list;
     }
     // `CONTROLS=1`: a page of controls, not bare boxes -- every cell holds a

@@ -18,7 +18,31 @@ struct ProjectionMemo {
     /// What each overflow container of a clip chain leaves its descendants,
     /// with the containers above it, in viewport coordinates (#201).
     clips: hashbrown::HashMap<StableNodeId, LayoutBox>,
+    /// How each node's accessible space stands ([`AccessibleSpace`]).
+    spaces: hashbrown::HashMap<StableNodeId, AccessibleSpace>,
     chain: Vec<StableNodeId>,
+    space_chain: Vec<StableNodeId>,
+}
+
+/// How a node's accessible space -- what its children's bounds are offsets
+/// in ([`AccessibilityNode::transform`]) -- stands to its own box and to the
+/// viewport.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct AccessibleSpace {
+    /// Placed by its local offset and its own 2D transform in its parent's
+    /// space ([`UiWorld::offset_placed`]), not from its viewport box.
+    local: bool,
+    /// The positive per-axis scale from its own layout px to its space,
+    /// where its box stands upright in it: its children placed by their
+    /// offsets stand at those offsets less its scroll, scaled by this.
+    /// `None` where its box is turned or projected in the viewport and it is
+    /// not placed by its offset: its children are placed from their
+    /// viewport boxes.
+    unit: Option<[f32; 2]>,
+    /// Its space is turned from the viewport's axes: a rotation, a skew or
+    /// a flip at or above it among boxes placed by their offsets. A box
+    /// placed from its viewport box under it is handed the inverse turn.
+    turned: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -41,6 +65,29 @@ struct ChildChain {
     hidden: bool,
     aligned: bool,
     hands_offsets: bool,
+}
+
+/// Whether the linear part `(a, b, c, d)` only scales, by a positive factor
+/// on each axis.
+fn upright(a: f32, b: f32, c: f32, d: f32) -> bool {
+    b == 0.0 && c == 0.0 && a > 0.0 && d > 0.0
+}
+
+/// The inverse of the affine `[a, b, c, d, e, f]` (`x' = a·x + c·y + e`),
+/// unless it is singular.
+fn invert_affine([a, b, c, d, e, f]: [f32; 6]) -> Option<[f32; 6]> {
+    let det = a * d - b * c;
+    if det == 0.0 || !det.is_finite() {
+        return None;
+    }
+    Some([
+        d / det,
+        -b / det,
+        -c / det,
+        a / det,
+        (c * f - d * e) / det,
+        (b * e - a * f) / det,
+    ])
 }
 
 impl UiWorld {
@@ -201,26 +248,221 @@ impl UiWorld {
         offsets
     }
 
-    /// Whether `id`'s accessible bounds relative to its parent's are its
-    /// local layout offset through what its parent hands it: `record`,
+    /// Whether `id`'s accessible bounds and transform in its parent's space
+    /// come from its local layout box and its own 2D transform: `record`,
     /// `id`'s, is placed by its offset
-    /// ([`NodeRecord::placed_by_accessibility_offset`]) and every box above
-    /// hands offsets on ([`Self::chain_hands_offsets`]). Then its parent's
-    /// transform for its children is a translation and a positive scale
-    /// `(a, d)`, and its bounds are `(a·(x − sx), d·(y − sy), a·w, d·h)` --
-    /// its local box less the parent's scroll offset, scaled -- whatever
-    /// the boxes above stand at. Nothing in that reads a page position, so a
-    /// box that moved with its parent keeps them to the bit.
+    /// ([`NodeRecord::placed_by_accessibility_offset`]) and its parent's
+    /// space holds its own box upright at a positive scale `(a, d)`
+    /// ([`AccessibleSpace::unit`]). Then its bounds are `(a·(x − sx), d·(y −
+    /// sy), a·w, d·h)` -- its local box less the parent's scroll offset,
+    /// scaled -- with its own transform, if any, folded in or handed on
+    /// ([`Self::local_placement`]), whatever the boxes above stand at, and
+    /// however they turn. Nothing in that reads a page position, so a box
+    /// that moved with its parent keeps them to the bit.
     fn offset_placed(
         &self,
         id: StableNodeId,
         record: &NodeRecord,
         memo: &mut ProjectionMemo,
     ) -> bool {
-        let above = record.hierarchy.parent.is_some_and(|parent| {
-            self.motion_free_unclipped() && self.chain_hands_offsets(parent, memo)
-        });
-        self.offset_placed_under(id, record, above)
+        // [`Self::space_of`]'s test, from the parent's space alone: the box
+        // itself is asked once and need not be kept.
+        let placed = record.hierarchy.parent.is_some_and(|parent| {
+            self.motion_free_unclipped()
+                && self.geometry_frame.get().is_none()
+                && self
+                    .accessible_space(parent, memo)
+                    .is_some_and(|space| space.unit.is_some())
+        }) && self.offset_placed_under(id, record, true);
+        #[cfg(any(test, feature = "layout-verify"))]
+        assert_eq!(
+            Some(placed),
+            self.accessible_space(id, memo).map(|space| space.local),
+            "{id:?}: placed by its offset, from its parent's space"
+        );
+        placed
+    }
+
+    /// `id`'s accessible space ([`AccessibleSpace`]), memoized with every
+    /// box above it.
+    fn accessible_space(
+        &self,
+        id: StableNodeId,
+        memo: &mut ProjectionMemo,
+    ) -> Option<AccessibleSpace> {
+        if let Some(space) = memo.spaces.get(&id) {
+            return Some(*space);
+        }
+        let mut chain = std::mem::take(&mut memo.space_chain);
+        chain.clear();
+        let mut at = Some(id);
+        while let Some(node) = at {
+            if memo.spaces.contains_key(&node) {
+                break;
+            }
+            let Some(record) = self.nodes.get(node) else {
+                break;
+            };
+            chain.push(node);
+            at = record.hierarchy.parent;
+        }
+        while let Some(node) = chain.pop() {
+            let Some(record) = self.nodes.get(node) else {
+                continue;
+            };
+            let parent = record
+                .hierarchy
+                .parent
+                .and_then(|parent| memo.spaces.get(&parent).copied());
+            let space = self.space_of(node, record, parent, memo);
+            memo.spaces.insert(node, space);
+        }
+        memo.space_chain = chain;
+        memo.spaces.get(&id).copied()
+    }
+
+    /// [`AccessibleSpace`] of `record`, `id`'s, under a parent whose space is
+    /// `parent`.
+    fn space_of(
+        &self,
+        id: StableNodeId,
+        record: &NodeRecord,
+        parent: Option<AccessibleSpace>,
+        memo: &mut ProjectionMemo,
+    ) -> AccessibleSpace {
+        let free = self.motion_free_unclipped();
+        let above = parent.filter(|parent| parent.unit.is_some());
+        if let Some(above) = above
+            && free
+            && self.geometry_frame.get().is_none()
+            && self.offset_placed_under(id, record, true)
+        {
+            let [ua, ud] = above.unit.unwrap_or([1.0, 1.0]);
+            return match self.own_accessible_transform(id, record) {
+                None => AccessibleSpace {
+                    local: true,
+                    unit: above.unit,
+                    turned: above.turned,
+                },
+                Some([a, b, c, d, ..]) if upright(a, b, c, d) => AccessibleSpace {
+                    local: true,
+                    unit: Some([ua * a, ud * d]),
+                    turned: above.turned,
+                },
+                Some(_) => AccessibleSpace {
+                    local: true,
+                    unit: Some([1.0, 1.0]),
+                    turned: true,
+                },
+            };
+        }
+        // Placed from its viewport box: its space is the viewport's, moved
+        // to that box; its own box stands upright in it only where every
+        // transform above scales it by a positive factor per axis.
+        let unit = (free && record.hands_accessibility_offsets() && !self.is_modal_frame(id))
+            .then(|| {
+                self.accessibility_ancestor_transform(id, memo)?;
+                let ([a, b, c, d, ..], [g, h]) = memo.transforms.get(&id)?.own;
+                (g == 0.0 && h == 0.0 && upright(a, b, c, d)).then_some([a, d])
+            })
+            .flatten();
+        AccessibleSpace {
+            local: false,
+            unit,
+            turned: false,
+        }
+    }
+
+    /// `record`'s own 2D transform, `id`'s, in its own layout px (its box at
+    /// the origin, about its transform origin): `None` without one.
+    fn own_accessible_transform(&self, _id: StableNodeId, record: &NodeRecord) -> Option<[f32; 6]> {
+        let style = record.resolved_layout.as_ref();
+        style.transform?;
+        let local = record.local_layout;
+        style
+            .world_scene_transform(0.0, 0.0, local.width, local.height)
+            .map(|(matrix, _)| matrix)
+    }
+
+    /// `id`'s bounds and transform in `parent`'s space, from its local box,
+    /// its parent's scroll and its own transform, where `id` is placed by
+    /// its offset ([`Self::offset_placed`]) and `unit` is its parent's
+    /// ([`AccessibleSpace::unit`]). An upright transform of its own (a
+    /// translation, a positive scale) is folded into the offset and the
+    /// size; any other is handed on, scaled by `unit`, with the box's own
+    /// size, so that what it holds is placed by offsets inside it.
+    fn local_placement(
+        &self,
+        id: StableNodeId,
+        record: &NodeRecord,
+        parent: StableNodeId,
+        [ua, ud]: [f32; 2],
+    ) -> Option<(LayoutBox, Option<nana_ui_core::PaintTransform>)> {
+        let scroll = self.nodes.get(parent)?.scroll_offset;
+        let local = record.local_layout;
+        let (x, y) = (local.x - scroll.x, local.y - scroll.y);
+        Some(match self.own_accessible_transform(id, record) {
+            None => (
+                LayoutBox {
+                    x: ua * x,
+                    y: ud * y,
+                    width: ua * local.width,
+                    height: ud * local.height,
+                },
+                None,
+            ),
+            Some([a, b, c, d, e, f]) if upright(a, b, c, d) => (
+                LayoutBox {
+                    x: ua * (x + e),
+                    y: ud * (y + f),
+                    width: (ua * a) * local.width,
+                    height: (ud * d) * local.height,
+                },
+                None,
+            ),
+            Some([a, b, c, d, e, f]) => (
+                LayoutBox {
+                    x: ua * x,
+                    y: ud * y,
+                    width: local.width,
+                    height: local.height,
+                },
+                Some(nana_ui_core::PaintTransform {
+                    a: ua * a,
+                    b: ud * b,
+                    c: ua * c,
+                    d: ud * d,
+                    e: ua * e,
+                    f: ud * f,
+                }),
+            ),
+        })
+    }
+
+    /// The map from `id`'s accessible space to the viewport, where its box
+    /// stands upright in it ([`AccessibleSpace::unit`]): its box's map to
+    /// the viewport after the inverse of that scale.
+    fn accessible_space_to_viewport(
+        &self,
+        id: StableNodeId,
+        memo: &mut ProjectionMemo,
+    ) -> Option<[f32; 6]> {
+        let [ua, ud] = self.accessible_space(id, memo)?.unit?;
+        self.accessibility_ancestor_transform(id, memo)?;
+        let transform = memo.transforms.get(&id)?;
+        let ([a, b, c, d, e, f], [g, h]) = transform.own;
+        if g != 0.0 || h != 0.0 {
+            return None;
+        }
+        let [ox, oy] = transform.origin;
+        Some([
+            a / ua,
+            b / ua,
+            c / ud,
+            d / ud,
+            a * ox + c * oy + e,
+            b * ox + d * oy + f,
+        ])
     }
 
     /// [`Self::offset_placed`] with the chain above already answered.
@@ -283,6 +525,7 @@ impl UiWorld {
     ) -> bool {
         if let Some(transform) = handed
             && record.hierarchy.parent == Some(parent)
+            && record.resolved_layout.transform.is_none()
             && self.offset_placed_under(id, record, above)
         {
             let ([a, b, c, d, e, f], [g, h]) = transform.children;
@@ -906,6 +1149,7 @@ impl UiWorld {
             }),
             focused: visible && self.input.focused.get(&document) == Some(&id),
             bounds,
+            transform: None,
             clip: if plain {
                 None
             } else {
@@ -917,7 +1161,14 @@ impl UiWorld {
 }
 
 impl UiWorld {
-    fn project_virtual_menu_items(&self, menu: &AccessibilityNode) -> Vec<AccessibilityNode> {
+    /// The items of an open context menu under it, at the bounds its
+    /// geometry gives them on the page; `pages` takes those page boxes.
+    fn project_virtual_menu_items(
+        &self,
+        menu: &AccessibilityNode,
+        pages: &mut Vec<LayoutBox>,
+        memo: &mut ProjectionMemo,
+    ) -> Vec<AccessibilityNode> {
         let Some(StandardVisual::MenuSurface {
             kind: crate::MenuSurfaceKind::ContextMenu,
             open: true,
@@ -934,19 +1185,24 @@ impl UiWorld {
         };
         let count = rows.len().max(1) as f32;
         let slots = crate::menu_row_slots(rows);
+        let surface = self.component_layout_box(menu.id).unwrap_or(menu.bounds);
         rows.iter()
             .enumerate()
             .filter_map(|(index, row)| {
                 let id = crate::virtual_menu_item_id(menu.id, slots[index])?;
-                let bounds = options
+                let page = options
                     .get(index)
                     .map(|option| option.bounds)
                     .unwrap_or_else(|| LayoutBox {
-                        x: menu.bounds.x,
-                        y: menu.bounds.y + menu.bounds.height * index as f32 / count,
-                        width: menu.bounds.width,
-                        height: menu.bounds.height / count,
+                        x: surface.x,
+                        y: surface.y + surface.height * index as f32 / count,
+                        width: surface.width,
+                        height: surface.height / count,
                     });
+                let bounds = self
+                    .accessibility_viewport_bounds(menu.id, page, memo)
+                    .unwrap_or(page);
+                pages.push(page);
                 Some(AccessibilityNode {
                     id,
                     parent: Some(menu.id),
@@ -989,6 +1245,7 @@ impl UiWorld {
                     scroll_y: None,
                     focused: *highlighted == Some(index),
                     bounds,
+                    transform: None,
                     clip: menu.clip,
                     writing: menu.writing,
                 })
@@ -999,7 +1256,15 @@ impl UiWorld {
     /// The visible rows of a tree as `TreeItem` nodes under it, each followed
     /// by its toggles as `Checkbox` nodes under the row (#353). The row the
     /// tree is on is focused while the tree has the focus.
-    fn project_virtual_tree_items(&self, tree: &AccessibilityNode) -> Vec<AccessibilityNode> {
+    ///
+    /// Each takes the bounds the tree's geometry gives it on the page;
+    /// `pages` takes those page boxes.
+    fn project_virtual_tree_items(
+        &self,
+        tree: &AccessibilityNode,
+        pages: &mut Vec<LayoutBox>,
+        memo: &mut ProjectionMemo,
+    ) -> Vec<AccessibilityNode> {
         let Some(StandardVisual::TreeView {
             rows,
             active,
@@ -1014,6 +1279,7 @@ impl UiWorld {
             _ => Vec::new(),
         };
         let count = rows.len().max(1) as f32;
+        let whole = self.component_layout_box(tree.id).unwrap_or(tree.bounds);
         let mut nodes = Vec::with_capacity(rows.len() * (1 + column_labels.len()));
         for (index, row) in rows.iter().enumerate() {
             let Ok(slot) = u16::try_from(index + 1) else {
@@ -1023,13 +1289,13 @@ impl UiWorld {
                 break;
             };
             let row_geometry = geometry.get(index);
-            let bounds = row_geometry
+            let page = row_geometry
                 .map(|row| row.bounds)
                 .unwrap_or_else(|| LayoutBox {
-                    x: tree.bounds.x,
-                    y: tree.bounds.y + tree.bounds.height * index as f32 / count,
-                    width: tree.bounds.width,
-                    height: tree.bounds.height / count,
+                    x: whole.x,
+                    y: whole.y + whole.height * index as f32 / count,
+                    width: whole.width,
+                    height: whole.height / count,
                 });
             let toggles = column_labels
                 .iter()
@@ -1045,11 +1311,11 @@ impl UiWorld {
                         .and_then(|row| row.toggles.get(column))
                         .map(|(_, icon, _)| *icon)
                         .unwrap_or_else(|| {
-                            let side = bounds.height.min(bounds.width);
+                            let side = page.height.min(page.width);
                             let from_end = (column_labels.len() - column) as f32;
                             LayoutBox {
-                                x: bounds.x + bounds.width - side * from_end,
-                                y: bounds.y,
+                                x: page.x + page.width - side * from_end,
+                                y: page.y,
                                 width: side,
                                 height: side,
                             }
@@ -1057,6 +1323,10 @@ impl UiWorld {
                     Some((toggle, column, label, icon))
                 })
                 .collect::<Vec<_>>();
+            let bounds = self
+                .accessibility_viewport_bounds(tree.id, page, memo)
+                .unwrap_or(page);
+            pages.push(page);
             nodes.push(AccessibilityNode {
                 id,
                 parent: Some(tree.id),
@@ -1094,10 +1364,15 @@ impl UiWorld {
                 scroll_y: None,
                 focused: tree.focused && active.as_ref() == Some(&row.id),
                 bounds,
+                transform: None,
                 clip: tree.clip,
                 writing: tree.writing,
             });
             nodes.extend(toggles.into_iter().map(|(toggle, column, label, icon)| {
+                pages.push(icon);
+                let icon = self
+                    .accessibility_viewport_bounds(tree.id, icon, memo)
+                    .unwrap_or(icon);
                 AccessibilityNode {
                     id: toggle,
                     parent: Some(id),
@@ -1135,6 +1410,7 @@ impl UiWorld {
                     scroll_y: None,
                     focused: false,
                     bounds: icon,
+                    transform: None,
                     clip: tree.clip,
                     writing: tree.writing,
                 }
@@ -1152,9 +1428,13 @@ impl UiWorld {
     /// as the part shown. The field says whether it is expanded and which
     /// option the keyboard is on; the options' set is the rows the menu
     /// lists, so a filtered SearchDropdown counts only its matches.
+    ///
+    /// `pages` takes the boxes on the page the list box and its options
+    /// stand at, in the order they are returned.
     fn project_select_menu(
         &self,
         field: &mut AccessibilityNode,
+        pages: &mut Vec<LayoutBox>,
         memo: &mut ProjectionMemo,
     ) -> Vec<AccessibilityNode> {
         let Some(StandardVisual::Select {
@@ -1205,20 +1485,29 @@ impl UiWorld {
             Some(room) => intersect_layout_boxes(bounds, room),
             None => Some(bounds),
         };
-        let Some(surface) = seen(menu.surface)
-            .and_then(|local| self.accessibility_viewport_bounds(field.id, local, memo))
-        else {
+        let Some((surface_page, surface)) = seen(menu.surface).and_then(|local| {
+            Some((
+                local,
+                self.accessibility_viewport_bounds(field.id, local, memo)?,
+            ))
+        }) else {
             return Vec::new();
         };
         let set_size = u32::try_from(options.len()).ok();
         let slots = crate::menu_row_slots(options);
         let mut rows = Vec::with_capacity(options.len());
+        let mut row_pages = Vec::with_capacity(options.len());
         for (index, (option, row)) in options.iter().zip(&menu.options).enumerate() {
             // Only the part of a row inside the menu's viewport is drawn and
             // takes the pointer.
-            let Some(bounds) = intersect_layout_boxes(row.bounds, menu.viewport)
+            let Some((page, bounds)) = intersect_layout_boxes(row.bounds, menu.viewport)
                 .and_then(seen)
-                .and_then(|local| self.accessibility_viewport_bounds(field.id, local, memo))
+                .and_then(|local| {
+                    Some((
+                        local,
+                        self.accessibility_viewport_bounds(field.id, local, memo)?,
+                    ))
+                })
             else {
                 continue;
             };
@@ -1228,6 +1517,7 @@ impl UiWorld {
             if *highlighted == Some(index) {
                 field.active_descendant = Some(id);
             }
+            row_pages.push(page);
             rows.push(AccessibilityNode {
                 id,
                 parent: Some(listbox),
@@ -1271,11 +1561,14 @@ impl UiWorld {
                 scroll_y: None,
                 focused: false,
                 bounds,
+                transform: None,
                 clip: field.clip,
                 writing: field.writing,
             });
         }
         field.children.push(listbox);
+        pages.push(surface_page);
+        pages.extend(row_pages);
         let mut nodes = Vec::with_capacity(rows.len() + 1);
         nodes.push(AccessibilityNode {
             id: listbox,
@@ -1314,6 +1607,7 @@ impl UiWorld {
             scroll_y: None,
             focused: false,
             bounds: surface,
+            transform: None,
             clip: field.clip,
             writing: field.writing,
         });
@@ -1346,27 +1640,56 @@ impl UiWorld {
         relative: bool,
         memo: &mut ProjectionMemo,
     ) -> Vec<AccessibilityNode> {
-        let mut entries = self.project_viewport_entries(id, plain, memo);
+        let mut pages = Vec::new();
+        let mut entries = self.project_viewport_entries(id, plain, &mut pages, memo);
         if relative && !entries.is_empty() {
-            self.make_bounds_relative(&mut entries, plain, memo);
+            self.make_bounds_relative(&mut entries, &pages, plain, memo);
         }
         entries
     }
 
-    /// Move `entries`' bounds from the viewport to their parents' boxes. The
-    /// first entry's parent is a retained node; the virtual ones after it
-    /// hang from entries before them.
+    /// Move `entries`' bounds from the viewport to their parents' spaces.
+    /// The first entry's parent is a retained node; the virtual ones after
+    /// it hang from entries before them, and `pages` holds where each of
+    /// those stands on the page (`pages[i]` for `entries[i + 1]`).
     fn make_bounds_relative(
         &self,
         entries: &mut [AccessibilityNode],
+        pages: &[LayoutBox],
         plain: bool,
         memo: &mut ProjectionMemo,
     ) {
+        let owner = entries[0].id;
+        // Virtual nodes stand in their owner's space. Where that is turned
+        // from the viewport, they are placed in it from their page boxes,
+        // upright there as on the page; elsewhere from their viewport boxes.
+        let turned = (entries.len() > 1 && !plain)
+            .then(|| self.accessible_space(owner, memo))
+            .flatten()
+            .filter(|space| space.turned)
+            .and_then(|space| Some((space.unit?, self.layout_origin(owner)?)));
+        let in_owner = |page: LayoutBox| {
+            let ([ua, ud], [ox, oy]) = turned.expect("placed in a turned owner");
+            LayoutBox {
+                x: ua * (page.x - ox),
+                y: ud * (page.y - oy),
+                width: ua * page.width,
+                height: ud * page.height,
+            }
+        };
         let origins = (entries.len() > 1)
             .then(|| {
                 entries
                     .iter()
-                    .map(|entry| (entry.id, entry.bounds.x, entry.bounds.y))
+                    .enumerate()
+                    .map(|(index, entry)| match (turned, index) {
+                        (Some(_), 0) => (entry.id, 0.0, 0.0),
+                        (Some(_), _) => {
+                            let placed = in_owner(pages[index - 1]);
+                            (entry.id, placed.x, placed.y)
+                        }
+                        (None, _) => (entry.id, entry.bounds.x, entry.bounds.y),
+                    })
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
@@ -1374,10 +1697,42 @@ impl UiWorld {
             let Some(parent) = entry.parent else {
                 continue;
             };
-            if index == 0
-                && let Some(bounds) = self.offset_bounds_in_parent(entry, parent, plain, memo)
-            {
-                entry.bounds = bounds;
+            if index == 0 {
+                if let Some((bounds, transform)) =
+                    self.offset_bounds_in_parent(entry, parent, plain, memo)
+                {
+                    entry.bounds = bounds;
+                    entry.transform = transform;
+                    continue;
+                }
+                if !plain && let Some(inverse) = self.turned_space_inverse(parent, memo) {
+                    // Placed from its viewport box under a turned space: the
+                    // inverse turn brings that box back upright.
+                    let [a, b, c, d, e, f] = inverse;
+                    let (x, y) = (entry.bounds.x, entry.bounds.y);
+                    entry.bounds.x = a * x + c * y + e;
+                    entry.bounds.y = b * x + d * y + f;
+                    entry.transform = Some(nana_ui_core::PaintTransform {
+                        a,
+                        b,
+                        c,
+                        d,
+                        e: 0.0,
+                        f: 0.0,
+                    });
+                    continue;
+                }
+            } else if turned.is_some() {
+                let placed = in_owner(pages[index - 1]);
+                let (x, y) = origins
+                    .iter()
+                    .find(|(id, ..)| *id == parent)
+                    .map_or((0.0, 0.0), |&(_, x, y)| (x, y));
+                entry.bounds = LayoutBox {
+                    x: placed.x - x,
+                    y: placed.y - y,
+                    ..placed
+                };
                 continue;
             }
             let origin = if index == 0 {
@@ -1400,12 +1755,25 @@ impl UiWorld {
         }
     }
 
-    /// `entry`'s bounds relative to `parent`'s, from its local layout box
-    /// read straight off the record, when that is what they are: both
-    /// accessible boxes are their layout boxes (its offset), or every
-    /// transform above is a translation and a positive scale
-    /// ([`Self::offset_placed`]: the offset less the parent's scroll,
-    /// scaled). The viewport boxes are chain sums through the transforms, so
+    /// The map from the viewport into `id`'s accessible space, when that
+    /// space is turned from the viewport's axes ([`AccessibleSpace::turned`]).
+    fn turned_space_inverse(
+        &self,
+        id: StableNodeId,
+        memo: &mut ProjectionMemo,
+    ) -> Option<[f32; 6]> {
+        if !self.accessible_space(id, memo)?.turned {
+            return None;
+        }
+        invert_affine(self.accessible_space_to_viewport(id, memo)?)
+    }
+
+    /// `entry`'s bounds and transform in `parent`'s space, from its local
+    /// layout box read straight off the record, when that is what they are:
+    /// both accessible boxes are their layout boxes (its offset), or it is
+    /// placed by its offset ([`Self::offset_placed`]: the offset less the
+    /// parent's scroll, scaled, with its own transform folded in or handed
+    /// on). The viewport boxes are chain sums through the transforms, so
     /// their difference would equal this only up to the last bit, and that
     /// bit moves with every ancestor a fractional move shifts; the offset
     /// itself does not, which is what lets a box that follows its parent
@@ -1416,7 +1784,7 @@ impl UiWorld {
         parent: StableNodeId,
         plain: bool,
         memo: &mut ProjectionMemo,
-    ) -> Option<LayoutBox> {
+    ) -> Option<(LayoutBox, Option<nana_ui_core::PaintTransform>)> {
         let record = self.nodes.get(entry.id)?;
         if record.layout_frame != crate::LayoutFrame::Parent
             || record.hierarchy.parent != Some(parent)
@@ -1435,34 +1803,39 @@ impl UiWorld {
         // An aligned box's chain runs through its parent, so the parent's
         // accessible box is its layout box too.
         if plain || self.axis_aligned(entry.id, memo) {
-            return Some(offset);
+            return Some((offset, None));
         }
         if self.offset_placed(entry.id, record, memo) {
-            let scroll = self.nodes.get(parent)?.scroll_offset;
-            let [a, _, _, d, ..] = self.accessibility_ancestor_transform(parent, memo)?;
-            let bounds = LayoutBox {
-                x: a * (local.x - scroll.x),
-                y: d * (local.y - scroll.y),
-                width: a * local.width,
-                height: d * local.height,
-            };
+            let unit = self.accessible_space(parent, memo)?.unit?;
+            let placed = self.local_placement(entry.id, record, parent, unit)?;
             #[cfg(any(test, feature = "layout-verify"))]
-            self.check_offset_bounds(entry, parent, bounds, memo);
-            return Some(bounds);
+            self.check_offset_bounds(entry, parent, placed, memo);
+            return Some(placed);
         }
         // Off those paths, only where what was projected for both is their
-        // layout boxes, as a cold projection finds them.
+        // layout boxes, as a cold projection finds them, and the parent's
+        // space is the viewport's, moved.
+        if self
+            .accessible_space(parent, memo)
+            .is_some_and(|space| space.turned)
+        {
+            return None;
+        }
         let own = self.record_layout_origin(record);
         let above = self.layout_origin(parent)?;
         let parent_bounds = self.accessible_viewport_bounds(parent, plain, memo)?;
         ([entry.bounds.x, entry.bounds.y] == own && [parent_bounds.x, parent_bounds.y] == above)
-            .then_some(offset)
+            .then_some((offset, None))
     }
 
+    /// `id`'s projection, and the virtual nodes it holds after it, all with
+    /// their bounds in the viewport; `pages` takes the page boxes of the
+    /// virtual ones, in order.
     fn project_viewport_entries(
         &self,
         id: StableNodeId,
         plain: bool,
+        pages: &mut Vec<LayoutBox>,
         memo: &mut ProjectionMemo,
     ) -> Vec<AccessibilityNode> {
         let Some(mut node) = self.project_accessibility_node(id, plain, memo) else {
@@ -1471,7 +1844,7 @@ impl UiWorld {
         if self.nodes.has_visuals()
             && matches!(self.nodes.visual(id), Some(StandardVisual::Select { .. }))
         {
-            let menu = self.project_select_menu(&mut node, memo);
+            let menu = self.project_select_menu(&mut node, pages, memo);
             let mut entries = vec![node];
             entries.extend(menu);
             return entries;
@@ -1479,7 +1852,7 @@ impl UiWorld {
         if self.nodes.has_visuals()
             && matches!(self.nodes.visual(id), Some(StandardVisual::TreeView { .. }))
         {
-            let rows = self.project_virtual_tree_items(&node);
+            let rows = self.project_virtual_tree_items(&node, pages, memo);
             let mut entries = vec![node];
             entries.extend(rows);
             return entries;
@@ -1496,9 +1869,9 @@ impl UiWorld {
         if !open_context_menu {
             return vec![node];
         }
+        let items = self.project_virtual_menu_items(&node, pages, memo);
         let mut entries = vec![node];
-        let menu = entries[0].clone();
-        entries.extend(self.project_virtual_menu_items(&menu));
+        entries.extend(items);
         entries
     }
 
@@ -1563,28 +1936,54 @@ impl UiWorld {
             // all the way down, but where something pins them: those are
             // found from the pins, not by walking what the box holds.
             let mut pin_roots = Vec::new();
+            // Boxes resized where they stood whose own transform turns
+            // about a centre the new size moved: their space moved, as a
+            // moved box's does, while what they hold kept its offsets in
+            // it. They are walked as moved boxes are.
+            let mut resized_roots = Vec::new();
+            for &id in &moved_seeds {
+                if work.layout_moved.binary_search(&id).is_err()
+                    && let Some(node) = self.nodes.get(id)
+                    && node.resolved_layout.transform.is_some()
+                    && self.moved_root_hands_offsets(id, &mut memo)
+                {
+                    resized_roots.push(id);
+                }
+            }
+            let walk_roots = if resized_roots.is_empty() {
+                std::borrow::Cow::Borrowed(&work.layout_moved)
+            } else {
+                let mut roots = work.layout_moved.clone();
+                roots.extend(&resized_roots);
+                roots.sort_unstable();
+                roots.dedup();
+                std::borrow::Cow::Owned(roots)
+            };
             for &id in &moved_seeds {
                 if work.layout_moved.binary_search(&id).is_ok() {
-                    if self.moved_root_hands_offsets(id) {
+                    if self.moved_root_hands_offsets(id, &mut memo) {
                         pin_roots.push(id);
                     } else {
                         let mut open = Vec::new();
                         self.reach_moved_subtree(
                             id,
                             &mut open,
-                            &work.layout_moved,
+                            &walk_roots,
                             false,
                             &mut affected,
                             &mut pending,
                             &mut memo,
                         );
                     }
+                } else if resized_roots.binary_search(&id).is_ok() {
+                    pin_roots.push(id);
                 } else if let Some(node) = self.nodes.get(id) {
                     // Resized where it stood: what it holds stays on the
                     // page, unless its own transform turns about a centre
-                    // the new size moved, or a rotation above makes its
-                    // accessible box the box around turned corners, whose
-                    // origin the new size moves.
+                    // the new size moved, or its box is turned or projected
+                    // in the viewport, so its accessible box is the box
+                    // around turned corners, whose origin the new size
+                    // moves.
                     let style = node.resolved_layout.as_ref();
                     if style.transform.is_some()
                         || style.transform_3d.is_some()
@@ -1596,6 +1995,9 @@ impl UiWorld {
                                 .and_then(|parent| self.nodes.get(parent))
                         })
                         .all(NodeRecord::hands_accessibility_offsets)
+                        || self
+                            .accessible_space(id, &mut memo)
+                            .is_none_or(|space| space.unit.is_none())
                     {
                         affected.extend(
                             node.hierarchy
@@ -1612,13 +2014,13 @@ impl UiWorld {
                 let (mut pinned, mut pinned_subtrees) = (Vec::new(), Vec::new());
                 self.reach_moved_pins(
                     &pin_roots,
-                    &work.layout_moved,
+                    &walk_roots,
                     &mut pinned,
                     &mut pinned_subtrees,
                     &mut memo,
                 );
                 #[cfg(any(test, feature = "layout-verify"))]
-                self.check_moved_pins(&pin_roots, &work.layout_moved, &pinned, &pinned_subtrees);
+                self.check_moved_pins(&pin_roots, &walk_roots, &pinned, &pinned_subtrees);
                 affected.extend(pinned);
                 pending.extend(pinned_subtrees);
             }
@@ -1681,26 +2083,51 @@ impl UiWorld {
         }
     }
 
-    /// Whether every box from the page down to `root`, a box layout moved,
-    /// hands its children offsets ([`NodeRecord::hands_accessibility_offsets`]:
-    /// translations, scrolls and positive scales only), and `root` is no
-    /// modal frame: then of what it holds only the pinned boxes
-    /// ([`NodeRecord::pins_accessibility`]) and what is under those can
-    /// project differently ([`Self::reach_moved_pins`]). Motion overlays can
-    /// transform any box, and a clip visual cuts every box under it, so
-    /// either leaves the walk.
-    fn moved_root_hands_offsets(&self, root: StableNodeId) -> bool {
-        self.clip_visuals == 0
-            && self.presentation.is_empty()
-            && self.layout_length_tracks.is_empty()
-            && !self.is_modal_frame(root)
-            && std::iter::successors(self.nodes.get(root), |record| {
-                record
-                    .hierarchy
-                    .parent
-                    .and_then(|parent| self.nodes.get(parent))
-            })
-            .all(NodeRecord::hands_accessibility_offsets)
+    /// Whether `root`, a box layout moved, holds its own box upright in its
+    /// accessible space ([`AccessibleSpace::unit`]: every box from the page
+    /// down to it is placed by its offset, however it turns, or stands
+    /// upright in the viewport), and is no modal frame: then of what it
+    /// holds only the pinned boxes ([`NodeRecord::pins_accessibility`]) and
+    /// what is under those can project differently
+    /// ([`Self::reach_moved_pins`]). Motion overlays can transform any box,
+    /// and a clip visual cuts every box under it, so either leaves the walk.
+    fn moved_root_hands_offsets(&self, root: StableNodeId, memo: &mut ProjectionMemo) -> bool {
+        if self.clip_visuals != 0
+            || !self.presentation.is_empty()
+            || !self.layout_length_tracks.is_empty()
+            || self.is_modal_frame(root)
+        {
+            return false;
+        }
+        // Every box from the page down only translating and scaling by a
+        // positive factor: the root's box is upright wherever its space
+        // comes from. Read off the records, without the memo, for the
+        // thousand rows a reflow moves.
+        let upright_chain = std::iter::successors(self.nodes.get(root), |record| {
+            record
+                .hierarchy
+                .parent
+                .and_then(|parent| self.nodes.get(parent))
+        })
+        .all(|record| {
+            record.hands_accessibility_offsets()
+                && record
+                    .resolved_layout
+                    .transform
+                    .is_none_or(|turn| upright(turn.a, turn.b, turn.c, turn.d))
+        });
+        #[cfg(any(test, feature = "layout-verify"))]
+        if upright_chain {
+            assert!(
+                self.accessible_space(root, memo)
+                    .is_some_and(|space| space.unit.is_some()),
+                "{root:?}: an upright chain holds its box upright"
+            );
+        }
+        upright_chain
+            || self
+                .accessible_space(root, memo)
+                .is_some_and(|space| space.unit.is_some())
     }
 
     fn is_modal_frame(&self, id: StableNodeId) -> bool {
@@ -1769,6 +2196,9 @@ impl UiWorld {
                     crate::LayoutFrame::Block(block) => frames.push(block),
                     crate::LayoutFrame::Page => break None,
                 }
+                // A pin on the way placed from its viewport box and not
+                // upright there walks what it holds itself, this pin among
+                // them: passing it only finds this pin twice.
                 if above.resolved_layout.clips_overflow()
                     || !above.hands_accessibility_offsets()
                     || self.is_modal_frame(id)
@@ -1842,19 +2272,16 @@ impl UiWorld {
             std::iter::successors(Some(block), |&at| self.parent_id(at)).any(|at| at == root)
         };
         if open.is_empty() {
-            // Whether every box from the page down to a box hands offsets
-            // on: then its bounds come from its offset. Motion overlays can
-            // transform any box, so they leave only the exact check.
-            let plain_motion = self.presentation.is_empty() && self.layout_length_tracks.is_empty();
-            let root_offsets = plain_motion
-                && std::iter::successors(Some(record), |record| {
-                    record
-                        .hierarchy
-                        .parent
-                        .and_then(|parent| self.nodes.get(parent))
-                })
-                .all(NodeRecord::hands_accessibility_offsets);
-            let parent_offsets = root_offsets && !self.is_modal_frame(root);
+            // Whether `root` holds its box upright in its space: then the
+            // bounds of what it holds come from their offsets. Motion
+            // overlays can transform any box, so they leave only the exact
+            // check; a clip visual sends every box to `pending` below.
+            let parent_offsets = self.presentation.is_empty()
+                && self.layout_length_tracks.is_empty()
+                && !self.is_modal_frame(root)
+                && self
+                    .accessible_space(root, memo)
+                    .is_some_and(|space| space.unit.is_some());
             open.extend(
                 record
                     .hierarchy
@@ -1892,8 +2319,16 @@ impl UiWorld {
             if !keeps {
                 affected.push(id);
             }
-            let handed =
-                parent_offsets && record.hands_accessibility_offsets() && !self.is_modal_frame(id);
+            // A box placed by its offset under one that holds its own box
+            // upright holds its own upright too, however it turns; one
+            // placed from its viewport box, only when that is upright.
+            let handed = parent_offsets
+                && record.hands_accessibility_offsets()
+                && !self.is_modal_frame(id)
+                && (record.placed_by_accessibility_offset()
+                    || self
+                        .accessible_space(id, memo)
+                        .is_some_and(|space| space.unit.is_some()));
             if handed && !descend_identity {
                 continue;
             }
@@ -1927,6 +2362,12 @@ impl UiWorld {
             return true;
         }
         let parent = self.nodes.get(id).and_then(|node| node.hierarchy.parent);
+        if parent.is_some_and(|parent| {
+            self.accessible_space(parent, memo)
+                .is_some_and(|space| space.turned)
+        }) {
+            return false;
+        }
         [Some(id), parent].into_iter().flatten().all(|node| {
             !(self.nodes.has_visuals()
                 && matches!(
@@ -1971,48 +2412,70 @@ impl ShippedAccessibility {
 
 #[cfg(any(test, feature = "layout-verify"))]
 impl UiWorld {
-    /// `bounds`, what [`Self::offset_placed`] makes of `entry` from its
-    /// offset, are where its viewport box stands from its parent's, up to
-    /// the rounding of the page and viewport sums the offset leaves out:
-    /// the parent's transform for its children is a translation and a
-    /// positive scale.
+    /// `placed`, what [`Self::offset_placed`] makes of `entry` from its
+    /// offset, puts its box where its layout box's turned corners stand in
+    /// the viewport, up to the rounding of the page and viewport sums the
+    /// offset leaves out: its parent's space taken to the viewport
+    /// ([`Self::accessible_space_to_viewport`]), then its bounds' move and
+    /// its transform, take the corners of its own box to the corners its
+    /// whole chain of transforms takes its page box to.
     fn check_offset_bounds(
         &self,
         entry: &AccessibilityNode,
         parent: StableNodeId,
-        bounds: LayoutBox,
+        (bounds, transform): (LayoutBox, Option<nana_ui_core::PaintTransform>),
         memo: &mut ProjectionMemo,
     ) {
-        let [a, b, c, d, ..] = self
-            .accessibility_ancestor_transform(parent, memo)
-            .expect("a placed box's parent has a transform");
-        assert!(
-            b == 0.0 && c == 0.0 && a > 0.0 && d > 0.0,
-            "{:?}: a box placed by its offset hangs under {:?}",
-            entry.id,
-            [a, b, c, d]
-        );
-        let Some(above) = self.visible_accessibility_bounds(parent, memo) else {
-            return;
+        let above = self
+            .accessible_space_to_viewport(parent, memo)
+            .expect("a placed box's parent space reaches the viewport");
+        let mut own = transform.unwrap_or_default();
+        own.e += bounds.x;
+        own.f += bounds.y;
+        let [a, b, c, d, e, f] = above;
+        let to_viewport = nana_ui_core::PaintTransform { a, b, c, d, e, f }.then(own);
+        let placed = |x: f32, y: f32| {
+            [
+                to_viewport.a * x + to_viewport.c * y + to_viewport.e,
+                to_viewport.b * x + to_viewport.d * y + to_viewport.f,
+            ]
         };
-        let seen = entry.bounds;
-        let cold = [seen.x - above.x, seen.y - above.y, seen.width, seen.height];
-        let page = self.layout_origin(entry.id).unwrap_or_default();
+        self.accessibility_ancestor_transform(entry.id, memo)
+            .expect("a placed box has a transform");
+        let ([ca, cb, cc, cd, ce, cf], _) = memo.transforms[&entry.id].own;
+        let page = self
+            .component_layout_box(entry.id)
+            .expect("a placed box has a box");
+        let cold = |x: f32, y: f32| [ca * x + cc * y + ce, cb * x + cd * y + cf];
+        let (w, h) = (bounds.width, bounds.height);
+        let got = [
+            placed(0.0, 0.0),
+            placed(w, 0.0),
+            placed(0.0, h),
+            placed(w, h),
+        ];
+        let want = [
+            cold(page.x, page.y),
+            cold(page.x + page.width, page.y),
+            cold(page.x, page.y + page.height),
+            cold(page.x + page.width, page.y + page.height),
+        ];
         let scale = 1.0
-            + seen.x.abs()
-            + seen.y.abs()
-            + above.x.abs()
-            + above.y.abs()
-            + seen.width.abs()
-            + seen.height.abs()
-            + page[0].abs()
-            + page[1].abs();
-        let got = [bounds.x, bounds.y, bounds.width, bounds.height];
+            + want
+                .iter()
+                .chain(&got)
+                .flatten()
+                .map(|value| value.abs())
+                .fold(0.0, f32::max)
+                * 4.0
+            + page.x.abs()
+            + page.y.abs();
         assert!(
             got.iter()
-                .zip(cold)
-                .all(|(got, cold)| (got - cold).abs() <= 1e-5 * scale),
-            "{:?}: bounds from the offset {got:?} are not where it stands from its parent, {cold:?}",
+                .flatten()
+                .zip(want.iter().flatten())
+                .all(|(got, want)| (got - want).abs() <= 2e-5 * scale),
+            "{:?}: corners placed from its offset {got:?} are not where its turned box stands, {want:?}",
             entry.id
         );
     }

@@ -533,12 +533,24 @@ impl MobileRuntime {
         ))
     }
 
-    /// Accessibility nodes the shell publishes to VoiceOver / TalkBack.
+    /// Accessibility nodes the shell publishes to TalkBack through
+    /// AccessKit: each node's `bounds` and `transform` are relative to its
+    /// parent's space ([`AccessibilityNode::to_parent`]).
     pub fn accessibility_nodes(&self) -> Vec<AccessibilityNode> {
         self.document
             .context()
             .world()
             .project_accessibility(self.document.document())
+    }
+
+    /// [`Self::accessibility_nodes`] with every node's `bounds` the box
+    /// around it in the surface's logical px and no `transform`: for a shell
+    /// that hands VoiceOver a flat list of frames.
+    pub fn accessibility_nodes_in_viewport(&self) -> Vec<AccessibilityNode> {
+        self.document
+            .context()
+            .world()
+            .project_accessibility_in_viewport(self.document.document())
     }
 
     pub fn apply_accessibility_action(

@@ -765,7 +765,7 @@ pub unsafe extern "C" fn nana_ios_host_accessibility_count(host: *mut NanaIosHos
     };
     host.accessibility = host
         .runtime
-        .accessibility_nodes()
+        .accessibility_nodes_in_viewport()
         .into_iter()
         .filter(ax_exposed)
         .collect();

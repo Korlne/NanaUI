@@ -613,11 +613,15 @@ padding。同一 `UiWorld` 交替布局多个文档时。一个文档的全量�
 
 ### 无障碍节点的坐标
 
-`AccessibilityNode::bounds` 相对父节点：偏移从 `parent` 的 `bounds` 原点量起（根节点、或父节点没有 bounds 时从视口量起），尺寸是自己的。
-虚拟子节点（菜单行、树行、列表框选项）同样相对各自的父节点。`clip` 仍在视口坐标里：它是裁剪链留下的屏幕区域。
-AccessKit 宿主把偏移设成节点的 `transform`、尺寸设成本地 `bounds`，所以一行变高时，下面只是跟着父节点平移的节点不进增量，也不进原生更新。
-要在屏幕上找节点（自动化、测试、调试导出）用 `UiWorld::project_accessibility_in_viewport` 或 `project_accessibility_nodes_in_viewport`，它们给视口坐标；
-原生树只能由 `project_accessibility` 和 `project_accessibility_delta` 建立。
+`AccessibilityNode::bounds` 相对父节点的空间：`(x, y)` 是节点自己的空间在父节点空间里的原点（根节点、或父节点没有 bounds 时在视口里），`(width, height)` 是节点在自己空间里的盒子，从原点起。
+`AccessibilityNode::transform` 是节点空间到父节点空间的旋转、斜切或翻转（`PaintTransform`，CSS `matrix(a, b, c, d, e, f)`），在平移 `(x, y)` 之前作用：节点到父节点是 `translate(x, y) · transform`（`AccessibilityNode::to_parent`）。
+只有自己的 `transform` 样式（乘上它上面的正缩放）让盒子转离父节点坐标轴的节点才设它，这时 `bounds` 的尺寸是它自己的布局盒，子节点的 bounds 是它里面的本地偏移；
+平移、滚动、正缩放的链上一律是 `None`，缩放已经算进偏移和尺寸，与以前相同。3D 上下文里的节点不发透视，`bounds` 是投影后四角的外接框。
+虚拟子节点（菜单行、树行、列表框选项）同样相对各自的父节点，在转过的控件里是控件空间里正立的盒子。`clip` 仍在视口坐标里：它是裁剪链留下的屏幕区域。
+AccessKit 宿主把 `to_parent()` 设成节点的 `transform`（物理像素下平移部分乘缩放比）、尺寸设成本地 `bounds`，所以一行变高时，下面只是跟着父节点平移的节点不进增量，也不进原生更新；转过的祖先下面也一样。
+手里拿着相对树、要节点在视口里的位置（命中、自动化、测试），用 `AccessibilityPlacements::new(&nodes)`：`transform(id)` 是节点空间到视口的累积变换，`corners(id)` 是盒子四角，`viewport_bounds(id)` 是外接框，`contains(id, x, y)` 按变换判断点在不在盒子里。
+直接从世界取屏幕坐标（自动化、测试、调试导出）用 `UiWorld::project_accessibility_in_viewport` 或 `project_accessibility_nodes_in_viewport`，它们给视口外接框，`transform` 都是 `None`；
+原生树只能由 `project_accessibility` 和 `project_accessibility_delta` 建立。移动端 `MobileRuntime::accessibility_nodes` 给相对树（TalkBack 经 AccessKit），`accessibility_nodes_in_viewport` 给视口外接框（iOS 的扁平 VoiceOver 快照用它）。
 
 ### 隐藏层级中的无障碍语义
 

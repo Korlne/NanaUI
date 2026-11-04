@@ -855,3 +855,485 @@ fn a_clip_resized_in_place_projects_what_it_holds_again() {
         }
     }
 }
+
+/// A rotation, a skew or a flip by `angle` (radians, for the turns) with a
+/// move, as a CSS `matrix`.
+fn turn(kind: &str, angle: f32) -> PaintTransform {
+    let (sin, cos) = angle.sin_cos();
+    match kind {
+        "rotated" => PaintTransform {
+            a: cos,
+            b: sin,
+            c: -sin,
+            d: cos,
+            e: 2.0,
+            f: 1.0,
+        },
+        "skewed" => PaintTransform {
+            c: angle.tan(),
+            e: 1.5,
+            ..Default::default()
+        },
+        "flipped" => PaintTransform {
+            a: -1.0,
+            f: 3.25,
+            ..Default::default()
+        },
+        "scaled" => PaintTransform {
+            a: 1.5,
+            d: 1.25,
+            e: 3.3,
+            f: 7.1,
+            ..Default::default()
+        },
+        other => panic!("no turn {other}"),
+    }
+}
+
+/// Rows in a column under nested wrappers, the outermost first, each with
+/// its transform; the innermost holds the column. Every cell of a row past
+/// the first holds a sticky and a fixed box too when `hanging`, and an
+/// absolute one measured from the row, each with a plain box inside.
+fn turned_page(transforms: &[PaintTransform], hanging: bool) -> (Page, Vec<StableNodeId>) {
+    let (mut b, root) = Builder::page(document(), 1, 400.0);
+    let mut parent = root;
+    let mut wrappers = Vec::new();
+    for (depth, &transform) in transforms.iter().enumerate() {
+        let side = 10.0 * depth as f32;
+        parent = b.element(
+            parent,
+            LayoutStyle {
+                transform: Some(transform),
+                padding_left: Some(LengthSpec::Px(1.3)),
+                padding_top: Some(LengthSpec::Px(2.1)),
+                ..fixed(340.0 - side, 520.0 - side)
+            },
+        );
+        wrappers.push(parent);
+    }
+    let list = b.element(parent, column(Some(300.0)));
+    let rows = uneven_rows(&mut b, list, 12);
+    if hanging {
+        for [_, cell, _] in &rows[1..4] {
+            for position in [
+                PositionSpec::Sticky,
+                PositionSpec::Fixed,
+                PositionSpec::Absolute,
+            ] {
+                let held = b.element(
+                    *cell,
+                    LayoutStyle {
+                        position,
+                        offset_top: Some(LengthSpec::Px(1.0)),
+                        offset_left: Some(LengthSpec::Px(7.0)),
+                        ..fixed(12.0, 6.0)
+                    },
+                );
+                b.element(held, fixed(4.0, 3.0));
+            }
+        }
+    }
+    (laid_out(b, rows, list), wrappers)
+}
+
+/// Rows under ancestors that rotate, skew, flip or nest a turn and a scale,
+/// moved again and again by an uneven step. The innermost turn is handed
+/// to the platform as its box's own transform, and every box under it is
+/// placed by its offset inside it -- its local offset, scaled by the
+/// upright scales below the turn -- so the moved rows project alone and
+/// what they hold keeps its bounds to the bit.
+#[test]
+fn boxes_moved_under_a_turned_ancestor_keep_a_cold_projection_to_the_bit() {
+    for (name, transforms, unit) in [
+        ("rotated", vec![turn("rotated", 0.3)], [1.0, 1.0]),
+        ("skewed", vec![turn("skewed", 0.4)], [1.0, 1.0]),
+        ("flipped", vec![turn("flipped", 0.0)], [1.0, 1.0]),
+        (
+            "rotated twice",
+            vec![turn("rotated", 0.3), turn("rotated", -0.7)],
+            [1.0, 1.0],
+        ),
+        (
+            "scaled in a rotation",
+            vec![turn("rotated", 0.3), turn("scaled", 0.0)],
+            [1.5, 1.25],
+        ),
+        (
+            "rotated in a scale",
+            vec![turn("scaled", 0.0), turn("rotated", 0.3)],
+            [1.0, 1.0],
+        ),
+    ] {
+        let (mut page, wrappers) = turned_page(&transforms, false);
+        let mut retained = snapshot(&page.context);
+        let turned = *wrappers
+            .iter()
+            .rev()
+            .find(|id| retained[id].transform.is_some())
+            .unwrap_or_else(|| panic!("{name}: no box hands its turn"));
+        assert_eq!(
+            retained[wrappers.last().unwrap()].transform.is_some(),
+            unit == [1.0, 1.0],
+            "{name}: an upright scale is folded into the offsets"
+        );
+        let _ = turned;
+        grow_unevenly(
+            &mut page,
+            &mut retained,
+            12,
+            name,
+            |page, retained, updated, at| {
+                for id in &wrappers {
+                    assert!(!updated.contains(id), "{at}: a wrapper did not move");
+                }
+                for [_, cell, leaf] in &page.rows[1..] {
+                    for id in [cell, leaf] {
+                        let local = page.context.world().local_layout_box(*id).unwrap();
+                        let node = &retained[id];
+                        assert_eq!(node.transform, None, "{at}: an upright box");
+                        assert_eq!(
+                            [
+                                node.bounds.x,
+                                node.bounds.y,
+                                node.bounds.width,
+                                node.bounds.height
+                            ]
+                            .map(f32::to_bits),
+                            [
+                                unit[0] * local.x,
+                                unit[1] * local.y,
+                                unit[0] * local.width,
+                                unit[1] * local.height,
+                            ]
+                            .map(f32::to_bits),
+                            "{at}: {id:?} is handed its offset in its turned space"
+                        );
+                    }
+                }
+            },
+        );
+    }
+}
+
+/// Boxes placed from their viewport boxes under a turn -- a sticky, a fixed
+/// and an absolute box measured from the row, each holding a plain one --
+/// are handed the inverse turn, found from the pins when their rows move,
+/// and match a full projection; what the moved rows hold otherwise does not
+/// project again. The absolute box turns with the row, so it does not stand
+/// upright in its own space: what it holds is placed from the viewport too,
+/// and projects again with it.
+#[test]
+fn boxes_placed_from_the_viewport_under_a_turn_match_a_cold_projection() {
+    for kind in ["rotated", "skewed", "flipped"] {
+        let (mut page, _) = turned_page(&[turn(kind, 0.3)], true);
+        let mut retained = snapshot(&page.context);
+        let pinned: Vec<StableNodeId> = page.rows[1..4]
+            .iter()
+            .flat_map(|[_, cell, _]| {
+                page.context
+                    .world()
+                    .nodes
+                    .get(*cell)
+                    .unwrap()
+                    .hierarchy
+                    .children
+                    .iter()
+                    .copied()
+                    .skip(1)
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        assert_eq!(pinned.len(), 9);
+        for id in &pinned {
+            assert!(
+                retained[id].transform.is_some(),
+                "{kind}: {id:?} is handed the inverse turn"
+            );
+        }
+        let held_by_absolute: Vec<StableNodeId> = pinned
+            .iter()
+            .skip(2)
+            .step_by(3)
+            .map(|id| {
+                page.context
+                    .world()
+                    .nodes
+                    .get(*id)
+                    .unwrap()
+                    .hierarchy
+                    .children[0]
+            })
+            .collect();
+        grow_unevenly(&mut page, &mut retained, 6, kind, |_, _, updated, at| {
+            for id in pinned.iter().chain(&held_by_absolute) {
+                assert!(updated.contains(id), "{at}: {id:?} is placed from the page");
+            }
+        });
+    }
+}
+
+/// A turned wrapper whose turn changes in the frame its rows move, then
+/// again on its own: the wrapper hands its new turn, and every box matches
+/// a full projection.
+#[test]
+fn a_turn_changed_while_rows_move_matches_a_cold_projection() {
+    let (mut page, wrappers) = turned_page(&[turn("rotated", 0.3)], false);
+    let wrapper = wrappers[0];
+    let mut retained = snapshot(&page.context);
+    let mut height = 20.0;
+    for (step, angle) in [0.45_f32, 0.45, -0.2, -0.2, 1.1].into_iter().enumerate() {
+        let at = format!("step {step}");
+        let before = retained[&wrapper].transform;
+        let mut queue = MutationQueue::new();
+        queue.set_style(
+            wrapper,
+            styled(LayoutStyle {
+                transform: Some(turn("rotated", angle)),
+                padding_left: Some(LengthSpec::Px(1.3)),
+                padding_top: Some(LengthSpec::Px(2.1)),
+                ..fixed(340.0, 520.0)
+            }),
+        );
+        if step % 2 == 0 {
+            height += 1.37;
+            row_height(&mut queue, page.rows[0][0], height);
+        }
+        edit(&mut page, &mut retained, queue, &at);
+        let (sin, cos) = angle.sin_cos();
+        let handed = retained[&wrapper].transform.unwrap();
+        assert_eq!(
+            (handed.a, handed.b, handed.c, handed.d),
+            (cos, sin, -sin, cos),
+            "{at}: the wrapper hands its new turn"
+        );
+        if step == 0 {
+            assert_ne!(before, Some(handed), "{at}: the turn changed");
+        }
+        // Then a move alone, under the new turn.
+        height += 1.37;
+        let mut queue = MutationQueue::new();
+        row_height(&mut queue, page.rows[0][0], height);
+        let updated = edit(&mut page, &mut retained, queue, &format!("{at}, moved"));
+        for [_, cell, leaf] in &page.rows[1..] {
+            assert!(
+                !updated.contains(cell) && !updated.contains(leaf),
+                "{at}: what a moved row holds moved with it"
+            );
+        }
+    }
+}
+
+/// A select in a row under a rotation: closed it moves with its row; open,
+/// its list box and options stand in the field's turned space, upright
+/// there, and project again under every move, as the menu reads the page.
+#[test]
+fn a_select_under_a_turn_moves_with_its_row_and_an_open_one_projects_again() {
+    let (mut page, _) = turned_page(&[turn("rotated", 0.3)], false);
+    let mut select = crate::Select::new(Some("a"));
+    select.options = vec![
+        crate::SelectOption::new("a", "Alpha"),
+        crate::SelectOption::new("b", "Beta"),
+    ];
+    let select = page
+        .context
+        .create_detached_component(document(), select)
+        .unwrap();
+    let field = select.stable_id();
+    let mut queue = MutationQueue::new();
+    queue.insert(page.rows[6][0], field, None);
+    let mut retained = snapshot(&page.context);
+    edit(&mut page, &mut retained, queue, "placed");
+    let mut height = 20.0;
+    for (opened, at) in [(false, "closed"), (true, "open"), (false, "closed again")] {
+        if opened != retained[&field].expanded.unwrap_or(false) {
+            page.context.toggle_select(select).unwrap();
+            edit(
+                &mut page,
+                &mut retained,
+                MutationQueue::new(),
+                &format!("{at}: toggled"),
+            );
+        }
+        let listbox = crate::virtual_listbox_id(field).unwrap();
+        assert_eq!(
+            retained.contains_key(&listbox),
+            opened,
+            "{at}: its list box"
+        );
+        if opened {
+            assert_eq!(
+                retained[&listbox].transform, None,
+                "{at}: upright in the field"
+            );
+            assert_matches_viewport(&page.context, &retained, at);
+        }
+        for step in 0..3 {
+            height += 1.37;
+            let mut queue = MutationQueue::new();
+            row_height(&mut queue, page.rows[0][0], height);
+            let updated = edit(
+                &mut page,
+                &mut retained,
+                queue,
+                &format!("{at}, step {step}"),
+            );
+            assert_eq!(
+                updated.contains(&field),
+                opened,
+                "{at}, step {step}: a select projects again under a move only while open"
+            );
+        }
+    }
+}
+
+/// Every node's box, placed through the transforms its chain hands
+/// ([`crate::AccessibilityPlacements`]), stands where a viewport projection
+/// puts it, up to rounding.
+fn assert_matches_viewport(
+    context: &AppContext,
+    retained: &BTreeMap<StableNodeId, AccessibilityNode>,
+    at: &str,
+) {
+    let placements = crate::AccessibilityPlacements::new(retained.values());
+    for node in context
+        .world()
+        .project_accessibility_in_viewport(document())
+    {
+        let placed = placements.viewport_bounds(node.id).unwrap();
+        let want = node.bounds;
+        assert!(
+            [
+                placed.x - want.x,
+                placed.y - want.y,
+                placed.width - want.width,
+                placed.height - want.height
+            ]
+            .iter()
+            .all(|delta| delta.abs() <= 2e-3),
+            "{at}: {:?} placed at {placed:?}, in the viewport at {want:?}",
+            node.id
+        );
+    }
+}
+
+/// The corners the transforms a relative projection hands put each box's
+/// own box at are the corners the old projection took the box around:
+/// the layout box's corners through every transform and scroll above it.
+/// Boxes placed from their viewport boxes are that box around, so only
+/// their boxes around are compared.
+#[test]
+fn placed_corners_are_the_turned_corners_of_a_cold_projection() {
+    for (name, transforms) in [
+        ("rotated", vec![turn("rotated", 0.3)]),
+        ("skewed", vec![turn("skewed", 0.4)]),
+        ("flipped", vec![turn("flipped", 0.0)]),
+        (
+            "nested",
+            vec![
+                turn("scaled", 0.0),
+                turn("rotated", 0.3),
+                turn("scaled", 0.0),
+                turn("skewed", -0.2),
+            ],
+        ),
+    ] {
+        let (mut page, _) = turned_page(&transforms, true);
+        let mut queue = MutationQueue::new();
+        row_height(&mut queue, page.rows[0][0], 21.37);
+        let mut retained = snapshot(&page.context);
+        edit(&mut page, &mut retained, queue, name);
+        let world = page.context.world();
+        let placements = crate::AccessibilityPlacements::new(retained.values());
+        let mut memo = super::ProjectionMemo::default();
+        let mut compared = 0;
+        for (id, node) in &retained {
+            if world
+                .accessible_space(*id, &mut memo)
+                .is_none_or(|space| !space.local)
+            {
+                continue;
+            }
+            world
+                .accessibility_ancestor_transform(*id, &mut memo)
+                .unwrap();
+            let ([a, b, c, d, e, f], _) = memo.transforms[id].own;
+            let page_box = world.component_layout_box(*id).unwrap();
+            let turned = |x: f32, y: f32| [a * x + c * y + e, b * x + d * y + f];
+            let (x, y, w, h) = (page_box.x, page_box.y, page_box.width, page_box.height);
+            let want = [
+                turned(x, y),
+                turned(x + w, y),
+                turned(x + w, y + h),
+                turned(x, y + h),
+            ];
+            let got = placements.corners(*id).unwrap();
+            assert!(
+                got.iter()
+                    .flatten()
+                    .zip(want.iter().flatten())
+                    .all(|(got, want)| (got - want).abs() <= 2e-3),
+                "{name}: {id:?} ({:?}) placed at {got:?}, turned to {want:?}",
+                node.transform
+            );
+            compared += 1;
+        }
+        assert!(compared > 40, "{name}: compared {compared} boxes");
+        assert_matches_viewport(&page.context, &retained, name);
+    }
+}
+
+/// A row that turns about its centre, resized where it stands: its turn
+/// moves with the centre, so its space moves as a moved box's does. What it
+/// holds by offsets keeps its bounds; a fixed box two levels down, placed
+/// from the viewport, projects again.
+#[test]
+fn a_turned_box_resized_in_place_moves_its_space() {
+    let (mut b, root) = Builder::page(document(), 1, 400.0);
+    let list = b.element(root, column(Some(300.0)));
+    let rows = uneven_rows(&mut b, list, 3);
+    let turned = rows[0][0];
+    let cell = rows[0][1];
+    let leaf = rows[0][2];
+    let fixed_box = b.element(
+        cell,
+        LayoutStyle {
+            position: PositionSpec::Fixed,
+            offset_top: Some(LengthSpec::Px(5.0)),
+            offset_left: Some(LengthSpec::Px(9.0)),
+            ..fixed(12.0, 6.0)
+        },
+    );
+    let mut page = laid_out(b, rows, list);
+    let mut retained = snapshot(&page.context);
+    let mut height = 20.0;
+    for step in 0..6 {
+        height += 1.37;
+        let at = format!("step {step}");
+        let mut queue = MutationQueue::new();
+        queue.set_style(
+            turned,
+            styled(LayoutStyle {
+                flex_shrink: Some(0.0),
+                position: PositionSpec::Relative,
+                transform: Some(turn("rotated", 0.3)),
+                ..fixed(300.0, height)
+            }),
+        );
+        let updated = edit(&mut page, &mut retained, queue, &at);
+        assert!(updated.contains(&turned), "{at}: its turn moved");
+        assert!(
+            retained[&turned].transform.is_some(),
+            "{at}: it hands its turn"
+        );
+        if step > 0 {
+            assert!(
+                !updated.contains(&cell) && !updated.contains(&leaf),
+                "{at}: what it holds kept its offsets in it"
+            );
+            assert!(
+                updated.contains(&fixed_box),
+                "{at}: placed from the viewport"
+            );
+        }
+    }
+}

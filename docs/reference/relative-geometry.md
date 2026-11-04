@@ -126,11 +126,19 @@ Taffy 做同一次编辑只要 0.48 ms。真正重新排布的只有约 1 000 �
 
 `AccessibilityNode.bounds` 已经是相对父节点的（47aa93fb2）。写回时本地偏移变了的盒子直接标 ACCESSIBILITY，随父节点平移的后代不写回也不标。第 3 阶段起无障碍只看平移的根（`SystemWork::layout_moved`），收尾一步起连根下面也不走：
 
-- **按偏移放置**（`offset_placed`，`offset_bounds_in_parent`）：盒子的参照系是父节点、自己没有变换和 3D 上下文、不是 `fixed` / `sticky`（`NodeRecord::placed_by_accessibility_offset`），且父节点往上一路都只交出平移、滚动和正缩放（`hands_accessibility_offsets`：没有 3D，`transform` 只允许 `b = c = 0`、`a, d > 0`；滚动、`sticky`、`absolute` / `fixed` 都只是平移），全局没有动画叠加和裁剪 visual 时，相对 bounds 直接由本地布局盒算出：`(a·(x − sx), d·(y − sy), a·w, d·h)`，`(sx, sy)` 是父节点的滚动偏移，`(a, d)` 是父节点交给子节点的变换的缩放（变换的线性部分只由样式相乘得到，与任何盒子站在哪无关）。链上全是恒等时（`axis_aligned`）就是 `(x, y, w, h)`，与原来逐位相同。冷投影和保留路径用同一个公式，所以平移后逐位一致；与改造前「子节点视口盒 − 父节点视口原点」相比，滚动或缩放下的 bounds 在末位可能不同（只影响无障碍，不影响绘制）。测试与 `layout-verify` 下 `check_offset_bounds` 每算一次就核对父节点的变换确实是平移加正缩放，并与旧的相减结果在舍入误差内相等。
-- **钉住的盒子**（`NodeRecord::pins_accessibility`）：不按偏移放置（参照系不是父节点：`fixed`、逃逸的绝对定位、触发式菜单的菜单项；自己有变换、3D 上下文或 `sticky`）、裁剪溢出（视口坐标的 `clip` 从它而来）、交给子节点的不是偏移（旋转、斜切、翻转、3D），或带打开的 Select、TreeView、MenuSurface、ModalFrame 这类从几何派生虚拟节点或改写自身盒子的 visual。滚动过的容器不再是钉子；关着的 Select 只投影字段本身（`project_select_menu` 只改 `expanded`），也不再是钉子（`projects_virtual_accessibility`）。`NodeStore` 记着这个集合（`accessibility_pins`，超集）：决定它的字段一写就重算该节点——样式解析（`note_layout_anchor_change`）、滚动偏移、写回或换参照系时参照系变了、visual 设置（打开、关上 Select 都改 visual）、插入；节点移除时删掉；读的时候再按现状核一次。
-- **从钉子找**（`reach_moved_pins`）：根到页面一路交偏移、根不是模态框、没有动画叠加和裁剪 visual（`moved_root_hands_offsets`）时，对每个钉子往上找最近的平移根。路上碰到裁剪、不交偏移、模态框、参照系是页面的盒子就交给那个盒子（或者它根本没动）；参照系是某个块的盒子（`absolute`）记下那个块，到根之前经过了它才算跟着根动，否则它没动、下面也没动。仍交偏移的钉子（缩放、`sticky`、从随根平移的块量起的绝对定位）不挡路：它下面的盒子按偏移相对它放置。找到的钉子从它自己起按原来的规则走（`reach_moved_subtree`：没跟着动的进 `affected`，裁剪的整棵子树重投影，不按偏移放置的逐个 `keeps_relative_bounds`），交偏移的盒子下面不再往下。代价 O(钉子数 × 深度)，和被平移的节点数无关。
+- **节点自带变换**（收尾·无障碍变换）：`AccessibilityNode` 多了 `transform: Option<PaintTransform>`，对应 AccessKit `Node` 的 `transform`。节点空间到父节点空间是 `translate(bounds.x, bounds.y) · transform`（`AccessibilityNode::to_parent`），节点自己的盒子在自己的空间里是 `(0, 0, width, height)`。每个节点有一个无障碍空间（`AccessibleSpace`）：
+  - **按偏移放置**的盒子（下一条）没有自己的变换时，空间是父节点的空间平移 `bounds` 的偏移，`transform` 为 `None`，与原来逐位相同；自己的变换只有平移和正缩放（本地 2×3 为 `(a', 0, 0, d', e, f)`）时并进偏移和尺寸：`(a·(x − sx + e), d·(y − sy + f), a·a'·w, d·d'·h)`，仍为 `None`，它的空间缩放变成 `(a·a', d·d')`；
+  - 自己的变换有旋转、斜切或翻转时发出 `transform = diag(a, d) · L`（`L` 是它在本地坐标里绕变换原点的 2×3，`(a, d)` 是父节点空间的缩放），`bounds` 是 `(a·(x − sx), d·(y − sy), w, h)`：尺寸是它自己的布局盒，它的空间就是它的本地布局坐标（缩放归一），下面的盒子在里面按本地偏移放置；
+  - 全都与页面位置无关，所以转过的子树里平移只改根自己的偏移，子孙逐位不变；
+  - 不按偏移放置的盒子（`fixed`、`sticky`、逃逸的绝对定位、3D、模态框的 surface、动画叠加或裁剪 visual 下的一切）仍从视口外接框来：父节点空间没转时是「视口盒 − 父节点视口原点」（原来的结果），转过时发出父节点空间到视口的逆的线性部分，`bounds` 原点是视口原点在父节点空间里的位置（`turned_space_inverse`），于是它的空间与视口对齐；
+  - 3D 下的取舍：3D 上下文里（`transform_3d`、`perspective`、`preserve-3d`）只退回外接框，不发透视；平台能拿到的只有 2D 仿射，外接框是平台已经在用的近似。
+
+- **按偏移放置**（`offset_placed`，`offset_bounds_in_parent`，`local_placement`）：盒子的参照系是父节点、自己没有 3D 上下文、不是 `fixed` / `sticky`（`NodeRecord::placed_by_accessibility_offset`；自己的 2D 变换不再排除），父节点的空间让它的盒子正立（`AccessibleSpace::unit` 有值：父节点自己按偏移放置，或从视口外接框来、而一路的变换只是正缩放），全局没有动画叠加和裁剪 visual 时，相对 bounds 直接由本地布局盒算出：`(a·(x − sx), d·(y − sy), a·w, d·h)`，`(sx, sy)` 是父节点的滚动偏移，`(a, d)` 是父节点空间的缩放（从最近一个发出 `transform` 的盒子往下，正缩放的样式相乘；没有这样的盒子时就是从页面起的累积缩放，与原来相同），自己的变换按上一条并进去或发出去。链上全是恒等时（`axis_aligned`）就是 `(x, y, w, h)`，与原来逐位相同。冷投影和保留路径用同一个公式，所以平移后逐位一致。`NodeRecord::hands_accessibility_offsets` 现在只排除 3D：旋转、斜切、翻转的盒子下面同样按偏移放置。测试与 `layout-verify` 下 `check_offset_bounds` 每算一次就把父节点空间到视口的映射（`accessible_space_to_viewport`：父节点盒子的视口变换乘缩放的逆）、自己的偏移和 `transform` 连乘，核对自己盒子的四角落在旧算法「布局盒四角过整条变换链」的位置上（舍入误差内）。
+- **钉住的盒子**（`NodeRecord::pins_accessibility`）：不按偏移放置（参照系不是父节点：`fixed`、逃逸的绝对定位、触发式菜单的菜单项；3D 上下文或 `sticky`）、裁剪溢出（视口坐标的 `clip` 从它而来）、交给子节点的不是偏移（3D），或带打开的 Select、TreeView、MenuSurface、ModalFrame 这类从几何派生虚拟节点或改写自身盒子的 visual。自己带 2D 变换（平移、缩放、旋转、斜切、翻转）的盒子和转过的祖先下面的盒子不再是钉子。滚动过的容器不再是钉子；关着的 Select 只投影字段本身（`project_select_menu` 只改 `expanded`），也不再是钉子（`projects_virtual_accessibility`）。`NodeStore` 记着这个集合（`accessibility_pins`，超集）：决定它的字段一写就重算该节点——样式解析（`note_layout_anchor_change`）、滚动偏移、写回或换参照系时参照系变了、visual 设置（打开、关上 Select 都改 visual）、插入；节点移除时删掉；读的时候再按现状核一次。
+- **从钉子找**（`reach_moved_pins`）：根的空间让它的盒子正立（`moved_root_hands_offsets`：`AccessibleSpace::unit` 有值，转过的根也算）、根不是模态框、没有动画叠加和裁剪 visual 时，对每个钉子往上找最近的平移根。路上碰到裁剪、不交偏移（3D）、模态框、参照系是页面的盒子，或从视口外接框来、空间又不正立的钉子（转过的祖先下的 `sticky`），就交给那个盒子（或者它根本没动）；参照系是某个块的盒子（`absolute`）记下那个块，到根之前经过了它才算跟着根动，否则它没动、下面也没动。仍交偏移的钉子（缩放、`sticky`、从随根平移的块量起的绝对定位）不挡路：它下面的盒子按偏移相对它放置。找到的钉子从它自己起按原来的规则走（`reach_moved_subtree`：没跟着动的进 `affected`，裁剪的整棵子树重投影，不按偏移放置的逐个 `keeps_relative_bounds`），交偏移的盒子下面不再往下。代价 O(钉子数 × 深度)，和被平移的节点数无关。
 - **原地不动的裁剪盒**：长列表的滚动容器在行变高时盒子不变，只是滚动范围变了，布局照样把它标成「只是布局动了它」。原来裁剪的种子一律整棵子树重投影（视口坐标的 `clip` 可能变了），现在 `SystemWork::layout_reshaped`（`DirtyMask::RESHAPED`：写回时新原点或新尺寸、或发布的结果在滚动范围、溢出、基线之外还有几何变化，`layout_result_reshapes`）里没有它时，它按原来的盒子裁剪，下面的 `clip` 不变，只投影它自己。
-- 根到页面不交偏移（祖先有旋转、斜切、翻转或 3D，根是模态框，有动画叠加或裁剪 visual）时仍从根往下走：旋转下无障碍 bounds 是转过的四个角的外接框，相对父节点的外接框求差，不是任何偏移乘一个与位置无关的因子能给出的；要只动根，就得让 `AccessibilityNode` 自己带变换、bounds 改成父节点变换后空间里的本地盒（AccessKit 的 `transform`），这改了公开语义和平台适配，没有做。这些子树里的盒子逐个精确判定。顺带修了一处原有的漏洞：旋转下原地改了尺寸的盒子，外接框原点随尺寸变，它没动的子节点相对它的 bounds 也变了，原来只在它自己有变换时才重投影子节点，现在链上有不交偏移的样式时也重投影。
+- 根的空间不正立（祖先有 3D，或根从视口外接框来而上面有旋转），根是模态框，有动画叠加或裁剪 visual 时仍从根往下走，盒子逐个精确判定。旋转、斜切、翻转的祖先下平移已经只投影根（收尾·无障碍变换）。
+- **原地改尺寸的转过的盒子**：自己带变换的盒子原地变了尺寸，变换原点（默认中心）随尺寸动，它的空间像平移过一样动了，里面按偏移放置的盒子相对它不变。它不在 `layout_moved` 里，但根的空间正立时当作平移根一起交给 `reach_moved_pins`（`resized_roots`，与 `layout_moved` 合成 `walk_roots`）：下面只有钉子重投影（例如两层以下的 `fixed`，它相对转过的空间的逆变了）。其余原地改尺寸、空间不正立或在 3D 链上的盒子照旧重投影直接子节点（外接框原点随尺寸变）。
 - **子节点筛选**：投影一个节点要问每个子节点有没有视口盒（`visible_accessibility_bounds` 是否为 `Some`）。滚动下 `axis_aligned` 不成立，原来每个子节点都算一遍自己的变换和视口盒、插两次记忆表；现在按偏移放置的子节点直接用父节点已记下的给子节点的变换判断四角是否有限（`has_accessibility_bounds`，测试与 `layout-verify` 下与慢路径对照）。收尾·滚动容器起，父节点那条链的三个答案（上面有没有隐藏、是否对齐、是否交偏移）每个被投影的节点只问一次（`ChildChain`），不再每个子节点各查三次记忆表；子节点的页面盒子取父节点变换记忆里记下的原点加本地偏移（`AccessibleTransform.origin`，与 `record_layout_origin` 同一个加法），不再每个子节点沿参照系链求和。测试与 `layout-verify` 下每个子节点都按原来的逐个判定再判一次、页面盒子与链求和逐位比对。
 - **投影本身**：平移的根自己的相对偏移确实变了，要重投影，代价落在它的子节点筛选（每个子节点问一次隐藏、视口盒）。`axis_aligned` 原来有任何 visual、z-index、浮层宿主就整体退回变换链现算；现在只看链上每个盒子（滚动、变换、`fixed` / `sticky`、3D、父节点是打开的触发式菜单），全局只留动画叠加和裁剪 visual（每个活着的 ModalFrame 都是裁剪 visual，所以不会把 surface 当成布局盒）；被问的盒子本身不进记忆表，只记它上面的链，隐藏判定同样。测试与 `layout-verify` 构建里 `axis_aligned` 每答一次「对齐」都现算一遍视口盒断言等于布局盒。
 - 回归（滚动、变换、Select，2026-11-04）：`accessibility_relative_tests.rs` 新增
@@ -140,6 +148,14 @@ Taffy 做同一次编辑只要 0.48 ms。真正重新排布的只有约 1 000 �
   - `a_closed_select_moves_with_its_row_and_an_open_one_projects_again`：滚动列表里关着 → 打开 → 关上，各平移 3 次，断言只有打开时 Select 重投影、只有打开时是钉子；
   - `a_clip_resized_in_place_projects_what_it_holds_again`：原地变高的裁剪盒，下面的盒子都重投影。
   - 变异实验（各自变红）：每个 Select 都钉住 → Select 测试；冷投影改回相减 → 滚动、缩放、Select 三个测试（冷对照报逐位不同）；钉子往上找时在参照系是块的盒子处停 → `check_moved_pins`；在缩放的盒子处停 → `check_moved_pins`；裁剪盒无视 `layout_reshaped` 一律当原地不动 → 原地变高的裁剪测试（冷对照）；裁剪盒一律整棵重投影（旧行为）→ 滚动列表与 Select 测试的「行里的盒子不重投影」；子节点筛选答反 → 两个滚动测试；去掉旋转下原地改尺寸的修复 → 旋转测试（冷对照）。滚动下根退回整棵走只影响代价（新公式下 `keeps_relative_bounds` 照样答「不变」），用基准量：`SCROLLED=1` 无障碍约 1.0 → 1.45 ms。
+- 回归（转过的空间，2026-11-04）：`accessibility_relative_tests.rs` 新增
+  - `boxes_moved_under_a_turned_ancestor_keep_a_cold_projection_to_the_bit`：旋转 0.3 rad、斜切 0.4、翻转、两层旋转、旋转里套缩放、缩放里套旋转的祖先下，首行每帧加高 1.37 px 共 12 次；断言移动的行只投影自己，格子和叶子拿到 `unit · 本地偏移` 的位模式、`transform` 为 `None`，最里层的转发出 `transform`、正缩放并进偏移；
+  - `boxes_placed_from_the_viewport_under_a_turn_match_a_cold_projection`：旋转、斜切、翻转下的 `sticky` 和 `fixed`（各套一个普通盒）拿到逆变换，从钉子找到并重投影；
+  - `a_turn_changed_while_rows_move_matches_a_cold_projection`：同一帧改祖先的旋转角并平移，再单独平移，五轮；
+  - `a_select_under_a_turn_moves_with_its_row_and_an_open_one_projects_again`：旋转下关着 → 打开 → 关上各平移 3 次，打开时列表框在字段的转过空间里正立（`transform` 为 `None`），只有打开时重投影；
+  - `a_turned_box_resized_in_place_moves_its_space`：自带旋转的行原地变高，里面的格子、叶子不重投影，两层以下的 `fixed` 重投影；
+  - `placed_corners_are_the_turned_corners_of_a_cold_projection`：等价性。用 `AccessibilityPlacements` 把相对投影沿链累积，按偏移放置的每个盒子四角与旧算法的外接框来源（布局盒四角过 `accessibility_ancestor_transform`）在 2e-3 内相等，其余节点（含虚拟节点、逆变换的钉子）的外接框与 `project_accessibility_in_viewport` 在 2e-3 内相等；旋转、斜切、翻转和缩放-旋转-缩放-斜切四层嵌套各一页。
+  - 变异实验见下面「收尾·无障碍变换」一段。
 - 回归：`accessibility_relative_tests.rs` 的 `boxes_moved_by_an_uneven_step_keep_a_cold_projection_to_the_bit` 每帧把首行加高 1.37 px 共 12 次（有、无 visual 两种页面），逐位比对冷投影并断言叶子拿到的就是本地偏移；`moved_extraction.rs` 的平移步长也改回 1.37。变异实验：恢复相减公式，两者都报 `y = 2.5` 对 `2.5000038`。
 - 校验：测试与 `layout-verify` 下 4 096 个节点以内的世界，`check_moved_pins` 每次把同一批根按旧规则整棵走一遍，断言两边找出的节点集合与子树集合相同，并逐个节点核对钉住的盒子都记在集合里；`check_kept_accessibility` 照旧对没投影的节点逐个比对冷投影。只改了尺寸的根（不在 `layout_moved` 里）只在自身带变换时重投影子节点。
 
@@ -195,8 +211,10 @@ Taffy 做同一次编辑只要 0.48 ms。真正重新排布的只有约 1 000 �
 仍然按节点处理、没有吃到这次好处的地方：
 
 - 平移的根本身（约 1 000 行）要重投影，这是无障碍剩下的约 0.3 ms。
-- 根到页面有旋转、斜切、翻转或 3D，根是模态框，有动画叠加或裁剪 visual 时，无障碍仍整棵走旧路径（原因见 3.7）。滚动过的容器和正缩放已经只动根（收尾·无障碍滚动与 Select）。
-- 打开的 Select 仍是钉子，平移时连同列表框和选项重投影（虚拟节点的 bounds 从页面上的组件几何来）。
+- 根到页面有 3D，根是模态框，有动画叠加或裁剪 visual 时，无障碍仍整棵走旧路径（原因见 3.7）。滚动过的容器、正缩放（收尾·无障碍滚动与 Select）和旋转、斜切、翻转（收尾·无障碍变换）已经只动根。3D 不做：平台的 `transform` 只有 2D 仿射，透视下四角不是任何仿射能给的，只能退回外接框。
+- 转过的空间里从视口外接框来的钉子（`sticky`、从移动的行量起的绝对定位）空间不正立，它下面的盒子也从外接框来，平移时连同它一起重投影；`fixed` 的空间与视口对齐，下面照旧按偏移放置。
+- 改一个盒子的 `transform` 样式仍整棵标 TRANSFORM（`mark_subtree`），无障碍整棵重投影；在新语义下转过的子树其实只有它自己和从外接框来的钉子会变，但 TRANSFORM 也驱动命中和提取，收窄要三处一起改，先没做。
+- 打开的 Select 仍是钉子，平移时连同列表框和选项重投影。虚拟节点的 bounds 在字段自己的空间里（转过时在字段空间里正立），但菜单的几何读页面：`select_menu_room` 按视口和上面的裁剪链决定菜单往上还是往下开、留多大，字段一动菜单相对字段就可能变，所以必须重投影。
 - 打开的 Select / MenuSurface、Painter 非恒等变换、参照系不是父节点的图标、图表悬停线、行内字形对象、转场视口里的文字，平移时仍重新提取或重建（3.5）。
 - 滚动过的容器里改行高，整帧仍比普通页多约 0.2 ms（收尾·内容范围之后）。剩下的三处都是 O(移动行数) 或 O(行数)，常数已压低，量级没变：
   - 内容范围每个移动的行一次叶子写入（约 40 µs）。惰性区间平移做不到逐位：叶子是 `fl(子节点范围 + 偏移)`，「旧叶子 + 位移」与它在末位不同（变异实验 M6 让冷对照报了），布局又本来就逐行写偏移、逐行标脏，所以没有 O(log n) 的余地。

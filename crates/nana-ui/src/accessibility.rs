@@ -1055,16 +1055,30 @@ fn project_node(
         .collect::<Vec<_>>();
     children.extend(text_run_id);
     projected.set_children(children);
-    // Runtime bounds are relative to the parent's box: the offset is this
-    // node's transform, so its children's offsets start from its origin, and
-    // the size is its local bounds. A box that moved with its parent keeps
-    // both and is not sent again.
+    // Runtime bounds are relative to the parent's space: the offset, after
+    // the node's own turn when it has one, is this node's transform, so its
+    // children's offsets start from its origin, and the size is its local
+    // bounds. A box that moved with its parent keeps both and is not sent
+    // again. Physical px scale every length: the turn's linear part stays,
+    // its move scales.
     let (x, y) = (
         f64::from(node.bounds.x * scale_factor),
         f64::from(node.bounds.y * scale_factor),
     );
-    if x != 0.0 || y != 0.0 {
-        projected.set_transform(Affine::translate((x, y)));
+    match node.transform {
+        Some(turn) => projected.set_transform(
+            Affine::translate((x, y))
+                * Affine::new([
+                    f64::from(turn.a),
+                    f64::from(turn.b),
+                    f64::from(turn.c),
+                    f64::from(turn.d),
+                    f64::from(turn.e * scale_factor),
+                    f64::from(turn.f * scale_factor),
+                ]),
+        ),
+        None if x != 0.0 || y != 0.0 => projected.set_transform(Affine::translate((x, y))),
+        None => {}
     }
     projected.set_bounds(Rect {
         x0: 0.0,
@@ -1567,6 +1581,7 @@ mod tests {
             scroll_y: None,
             focused: false,
             bounds: LayoutBox::default(),
+            transform: None,
             clip: None,
             writing: Default::default(),
         }
@@ -1789,6 +1804,49 @@ mod tests {
             [1.0, 0.0, 0.0, 1.0, 20.0, 40.0]
         );
         assert_eq!(placed(child), accesskit::Rect::new(20.0, 40.0, 80.0, 120.0));
+    }
+
+    /// A turned node's transform is its offset after its own turn, in
+    /// physical px: the turn's linear part as it is, its move scaled.
+    #[test]
+    fn a_turned_node_hands_its_turn_after_its_offset() {
+        let root = node(1, None, &[2]);
+        let mut child = node(2, Some(1), &[]);
+        child.bounds = LayoutBox {
+            x: 10.0,
+            y: 20.0,
+            width: 30.0,
+            height: 40.0,
+        };
+        child.transform = Some(nana_ui_core::PaintTransform {
+            a: 0.0,
+            b: 1.0,
+            c: -1.0,
+            d: 0.0,
+            e: 40.0,
+            f: 0.0,
+        });
+        let (_, update) = AccessibilityProjector::new(vec![root, child], false, 2.0);
+        let child = &update
+            .nodes
+            .iter()
+            .find(|(id, _)| *id == NodeId(2))
+            .unwrap()
+            .1;
+        assert_eq!(
+            child.transform().unwrap().as_coeffs(),
+            [0.0, 1.0, -1.0, 0.0, 100.0, 40.0]
+        );
+        assert_eq!(
+            child.bounds().unwrap(),
+            accesskit::Rect::new(0.0, 0.0, 60.0, 80.0)
+        );
+        // A quarter turn about the box's origin, moved back by its height:
+        // the turned box stands at the offset, 80 wide and 60 tall.
+        assert_eq!(
+            placed(child),
+            accesskit::Rect::new(20.0, 40.0, 100.0, 100.0)
+        );
     }
 
     #[test]

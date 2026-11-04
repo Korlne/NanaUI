@@ -3847,15 +3847,34 @@ pub struct AccessibilityNode {
     /// This is omitted when the node cannot move on that axis.
     pub scroll_y: Option<AccessibilityScrollAxis>,
     pub focused: bool,
-    /// The node's box relative to its parent's: its offset from the
-    /// `bounds` origin of [`Self::parent`] (from the viewport for a root, or
-    /// a parent without bounds), and its size. A platform tree takes the
-    /// offset as the node's transform and the size as its local bounds, as
-    /// AccessKit does, so a node whose box moved with its parent is not
-    /// handed out again. The viewport box is the sum of the offsets down
-    /// the parent chain; [`crate::UiWorld::project_accessibility_in_viewport`]
-    /// gives it directly.
+    /// The node's box relative to its parent's space: `(x, y)` is where the
+    /// node's own space starts in its parent's ([`Self::parent`]'s; the
+    /// viewport for a root, or a parent without bounds), and `(width,
+    /// height)` is its box there, from that origin: `(0, 0, width, height)`
+    /// in its own space. With [`Self::transform`] unset a node's space is
+    /// its parent's moved by `(x, y)`; with it set, that move follows the
+    /// transform ([`Self::to_parent`]). A platform tree takes
+    /// [`Self::to_parent`] as the node's transform and `(0, 0, width,
+    /// height)` as its local bounds, as AccessKit does, so a node whose box
+    /// moved with its parent is not handed out again.
+    ///
+    /// Where a node stands in the viewport is the product of
+    /// [`Self::to_parent`] down the parent chain
+    /// ([`AccessibilityPlacements`]); [`crate::UiWorld::project_accessibility_in_viewport`]
+    /// gives the box around it directly.
     pub bounds: LayoutBox,
+    /// The turn, skew or flip from this node's space into its parent's,
+    /// applied before the move by `bounds`' `(x, y)`: node space to parent
+    /// space is `translate(x, y) · transform`. Set where a rotation, a skew
+    /// or a flip (a box's own `transform`, scaled by what is above it) turns
+    /// the node's box from its parent's axes; its `bounds` size is then its
+    /// own layout box, and its children's bounds are offsets in it, so they
+    /// keep them when the node moves or turns. `None` on every node whose
+    /// space is its parent's moved -- a chain of translations, scrolls and
+    /// positive scales, which `bounds` carries as scaled offsets -- and on
+    /// nodes inside a 3D context, whose `bounds` are the box around their
+    /// projected corners, as in the viewport.
+    pub transform: Option<nana_ui_core::PaintTransform>,
     /// What the node's clip chain leaves of the viewport, in viewport
     /// coordinates: the overflow containers whose clip reaches it (#201),
     /// each where it sits after the scroll above it. `None` when no
@@ -3868,6 +3887,137 @@ pub struct AccessibilityNode {
     /// The writing mode and direction its text reads in (#59): which way an
     /// assistive technology walks a text run.
     pub writing: nana_ui_core::WritingContext,
+}
+
+impl AccessibilityNode {
+    /// The map from this node's space into its parent's: the move by
+    /// `bounds`' `(x, y)` after [`Self::transform`], in the `matrix(a, b, c,
+    /// d, e, f)` convention (`x' = a·x + c·y + e`).
+    pub fn to_parent(&self) -> nana_ui_core::PaintTransform {
+        let mut placed = self.transform.unwrap_or_default();
+        placed.e += self.bounds.x;
+        placed.f += self.bounds.y;
+        placed
+    }
+
+    /// The node's box in its own space: `bounds`' size at the origin.
+    pub fn local_bounds(&self) -> LayoutBox {
+        LayoutBox {
+            x: 0.0,
+            y: 0.0,
+            ..self.bounds
+        }
+    }
+}
+
+/// Where every node of a relative accessibility projection
+/// ([`crate::UiWorld::project_accessibility`], its deltas applied) stands in
+/// the viewport: [`AccessibilityNode::to_parent`] multiplied down each
+/// node's parent chain. A node whose parent is not among the nodes is
+/// placed from the viewport, as a root is.
+///
+/// For automation, hit queries and tests that hold the relative tree; a
+/// world at hand gives the boxes directly with
+/// [`crate::UiWorld::project_accessibility_in_viewport`].
+#[derive(Debug, Clone, Default)]
+pub struct AccessibilityPlacements {
+    to_viewport: std::collections::HashMap<StableNodeId, (nana_ui_core::PaintTransform, LayoutBox)>,
+}
+
+impl AccessibilityPlacements {
+    /// Place `nodes`, in any order.
+    pub fn new<'a>(nodes: impl IntoIterator<Item = &'a AccessibilityNode>) -> Self {
+        let nodes: std::collections::HashMap<StableNodeId, &AccessibilityNode> =
+            nodes.into_iter().map(|node| (node.id, node)).collect();
+        let mut to_viewport = std::collections::HashMap::with_capacity(nodes.len());
+        let mut chain = Vec::new();
+        for &start in nodes.keys() {
+            let mut at = Some(start);
+            // Up to the first node already placed, or one with no parent here.
+            while let Some(id) = at {
+                if to_viewport.contains_key(&id) || chain.contains(&id) {
+                    break;
+                }
+                chain.push(id);
+                at = nodes[&id]
+                    .parent
+                    .filter(|parent| nodes.contains_key(parent));
+            }
+            while let Some(id) = chain.pop() {
+                let node = nodes[&id];
+                let above = node
+                    .parent
+                    .and_then(|parent| to_viewport.get(&parent))
+                    .map_or(nana_ui_core::PaintTransform::IDENTITY, |(placed, _)| {
+                        *placed
+                    });
+                let placed = above.then(node.to_parent());
+                to_viewport.insert(id, (placed, node.local_bounds()));
+            }
+        }
+        Self { to_viewport }
+    }
+
+    /// The map from `id`'s space to the viewport.
+    pub fn transform(&self, id: StableNodeId) -> Option<nana_ui_core::PaintTransform> {
+        self.to_viewport.get(&id).map(|(placed, _)| *placed)
+    }
+
+    /// `id`'s box corners in the viewport: top left, top right, bottom
+    /// right, bottom left of its own box.
+    pub fn corners(&self, id: StableNodeId) -> Option<[[f32; 2]; 4]> {
+        let (placed, local) = self.to_viewport.get(&id)?;
+        let point = |x: f32, y: f32| {
+            [
+                placed.a * x + placed.c * y + placed.e,
+                placed.b * x + placed.d * y + placed.f,
+            ]
+        };
+        let (right, bottom) = (local.width, local.height);
+        Some([
+            point(0.0, 0.0),
+            point(right, 0.0),
+            point(right, bottom),
+            point(0.0, bottom),
+        ])
+    }
+
+    /// The box around `id`'s corners in the viewport: where
+    /// [`crate::UiWorld::project_accessibility_in_viewport`] puts it, up to
+    /// rounding.
+    pub fn viewport_bounds(&self, id: StableNodeId) -> Option<LayoutBox> {
+        let corners = self.corners(id)?;
+        let (mut left, mut top) = (f32::INFINITY, f32::INFINITY);
+        let (mut right, mut bottom) = (f32::NEG_INFINITY, f32::NEG_INFINITY);
+        for [x, y] in corners {
+            left = left.min(x);
+            top = top.min(y);
+            right = right.max(x);
+            bottom = bottom.max(y);
+        }
+        Some(LayoutBox {
+            x: left,
+            y: top,
+            width: right - left,
+            height: bottom - top,
+        })
+    }
+
+    /// Whether the viewport point `(x, y)` is inside `id`'s box, as a
+    /// platform hit test through the node's transforms finds it.
+    pub fn contains(&self, id: StableNodeId, x: f32, y: f32) -> bool {
+        let Some((placed, local)) = self.to_viewport.get(&id) else {
+            return false;
+        };
+        let det = placed.a * placed.d - placed.b * placed.c;
+        if det == 0.0 || !det.is_finite() {
+            return false;
+        }
+        let (dx, dy) = (x - placed.e, y - placed.f);
+        let lx = (placed.d * dx - placed.c * dy) / det;
+        let ly = (placed.a * dy - placed.b * dx) / det;
+        lx >= 0.0 && ly >= 0.0 && lx <= local.width && ly <= local.height
+    }
 }
 
 /// The logical scroll position and range exposed to assistive technology.

@@ -166,33 +166,30 @@ pub(crate) fn projects_virtual_accessibility(visual: Option<&StandardVisual>) ->
 
 impl NodeRecord {
     /// Whether the accessible boxes under this box can be placed by their
-    /// offsets from their parents ([`Self::placed_by_accessibility_offset`]):
-    /// no 3D context and no transform but a translation and a positive
-    /// scale. Scrolling, sticky offsets and `absolute` / `fixed` placement
-    /// only translate, and what they translate by is not part of an offset;
-    /// a positive scale multiplies offsets by a factor that does not depend
-    /// on where any box stands. A rotation, a skew or a flip makes a box's
-    /// accessible bounds the box around its turned corners, which an offset
-    /// alone does not give.
+    /// offsets in its space ([`Self::placed_by_accessibility_offset`]): no
+    /// 3D context. Any 2D transform will do: a translation and a positive
+    /// scale multiply the offsets under it by factors that do not depend on
+    /// where any box stands, and a rotation, a skew or a flip is handed to
+    /// the platform as the box's own transform
+    /// ([`crate::AccessibilityNode::transform`]), its children placed by
+    /// their offsets inside it. Scrolling, sticky offsets and `absolute` /
+    /// `fixed` placement only translate, and what they translate by is not
+    /// part of an offset. Under a 3D context the bounds are the box around
+    /// projected corners, which no offset gives.
     pub(crate) fn hands_accessibility_offsets(&self) -> bool {
         let style = self.resolved_layout.as_ref();
-        style.transform_3d.is_none()
-            && style.css_perspective.is_none()
-            && !style.preserve_3d
-            && style.transform.is_none_or(|transform| {
-                transform.b == 0.0 && transform.c == 0.0 && transform.a > 0.0 && transform.d > 0.0
-            })
+        style.transform_3d.is_none() && style.css_perspective.is_none() && !style.preserve_3d
     }
 
     /// Whether this box's accessible bounds are its local layout offset from
-    /// its parent, through the scroll and the scale above it, when its
-    /// parent's chain hands offsets ([`Self::hands_accessibility_offsets`]):
-    /// measured from its parent, and placed nowhere else by its own style
-    /// (no transform or 3D context of its own, not `fixed` or `sticky`).
+    /// its parent and its own 2D transform, through the scroll and the scale
+    /// above it, when its parent's space is placed so
+    /// ([`Self::hands_accessibility_offsets`]): measured from its parent, and
+    /// placed nowhere else by its own style (no 3D context of its own, not
+    /// `fixed` or `sticky`).
     pub(crate) fn placed_by_accessibility_offset(&self) -> bool {
         let style = self.resolved_layout.as_ref();
         self.layout_frame == crate::LayoutFrame::Parent
-            && style.transform.is_none()
             && style.transform_3d.is_none()
             && style.css_perspective.is_none()
             && !style.preserve_3d
@@ -208,8 +205,8 @@ impl NodeRecord {
     /// not handing its children offsets
     /// ([`Self::hands_accessibility_offsets`]), or a visual whose accessible
     /// nodes come from its geometry ([`projects_virtual_accessibility`]).
-    /// Every other box keeps its bounds when its parent moves, to the bit,
-    /// and so does all it holds.
+    /// Every other box keeps its bounds and transform when its parent
+    /// moves, to the bit, and so does all it holds.
     pub(crate) fn pins_accessibility(&self, visual: Option<&StandardVisual>) -> bool {
         !self.placed_by_accessibility_offset()
             || self.resolved_layout.clips_overflow()
