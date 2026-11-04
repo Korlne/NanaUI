@@ -1791,6 +1791,27 @@ impl SceneWgpuPainter {
                         corner_radius,
                         shadow,
                         surface,
+                    } if quad_paints_nothing(
+                        *background,
+                        *border_color,
+                        *border_width,
+                        shadow.as_ref(),
+                        surface,
+                    ) =>
+                    {
+                        // A box with no fill, edge, shadow or image draws no
+                        // pixel. Shading it anyway costs its whole area: a
+                        // window-sized rounded container on every frame.
+                        self.natural_sizes
+                            .note_quad(&self.url_cache, id, bounds, surface);
+                    }
+                    ScenePrimitiveKind::Quad {
+                        background,
+                        border_color,
+                        border_width,
+                        corner_radius,
+                        shadow,
+                        surface,
                     } => {
                         let painted = quad_painted_bounds(
                             bounds,
@@ -3999,6 +4020,38 @@ fn ensure_backdrop_target_ready(
         drop(pass);
         *dest_load = wgpu::LoadOp::Load;
     }
+}
+
+/// Whether a quad paints no pixel at all: no fill, no visible edge, outline
+/// or shadow, no image, material or backdrop. Such boxes still lay out, hit
+/// and clip; they only have nothing to draw.
+fn quad_paints_nothing(
+    background: Option<nana_ui_core::PaintColor>,
+    border_color: Option<nana_ui_core::PaintColor>,
+    border_width: f32,
+    shadow: Option<&nana_ui_runtime::ComponentElevation>,
+    surface: &nana_ui_scene::QuadSurfacePaint,
+) -> bool {
+    let edge = (border_width > 0.0 && border_color.is_some())
+        || surface
+            .border_widths
+            .iter()
+            .zip(&surface.border_colors)
+            .any(|(width, color)| *width > 0.0 && (color.is_some() || border_color.is_some()));
+    background.is_none()
+        && !edge
+        && shadow.is_none()
+        && surface.extra_shadows.is_empty()
+        && surface.border_image.is_none()
+        && !(surface.outline_width > 0.0 && surface.outline_color.is_some())
+        && surface.background_material.is_none()
+        && surface.border_material.is_none()
+        && surface.background_image.is_none()
+        && surface.background_layers.is_empty()
+        && surface.content_image.is_none()
+        && surface
+            .backdrop_filter
+            .is_none_or(|filter| !filter.is_active())
 }
 
 #[cfg(test)]

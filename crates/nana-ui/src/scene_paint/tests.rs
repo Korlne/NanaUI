@@ -14359,3 +14359,67 @@ fn rows_a_reflow_moves_by_a_fraction_paint_what_a_cold_scene_does() {
         );
     }
 }
+
+/// The stage pane shape: a window-sized rounded container and a rounded frame
+/// that only clip, over a host texture. They have nothing to draw; shading them
+/// cost two window-sized fragment passes on every frame.
+#[test]
+fn boxes_with_nothing_to_paint_add_no_draw_and_no_pixel() {
+    let (device, queue) = test_device();
+    let format = wgpu::TextureFormat::Rgba8Unorm;
+    let paint = |empty_boxes: bool| {
+        let mut painter = SceneWgpuPainter::for_test(format);
+        let mut context = AppContext::new();
+        let document = DocumentId::new(1).unwrap();
+        let mut layout = MutationQueue::new();
+        if empty_boxes {
+            for (x, y, w, h) in [(0.0, 0.0, 64.0, 64.0), (4.0, 4.0, 56.0, 56.0)] {
+                let empty = context
+                    .create_component(
+                        document,
+                        nana_ui_runtime::Stack::column(0.0)
+                            .with_layout(|l| l.border_radius = Some(12.0)),
+                    )
+                    .unwrap();
+                write_box(&mut layout, empty.stable_id(), x, y, w, h);
+            }
+        }
+        let preview = context
+            .create_component(document, GpuTextureView::new("stage"))
+            .unwrap();
+        write_box(&mut layout, preview.stable_id(), 8.0, 8.0, 48.0, 48.0);
+        context.commit_mutations(layout).unwrap();
+        let scene = commit_scene(&mut context);
+        let view = solid_texture_view(&device, &queue, format, 48, 48, wgpu::Color::GREEN);
+        let registry = register_host_texture("stage", &view, 48, 48);
+        let (target, target_view) = test_copy_target(&device, format, 64, 64);
+        let viewport = ScenePaintViewport {
+            logical_size: [64.0, 64.0],
+            physical_size: [64, 64],
+            scale_factor: 1.0,
+            scene_origin: [0.0, 0.0],
+            target_origin: [0.0, 0.0],
+            clear_color: [0.0, 0.0, 0.0, 1.0],
+            clear: true,
+        };
+        let mut encoder = device.create_command_encoder(&Default::default());
+        painter
+            .paint_encoder(
+                &scene,
+                &mut encoder,
+                &target_view,
+                viewport,
+                Some(&registry),
+                None,
+            )
+            .unwrap();
+        let pixels = readback_rgba(&device, &queue, encoder, &target, 64, 64);
+        let work = painter.last_gpu_work().expect("painted frame records work");
+        drop(view);
+        (pixels, work.draw_calls)
+    };
+    let (bare, bare_draws) = paint(false);
+    let (boxed, boxed_draws) = paint(true);
+    assert_eq!(boxed_draws, bare_draws, "empty boxes must not draw");
+    assert_eq!(boxed, bare, "empty boxes must not change a pixel");
+}
