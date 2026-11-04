@@ -1805,8 +1805,14 @@ impl UiWorld {
         if plain || self.axis_aligned(entry.id, memo) {
             return Some((offset, None));
         }
-        if self.offset_placed(entry.id, record, memo) {
-            let unit = self.accessible_space(parent, memo)?.unit?;
+        // [`Self::offset_placed`], with the parent's space looked up once.
+        let above = self.accessible_space(parent, memo);
+        if let Some(unit) = above.and_then(|space| space.unit)
+            && self.motion_free_unclipped()
+            && self.offset_placed_under(entry.id, record, true)
+        {
+            #[cfg(any(test, feature = "layout-verify"))]
+            assert!(self.offset_placed(entry.id, record, memo));
             let placed = self.local_placement(entry.id, record, parent, unit)?;
             #[cfg(any(test, feature = "layout-verify"))]
             self.check_offset_bounds(entry, parent, placed, memo);
@@ -1815,10 +1821,7 @@ impl UiWorld {
         // Off those paths, only where what was projected for both is their
         // layout boxes, as a cold projection finds them, and the parent's
         // space is the viewport's, moved.
-        if self
-            .accessible_space(parent, memo)
-            .is_some_and(|space| space.turned)
-        {
+        if above.is_some_and(|space| space.turned) {
             return None;
         }
         let own = self.record_layout_origin(record);
@@ -1939,52 +1942,31 @@ impl UiWorld {
             // Boxes resized where they stood whose own transform turns
             // about a centre the new size moved: their space moved, as a
             // moved box's does, while what they hold kept its offsets in
-            // it. They are walked as moved boxes are.
+            // it. They are walked as moved boxes are, and moved boxes that
+            // are walked box by box stop at them: those walks wait for the
+            // list.
             let mut resized_roots = Vec::new();
-            for &id in &moved_seeds {
-                if work.layout_moved.binary_search(&id).is_err()
-                    && let Some(node) = self.nodes.get(id)
-                    && node.resolved_layout.transform.is_some()
-                    && self.moved_root_hands_offsets(id, &mut memo)
-                {
-                    resized_roots.push(id);
-                }
-            }
-            let walk_roots = if resized_roots.is_empty() {
-                std::borrow::Cow::Borrowed(&work.layout_moved)
-            } else {
-                let mut roots = work.layout_moved.clone();
-                roots.extend(&resized_roots);
-                roots.sort_unstable();
-                roots.dedup();
-                std::borrow::Cow::Owned(roots)
-            };
+            let mut walked = Vec::new();
             for &id in &moved_seeds {
                 if work.layout_moved.binary_search(&id).is_ok() {
                     if self.moved_root_hands_offsets(id, &mut memo) {
                         pin_roots.push(id);
                     } else {
-                        let mut open = Vec::new();
-                        self.reach_moved_subtree(
-                            id,
-                            &mut open,
-                            &walk_roots,
-                            false,
-                            &mut affected,
-                            &mut pending,
-                            &mut memo,
-                        );
+                        walked.push(id);
                     }
-                } else if resized_roots.binary_search(&id).is_ok() {
-                    pin_roots.push(id);
                 } else if let Some(node) = self.nodes.get(id) {
+                    let style = node.resolved_layout.as_ref();
+                    if style.transform.is_some() && self.moved_root_hands_offsets(id, &mut memo) {
+                        resized_roots.push(id);
+                        pin_roots.push(id);
+                        continue;
+                    }
                     // Resized where it stood: what it holds stays on the
                     // page, unless its own transform turns about a centre
                     // the new size moved, or its box is turned or projected
                     // in the viewport, so its accessible box is the box
                     // around turned corners, whose origin the new size
                     // moves.
-                    let style = node.resolved_layout.as_ref();
                     if style.transform.is_some()
                         || style.transform_3d.is_some()
                         || style.css_perspective.is_some()
@@ -2008,6 +1990,27 @@ impl UiWorld {
                         );
                     }
                 }
+            }
+            let walk_roots = if resized_roots.is_empty() {
+                std::borrow::Cow::Borrowed(&work.layout_moved)
+            } else {
+                let mut roots = work.layout_moved.clone();
+                roots.extend(&resized_roots);
+                roots.sort_unstable();
+                roots.dedup();
+                std::borrow::Cow::Owned(roots)
+            };
+            for id in walked {
+                let mut open = Vec::new();
+                self.reach_moved_subtree(
+                    id,
+                    &mut open,
+                    &walk_roots,
+                    false,
+                    &mut affected,
+                    &mut pending,
+                    &mut memo,
+                );
             }
             if !pin_roots.is_empty() {
                 pin_roots.sort_unstable();
