@@ -26,6 +26,21 @@ struct AccessibleTransform {
     own: ([f32; 6], [f32; 2]),
     children: ([f32; 6], [f32; 2]),
     blocks_3d: bool,
+    /// The node's layout origin on the page ([`UiWorld::layout_origin`]):
+    /// a child measured from it stands its local offset away, by the same
+    /// addition [`UiWorld::record_layout_origin`] makes.
+    origin: [f32; 2],
+}
+
+/// What a projected node's chain answers for every child it holds, asked
+/// once for them all: whether a box above them is hidden, is not
+/// axis-aligned ([`UiWorld::axis_aligned`]) or does not hand offsets
+/// ([`UiWorld::offset_placed`]).
+#[derive(Clone, Copy)]
+struct ChildChain {
+    hidden: bool,
+    aligned: bool,
+    hands_offsets: bool,
 }
 
 impl UiWorld {
@@ -42,17 +57,30 @@ impl UiWorld {
     /// visuals cut it, so those leave the walk; every live modal frame is a
     /// clip visual, so none is left whose surface is its accessible box.
     fn axis_aligned(&self, id: StableNodeId, memo: &mut ProjectionMemo) -> bool {
+        let Some(record) = self.nodes.get(id) else {
+            return false;
+        };
+        let above = self.motion_free_unclipped()
+            && record
+                .hierarchy
+                .parent
+                .is_none_or(|parent| self.chain_axis_aligned(parent, memo));
+        self.axis_aligned_under(id, record, above, memo)
+    }
+
+    /// [`Self::axis_aligned`] for `record`, `id`'s, with the chain above it
+    /// already answered (`above`).
+    fn axis_aligned_under(
+        &self,
+        id: StableNodeId,
+        record: &NodeRecord,
+        above: bool,
+        memo: &mut ProjectionMemo,
+    ) -> bool {
         // The box itself is not memoized, only the chains above it: a
         // projection asks after each of its children once, and their own
         // boxes are rarely asked after again, where every ancestor is.
-        let aligned = self.motion_free_unclipped()
-            && self.nodes.get(id).is_some_and(|record| {
-                self.box_axis_aligned(id, record)
-                    && record
-                        .hierarchy
-                        .parent
-                        .is_none_or(|parent| self.chain_axis_aligned(parent, memo))
-            });
+        let aligned = above && self.box_axis_aligned(id, record);
         #[cfg(any(test, feature = "layout-verify"))]
         if aligned {
             assert_eq!(
@@ -61,7 +89,19 @@ impl UiWorld {
                 "{id:?}: an axis-aligned box's accessible box is not its layout box"
             );
         }
+        #[cfg(not(any(test, feature = "layout-verify")))]
+        let _ = memo;
         aligned
+    }
+
+    /// What `id`'s chain answers for the children it holds ([`ChildChain`]).
+    fn child_chain(&self, id: StableNodeId, memo: &mut ProjectionMemo) -> ChildChain {
+        let free = self.motion_free_unclipped();
+        ChildChain {
+            hidden: self.ancestor_hidden(id, memo),
+            aligned: free && self.chain_axis_aligned(id, memo),
+            hands_offsets: free && self.chain_hands_offsets(id, memo),
+        }
     }
 
     /// No motion overlay and no clip visual anywhere: what decides whether
@@ -177,14 +217,18 @@ impl UiWorld {
         record: &NodeRecord,
         memo: &mut ProjectionMemo,
     ) -> bool {
-        self.motion_free_unclipped()
+        let above = record.hierarchy.parent.is_some_and(|parent| {
+            self.motion_free_unclipped() && self.chain_hands_offsets(parent, memo)
+        });
+        self.offset_placed_under(id, record, above)
+    }
+
+    /// [`Self::offset_placed`] with the chain above already answered.
+    fn offset_placed_under(&self, id: StableNodeId, record: &NodeRecord, above: bool) -> bool {
+        above
             && record.placed_by_accessibility_offset()
             && !matches!(record.kind.as_ref(), NodeKind::Document)
             && (self.triggered_overlays.is_empty() || self.parent_triggered_overlay(id).is_none())
-            && record
-                .hierarchy
-                .parent
-                .is_some_and(|parent| self.chain_hands_offsets(parent, memo))
     }
 
     /// Whether `id`, a child of `parent`, has a viewport box
@@ -199,13 +243,38 @@ impl UiWorld {
         parent: StableNodeId,
         memo: &mut ProjectionMemo,
     ) -> bool {
-        if let Some(record) = self.nodes.get(id)
-            && let Some(&transform) = memo.transforms.get(&parent)
-            && self.offset_placed(id, record, memo)
+        let Some(record) = self.nodes.get(id) else {
+            return self.visible_accessibility_bounds(id, memo).is_some();
+        };
+        let above = self.motion_free_unclipped() && self.chain_hands_offsets(parent, memo);
+        self.has_accessibility_bounds_under(id, record, parent, above, memo)
+    }
+
+    /// [`Self::has_accessibility_bounds`] for `record`, `id`'s, with whether
+    /// the chain above hands offsets already answered (`above`). The child's
+    /// page box is its local offset from `parent`'s origin, which the
+    /// parent's transform already holds.
+    fn has_accessibility_bounds_under(
+        &self,
+        id: StableNodeId,
+        record: &NodeRecord,
+        parent: StableNodeId,
+        above: bool,
+        memo: &mut ProjectionMemo,
+    ) -> bool {
+        if let Some(&transform) = memo.transforms.get(&parent)
+            && record.hierarchy.parent == Some(parent)
+            && self.geometry_frame.get().is_none()
+            && self.offset_placed_under(id, record, above)
         {
             let ([a, b, c, d, e, f], [g, h]) = transform.children;
             if g == 0.0 && h == 0.0 {
-                let bounds = self.record_layout_box(record);
+                let local = record.local_layout;
+                let bounds = LayoutBox {
+                    x: transform.origin[0] + local.x,
+                    y: transform.origin[1] + local.y,
+                    ..local
+                };
                 let finite = [
                     (bounds.x, bounds.y),
                     (bounds.x + bounds.width, bounds.y + bounds.height),
@@ -213,11 +282,18 @@ impl UiWorld {
                 .into_iter()
                 .all(|(x, y)| (a * x + c * y + e).is_finite() && (b * x + d * y + f).is_finite());
                 #[cfg(any(test, feature = "layout-verify"))]
-                assert_eq!(
-                    finite,
-                    self.visible_accessibility_bounds(id, memo).is_some(),
-                    "{id:?}: whether it has a viewport box"
-                );
+                {
+                    assert_eq!(
+                        bounds,
+                        self.record_layout_box(record),
+                        "{id:?}: its page box is not its parent's origin and its offset"
+                    );
+                    assert_eq!(
+                        finite,
+                        self.visible_accessibility_bounds(id, memo).is_some(),
+                        "{id:?}: whether it has a viewport box"
+                    );
+                }
                 return finite;
             }
         }
@@ -362,6 +438,7 @@ impl UiWorld {
                     own,
                     children: cumulative,
                     blocks_3d,
+                    origin: [bounds.x, bounds.y],
                 },
             );
         }
@@ -669,16 +746,40 @@ impl UiWorld {
             children.as_ref().clone()
         } else {
             let mut kept = Vec::with_capacity(children.len());
-            kept.extend(children.iter().copied().filter(|child| {
-                let child_id = *child;
-                self.nodes.get(child_id).is_some_and(|node| {
-                    node.resolved.0.box_visible
+            if !children.is_empty() {
+                let chain = self.child_chain(id, memo);
+                kept.extend(children.iter().copied().filter(|&child| {
+                    let Some(node) = self.nodes.get(child) else {
+                        return false;
+                    };
+                    let kept = node.resolved.0.box_visible
                         && (node.resolved.0.visible || !node.hierarchy.children.is_empty())
                         && !matches!(node.kind.as_ref(), NodeKind::Comment)
-                }) && !self.accessibility_hidden(child_id, memo)
-                    && (self.axis_aligned(child_id, memo)
-                        || self.has_accessibility_bounds(child_id, id, memo))
-            }));
+                        && !(chain.hidden
+                            || node.accessibility.hidden
+                            || self.inline_box_omitted(child))
+                        && (self.axis_aligned_under(child, node, chain.aligned, memo)
+                            || self.has_accessibility_bounds_under(
+                                child,
+                                node,
+                                id,
+                                chain.hands_offsets,
+                                memo,
+                            ));
+                    #[cfg(any(test, feature = "layout-verify"))]
+                    assert_eq!(
+                        kept,
+                        node.resolved.0.box_visible
+                            && (node.resolved.0.visible || !node.hierarchy.children.is_empty())
+                            && !matches!(node.kind.as_ref(), NodeKind::Comment)
+                            && !self.accessibility_hidden(child, memo)
+                            && (self.axis_aligned(child, memo)
+                                || self.has_accessibility_bounds(child, id, memo)),
+                        "{child:?}: kept by its parent's chain, not by its own"
+                    );
+                    kept
+                }));
+            }
             kept
         };
         if self.nodes.has_visuals()
