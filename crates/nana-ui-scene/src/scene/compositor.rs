@@ -6,9 +6,9 @@
 use std::time::Duration;
 
 use nana_ui_core::motion::{
-    AnimatableProperty, AnimationClass, MotionDescriptorStore, MotionGpuDescriptor,
-    MotionGpuKeyframe, MotionHandle, MotionInspectorEntry, MotionTargetId, MotionTrackId,
-    MotionValue, MotionWorkCounters, PresentationStore, evaluate_track,
+    AnimatableProperty, AnimationClass, AnimationPlayState, MotionDescriptorStore,
+    MotionGpuDescriptor, MotionGpuKeyframe, MotionHandle, MotionInspectorEntry, MotionTargetId,
+    MotionTrack, MotionTrackId, MotionValue, MotionWorkCounters, PresentationStore, evaluate_track,
 };
 use nana_ui_core::{ColorFilter, PaintTransform};
 use nana_ui_runtime::{ExtractedNode, NodeMap, NodeSet, StableNodeId};
@@ -135,6 +135,11 @@ pub(super) struct CompositorRegistry {
     pending: NodeMap<LayerSnapshot>,
     phases: NodeMap<LayerPhase>,
     requested: NodeSet,
+    /// Whether some compositor motion bound in the last
+    /// [`UiScene::apply_presentation`] still changes with time. A track that
+    /// has finished and holds its last value, or is paused, samples the same
+    /// at every later clock, so its layer needs no further frames.
+    motion_live: bool,
     presentation_epoch: u64,
     surface_generation: u64,
     last_promoted: usize,
@@ -262,10 +267,20 @@ impl UiScene {
         }
     }
 
+    /// Whether the compositor has anything left to show at a later clock:
+    /// motion still running, a promotion or demotion waiting out its hold,
+    /// or live glyph and chart presentation. Layers whose motion has all
+    /// finished (a fade that holds its end value) or is paused keep their
+    /// layer but stop driving frames.
     pub fn compositor_needs_tick(&self) -> bool {
-        !self.compositor.layers.is_empty()
-            || !self.compositor.phases.is_empty()
-            || !self.compositor.requested.is_empty()
+        self.compositor.motion_live
+            || self.compositor.phases.values().any(|phase| {
+                matches!(
+                    phase,
+                    LayerPhase::PendingPromote { .. } | LayerPhase::PendingDemote { .. }
+                )
+            })
+            || !self.compositor.pending.is_empty()
             || self.glyph_presentation_live()
             || self.chart_presentation_live()
     }
@@ -369,6 +384,23 @@ impl UiScene {
         for node in self.compositor.phases.keys().copied() {
             candidates.insert(node);
         }
+        self.compositor.motion_live = store.overlays().any(|overlay| {
+            overlay.track.property.animation_class() == AnimationClass::Compositor
+                && StableNodeId::new(overlay.track.target.get())
+                    .is_some_and(|node| self.nodes.contains_key(&node))
+                && track_changes_after(&overlay.track, now)
+        }) || descriptors.is_some_and(|descriptors| {
+            candidates.iter().any(|node| {
+                self.nodes.get(node).is_some_and(|extracted| {
+                    extracted.compositor.bindings.iter().any(|track| {
+                        store.get(*track).is_none()
+                            && descriptors
+                                .evaluate_track(*track, now)
+                                .is_some_and(|sample| !sample.finished)
+                    })
+                })
+            })
+        });
 
         if candidates.is_empty() && self.nodes.opacity_motion.is_empty() {
             return;
@@ -1222,6 +1254,12 @@ fn presentation_pivot(node: &ExtractedNode) -> Option<[f32; 2]> {
     node.component_geometry
         .as_deref()?
         .presentation_pivot(super::UiScene::record_box(node))
+}
+
+/// Whether `track` samples differently at some clock after `now`: not
+/// finished there, and not frozen by a pause.
+fn track_changes_after(track: &MotionTrack, now: Duration) -> bool {
+    track.playback.play_state != AnimationPlayState::Paused && !evaluate_track(track, now).finished
 }
 
 #[cfg(test)]
@@ -2477,6 +2515,82 @@ mod tests {
                 .advance_animations(Duration::from_millis(80))
                 .animation_deadlines_scanned,
             0
+        );
+    }
+
+    /// A fade that holds its end value (chrome faded out and left hidden)
+    /// keeps showing that value, but nothing about it changes any more: the
+    /// window must not keep presenting for it. Same for a paused one.
+    #[test]
+    fn settled_compositor_motion_stops_ticking() {
+        use nana_ui_core::motion::{
+            AnimationFillMode, AnimationIteration, AnimationPlayState, AnimationPlayback,
+        };
+        use nana_ui_runtime::{AnimationId, AnimationSpec, DocumentId, MutationQueue, UiWorld};
+        let fade = |animation: u64, node: StableNodeId, playback: AnimationPlayback| {
+            AnimationSpec::new(
+                AnimationId::new(animation).unwrap(),
+                node,
+                Duration::ZERO,
+                Duration::from_millis(200),
+                Duration::from_millis(16),
+                Easing::Linear,
+            )
+            .with_property(AnimatableProperty::Opacity)
+            .with_range(
+                MotionValue::Scalar(1.0),
+                MotionTo::Value(MotionValue::Scalar(0.0)),
+            )
+            .with_playback(playback)
+        };
+        let held = AnimationPlayback::running(
+            AnimationIteration::Count(1),
+            Default::default(),
+            AnimationFillMode::Forwards,
+        );
+        let run = |playback: AnimationPlayback| {
+            let mut world = UiWorld::new();
+            let node = id(1);
+            let mut queue = MutationQueue::new();
+            queue.create(node, DocumentId::new(1).unwrap(), NodeKind::Document);
+            queue.start_animation(fade(1, node, playback));
+            world.commit(queue).unwrap();
+            let mut scene = UiScene::new();
+            scene.apply_delta(world.extract_nodes(&[node]), []);
+            let mut ticks = Vec::new();
+            for millis in [0u64, 50, 100, 150, 400, 800, 1200] {
+                let now = Duration::from_millis(millis);
+                world.advance_animations(now);
+                world.sync_presentation_clock(now);
+                scene.apply_presentation(
+                    world.presentation_store(),
+                    world.animation_now(),
+                    Some(world.motion_descriptors()),
+                );
+                ticks.push(scene.compositor_needs_tick());
+            }
+            (scene, node, ticks)
+        };
+
+        let (scene, node, ticks) = run(held);
+        assert!(ticks[1], "a running fade ticks");
+        assert!(
+            !ticks[ticks.len() - 1],
+            "a finished fade that holds its end value must stop ticking: {ticks:?}"
+        );
+        if let Some(layer) = scene.compositor_layer(node) {
+            assert_eq!(layer.opacity, 0.0, "the held value still shows");
+        }
+
+        let paused = AnimationPlayback {
+            play_state: AnimationPlayState::Paused,
+            paused_at: Some(Duration::from_millis(100)),
+            ..held
+        };
+        let (_, _, ticks) = run(paused);
+        assert!(
+            !ticks[ticks.len() - 1],
+            "a paused fade samples the same at every clock: {ticks:?}"
         );
     }
 

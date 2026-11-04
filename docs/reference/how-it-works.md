@@ -67,7 +67,7 @@ scene_gpu_renderers / scene_resource_producers
 ```
 
 - **无变更不空刷**：当树没有变化时，`flush` 是微秒级空转，宿主不会空刷帧。静态窗口保持 `FrameDemand::OnDemand`。
-- **唤醒通道分离**：动画、实时 GPU 画面与普通 UI 变更的唤醒彼此独立。一块实时纹理更新（通过 `HostTextureRegistry::slot` 返回的 `TextureSlot` 通知引用它的窗口）或一条合成器动画推进，不会迫使整棵 `UiWorld` 重新跑样式与布局。
+- **唤醒通道分离**：动画、实时 GPU 画面与普通 UI 变更的唤醒彼此独立。一块实时纹理更新（通过 `HostTextureRegistry::slot` 返回的 `TextureSlot` 通知引用它的窗口）或一条合成器动画推进，不会迫使整棵 `UiWorld` 重新跑样式与布局。窗口在自己这一帧的 `prepare_window_frame` 里把生产者的新帧绑进槽位时，这次槽位通知由正在画的这一帧消化，一帧生产者画面只呈现一次；开始编码之后才换的槽位照常再唤醒一次。
 - **遮挡与零尺寸窗口**：当窗口被最小化、遮挡或尺寸为 0 时，宿主仍按程序声明的 `FrameDemand` 调用 `prepare_window_frame`（当尺寸可画时仍编码离屏 producer），但跳过 UI `flush`、不获取 Surface、不 `present`，也不调用 `window_frame_presented`。
 - **应用不手写布局**：`flush` 内部统一调用宿主的 `NanaTextShaper` 与 `RuntimeLayoutEngine`，应用切勿自行跑第二套布局或往树里硬塞像素坐标。对外公开身份只有 `DocumentId`、`StableNodeId` 和类型化的 `Entity<V>`。
 

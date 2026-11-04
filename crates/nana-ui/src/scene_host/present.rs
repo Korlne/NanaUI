@@ -446,6 +446,14 @@ impl<Program: RuntimeProgram> WindowManager<Program> {
             parameters: presentation_parameters,
         };
         stage_clock.mark(&stage::PRESENTATION_PLAN_NS);
+        // This frame samples every host texture slot as it stands now, so a
+        // wake for this window queued before here is answered by it. Above
+        // all the one its own `prepare_window_frame` raised by binding a
+        // producer frame into a slot: left queued, every producer frame
+        // presented twice. A slot replaced from here on queues a fresh wake.
+        if let Ok(mut pending) = self.texture_redraws.lock() {
+            pending.remove(&id);
+        }
         let (output, encoded_presentation) = match self.encode_presentation(
             id,
             output_step,
