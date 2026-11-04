@@ -1900,6 +1900,13 @@ impl UiScene {
                     ..
                 }) => own_frame(|| {
                     let ratio = ratio.clamp(0.0, 1.0);
+                    let value_thumb = match node.component_geometry.as_deref() {
+                        Some(ComponentGeometry::Range {
+                            value_thumb: Some(thumb),
+                            ..
+                        }) => Some(thumb),
+                        _ => None,
+                    };
                     let (track_band, thumb_ring, girth, border_width) =
                         match node.component_geometry.as_deref() {
                             Some(ComponentGeometry::Range {
@@ -1939,7 +1946,60 @@ impl UiScene {
                         height: girth,
                     };
                     let rail_radius = girth / 2.0;
-                    if let Some((stops, _)) = gradient {
+                    if let Some(thumb) = value_thumb {
+                        // A value thumb's rail runs the whole lane, the
+                        // capsule's travel and half a capsule past each end,
+                        // and stops a gap short of the capsule on each side,
+                        // so the capsule reads on the fill it sits on. The
+                        // fill reaches the capsule, which marks its end.
+                        let capsule = scene_rect(thumb.capsule);
+                        let half = capsule.width / 2.0;
+                        let lane = SceneRect {
+                            x: rail.x - half,
+                            width: rail.width + capsule.width,
+                            ..rail
+                        };
+                        let cut = if thumb.editing { 0.0 } else { thumb.gap };
+                        let before = SceneRect {
+                            width: (capsule.x - cut - lane.x).max(0.0),
+                            ..lane
+                        };
+                        let after_x = capsule.x + capsule.width + cut;
+                        let after = SceneRect {
+                            x: after_x,
+                            width: (lane.x + lane.width - after_x).max(0.0),
+                            ..lane
+                        };
+                        self.insert_primitive(visual_quad_with_paint(
+                            &visual_context,
+                            3,
+                            after,
+                            VisualQuadStyle {
+                                background: node.style.border_color,
+                                border_color: None,
+                                border_width: 0.0,
+                                corner_radius: corner_radii(rail_radius),
+                            },
+                            matching_paint_color(
+                                node.style.paint_colors.border,
+                                node.style.border_color,
+                            ),
+                            None,
+                        ));
+                        self.insert_primitive(visual_quad_with_paint(
+                            &visual_context,
+                            4,
+                            before,
+                            VisualQuadStyle {
+                                background: node.style.background,
+                                border_color: None,
+                                border_width: 0.0,
+                                corner_radius: corner_radii(rail_radius),
+                            },
+                            node.style.paint_colors.background,
+                            None,
+                        ));
+                    } else if let Some((stops, _)) = gradient {
                         let mut strip = visual_quad(
                             &visual_context,
                             3,
@@ -2023,13 +2083,35 @@ impl UiScene {
                         ));
                     }
                     let thumb_slot = 5 + marker_count;
-                    let thumb_rect = SceneRect {
-                        x: track_band.x + track_band.width * ratio - thumb_extent / 2.0,
-                        y: track_band.y + (track_band.height - thumb_extent) / 2.0,
-                        width: thumb_extent,
-                        height: thumb_extent,
+                    let thumb_rect = match value_thumb {
+                        Some(thumb) => scene_rect(thumb.capsule),
+                        None => SceneRect {
+                            x: track_band.x + track_band.width * ratio - thumb_extent / 2.0,
+                            y: track_band.y + (track_band.height - thumb_extent) / 2.0,
+                            width: thumb_extent,
+                            height: thumb_extent,
+                        },
                     };
-                    let focus_slot = if let Some((_, ring)) = gradient {
+                    let focus_slot = if let Some(thumb) = value_thumb {
+                        // A capsule, the accent filling it; its value is
+                        // written over it with the range's other text.
+                        if !thumb.editing {
+                            self.insert_primitive(visual_quad_with_paint(
+                                &visual_context,
+                                thumb_slot,
+                                thumb_rect,
+                                VisualQuadStyle {
+                                    background: node.style.background,
+                                    border_color: None,
+                                    border_width: 0.0,
+                                    corner_radius: corner_radii(thumb_rect.height / 2.0),
+                                },
+                                node.style.paint_colors.background,
+                                None,
+                            ));
+                        }
+                        thumb_slot + 1
+                    } else if let Some((_, ring)) = gradient {
                         for quad in
                             contrast_ring_quads(&visual_context, thumb_slot, thumb_rect, ring)
                         {
@@ -2054,7 +2136,7 @@ impl UiScene {
                         }
                         thumb_slot + 1
                     };
-                    if node.focused {
+                    if node.focused && !value_thumb.is_some_and(|thumb| thumb.editing) {
                         // Focus marks the thumb (LiliaUI focus-visible outline),
                         // never the rail: the rail colour stays interaction-free.
                         // The theme's ring, in the thumb's stroke units.
@@ -2075,7 +2157,7 @@ impl UiScene {
                                 background: None,
                                 border_color: node.standard_visual_foreground,
                                 border_width: ring_width,
-                                corner_radius: corner_radii(ring.width.max(ring.height) / 2.0),
+                                corner_radius: corner_radii(ring.width.min(ring.height) / 2.0),
                             },
                             None,
                             matching_paint_color(

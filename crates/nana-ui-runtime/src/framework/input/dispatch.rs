@@ -260,7 +260,13 @@ impl AppContext {
                     true
                 } else {
                     self.update_scrollbar_drag(document, *pointer_id, *x, *y)?
-                        || self.update_range_drag_at(document, *pointer_id, *x, *y)?
+                        || self.update_range_drag_at(
+                            document,
+                            *pointer_id,
+                            *x,
+                            *y,
+                            modifiers.alt,
+                        )?
                         || self.update_range_span_drag_at(document, *pointer_id, *x, *y)?
                         || self.update_curve_drag_at(document, *pointer_id, *x, *y)?
                         || self.update_xy_pad_drag(
@@ -1249,10 +1255,17 @@ impl AppContext {
         // A numeric field's step and commit keys are routed with its other
         // editing keys in `text_editor_key`; Escape is not an editing key and
         // reverts the draft here.
-        if key == "Escape" && self.revert_focused_number_input(document)? {
-            // a scrub field's typing ends with its revert
-            self.end_focused_scrub_edit(document)?;
-            return Ok(true);
+        if key == "Escape" {
+            let reverted = self.revert_focused_number_input(document)?;
+            if reverted {
+                // a scrub field's typing ends with its revert
+                self.end_focused_scrub_edit(document)?;
+            }
+            // a range's typing ends with Escape, whether the draft changed
+            let range = self.end_focused_range_edit(document)?;
+            if reverted || range {
+                return Ok(true);
+            }
         }
         let palette_nav = match key {
             "ArrowUp" => Some(crate::ActionPickerNavigation::Previous),
@@ -1518,7 +1531,8 @@ impl AppContext {
                 "Enter" => {
                     let committed = self.commit_focused_number_input(document)?;
                     // a scrub field's typing ends with Enter, committed or not
-                    let ended = self.end_focused_scrub_edit(document)?;
+                    let ended = self.end_focused_scrub_edit(document)?
+                        | self.end_focused_range_edit(document)?;
                     return Ok(committed || ended);
                 }
                 _ => {}

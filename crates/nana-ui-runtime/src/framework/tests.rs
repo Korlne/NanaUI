@@ -3986,6 +3986,10 @@ fn native_toggle_and_slider_state_share_events_visuals_and_accessibility() {
             invalid: false,
             rail: None,
             track_gradient: None,
+            value_thumb: None,
+            editing: false,
+            bounds: None,
+            reset: false,
         })
     );
     let accessibility = context.world().project_accessibility(document);
@@ -10378,6 +10382,10 @@ fn component_size_kind_and_fallback_geometry_preserve_design_contracts() {
                 invalid: false,
                 rail: None,
                 track_gradient: None,
+                value_thumb: None,
+                editing: false,
+                bounds: None,
+                reset: false,
             })
         );
     }
@@ -10553,6 +10561,10 @@ fn range_field_can_hide_the_value_readout_and_still_expose_the_numeric_value() {
             invalid: false,
             rail: None,
             track_gradient: None,
+            value_thumb: None,
+            editing: false,
+            bounds: None,
+            reset: false,
         })
     );
     let accessibility = context.world().project_accessibility(document);

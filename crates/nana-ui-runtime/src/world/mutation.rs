@@ -2004,9 +2004,11 @@ impl UiWorld {
                     (_, Some(StandardVisual::Switch { .. }))
                     | (Some(StandardVisual::Switch { .. }), _) => true,
                     // What a range's parts read (#384): its label, the limits
-                    // its value slot measures, its unit and size, and whether
-                    // it draws text at all. The value, the ratio, markers and
-                    // validity paint only, so a drag step lays nothing out.
+                    // its value slot measures, its unit and size, whether it
+                    // draws text at all, whether the value sits in its thumb,
+                    // its bounds and its reset square. The value, the ratio,
+                    // markers, typing and validity paint only, so a drag step
+                    // lays nothing out.
                     (
                         Some(StandardVisual::Range {
                             label: la,
@@ -2014,6 +2016,9 @@ impl UiWorld {
                             unit: ua,
                             size: sa,
                             rail: ra,
+                            value_thumb: va,
+                            bounds: ba,
+                            reset: za,
                             ..
                         }),
                         Some(StandardVisual::Range {
@@ -2022,9 +2027,15 @@ impl UiWorld {
                             unit: ub,
                             size: sb,
                             rail: rb,
+                            value_thumb: vb,
+                            bounds: bb,
+                            reset: zb,
                             ..
                         }),
-                    ) => (la, ma, ua, sa, ra.is_some()) != (lb, mb, ub, sb, rb.is_some()),
+                    ) => {
+                        (la, ma, ua, sa, ra.is_some(), va.is_some(), ba, za)
+                            != (lb, mb, ub, sb, rb.is_some(), vb.is_some(), bb, zb)
+                    }
                     (_, Some(StandardVisual::Range { .. }))
                     | (Some(StandardVisual::Range { .. }), _) => true,
                     // What a progress bar's parts read (#384): whether it has

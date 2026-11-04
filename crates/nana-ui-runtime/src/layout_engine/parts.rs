@@ -29,7 +29,7 @@ impl FlexPart {
 
 /// How many semantic parts one component's content publishes at most: a
 /// toast's mark, title, description and dismiss target.
-pub(crate) const CONTENT_PART_SLOTS: usize = 4;
+pub(crate) const CONTENT_PART_SLOTS: usize = 6;
 
 /// A fixed number of semantic slots, held inline; absent slots cost no
 /// retained allocation, and only the parts present are published.
@@ -652,10 +652,11 @@ pub(crate) fn toast_parts(bounds: LayoutBox, inputs: ToastInputs) -> ContentPart
     content_parts([mark, title, description, dismiss])
 }
 
-/// A range's text before placement: its label, the value's fixed slot and
-/// its unit, beside a track that takes the rest of the row. Intrinsic
-/// measure ([`Self::extent`]), placement ([`range_parts`]) and the track's
-/// lane ([`range_track_lane`]) all read this one declaration (#384).
+/// A range's text before placement: its label, its bounds, the value's
+/// fixed slot and its unit, and the reset button's square, beside a track
+/// that takes the rest of the row. Intrinsic measure ([`Self::extent`]),
+/// placement ([`range_parts`]) and the track's lane ([`range_track_lane`])
+/// all read this one declaration (#384).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct RangeInputs {
     /// The label's natural width, when it draws one.
@@ -666,6 +667,11 @@ pub(crate) struct RangeInputs {
     pub value: Option<f32>,
     /// The unit's natural width beside the value.
     pub unit: Option<f32>,
+    /// The minimum's and the maximum's natural widths, when the range writes
+    /// its bounds at the ends of its track.
+    pub bounds: Option<[f32; 2]>,
+    /// The reset button's square at the end of the row, when it has one.
+    pub trailing: Option<f32>,
     /// Between the label and the track, and the track and the readout.
     pub gap: f32,
 }
@@ -678,21 +684,35 @@ impl RangeInputs {
     /// What the range's text and its gaps take across the row.
     pub fn extent(&self) -> f32 {
         let gap = self.gap.max(0.0);
-        self.label.map_or(0.0, |label| label.max(0.0) + gap)
+        let beside = |width: f32| width.max(0.0) + gap;
+        self.label.map_or(0.0, beside)
+            + self
+                .bounds
+                .map_or(0.0, |[minimum, maximum]| beside(minimum) + beside(maximum))
             + if self.readout() > 0.0 {
-                self.readout() + gap
+                beside(self.readout())
             } else {
                 0.0
             }
+            + self.trailing.map_or(0.0, beside)
     }
 }
 
 /// A range's label at the start of `content` (at most 28% of it: a long
-/// label is cut short rather than squeezing the track), its value slot and
-/// unit at the end, each the content box's height; the track's lane is what
-/// is left between them.
+/// label is cut short rather than squeezing the track), then its minimum;
+/// its maximum, value slot, unit and reset square at the end, each the
+/// content box's height; the track's lane is what is left between them.
 pub(crate) fn range_parts(content: LayoutBox, inputs: RangeInputs) -> ContentParts {
     let gap = inputs.gap.max(0.0);
+    let text = |kind, width: Option<f32>, gap_after: f32| {
+        width.map(|width| {
+            let mut part = FlexPart::new(kind, Size::new(width.max(0.0), content.height));
+            part.align = AlignSpec::Stretch;
+            part.shrink = 1.0;
+            part.gap_after = gap_after;
+            part
+        })
+    };
     let label = inputs.label.map(|width| {
         let mut part = FlexPart::new(
             LayoutPartKind::Label,
@@ -702,41 +722,75 @@ pub(crate) fn range_parts(content: LayoutBox, inputs: RangeInputs) -> ContentPar
         part.gap_after = gap;
         part
     });
+    let [minimum, maximum] = inputs.bounds.map_or([None, None], |[minimum, maximum]| {
+        [Some(minimum), Some(maximum)]
+    });
+    let readout = inputs.readout() > 0.0;
+    let after_readout = if inputs.trailing.is_some() { gap } else { 0.0 };
     let mut lane = FlexPart::new(LayoutPartKind::ComponentContent, Size::default());
     lane.grow = 1.0;
-    lane.gap_after = if inputs.readout() > 0.0 { gap } else { 0.0 };
-    let text = |kind, width: Option<f32>| {
-        width.map(|width| {
-            let mut part = FlexPart::new(kind, Size::new(width.max(0.0), content.height));
-            part.align = AlignSpec::Stretch;
-            part.shrink = 1.0;
-            part
-        })
+    lane.gap_after = if maximum.is_some() || readout || inputs.trailing.is_some() {
+        gap
+    } else {
+        0.0
     };
-    let [label, _, value, unit] = flex_parts(
+    let [label, minimum, _, maximum, value, unit, trailing] = flex_parts(
         content,
         FlexDirection::Row,
         JustifySpec::Start,
         false,
         [
             label,
+            text(LayoutPartKind::Minimum, minimum, gap),
             Some(lane),
-            text(LayoutPartKind::Value, inputs.value),
-            text(LayoutPartKind::Detail, inputs.unit),
+            text(
+                LayoutPartKind::Maximum,
+                maximum,
+                if readout { gap } else { after_readout },
+            ),
+            text(
+                LayoutPartKind::Value,
+                inputs.value,
+                if inputs.unit.is_some() {
+                    0.0
+                } else {
+                    after_readout
+                },
+            ),
+            text(LayoutPartKind::Detail, inputs.unit, after_readout),
+            inputs.trailing.map(|square| {
+                let mut part = FlexPart::new(
+                    LayoutPartKind::TrailingContent,
+                    Size::new(square.max(0.0), square.max(0.0).min(content.height)),
+                );
+                part.align = AlignSpec::Center;
+                part
+            }),
         ],
     );
-    content_parts([label, value, unit])
+    content_parts([label, minimum, maximum, value, unit, trailing])
 }
 
-/// The lane a range's track runs in: from past its label (and gap) to
-/// before its readout (and gap), read from its published `parts`.
+/// The lane a range's track runs in: from past its label and minimum (and
+/// gap) to before its maximum, readout and reset square (and gap), read
+/// from its published `parts`.
 pub(crate) fn range_track_lane(content: LayoutBox, parts: &ContentParts, gap: f32) -> LayoutBox {
     let gap = gap.max(0.0);
-    let start = part_bounds(parts, LayoutPartKind::Label)
-        .map_or(content.x, |label| label.x + label.width + gap);
-    let end = part_bounds(parts, LayoutPartKind::Value)
-        .or_else(|| part_bounds(parts, LayoutPartKind::Detail))
-        .map_or(content.x + content.width, |readout| readout.x - gap);
+    let start = [LayoutPartKind::Label, LayoutPartKind::Minimum]
+        .into_iter()
+        .filter_map(|kind| part_bounds(parts, kind))
+        .map(|part| part.x + part.width + gap)
+        .fold(content.x, f32::max);
+    let end = [
+        LayoutPartKind::Maximum,
+        LayoutPartKind::Value,
+        LayoutPartKind::Detail,
+        LayoutPartKind::TrailingContent,
+    ]
+    .into_iter()
+    .filter_map(|kind| part_bounds(parts, kind))
+    .map(|part| part.x - gap)
+    .fold(content.x + content.width, f32::min);
     LayoutBox {
         x: start,
         width: (end - start).max(0.0),

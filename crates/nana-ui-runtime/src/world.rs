@@ -5,7 +5,7 @@ mod clip_chain;
 mod extraction;
 mod focus_scope;
 mod geometry;
-pub(crate) use geometry::PROGRESS_GIRTH;
+pub(crate) use geometry::{PROGRESS_GIRTH, range_value_thumb_height};
 mod hit_test;
 mod i18n;
 mod input;

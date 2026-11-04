@@ -201,6 +201,8 @@ impl UiWorld {
                         | crate::LayoutPartKind::Value
                         | crate::LayoutPartKind::Header
                         | crate::LayoutPartKind::Indicator
+                        | crate::LayoutPartKind::Minimum
+                        | crate::LayoutPartKind::Maximum
                 )
             });
             for (slot, part) in parts.iter_mut().zip(published.by_ref()) {
@@ -865,12 +867,14 @@ impl UiWorld {
         })
     }
 
-    /// A range's label, value slot and unit before placement: what
-    /// intrinsic measure, placement and the track's lane all read (#384).
-    /// The label and value are set in the range's own font, the unit at the
-    /// caption size; the slot measures the formatted minimum and maximum in
-    /// tabular figures, so it moves only with them, the step, the unit and
-    /// the theme, never with the value. A rail draws no text.
+    /// A range's label, bounds, value slot, unit and reset square before
+    /// placement: what intrinsic measure, placement and the track's lane all
+    /// read (#384). The label and value are set in the range's own font, the
+    /// unit and the bounds at the caption size; the slot measures the
+    /// formatted minimum and maximum in tabular figures, so it moves only
+    /// with them, the step, the unit and the theme, never with the value. A
+    /// value thumb draws the value in the thumb and lays out no slot. A rail
+    /// draws no text.
     pub(crate) fn range_inputs(&self, id: StableNodeId) -> Option<RangeInputs> {
         let Some(StandardVisual::Range {
             label,
@@ -878,6 +882,9 @@ impl UiWorld {
             unit,
             size,
             rail: None,
+            value_thumb,
+            bounds,
+            reset,
             ..
         }) = self.standard_visual_ref(id)
         else {
@@ -886,24 +893,31 @@ impl UiWorld {
         let style = self.computed_style(id)?;
         let typography = self.theme.typography();
         let measure = self.chrome_text_measure(id);
-        let value = limits.as_ref().map(|limits| {
-            limits
-                .iter()
-                .map(|limit| measure.tabular_width(limit, style.font_size, style.font_weight))
-                .fold(0.0, f32::max)
-        });
+        let value = limits
+            .as_ref()
+            .filter(|_| value_thumb.is_none())
+            .map(|limits| {
+                limits
+                    .iter()
+                    .map(|limit| measure.tabular_width(limit, style.font_size, style.font_weight))
+                    .fold(0.0, f32::max)
+            });
+        let caption = size.caption_size_in(typography);
         Some(RangeInputs {
             label: label
                 .as_ref()
                 .map(|label| measure.width(label, style.font_size, style.font_weight)),
             value,
-            unit: unit.as_ref().filter(|_| value.is_some()).map(|unit| {
-                measure.width(
-                    unit,
-                    size.caption_size_in(typography),
-                    Some(typography.regular),
-                )
+            unit: unit
+                .as_ref()
+                .filter(|_| value.is_some())
+                .map(|unit| measure.width(unit, caption, Some(typography.regular))),
+            bounds: bounds.as_ref().map(|bounds| {
+                bounds
+                    .each_ref()
+                    .map(|bound| measure.tabular_width(bound, caption, Some(typography.regular)))
             }),
+            trailing: reset.then_some(self.theme.spacing().page),
             gap: self.range_gap(*size),
         })
     }

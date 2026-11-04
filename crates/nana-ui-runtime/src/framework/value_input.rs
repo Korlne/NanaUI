@@ -309,19 +309,20 @@ impl AppContext {
         self.begin_range_drag(document, pointer_id, target, x)
     }
 
-    /// [`Self::update_range_drag`] at a window point.
+    /// [`Self::update_range_drag_fine`] at a window point.
     pub(crate) fn update_range_drag_at(
         &mut self,
         document: DocumentId,
         pointer_id: u64,
         x: f32,
         y: f32,
+        fine: bool,
     ) -> Result<bool, FrameworkError> {
         let Some(target) = self.world.pointer_capture(document, pointer_id) else {
             return Ok(false);
         };
         let (x, _) = self.layout_point(target, x, y);
-        self.update_range_drag(document, pointer_id, x)
+        self.update_range_drag_fine(document, pointer_id, x, fine)
     }
 
     /// A window point in `target`'s layout space.
@@ -333,6 +334,11 @@ impl AppContext {
 
     /// Starts dragging the range at `x`, in the field's layout space (the
     /// space of its [`crate::ComponentGeometry::Range`] track).
+    ///
+    /// The press picks the value under it, except on a value thumb's
+    /// capsule, where the drag starts from the value the range holds. A
+    /// value thumb's drag is relative from then on: the value moves by the
+    /// pointer's travel.
     pub fn begin_range_drag(
         &mut self,
         document: DocumentId,
@@ -343,30 +349,64 @@ impl AppContext {
         if !self.is_range_field(target) {
             return Ok(false);
         }
-        if self.read(Entity::<RangeField>::from_stable_id(target), |range| {
-            range.disabled
-        })? {
+        let (disabled, initial_value, value_thumb) = self
+            .read(Entity::<RangeField>::from_stable_id(target), |range| {
+                (range.disabled, range.value, range.draws_value_thumb())
+            })?;
+        if disabled {
             return Ok(false);
         }
-        let initial_value = self.read(Entity::<RangeField>::from_stable_id(target), |range| {
-            range.value
-        })?;
+        let capsule = match self.world.component_geometry(target) {
+            Some(crate::ComponentGeometry::Range {
+                value_thumb: Some(thumb),
+                ..
+            }) if value_thumb => Some(thumb.capsule),
+            _ => None,
+        };
+        let on_thumb =
+            capsule.is_some_and(|capsule| x >= capsule.x && x <= capsule.x + capsule.width);
         self.update_component(Entity::<RangeField>::from_stable_id(target), |range, cx| {
-            range.dragging = Some(crate::RangeDragState {
-                pointer_id,
-                initial_value,
-            });
+            let mut drag = crate::RangeDragState::new(pointer_id, initial_value);
+            drag.press_x = x;
+            drag.last_x = x;
+            drag.on_thumb = on_thumb;
+            drag.anchor = on_thumb.then_some((x, initial_value));
+            range.dragging = Some(drag);
             cx.mutations().capture_pointer(pointer_id, target);
             cx.emit(RangeDragging { dragging: true });
         })?;
-        self.update_range_drag(document, pointer_id, x)
+        let moved = self.update_range_drag(document, pointer_id, x)?;
+        if value_thumb && !on_thumb {
+            // A press beside the capsule jumps there, then drags from it.
+            self.update_component(Entity::<RangeField>::from_stable_id(target), |range, _| {
+                if let Some(drag) = range.dragging.as_mut() {
+                    drag.anchor = Some((x, drag.last_raw));
+                }
+            })?;
+        }
+        Ok(moved)
     }
 
+    /// [`Self::update_range_drag_fine`] at the drag's ordinary pace.
     pub fn update_range_drag(
         &mut self,
         document: DocumentId,
         pointer_id: u64,
         x: f32,
+    ) -> Result<bool, FrameworkError> {
+        self.update_range_drag_fine(document, pointer_id, x, false)
+    }
+
+    /// Moves the drag `pointer_id` holds to `x`. With `fine` (Alt held) the
+    /// value moves a tenth as far per pixel. Changing `fine` mid-drag
+    /// re-anchors at the last pointer position and value, so the value
+    /// never jumps, and the drag stays relative from then on.
+    pub fn update_range_drag_fine(
+        &mut self,
+        document: DocumentId,
+        pointer_id: u64,
+        x: f32,
+        fine: bool,
     ) -> Result<bool, FrameworkError> {
         let Some(target) = self.world.pointer_capture(document, pointer_id) else {
             return Ok(false);
@@ -381,9 +421,34 @@ impl AppContext {
         if track.width <= 0.0 {
             return Ok(false);
         }
-        let value = self.read(Entity::<RangeField>::from_stable_id(target), |range| {
-            range.value_at(track.x, track.width, x)
-        })?;
+        let value =
+            self.update_component(Entity::<RangeField>::from_stable_id(target), |range, _| {
+                let span = range.maximum - range.minimum;
+                let Some(mut drag) = range.dragging else {
+                    return range.value_at(track.x, track.width, x);
+                };
+                if drag.fine != fine {
+                    drag.anchor = Some((drag.last_x, drag.last_raw));
+                    drag.fine = fine;
+                }
+                if (x - drag.press_x).abs() >= nana_ui_core::space::XXS {
+                    drag.moved = true;
+                }
+                let raw = match drag.anchor {
+                    Some((anchor_x, anchor_value)) => {
+                        // Alt: a tenth of the pace.
+                        let pace = if fine { 0.1 } else { 1.0 };
+                        let per_pixel = span / f64::from(track.width) * pace;
+                        (anchor_value + f64::from(x - anchor_x) * per_pixel)
+                            .clamp(range.minimum, range.maximum)
+                    }
+                    None => range.value_at(track.x, track.width, x),
+                };
+                drag.last_x = x;
+                drag.last_raw = raw;
+                range.dragging = Some(drag);
+                raw
+            })?;
         self.write_range_value(Entity::from_stable_id(target), value, false)
     }
 
@@ -453,24 +518,32 @@ impl AppContext {
             return Ok(false);
         }
         let held = self.holds_capture(target, pointer_id);
-        self.update_component(Entity::<RangeField>::from_stable_id(target), |range, cx| {
-            if held {
-                cx.mutations().release_pointer(pointer_id, target);
-            }
-            let Some(drag) = range.dragging.take() else {
-                return false;
-            };
-            if range.value != drag.initial_value {
-                if cancel || range.disabled {
-                    range.value = drag.initial_value;
-                    cx.emit(RangeInput { value: range.value });
-                } else {
-                    cx.emit(RangeChanged { value: range.value });
+        let mut clicked_thumb = false;
+        let ended =
+            self.update_component(Entity::<RangeField>::from_stable_id(target), |range, cx| {
+                if held {
+                    cx.mutations().release_pointer(pointer_id, target);
                 }
-            }
-            cx.emit(RangeDragging { dragging: false });
-            true
-        })
+                let Some(drag) = range.dragging.take() else {
+                    return false;
+                };
+                if range.value != drag.initial_value {
+                    if cancel || range.disabled {
+                        range.value = drag.initial_value;
+                        cx.emit(RangeInput { value: range.value });
+                    } else {
+                        cx.emit(RangeChanged { value: range.value });
+                    }
+                }
+                cx.emit(RangeDragging { dragging: false });
+                clicked_thumb = !cancel && drag.on_thumb && !drag.moved;
+                true
+            })?;
+        if clicked_thumb {
+            // A click on the value thumb types a value.
+            self.begin_range_edit(Entity::from_stable_id(target))?;
+        }
+        Ok(ended)
     }
 
     pub fn begin_xy_pad_drag(

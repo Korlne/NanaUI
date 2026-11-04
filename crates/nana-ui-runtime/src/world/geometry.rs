@@ -1540,14 +1540,21 @@ impl UiWorld {
                     },
                     track_girth: girth.min(content.height),
                     thumb_ring: None,
+                    bounds: None,
+                    value_thumb: None,
                 })
             }),
             StandardVisual::Range {
                 label,
                 value,
+                limits,
                 unit,
                 size,
+                ratio,
                 track_gradient,
+                value_thumb,
+                editing,
+                bounds,
                 ..
             } => own_frame(|| {
                 // The label, the value's slot and the unit are the parts
@@ -1566,16 +1573,72 @@ impl UiWorld {
                 // strip; the band is the ring's height so it fits.
                 let thumb = if track_gradient.is_some() {
                     self.theme.spacing().xxxl
+                } else if value_thumb.is_some() {
+                    range_value_thumb_height(*size, self.theme.typography(), self.theme.spacing())
                 } else {
                     size.text_size_in(self.theme.typography())
                 }
                 .min(content.height);
+                // A value thumb is as wide as the widest value it shows, so
+                // it keeps its width as the value moves; its centre travels
+                // half a capsule in from each end of the lane, so the capsule
+                // never leaves it.
+                let capsule_width = value_thumb.as_ref().map(|text| {
+                    let measure = self.chrome_text_measure(id);
+                    let text_width = limits
+                        .iter()
+                        .flatten()
+                        .chain(std::iter::once(text))
+                        .map(|text| measure.tabular_width(text, style.font_size, style.font_weight))
+                        .fold(0.0, f32::max);
+                    let spacing = self.theme.spacing();
+                    (text_width + spacing.md + spacing.md)
+                        .max(spacing.page + spacing.page)
+                        .min(lane.width)
+                });
+                let travel = capsule_width.unwrap_or(thumb);
                 let track = LayoutBox {
-                    x: lane.x + thumb / 2.0,
+                    x: lane.x + travel / 2.0,
                     y: content.y + (content.height - thumb) / 2.0,
-                    width: (lane.width - thumb).max(0.0),
+                    width: (lane.width - travel).max(0.0),
                     height: thumb.min(content.height),
                 };
+                let value_thumb = value_thumb
+                    .as_ref()
+                    .zip(capsule_width)
+                    .map(|(text, width)| {
+                        let capsule = LayoutBox {
+                            x: track.x + track.width * ratio.clamp(0.0, 1.0) - width / 2.0,
+                            width,
+                            ..track
+                        };
+                        let disabled = self
+                            .nodes
+                            .get(id)
+                            .is_some_and(|node| node.accessibility.disabled);
+                        let mut text = text_region(
+                            capsule,
+                            Arc::clone(text),
+                            false,
+                            style.font_size,
+                            style.font_weight,
+                        );
+                        // On the accent fill; a disabled capsule loses the accent
+                        // and its text takes the range's own disabled colour.
+                        if !disabled {
+                            text.color = Some(
+                                self.style_model
+                                    .color(SemanticColorRole::AccentText)
+                                    .as_rgba_array(),
+                            );
+                        }
+                        crate::RangeValueThumb {
+                            capsule,
+                            text,
+                            gap: self.theme.spacing().xxs,
+                            editing: *editing,
+                        }
+                    });
                 Some(crate::ComponentGeometry::Range {
                     border_width: self.theme.border().hairline,
                     label: label.as_ref().zip(part(LayoutPartKind::Label)).map(
@@ -1623,6 +1686,27 @@ impl UiWorld {
                     thumb_ring: track_gradient
                         .is_some()
                         .then(|| crate::ContrastRing::from_effects(self.theme.effects())),
+                    bounds: bounds.as_ref().and_then(|[minimum, maximum]| {
+                        let caption = size.caption_size_in(self.theme.typography());
+                        let regular = Some(self.theme.typography().regular);
+                        Some([
+                            text_region(
+                                part(LayoutPartKind::Minimum)?,
+                                Arc::clone(minimum),
+                                true,
+                                caption,
+                                regular,
+                            ),
+                            text_region(
+                                part(LayoutPartKind::Maximum)?,
+                                Arc::clone(maximum),
+                                true,
+                                caption,
+                                regular,
+                            ),
+                        ])
+                    }),
+                    value_thumb,
                 })
             }),
             StandardVisual::Card { title, kind, .. } => own_frame(|| {
@@ -2783,4 +2867,18 @@ fn vertical_text_input_geometry(
         preedit_color,
         steppers,
     }
+}
+
+/// A value thumb's height: the control's text line with a small step of
+/// room above and below it, a little under the control itself.
+pub(crate) fn range_value_thumb_height(
+    size: nana_ui_core::ControlSize,
+    typography: nana_ui_core::TypographyTokens,
+    spacing: nana_ui_core::SpacingTokens,
+) -> f32 {
+    let line = match size {
+        nana_ui_core::ControlSize::Large => typography.line_tall,
+        _ => typography.line,
+    };
+    line + spacing.sm
 }

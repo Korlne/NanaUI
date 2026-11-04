@@ -90,6 +90,9 @@ macro_rules! for_each_control {
                 accessible_name: Option<Arc<str>> = set,
                 accessible_description: Option<Arc<str>> = set,
                 unit: Option<Arc<str>> = set,
+                default_value: Option<f64> = set,
+                value_thumb: bool = set,
+                show_bounds: bool = set,
                 disabled: bool = set,
             }
             with { on_input: RangeInput, on_change: RangeChanged }

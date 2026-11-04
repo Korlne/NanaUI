@@ -90,6 +90,11 @@ pub enum LayoutPartKind {
     /// A selection indicator drawn before a label, apart from any icon: a
     /// radio row's ring.
     Indicator,
+    /// The lower bound a range writes at the start of its track.
+    Minimum,
+    /// The upper bound (with its unit) a range writes at the end of its
+    /// track.
+    Maximum,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

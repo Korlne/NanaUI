@@ -64,6 +64,18 @@ pub(crate) fn format_range_value(value: f64, step: f64) -> Arc<str> {
     Arc::from(format!("{value:.decimals$}"))
 }
 
+/// `value` followed by `unit`: a word (`秒`, `px`) after a space, a sign
+/// (`%`, `°`) right after the number.
+pub(crate) fn with_unit(value: Arc<str>, unit: Option<&str>) -> Arc<str> {
+    match unit.filter(|unit| !unit.is_empty()) {
+        Some(unit) if unit.chars().next().is_some_and(char::is_alphanumeric) => {
+            Arc::from(format!("{value} {unit}"))
+        }
+        Some(unit) => Arc::from(format!("{value}{unit}")),
+        None => value,
+    }
+}
+
 fn range_field_style() -> NodeStyle {
     let mut layout = nana_ui_core::LayoutStyle::default();
     layout
@@ -5420,16 +5432,74 @@ pub struct RangeField {
     /// `Some(stops)` paints the track as this gradient; see
     /// [`Self::track_gradient`].
     pub track_gradient: Option<Arc<[nana_ui_core::GradientStop]>>,
+    /// Draw the value inside a wide capsule thumb instead of beside the
+    /// track; see [`Self::value_thumb`].
+    pub value_thumb: bool,
+    /// Write the minimum and the maximum at the ends of the track; see
+    /// [`Self::show_bounds`].
+    pub show_bounds: bool,
+    /// `Some(value)` ends the row with a button that puts this value back;
+    /// see [`Self::default_value`].
+    pub default_value: Option<f64>,
+    /// Typing a value: the assembled number field lies over the capsule and
+    /// has the focus. Only a value thumb types.
+    pub editing: bool,
     pub disabled: bool,
     pub invalid: bool,
     pub dragging: Option<RangeDragState>,
     pub style: NodeStyle,
+    pub(crate) parts: Option<RangeParts>,
 }
 
+/// The children a range assembles: the reset button and the number field a
+/// value thumb types in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct RangeParts {
+    pub(crate) reset: StableNodeId,
+    pub(crate) input: StableNodeId,
+}
+
+/// A pointer drag on a range in progress.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RangeDragState {
     pub pointer_id: u64,
+    /// The value a cancel restores.
     pub initial_value: f64,
+    /// Where the press landed, in the range's layout space.
+    pub(crate) press_x: f32,
+    /// The pointer's last position.
+    pub(crate) last_x: f32,
+    /// The unquantized value the pointer reached last.
+    pub(crate) last_raw: f64,
+    /// `Some((x, value))`: the drag is relative, the value moving from
+    /// `value` by the pointer's travel from `x` (a press on a value thumb,
+    /// or once Alt has changed the pace). `None`: the pointer's position
+    /// picks the value.
+    pub(crate) anchor: Option<(f32, f64)>,
+    /// Alt held at the last move: the drag moves at a tenth of the pace.
+    pub(crate) fine: bool,
+    /// The press landed on the value thumb's capsule.
+    pub(crate) on_thumb: bool,
+    /// The pointer has travelled past the click slop since the press.
+    pub(crate) moved: bool,
+}
+
+impl RangeDragState {
+    /// A drag by `pointer_id` starting at `initial_value`; the pointer's
+    /// position picks the value.
+    pub fn new(pointer_id: u64, initial_value: f64) -> Self {
+        Self {
+            pointer_id,
+            initial_value,
+            press_x: 0.0,
+            last_x: 0.0,
+            last_raw: initial_value,
+            anchor: None,
+            fine: false,
+            on_thumb: false,
+            moved: false,
+        }
+    }
 }
 
 /// Every value the range shows, including a drag or keyboard step in flight.
@@ -5504,10 +5574,15 @@ impl RangeField {
             size: nana_ui_core::ControlSize::Medium,
             rail: None,
             track_gradient: None,
+            value_thumb: false,
+            show_bounds: false,
+            default_value: None,
+            editing: false,
             disabled: false,
             invalid: false,
             dragging: None,
             style: range_field_style(),
+            parts: None,
         };
         field.value = field.quantize(value);
         field
@@ -5580,6 +5655,30 @@ impl RangeField {
         self.track_gradient = (stops.len() >= 2).then_some(stops);
         self
     }
+    /// Draw the value inside the thumb: a wide accent capsule as wide as
+    /// the widest value, whose ends stay on the track, over a thin rail
+    /// filled up to its centre. No readout is drawn beside the track. A
+    /// press on the capsule drags from where the value is instead of
+    /// jumping to the pointer; a click on it, or Enter, types a value into
+    /// a number field laid over it. A rail ([`Self::rail`]) or a gradient
+    /// track ([`Self::track_gradient`]) keeps its own thumb.
+    pub fn value_thumb(mut self, value_thumb: bool) -> Self {
+        self.value_thumb = value_thumb;
+        self
+    }
+    /// Write the minimum at the start of the track and the maximum, with
+    /// the unit, at its end, at the caption size.
+    pub fn show_bounds(mut self, show_bounds: bool) -> Self {
+        self.show_bounds = show_bounds;
+        self
+    }
+    /// End the row with a compact reset button that sets this value (a
+    /// commit, as [`crate::AppContext::set_range_value`]). The button is
+    /// disabled while the range holds it. `None` has no button.
+    pub fn default_value(mut self, default_value: Option<f64>) -> Self {
+        self.default_value = default_value.filter(|value| value.is_finite());
+        self
+    }
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
         self
@@ -5587,6 +5686,16 @@ impl RangeField {
     pub fn invalid(mut self, invalid: bool) -> Self {
         self.invalid = invalid;
         self
+    }
+    /// Whether the value is drawn in the thumb: [`Self::value_thumb`], with
+    /// neither a rail nor a gradient track taking the thumb's place.
+    pub fn draws_value_thumb(&self) -> bool {
+        self.value_thumb && self.rail.is_none() && self.track_gradient.is_none()
+    }
+    /// The range at its default value, the reset button then disabled.
+    pub fn at_default(&self) -> bool {
+        self.default_value
+            .is_none_or(|default| self.quantize(default) == self.value)
     }
     /// Sets the page step, ignoring a non-finite or non-positive value.
     pub fn page_step(mut self, page_step: f64) -> Self {
@@ -5663,6 +5772,20 @@ impl RangeField {
 }
 
 impl ComponentView for RangeField {
+    const BEHAVIOR: crate::TypeBehavior<Self> = crate::TypeBehavior {
+        activation: Some(crate::AppContext::activate_range_field),
+        assembler: Some(crate::AppContext::assemble_range_field),
+        ..crate::TypeBehavior::NONE
+    };
+
+    fn reconcile(&mut self, mut next: Self) {
+        // The assembled children are the runtime's; typing in progress is
+        // the user's.
+        next.parts = self.parts;
+        next.editing = self.editing && !next.disabled && next.draws_value_thumb();
+        *self = next;
+    }
+
     fn share_layouts(
         &mut self,
         share: &mut dyn FnMut(&mut std::sync::Arc<nana_ui_core::LayoutStyle>),
@@ -5685,7 +5808,8 @@ impl ComponentView for RangeField {
         let value = format_range_value(self.value, self.step);
         let rail = self.rail.filter(|girth| girth.is_finite() && *girth > 0.0);
         let track_gradient = self.track_gradient.clone().filter(|_| rail.is_none());
-        let show_value = self.show_value && rail.is_none();
+        let value_thumb = self.draws_value_thumb();
+        let show_value = self.show_value && rail.is_none() && !value_thumb;
         let visual = StandardVisual::Range {
             label: self
                 .label
@@ -5696,7 +5820,7 @@ impl ComponentView for RangeField {
             } else {
                 Arc::from("")
             },
-            limits: show_value.then(|| {
+            limits: (show_value || value_thumb).then(|| {
                 [
                     format_range_value(self.minimum, self.step),
                     format_range_value(self.maximum, self.step),
@@ -5709,6 +5833,18 @@ impl ComponentView for RangeField {
             invalid: self.invalid,
             rail,
             track_gradient: track_gradient.clone(),
+            value_thumb: value_thumb.then(|| Arc::clone(&value)),
+            editing: value_thumb && self.editing,
+            bounds: (self.show_bounds && rail.is_none()).then(|| {
+                [
+                    format_range_value(self.minimum, self.step),
+                    with_unit(
+                        format_range_value(self.maximum, self.step),
+                        self.unit.as_deref(),
+                    ),
+                ]
+            }),
+            reset: self.default_value.is_some() && rail.is_none(),
         };
         if world.standard_visual(id) != Some(visual.clone()) {
             mutations.set_standard_visual(id, Some(visual));
@@ -5752,6 +5888,12 @@ impl ComponentView for RangeField {
             );
             let thumb = if track_gradient.is_some() {
                 theme.spacing().xxxl
+            } else if value_thumb {
+                crate::world::range_value_thumb_height(
+                    self.size,
+                    theme.typography(),
+                    theme.spacing(),
+                )
             } else {
                 self.size.text_size_in(theme.typography())
             };
@@ -5782,6 +5924,12 @@ impl ComponentView for RangeField {
         }
         if rail.is_none() && track_gradient.is_none() {
             effective_style.control_padding_x = Some(nana_ui_core::ControlPadding::Field);
+        }
+        if self.parts.is_some() {
+            // The containing block of the reset button and the number field,
+            // which lie over the row's parts.
+            Arc::make_mut(&mut effective_style.layout).position =
+                nana_ui_core::PositionSpec::Relative;
         }
         if self.invalid {
             effective_style.border = Some(nana_ui_core::SemanticColorRole::Danger);

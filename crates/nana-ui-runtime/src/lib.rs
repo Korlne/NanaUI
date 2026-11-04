@@ -31,6 +31,7 @@ mod components;
 mod custom_paint;
 mod paint_script;
 mod property_grid;
+mod range_field;
 mod scrub_field;
 mod theme_intent;
 /// The BCP 47 tag [`MutationQueue::set_language`] and
@@ -234,19 +235,19 @@ pub use components::{
     ExtractedTextSpan, FontStrut, ImeComposition, ImeView, InteractionState, InteractionStyle,
     LayoutBox, LayoutInput, LineLabel, MeasureTextShaper, MenuItemMark, MenuSurfaceKind,
     ModalLayoutInput, MountState, NodeStyle, NumberSteppers, OverlayHostState,
-    PointerCaptureChange, RadioIndicator, RichEditorMarks, ScrollMetrics, ScrollOffset,
-    ScrollbarBar, SelectMenuDrag, SelectMenuGeometry, SelectMenuRoom, SelectMenuScroll,
-    SelectOptionData, SelectOptionGeometry, SemanticPaint, StandardVisual, TextAffinity,
-    TextAtomChip, TextAtomClosed, TextAtomSpan, TextCodeFold, TextColorSwatchSpan, TextCompletion,
-    TextCompletionEdit, TextCompletionPopup, TextCompletionRow, TextCompletionSnapshot,
-    TextContent, TextDiagnosticSeverity, TextDiagnosticSpan, TextEditorRenderOptions,
-    TextFoldGeometry, TextFoldGutter, TextGitGutterGeometry, TextGitMark, TextGitMarkKind, TextHit,
-    TextHorizontalAlignment, TextHover, TextHoverPopup, TextInlay, TextInputCharacterCounter,
-    TextInputScroll, TextInputState, TextInputSuffix, TextInputView, TextMatchMarker,
-    TextMatchSpan, TextMetrics, TextMinimapGeometry, TextSelection, TextShapeConstraints,
-    TextShaper, TextShaping, TextSignatureHelp, TextSignaturePopup, TextSnippet,
-    TextStickyLineGeometry, TextValue, TextVerticalAlignment, TextWhitespaceKind, TooltipVisual,
-    TriggeredMenuOverlay, decode_virtual_menu_item, decode_virtual_tree_item,
+    PointerCaptureChange, RadioIndicator, RangeValueThumb, RichEditorMarks, ScrollMetrics,
+    ScrollOffset, ScrollbarBar, SelectMenuDrag, SelectMenuGeometry, SelectMenuRoom,
+    SelectMenuScroll, SelectOptionData, SelectOptionGeometry, SemanticPaint, StandardVisual,
+    TextAffinity, TextAtomChip, TextAtomClosed, TextAtomSpan, TextCodeFold, TextColorSwatchSpan,
+    TextCompletion, TextCompletionEdit, TextCompletionPopup, TextCompletionRow,
+    TextCompletionSnapshot, TextContent, TextDiagnosticSeverity, TextDiagnosticSpan,
+    TextEditorRenderOptions, TextFoldGeometry, TextFoldGutter, TextGitGutterGeometry, TextGitMark,
+    TextGitMarkKind, TextHit, TextHorizontalAlignment, TextHover, TextHoverPopup, TextInlay,
+    TextInputCharacterCounter, TextInputScroll, TextInputState, TextInputSuffix, TextInputView,
+    TextMatchMarker, TextMatchSpan, TextMetrics, TextMinimapGeometry, TextSelection,
+    TextShapeConstraints, TextShaper, TextShaping, TextSignatureHelp, TextSignaturePopup,
+    TextSnippet, TextStickyLineGeometry, TextValue, TextVerticalAlignment, TextWhitespaceKind,
+    TooltipVisual, TriggeredMenuOverlay, decode_virtual_menu_item, decode_virtual_tree_item,
     decode_virtual_tree_toggle, menu_row_index, menu_row_slots, virtual_listbox_id,
     virtual_menu_item_id, virtual_tree_item_id, virtual_tree_toggle_id,
 };

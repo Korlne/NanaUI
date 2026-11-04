@@ -908,6 +908,19 @@ pub enum StandardVisual {
         /// fill, and the thumb is a [`ContrastRing`]. See
         /// `RangeField::track_gradient`.
         track_gradient: Option<Arc<[nana_ui_core::GradientStop]>>,
+        /// `Some(text)`: the thumb is a wide capsule with the value written
+        /// in it (`RangeField::value_thumb`); no readout slot is laid out
+        /// and `limits` size the capsule.
+        value_thumb: Option<Arc<str>>,
+        /// The value is being typed: the capsule makes way for the number
+        /// field laid over it.
+        editing: bool,
+        /// The formatted minimum and maximum (the maximum with the unit),
+        /// written at the ends of the track (`RangeField::show_bounds`).
+        bounds: Option<[Arc<str>; 2]>,
+        /// The row ends with the reset button's square
+        /// (`RangeField::default_value`).
+        reset: bool,
     },
     /// Scroll container chrome. Carries policy and the bars' animated state
     /// only: the lane, track and thumb boxes come from the authoritative
@@ -1307,6 +1320,21 @@ pub struct ComponentTextRegion {
     pub color: Option<[f32; 4]>,
     pub font_size: f32,
     pub font_weight: Option<u16>,
+}
+
+/// A range's value thumb (`RangeField::value_thumb`): a capsule as wide as
+/// its widest value, at the current value, with the value written in it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RangeValueThumb {
+    /// The capsule's box. Its ends stay inside the track's lane: the
+    /// range's `track` is the span its centre travels.
+    pub capsule: LayoutBox,
+    /// The value, centred in the capsule in the accent's text colour.
+    pub text: ComponentTextRegion,
+    /// The clear space the rail leaves on each side of the capsule.
+    pub gap: f32,
+    /// The value is being typed: the capsule is not drawn.
+    pub editing: bool,
 }
 
 /// A trailing count label and the editor viewport it reserves. Derived from
@@ -1738,6 +1766,10 @@ pub enum ComponentGeometry {
         /// The ring a gradient track's thumb is drawn as; `None` for the
         /// regular filled track.
         thumb_ring: Option<ContrastRing>,
+        /// The minimum and the maximum written at the track's ends.
+        bounds: Option<[ComponentTextRegion; 2]>,
+        /// The capsule a value thumb is drawn as, at the current value.
+        value_thumb: Option<RangeValueThumb>,
     },
     Scrollbar {
         horizontal: Option<ScrollbarBar>,

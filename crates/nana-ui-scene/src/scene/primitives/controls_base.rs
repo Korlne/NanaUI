@@ -4,6 +4,22 @@ use super::*;
 /// First primitive slot of a tree's toggle icons; the drop mark takes the one
 /// below it.
 const TREE_TOGGLE_SLOTS: u64 = 1 << 32;
+/// A range's bounds and the value written in its value thumb: past the
+/// slots its markers, thumb and focus ring count up through.
+const RANGE_MINIMUM_SLOT: u64 = 1 << 20;
+const RANGE_MAXIMUM_SLOT: u64 = RANGE_MINIMUM_SLOT + 1;
+const RANGE_THUMB_TEXT_SLOT: u64 = RANGE_MINIMUM_SLOT + 2;
+
+/// `primitive`'s text in tabular figures, every digit as wide, as a range
+/// measures the numbers it writes.
+fn tabular(mut primitive: ScenePrimitive) -> ScenePrimitive {
+    if let ScenePrimitiveKind::Text { font_features, .. } = &mut primitive.kind
+        && !font_features.iter().any(|feature| feature.tag == *b"tnum")
+    {
+        font_features.push(nana_ui_core::FontFeatureSetting::new(*b"tnum", 1));
+    }
+    primitive
+}
 
 pub(super) fn build(context: &GeometryPaintContext<'_>, emit: &mut impl FnMut(ScenePrimitive)) {
     let node = context.node;
@@ -90,8 +106,51 @@ pub(super) fn build(context: &GeometryPaintContext<'_>, emit: &mut impl FnMut(Sc
             }
         }),
         Some(ComponentGeometry::Range {
-            label, value, unit, ..
+            label,
+            value,
+            unit,
+            bounds,
+            value_thumb,
+            ..
         }) => own_frame(|| {
+            // Above the rail, the markers, the thumb and its focus ring,
+            // whatever number of markers moves those slots along.
+            if let Some(bounds) = bounds {
+                for (slot, (region, alignment)) in
+                    [RANGE_MINIMUM_SLOT, RANGE_MAXIMUM_SLOT].into_iter().zip(
+                        bounds
+                            .iter()
+                            .zip([TextHorizontalAlignment::End, TextHorizontalAlignment::Start]),
+                    )
+                {
+                    emit(tabular(component_text_primitive(
+                        id,
+                        slot,
+                        region,
+                        alignment,
+                        true,
+                        node,
+                        transform,
+                        clips.clone(),
+                        opacity,
+                        node_order,
+                    )));
+                }
+            }
+            if let Some(thumb) = value_thumb.as_ref().filter(|thumb| !thumb.editing) {
+                emit(tabular(component_text_primitive(
+                    id,
+                    RANGE_THUMB_TEXT_SLOT,
+                    &thumb.text,
+                    TextHorizontalAlignment::Center,
+                    true,
+                    node,
+                    transform,
+                    clips.clone(),
+                    opacity,
+                    node_order,
+                )));
+            }
             if let Some(label) = label {
                 emit(component_text_primitive(
                     id,

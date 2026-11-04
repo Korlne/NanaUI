@@ -2051,10 +2051,7 @@ mod tests {
         sync_time(&mut cx, bar, 12.0, 120.0);
 
         cx.update_component(seek, |range, _| {
-            range.dragging = Some(crate::RangeDragState {
-                pointer_id: 1,
-                initial_value: 12.0,
-            });
+            range.dragging = Some(crate::RangeDragState::new(1, 12.0));
             range.value = 45.0;
         })
         .unwrap();

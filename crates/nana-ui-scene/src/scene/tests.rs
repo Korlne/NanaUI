@@ -6061,6 +6061,10 @@ fn standard_control_visuals_expand_without_backend_tag_matching() {
         invalid: false,
         rail: None,
         track_gradient: None,
+        value_thumb: None,
+        editing: false,
+        bounds: None,
+        reset: false,
     });
     style_mut(&mut slider).background = Some([0.2, 0.5, 0.9, 1.0]);
     style_mut(&mut slider).border_color = Some([0.4, 0.4, 0.4, 1.0]);
@@ -6119,6 +6123,10 @@ fn a_rail_range_draws_its_girth_and_shows_the_thumb_only_with_visible_focus() {
         invalid: false,
         rail: Some(2.0),
         track_gradient: None,
+        value_thumb: None,
+        editing: false,
+        bounds: None,
+        reset: false,
     });
     range.component_geometry = Some(Box::new(ComponentGeometry::Range {
         label: None,
@@ -6134,6 +6142,8 @@ fn a_rail_range_draws_its_girth_and_shows_the_thumb_only_with_visible_focus() {
         track_girth: 2.0,
         border_width: 1.0,
         thumb_ring: None,
+        bounds: None,
+        value_thumb: None,
     }));
     style_mut(&mut range).background = Some([0.2, 0.5, 0.9, 1.0]);
     style_mut(&mut range).border_color = Some([0.4, 0.4, 0.4, 1.0]);
@@ -6235,6 +6245,10 @@ fn a_gradient_range_paints_its_stops_and_rings_the_value() {
         invalid: false,
         rail: None,
         track_gradient: Some(Arc::clone(&stops)),
+        value_thumb: None,
+        editing: false,
+        bounds: None,
+        reset: false,
     });
     range.component_geometry = Some(Box::new(ComponentGeometry::Range {
         label: None,
@@ -6255,6 +6269,8 @@ fn a_gradient_range_paints_its_stops_and_rings_the_value() {
         track_girth: nana_ui_core::space::XL,
         border_width: 1.0,
         thumb_ring: Some(TEST_RING),
+        bounds: None,
+        value_thumb: None,
     }));
     style_mut(&mut range).background = Some([0.2, 0.5, 0.9, 1.0]);
     style_mut(&mut range).border_color = Some([0.4, 0.4, 0.4, 1.0]);
@@ -7028,6 +7044,10 @@ fn a_focused_range_adds_a_thumb_focus_ring_and_keeps_the_rail_untouched() {
             invalid: false,
             rail: None,
             track_gradient: None,
+            value_thumb: None,
+            editing: false,
+            bounds: None,
+            reset: false,
         });
         style_mut(&mut range).border_color = Some([0.4, 0.4, 0.45, 1.0]);
         range.standard_visual_foreground = Some([0.2, 0.5, 1.0, 1.0]);
@@ -7109,6 +7129,10 @@ fn a_range_marker_paints_on_the_track_under_the_thumb() {
         invalid: false,
         rail: None,
         track_gradient: None,
+        value_thumb: None,
+        editing: false,
+        bounds: None,
+        reset: false,
     });
     style_mut(&mut range).background = Some([0.2, 0.5, 0.9, 1.0]);
     style_mut(&mut range).border_color = Some([0.4, 0.4, 0.45, 1.0]);
@@ -7216,6 +7240,10 @@ fn migrated_components_consume_runtime_subregion_geometry() {
         invalid: false,
         rail: None,
         track_gradient: None,
+        value_thumb: None,
+        editing: false,
+        bounds: None,
+        reset: false,
     });
     range.component_geometry = Some(Box::new(ComponentGeometry::Range {
         label: Some(ComponentTextRegion {
@@ -7263,6 +7291,8 @@ fn migrated_components_consume_runtime_subregion_geometry() {
         track_girth: 4.0,
         border_width: 1.0,
         thumb_ring: None,
+        bounds: None,
+        value_thumb: None,
     }));
     range.layout.width = 240.0;
     range.layout.height = 40.0;
