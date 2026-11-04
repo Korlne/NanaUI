@@ -735,7 +735,7 @@ fn moved_controls_that_read_little_of_the_page_keep_what_they_built() {
     assert_scene_is_cold(&runtime, "first frame");
     let mut padding = 0.0;
     let mut step = |runtime: &mut RuntimeDocument, frame: &str, culling: bool| {
-        padding += 1.25;
+        padding += 1.37;
         let mut queue = MutationQueue::new();
         queue.set_style(id(COLUMN), column_style(padding));
         runtime.context_mut().commit_mutations(queue).unwrap();

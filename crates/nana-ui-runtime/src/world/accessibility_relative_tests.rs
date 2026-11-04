@@ -372,3 +372,76 @@ fn a_box_placed_from_another_frame_is_noted_as_a_pin() {
         assert_eq!(pinned(&page.context), expected, "{frame:?}");
     }
 }
+
+/// Rows grown by an uneven step, again and again, move what they hold by
+/// amounts whose page sums round differently each frame. A box that moved
+/// with its parent is handed its offset from it, its local layout offset,
+/// so the bounds it kept are a cold projection's to the bit -- with a
+/// visual on the page, too, so the projection takes the path visuals do.
+#[test]
+fn boxes_moved_by_an_uneven_step_keep_a_cold_projection_to_the_bit() {
+    for visual in [false, true] {
+        let (mut b, root) = Builder::page(document(), 1, 400.0);
+        let list = b.element(root, column(Some(300.0)));
+        let mut rows = Vec::new();
+        for _ in 0..12 {
+            let row = b.element(
+                list,
+                LayoutStyle {
+                    flex_shrink: Some(0.0),
+                    ..fixed(300.0, 20.0)
+                },
+            );
+            let cell = b.element(
+                row,
+                LayoutStyle {
+                    padding_left: Some(LengthSpec::Px(1.3)),
+                    padding_top: Some(LengthSpec::Px(2.5)),
+                    ..fixed(100.0, 14.0)
+                },
+            );
+            let leaf = b.element(cell, fixed(50.0, 5.0));
+            rows.push([row, cell, leaf]);
+        }
+        if visual {
+            b.queue
+                .set_standard_visual(rows[11][2], Some(StandardVisual::KeymapLayer));
+        }
+        let mut context = AppContext::new();
+        context.commit_mutations(b.queue).unwrap();
+        product_frame(
+            &mut context,
+            document(),
+            viewport(),
+            &mut bundled_face_shaper(),
+        );
+        let mut page = Page {
+            context,
+            rows,
+            hanging: None,
+            list,
+        };
+        let mut retained = snapshot(&page.context);
+        let mut height = 20.0;
+        for step in 0..12 {
+            height += 1.37;
+            let at = format!("visual {visual}, step {step}");
+            let mut queue = MutationQueue::new();
+            row_height(&mut queue, page.rows[0][0], height);
+            let updated = edit(&mut page, &mut retained, queue, &at);
+            for [_, cell, leaf] in &page.rows[1..] {
+                assert!(
+                    !updated.contains(cell) && !updated.contains(leaf),
+                    "{at}: what a moved row holds moved with it"
+                );
+                let local = page.context.world().local_layout_box(*leaf).unwrap();
+                let bounds = retained[leaf].bounds;
+                assert_eq!(
+                    (bounds.x.to_bits(), bounds.y.to_bits()),
+                    (local.x.to_bits(), local.y.to_bits()),
+                    "{at}: a leaf is handed its offset in its cell"
+                );
+            }
+        }
+    }
+}

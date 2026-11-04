@@ -1142,6 +1142,13 @@ impl UiWorld {
             let Some(parent) = entry.parent else {
                 continue;
             };
+            if index == 0
+                && let Some([x, y]) = self.layout_offset_in_parent(entry, parent, plain, memo)
+            {
+                entry.bounds.x = x;
+                entry.bounds.y = y;
+                continue;
+            }
             let origin = if index == 0 {
                 if plain && self.layout_results.is_empty() {
                     self.layout_origin(parent).map(|[x, y]| (x, y))
@@ -1160,6 +1167,43 @@ impl UiWorld {
                 entry.bounds.y -= y;
             }
         }
+    }
+
+    /// `entry`'s offset from `parent` when both accessible boxes are their
+    /// layout boxes and `entry`'s is measured from `parent`'s: its local
+    /// layout offset, read straight off the record. The page boxes are the
+    /// chain sums, so their difference would equal it only up to the last
+    /// bit, and that bit moves with every ancestor a fractional move shifts;
+    /// the offset itself does not, which is what lets a box that follows its
+    /// parent keep the bounds it was handed ([`Self::keeps_relative_bounds`]).
+    fn layout_offset_in_parent(
+        &self,
+        entry: &AccessibilityNode,
+        parent: StableNodeId,
+        plain: bool,
+        memo: &mut ProjectionMemo,
+    ) -> Option<[f32; 2]> {
+        let record = self.nodes.get(entry.id)?;
+        if record.layout_frame != crate::LayoutFrame::Parent
+            || record.hierarchy.parent != Some(parent)
+            || matches!(record.kind.as_ref(), NodeKind::Document)
+            || self.geometry_frame.get().is_some()
+        {
+            return None;
+        }
+        let local = [record.local_layout.x, record.local_layout.y];
+        // An aligned box's chain runs through its parent, so the parent's
+        // accessible box is its layout box too.
+        if plain || self.axis_aligned(entry.id, memo) {
+            return Some(local);
+        }
+        // Off the aligned path, only where what was projected for both is
+        // their layout boxes, as a cold projection finds them.
+        let own = self.record_layout_origin(record);
+        let above = self.layout_origin(parent)?;
+        let parent_bounds = self.accessible_viewport_bounds(parent, plain, memo)?;
+        ([entry.bounds.x, entry.bounds.y] == own && [parent_bounds.x, parent_bounds.y] == above)
+            .then_some(local)
     }
 
     fn project_viewport_entries(
