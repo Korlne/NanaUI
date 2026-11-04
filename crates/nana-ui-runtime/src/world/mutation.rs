@@ -3294,6 +3294,7 @@ impl UiWorld {
         let previous = self.record(id).scroll_offset;
         if previous != offset {
             self.record_mut(id).scroll_offset = offset;
+            self.nodes.note_accessibility_pin(id);
             // Hit-index patch + Scene extract of this scroller only.
             // Descendants keep LayoutBox; paint uses scroll_offset.
             self.scroll_hit_updates
@@ -3316,6 +3317,7 @@ impl UiWorld {
             return false;
         }
         self.record_mut(id).scroll_offset = clamped;
+        self.nodes.note_accessibility_pin(id);
         self.scroll_hit_updates
             .push((id, [current.x - clamped.x, current.y - clamped.y]));
         self.mark_scroll_compatible(id, DirtyMask::INPUT | DirtyMask::RENDER);
@@ -3597,6 +3599,7 @@ impl UiWorld {
             record.layout_frame = frame;
             record.local_layout.x = x - frame_x;
             record.local_layout.y = y - frame_y;
+            self.nodes.note_accessibility_pin(id);
             self.defer_scroll_content(id);
         }
     }
@@ -3620,8 +3623,12 @@ impl UiWorld {
         let omission_changed = (record.local_layout.width <= 0.0
             || record.local_layout.height <= 0.0)
             != (layout.width <= 0.0 || layout.height <= 0.0);
+        let reframed = record.layout_frame != frame;
         record.local_layout = layout;
         record.layout_frame = frame;
+        if reframed {
+            self.nodes.note_accessibility_pin(id);
+        }
         if omission_changed && self.inline_parent(id).is_some() {
             self.mark_subtree(
                 id,

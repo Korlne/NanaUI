@@ -148,6 +148,43 @@ pub(crate) struct NodeRecord {
 }
 
 impl NodeRecord {
+    /// Whether nothing on this box changes where the accessible boxes under
+    /// it land relative to it: no scroll offset, transform or 3D context,
+    /// and placed in flow or relative to it (not absolute, fixed or sticky).
+    pub(crate) fn hands_accessibility_identity(&self) -> bool {
+        let style = self.resolved_layout.as_ref();
+        self.scroll_offset == ScrollOffset::default()
+            && style.transform.is_none()
+            && style.transform_3d.is_none()
+            && style.css_perspective.is_none()
+            && !style.preserve_3d
+            && matches!(
+                style.position,
+                nana_ui_core::PositionSpec::Static | nana_ui_core::PositionSpec::Relative
+            )
+    }
+
+    /// Whether this box, or what it holds, may not keep its accessible
+    /// offset from its parent's when a box above it moves: measured from
+    /// another frame than its parent, cutting what it holds, not handing its
+    /// children the identity ([`Self::hands_accessibility_identity`]), or a
+    /// visual whose accessible nodes come from its geometry. Every other box
+    /// moves with its parent to the bit, and so does all it holds.
+    pub(crate) fn pins_accessibility(&self, visual: Option<&StandardVisual>) -> bool {
+        self.layout_frame != crate::LayoutFrame::Parent
+            || self.resolved_layout.clips_overflow()
+            || !self.hands_accessibility_identity()
+            || matches!(
+                visual,
+                Some(
+                    StandardVisual::Select { .. }
+                        | StandardVisual::TreeView { .. }
+                        | StandardVisual::MenuSurface { .. }
+                        | StandardVisual::ModalFrame { .. }
+                )
+            )
+    }
+
     pub fn new(document: DocumentId, kind: &NodeKind, interaction: InteractionState) -> Self {
         Self {
             document,
@@ -684,6 +721,12 @@ pub(crate) struct NodeStore {
     /// menu: the few a layout pass gives a new room (see
     /// [`crate::SelectMenuRoom`]).
     open_select_menus: hashbrown::HashSet<StableNodeId>,
+    /// Nodes whose accessible bounds, or those of the boxes under them, may
+    /// not keep their offset from their parent's when a box above them moves
+    /// ([`NodeRecord::pins_accessibility`]). A superset: an entry is noted
+    /// whenever what decides it is written, and dropped when a later write
+    /// clears it or the node goes, so a reader checks it again.
+    accessibility_pins: hashbrown::HashSet<StableNodeId>,
     custom_render: HashMap<StableNodeId, CustomRenderNode>,
     event_listeners: HashMap<StableNodeId, EventListeners>,
     component_types: HashMap<StableNodeId, ComponentTypeId>,
@@ -805,6 +848,27 @@ impl NodeStore {
         self.text_nodes
             .insert(id, crate::text_node::TextNodeState::default());
         self.nodes.insert(id, record);
+        self.note_accessibility_pin(id);
+    }
+
+    /// Bring `id`'s entry in [`Self::accessibility_pins`] up to date with its
+    /// record and visual. Called wherever a field that decides it is written.
+    pub(crate) fn note_accessibility_pin(&mut self, id: StableNodeId) {
+        let pinned = self
+            .nodes
+            .get(id)
+            .is_some_and(|record| record.pins_accessibility(self.visuals.get(&id)));
+        if pinned {
+            self.accessibility_pins.insert(id);
+        } else {
+            self.accessibility_pins.remove(&id);
+        }
+    }
+
+    /// Every node [`NodeRecord::pins_accessibility`] holds for, and maybe
+    /// some it no longer does, in no particular order.
+    pub(crate) fn accessibility_pins(&self) -> impl ExactSizeIterator<Item = StableNodeId> + '_ {
+        self.accessibility_pins.iter().copied()
     }
 
     /// Drop the dense record and every sparse entry. The only despawn path.
@@ -812,6 +876,7 @@ impl NodeStore {
         let record = self.nodes.remove(id)?;
         self.visuals.remove(&id);
         self.open_select_menus.remove(&id);
+        self.accessibility_pins.remove(&id);
         self.custom_render.remove(&id);
         self.event_listeners.remove(&id);
         self.component_types.remove(&id);
@@ -894,6 +959,7 @@ impl NodeStore {
         if before != after {
             self.invalidate_text(id, crate::text_node::TextDirty::CONSTRAINT);
         }
+        self.note_accessibility_pin(id);
     }
     sparse!(
         custom_render,

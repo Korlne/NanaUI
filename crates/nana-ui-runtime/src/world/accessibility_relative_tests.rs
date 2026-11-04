@@ -3,14 +3,16 @@
 
 use std::collections::BTreeMap;
 
-use nana_ui_core::{FlexDirection, LayoutStyle, LengthSpec, OverflowSpec, PositionSpec};
+use nana_ui_core::{
+    FlexDirection, LayoutStyle, LengthSpec, OverflowSpec, PaintTransform, PositionSpec,
+};
 
 use super::super::reflow_oracle::{
     Builder, accessible_frame, bundled_face_shaper, column, fixed, product_frame, styled,
 };
 use crate::{
     AccessibilityNode, AppContext, DocumentId, LayoutViewport, MutationQueue, ScrollOffset,
-    StableNodeId,
+    StableNodeId, StandardVisual,
 };
 
 fn document() -> DocumentId {
@@ -229,4 +231,144 @@ fn moved_rows_under_a_scrolled_list_match_a_full_projection() {
     queue.set_scroll_offset(page.list, ScrollOffset { x: 0.0, y: 10.0 });
     row_height(&mut queue, page.rows[1][0], 24.0);
     edit(&mut page, &mut retained, queue, "scrolled and grown");
+}
+
+/// Boxes under moved rows that do not keep their offset from their parent
+/// to the bit -- a transform, a sticky offset, a clip, a box measured from
+/// the column above the row, a fixed and an absolute one -- each with a
+/// plain box inside, on a page with a visual (so the projection takes the
+/// path visuals do). The delta finds them from the pins alone and matches a
+/// full projection field by field; the plain boxes around them stay put.
+#[test]
+fn pinned_boxes_under_moved_rows_match_a_full_projection() {
+    let (mut b, root) = Builder::page(document(), 1, 400.0);
+    let list = b.element(
+        root,
+        LayoutStyle {
+            position: PositionSpec::Relative,
+            ..column(Some(300.0))
+        },
+    );
+    let mut rows = Vec::new();
+    for _ in 0..12 {
+        let row = b.element(
+            list,
+            LayoutStyle {
+                flex_shrink: Some(0.0),
+                ..fixed(300.0, 20.0)
+            },
+        );
+        let cell = b.element(
+            row,
+            LayoutStyle {
+                position: PositionSpec::Relative,
+                ..fixed(100.0, 10.0)
+            },
+        );
+        let leaf = b.element(cell, fixed(50.0, 5.0));
+        rows.push([row, cell, leaf]);
+    }
+    let placed = |position, left: f32, top: f32| LayoutStyle {
+        position,
+        offset_left: Some(LengthSpec::Px(left)),
+        offset_top: Some(LengthSpec::Px(top)),
+        ..fixed(10.0, 10.0)
+    };
+    let pins = [
+        LayoutStyle {
+            transform: Some(PaintTransform {
+                e: 3.25,
+                f: 1.5,
+                ..Default::default()
+            }),
+            ..fixed(40.0, 8.0)
+        },
+        LayoutStyle {
+            position: PositionSpec::Sticky,
+            offset_top: Some(LengthSpec::Px(0.0)),
+            ..fixed(40.0, 8.0)
+        },
+        LayoutStyle {
+            overflow_x: OverflowSpec::Hidden,
+            overflow_y: OverflowSpec::Hidden,
+            ..fixed(40.0, 8.0)
+        },
+        // Measured from the column, above the row.
+        placed(PositionSpec::Absolute, 210.0, 3.0),
+        placed(PositionSpec::Fixed, 320.0, 10.0),
+        // Measured from the row's own cell.
+        placed(PositionSpec::Absolute, 60.0, 2.0),
+    ];
+    let mut pinned = Vec::new();
+    for (index, style) in pins.into_iter().enumerate() {
+        let [row, cell, _] = rows[5 + index];
+        let parent = if index == 3 { row } else { cell };
+        let pin = b.element(parent, style);
+        let inside = b.element(pin, fixed(4.0, 3.0));
+        pinned.push((pin, inside));
+    }
+    b.queue
+        .set_standard_visual(rows[11][2], Some(StandardVisual::KeymapLayer));
+    let mut context = AppContext::new();
+    context.commit_mutations(b.queue).unwrap();
+    product_frame(
+        &mut context,
+        document(),
+        viewport(),
+        &mut bundled_face_shaper(),
+    );
+    let mut page = Page {
+        context,
+        rows,
+        hanging: None,
+        list,
+    };
+    let mut retained = snapshot(&page.context);
+    for (height, at) in [(26.25, "grown"), (20.0, "back"), (33.5, "grown more")] {
+        let mut queue = MutationQueue::new();
+        row_height(&mut queue, page.rows[0][0], height);
+        let updated = edit(&mut page, &mut retained, queue, at);
+        for [row, cell, leaf] in &page.rows[1..] {
+            assert!(updated.contains(row), "{at}: a moved row projects again");
+            assert!(
+                !updated.contains(cell) && !updated.contains(leaf),
+                "{at}: what a moved row holds moved with it"
+            );
+        }
+        let (absolute, inside) = pinned[5];
+        assert!(
+            !updated.contains(&absolute) && !updated.contains(&inside),
+            "{at}: a box measured from the moved cell kept its offset"
+        );
+        for &(pin, _) in &pinned[3..5] {
+            assert!(updated.contains(&pin), "{at}: its frame did not move");
+        }
+    }
+}
+
+/// A box layout places from the page while its own style is in flow (an
+/// open triggered menu's item) is noted as a pin when the frame is written,
+/// and stops being one when it is placed from its parent again.
+#[test]
+fn a_box_placed_from_another_frame_is_noted_as_a_pin() {
+    let mut page = page(2, false, false);
+    let leaf = page.rows[1][2];
+    let pinned = |context: &AppContext| {
+        context
+            .world()
+            .nodes
+            .accessibility_pins()
+            .any(|id| id == leaf)
+    };
+    assert!(!pinned(&page.context), "an in-flow box pins nothing");
+    let local = page.context.world().local_layout_box(leaf).unwrap();
+    for (frame, expected) in [
+        (crate::LayoutFrame::Page, true),
+        (crate::LayoutFrame::Parent, false),
+    ] {
+        let mut queue = MutationQueue::new();
+        queue.place_layout(leaf, local, frame);
+        page.context.commit_mutations(queue).unwrap();
+        assert_eq!(pinned(&page.context), expected, "{frame:?}");
+    }
 }

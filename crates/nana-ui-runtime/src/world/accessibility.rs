@@ -27,19 +27,67 @@ struct AccessibleTransform {
 
 impl UiWorld {
     /// Layout box and viewport box are the same when no ancestor scrolls or
-    /// transforms. The answer is memoized; a skewed node forces the normal
-    /// transform walk for itself and its descendants.
+    /// transforms, and the box's accessible box is its layout box (not a
+    /// modal frame's surface). The chain's answer is memoized; a skewed node
+    /// forces the normal transform walk for itself and its descendants.
+    ///
+    /// The transform walk ([`Self::accessibility_ancestor_transform`]) reads
+    /// each box's effective style, which visuals, overlays and stacking can
+    /// make differ from its resolved one; only an open triggered menu's
+    /// placement changes what the walk makes of it (its content is fixed,
+    /// hanging from the menu). Motion overlays transform any box, and clip
+    /// visuals cut it, so those leave the walk; every live modal frame is a
+    /// clip visual, so none is left whose surface is its accessible box.
     fn axis_aligned(&self, id: StableNodeId, memo: &mut ProjectionMemo) -> bool {
+        // The box itself is not memoized, only the chains above it: a
+        // projection asks after each of its children once, and their own
+        // boxes are rarely asked after again, where every ancestor is.
+        let aligned = self.motion_free_unclipped()
+            && self.nodes.get(id).is_some_and(|record| {
+                self.box_axis_aligned(id, record)
+                    && record
+                        .hierarchy
+                        .parent
+                        .is_none_or(|parent| self.chain_axis_aligned(parent, memo))
+            });
+        #[cfg(any(test, feature = "layout-verify"))]
+        if aligned {
+            assert_eq!(
+                self.visible_accessibility_bounds(id, memo),
+                self.component_layout_box(id),
+                "{id:?}: an axis-aligned box's accessible box is not its layout box"
+            );
+        }
+        aligned
+    }
+
+    /// No motion overlay and no clip visual anywhere: what decides whether
+    /// a box is axis-aligned is on its chain.
+    fn motion_free_unclipped(&self) -> bool {
+        self.layout_length_tracks.is_empty()
+            && self.presentation.is_empty()
+            && self.clip_visuals == 0
+    }
+
+    /// Whether `record`, `id`'s, neither scrolls, transforms nor places
+    /// itself off its parent's coordinates.
+    fn box_axis_aligned(&self, id: StableNodeId, record: &NodeRecord) -> bool {
+        let style = record.resolved_layout.as_ref();
+        !(record.scroll_offset != ScrollOffset::default()
+            || style.transform.is_some()
+            || style.transform_3d.is_some()
+            || matches!(style.position, PositionSpec::Fixed | PositionSpec::Sticky)
+            || style.css_perspective.is_some()
+            || style.preserve_3d
+            || (!self.triggered_overlays.is_empty() && self.parent_triggered_overlay(id).is_some()))
+    }
+
+    /// [`Self::axis_aligned`] for `id` and every box above it, memoized.
+    fn chain_axis_aligned(&self, id: StableNodeId, memo: &mut ProjectionMemo) -> bool {
         if let Some(aligned) = memo.aligned.get(&id) {
             return *aligned;
         }
-        if !self.layout_length_tracks.is_empty()
-            || !self.presentation.is_empty()
-            || self.z_index_nodes != 0
-            || self.nodes.has_visuals()
-            || !self.overlay_host_nodes.is_empty()
-            || self.clip_visuals != 0
-        {
+        if !self.motion_free_unclipped() {
             memo.aligned.insert(id, false);
             return false;
         }
@@ -47,7 +95,9 @@ impl UiWorld {
         let mut current = Some(id);
         let mut aligned = true;
         while let Some(node) = current {
-            if let Some(&known) = memo.aligned.get(&node) {
+            if node != id
+                && let Some(&known) = memo.aligned.get(&node)
+            {
                 aligned = known;
                 break;
             }
@@ -56,14 +106,7 @@ impl UiWorld {
                 aligned = false;
                 break;
             };
-            let style = record.resolved_layout.as_ref();
-            if record.scroll_offset != ScrollOffset::default()
-                || style.transform.is_some()
-                || style.transform_3d.is_some()
-                || matches!(style.position, PositionSpec::Fixed | PositionSpec::Sticky)
-                || style.css_perspective.is_some()
-                || style.preserve_3d
-            {
+            if !self.box_axis_aligned(node, record) {
                 aligned = false;
                 break;
             }
@@ -335,6 +378,20 @@ impl UiWorld {
     /// accessibility tree. The retained hierarchy is still used for paint,
     /// layout, and input; this is only the semantic projection boundary.
     fn accessibility_hidden(&self, id: StableNodeId, memo: &mut ProjectionMemo) -> bool {
+        // As in `axis_aligned`, only the boxes above are memoized.
+        let Some(node) = self.nodes.get(id) else {
+            return false;
+        };
+        if node.accessibility.hidden || self.inline_box_omitted(id) {
+            return true;
+        }
+        node.hierarchy
+            .parent
+            .is_some_and(|parent| self.ancestor_hidden(parent, memo))
+    }
+
+    /// [`Self::accessibility_hidden`], memoized.
+    fn ancestor_hidden(&self, id: StableNodeId, memo: &mut ProjectionMemo) -> bool {
         if let Some(hidden) = memo.hidden.get(&id) {
             return *hidden;
         }
@@ -347,7 +404,7 @@ impl UiWorld {
             return true;
         }
         let parent = node.hierarchy.parent;
-        let hidden = parent.is_some_and(|parent| self.accessibility_hidden(parent, memo));
+        let hidden = parent.is_some_and(|parent| self.ancestor_hidden(parent, memo));
         memo.hidden.insert(id, hidden);
         hidden
     }
@@ -505,20 +562,18 @@ impl UiWorld {
         let mut children = if plain {
             children.as_ref().clone()
         } else {
-            children
-                .iter()
-                .copied()
-                .filter(|child| {
-                    let child_id = *child;
-                    self.nodes.get(child_id).is_some_and(|node| {
-                        node.resolved.0.box_visible
-                            && (node.resolved.0.visible || !node.hierarchy.children.is_empty())
-                            && !matches!(node.kind.as_ref(), NodeKind::Comment)
-                    }) && !self.accessibility_hidden(child_id, memo)
-                        && (self.axis_aligned(child_id, memo)
-                            || self.visible_accessibility_bounds(child_id, memo).is_some())
-                })
-                .collect::<Vec<_>>()
+            let mut kept = Vec::with_capacity(children.len());
+            kept.extend(children.iter().copied().filter(|child| {
+                let child_id = *child;
+                self.nodes.get(child_id).is_some_and(|node| {
+                    node.resolved.0.box_visible
+                        && (node.resolved.0.visible || !node.hierarchy.children.is_empty())
+                        && !matches!(node.kind.as_ref(), NodeKind::Comment)
+                }) && !self.accessibility_hidden(child_id, memo)
+                    && (self.axis_aligned(child_id, memo)
+                        || self.visible_accessibility_bounds(child_id, memo).is_some())
+            }));
+            kept
         };
         if self.nodes.has_visuals()
             && let Some(StandardVisual::MenuSurface {
@@ -1203,15 +1258,26 @@ impl UiWorld {
         // no clip, transform or scroll: what a moved box holds keeps its
         // bounds.
         if !tree_plain {
+            // Moved boxes whose subtree hands its boxes their layout boxes
+            // all the way down, but where something pins them: those are
+            // found from the pins, not by walking what the box holds.
+            let mut pin_roots = Vec::new();
             for &id in &moved_seeds {
                 if work.layout_moved.binary_search(&id).is_ok() {
-                    self.reach_moved_subtree(
-                        id,
-                        &work.layout_moved,
-                        &mut affected,
-                        &mut pending,
-                        &mut memo,
-                    );
+                    if self.moved_root_hands_identity(id) {
+                        pin_roots.push(id);
+                    } else {
+                        let mut open = Vec::new();
+                        self.reach_moved_subtree(
+                            id,
+                            &mut open,
+                            &work.layout_moved,
+                            false,
+                            &mut affected,
+                            &mut pending,
+                            &mut memo,
+                        );
+                    }
                 } else if let Some(node) = self.nodes.get(id) {
                     // Resized where it stood: what it holds stays on the
                     // page, unless its own transform turns about a centre
@@ -1230,6 +1296,21 @@ impl UiWorld {
                         );
                     }
                 }
+            }
+            if !pin_roots.is_empty() {
+                pin_roots.sort_unstable();
+                let (mut pinned, mut pinned_subtrees) = (Vec::new(), Vec::new());
+                self.reach_moved_pins(
+                    &pin_roots,
+                    &work.layout_moved,
+                    &mut pinned,
+                    &mut pinned_subtrees,
+                    &mut memo,
+                );
+                #[cfg(any(test, feature = "layout-verify"))]
+                self.check_moved_pins(&pin_roots, &work.layout_moved, &pinned, &pinned_subtrees);
+                affected.extend(pinned);
+                pending.extend(pinned_subtrees);
             }
         }
         // `visited` is membership-only, so it does not need ordering at all.
@@ -1268,7 +1349,7 @@ impl UiWorld {
         self.check_kept_accessibility(&moved_seeds, &affected);
         let mut removed = work.accessibility_removals.clone();
         let plain = affected.len() >= 64 && tree_plain;
-        let mut updated = Vec::new();
+        let mut updated = Vec::with_capacity(affected.len());
         for id in affected {
             let entries = self.project_accessibility_entries(id, plain, true, &mut memo);
             if entries.is_empty() {
@@ -1290,10 +1371,108 @@ impl UiWorld {
         }
     }
 
+    /// Whether nothing from the page down to `root`, a box layout moved,
+    /// changes where an accessible box lands, and `root` hands its children
+    /// their layout boxes too: then of what it holds only the pinned boxes
+    /// ([`NodeRecord::pins_accessibility`]) and what is under those can
+    /// project differently ([`Self::reach_moved_pins`]). Motion overlays can
+    /// transform any box, and a clip visual cuts every box under it, so
+    /// either leaves the walk.
+    fn moved_root_hands_identity(&self, root: StableNodeId) -> bool {
+        self.clip_visuals == 0
+            && self.presentation.is_empty()
+            && self.layout_length_tracks.is_empty()
+            && !self.is_modal_frame(root)
+            && std::iter::successors(self.nodes.get(root), |record| {
+                record
+                    .hierarchy
+                    .parent
+                    .and_then(|parent| self.nodes.get(parent))
+            })
+            .all(NodeRecord::hands_accessibility_identity)
+    }
+
+    fn is_modal_frame(&self, id: StableNodeId) -> bool {
+        self.nodes.has_visuals()
+            && matches!(
+                self.nodes.visual(id),
+                Some(StandardVisual::ModalFrame { .. })
+            )
+    }
+
+    /// What under `roots` -- boxes layout moved that hand their subtrees the
+    /// identity ([`Self::moved_root_hands_identity`]) -- projects again
+    /// although nothing marked it, found from the pinned boxes alone. A box
+    /// on a path from such a root that nothing pins hands its children the
+    /// identity, is measured from its parent and cuts nothing: it, and every
+    /// box under it that nothing pins, kept its offset from its parent to
+    /// the bit. So each pin under a root with no box that changes that
+    /// between them is where [`Self::reach_moved_subtree`]'s walk would
+    /// first find anything; the walk starts there instead. A pin below one
+    /// that hands its children something else (a transform, a scroll, a
+    /// sticky offset, another frame, a clip or a modal frame) is the upper
+    /// one's walk to reach, and a pin with another moved box between it and
+    /// the root is that box's. O(pins × depth), not O(boxes moved).
+    fn reach_moved_pins(
+        &self,
+        roots: &[StableNodeId],
+        layout_moved: &[StableNodeId],
+        affected: &mut Vec<StableNodeId>,
+        pending: &mut Vec<StableNodeId>,
+        memo: &mut ProjectionMemo,
+    ) {
+        let mut open = Vec::new();
+        for pin in self.nodes.accessibility_pins() {
+            let Some(record) = self.nodes.get(pin) else {
+                continue;
+            };
+            if !record.pins_accessibility(self.nodes.visual(pin)) {
+                continue;
+            }
+            // The nearest box layout moved above the pin, unless a box on
+            // the way hands what it holds anything but the identity.
+            let mut at = record.hierarchy.parent;
+            let root = loop {
+                let Some(id) = at else {
+                    break None;
+                };
+                if layout_moved.binary_search(&id).is_ok() {
+                    break Some(id);
+                }
+                let Some(above) = self.nodes.get(id) else {
+                    break None;
+                };
+                if above.layout_frame != crate::LayoutFrame::Parent
+                    || above.resolved_layout.clips_overflow()
+                    || !above.hands_accessibility_identity()
+                    || self.is_modal_frame(id)
+                {
+                    break None;
+                }
+                at = above.hierarchy.parent;
+            };
+            let Some(root) = root.filter(|root| roots.binary_search(root).is_ok()) else {
+                continue;
+            };
+            open.push((pin, true));
+            self.reach_moved_subtree(
+                root,
+                &mut open,
+                layout_moved,
+                false,
+                affected,
+                pending,
+                memo,
+            );
+        }
+    }
+
     /// What under `root`, a box layout moved, projects again although nothing
     /// marked it, into `affected`, and the boxes whose whole subtree does
-    /// into `pending`. Everything under `root` moved with it and kept its
-    /// offset from its parent but for:
+    /// into `pending`, walking from the boxes in `open` (each with whether
+    /// its parent's accessible box is its layout box) or, when `open` is
+    /// empty, from `root`'s children. Everything under `root` moved with it
+    /// and kept its offset from its parent but for:
     ///
     /// - a box measured from a frame that did not move (a `fixed` box, an
     ///   absolute one whose containing block is above `root`): it stayed on
@@ -1307,46 +1486,27 @@ impl UiWorld {
     ///   the same offset to the bit ([`Self::keeps_relative_bounds`]).
     ///
     /// The walk stops at a box layout moved itself (in `layout_moved`): it
-    /// is walked as a root of its own. It reads each box's record and
-    /// nothing else on the common path -- no box, no memo -- which is what
-    /// lets a moved column of rows cost a pass over records rather than a
-    /// projection per box.
+    /// is walked as a root of its own. Below a box that hands its children
+    /// their layout boxes it goes on only when `descend_identity` is set:
+    /// what is there that can project again is pinned, and found from the
+    /// pins ([`Self::reach_moved_pins`]); a root that hands nothing the
+    /// identity is walked whole. The walk reads each box's record and
+    /// nothing else on the common path -- no box, no memo.
+    #[allow(clippy::too_many_arguments)]
     fn reach_moved_subtree(
         &self,
         root: StableNodeId,
+        open: &mut Vec<(StableNodeId, bool)>,
         layout_moved: &[StableNodeId],
+        descend_identity: bool,
         affected: &mut Vec<StableNodeId>,
         pending: &mut Vec<StableNodeId>,
         memo: &mut ProjectionMemo,
     ) {
         let Some(record) = self.nodes.get(root) else {
+            open.clear();
             return;
         };
-        // Whether nothing from the page down to a box changes where its
-        // accessible box lands: then its bounds are its layout box. Motion
-        // overlays can transform any box, so they leave only the exact
-        // check.
-        let plain_motion = self.presentation.is_empty() && self.layout_length_tracks.is_empty();
-        let clean = |record: &NodeRecord| {
-            let style = record.resolved_layout.as_ref();
-            record.scroll_offset == ScrollOffset::default()
-                && style.transform.is_none()
-                && style.transform_3d.is_none()
-                && style.css_perspective.is_none()
-                && !style.preserve_3d
-                && matches!(
-                    style.position,
-                    PositionSpec::Static | PositionSpec::Relative
-                )
-        };
-        let root_identity = plain_motion
-            && std::iter::successors(Some(record), |record| {
-                record
-                    .hierarchy
-                    .parent
-                    .and_then(|parent| self.nodes.get(parent))
-            })
-            .all(clean);
         let special = |id: StableNodeId| {
             self.nodes.has_visuals()
                 && matches!(
@@ -1359,24 +1519,33 @@ impl UiWorld {
                     )
                 )
         };
-        let modal = |id: StableNodeId| {
-            self.nodes.has_visuals()
-                && matches!(
-                    self.nodes.visual(id),
-                    Some(StandardVisual::ModalFrame { .. })
-                )
-        };
         // Whether `block` moved with `root`: it is `root` or under it.
         let inside = |block: StableNodeId| {
             std::iter::successors(Some(block), |&at| self.parent_id(at)).any(|at| at == root)
         };
-        let parent_identity = root_identity && !modal(root);
-        let mut open: Vec<(StableNodeId, bool)> = record
-            .hierarchy
-            .children
-            .iter()
-            .map(|&child| (child, parent_identity))
-            .collect();
+        if open.is_empty() {
+            // Whether nothing from the page down to a box changes where its
+            // accessible box lands: then its bounds are its layout box.
+            // Motion overlays can transform any box, so they leave only the
+            // exact check.
+            let plain_motion = self.presentation.is_empty() && self.layout_length_tracks.is_empty();
+            let root_identity = plain_motion
+                && std::iter::successors(Some(record), |record| {
+                    record
+                        .hierarchy
+                        .parent
+                        .and_then(|parent| self.nodes.get(parent))
+                })
+                .all(NodeRecord::hands_accessibility_identity);
+            let parent_identity = root_identity && !self.is_modal_frame(root);
+            open.extend(
+                record
+                    .hierarchy
+                    .children
+                    .iter()
+                    .map(|&child| (child, parent_identity)),
+            );
+        }
         while let Some((id, parent_identity)) = open.pop() {
             let Some(record) = self.nodes.get(id) else {
                 continue;
@@ -1397,7 +1566,7 @@ impl UiWorld {
                 pending.push(id);
                 continue;
             }
-            let identity = parent_identity && clean(record);
+            let identity = parent_identity && record.hands_accessibility_identity();
             let keeps = if identity && !special(id) {
                 true
             } else {
@@ -1406,7 +1575,10 @@ impl UiWorld {
             if !keeps {
                 affected.push(id);
             }
-            let handed = identity && !modal(id);
+            let handed = identity && !self.is_modal_frame(id);
+            if handed && !descend_identity {
+                continue;
+            }
             open.extend(
                 record
                     .hierarchy
@@ -1478,6 +1650,61 @@ impl ShippedAccessibility {
         for node in updated {
             shipped.insert(node.id, node.clone());
         }
+    }
+}
+
+#[cfg(any(test, feature = "layout-verify"))]
+impl UiWorld {
+    /// The pins found under `roots` are what walking every box under them
+    /// finds, and every box that pins is noted as a pin. Small worlds only,
+    /// as the other checks.
+    fn check_moved_pins(
+        &self,
+        roots: &[StableNodeId],
+        layout_moved: &[StableNodeId],
+        affected: &[StableNodeId],
+        pending: &[StableNodeId],
+    ) {
+        if self.len() > SHIPPED_ACCESSIBILITY_LIMIT {
+            return;
+        }
+        let noted: hashbrown::HashSet<StableNodeId> = self.nodes.accessibility_pins().collect();
+        for id in self.nodes.keys() {
+            let record = self.nodes.get(id).expect("a key has a record");
+            assert!(
+                !record.pins_accessibility(self.nodes.visual(id)) || noted.contains(&id),
+                "{id:?} pins accessibility but is not noted as a pin"
+            );
+        }
+        let mut memo = ProjectionMemo::default();
+        let (mut walked, mut walked_subtrees, mut open) = (Vec::new(), Vec::new(), Vec::new());
+        for &root in roots {
+            self.reach_moved_subtree(
+                root,
+                &mut open,
+                layout_moved,
+                true,
+                &mut walked,
+                &mut walked_subtrees,
+                &mut memo,
+            );
+        }
+        let sorted = |ids: &[StableNodeId]| {
+            let mut ids = ids.to_vec();
+            ids.sort_unstable();
+            ids.dedup();
+            ids
+        };
+        assert_eq!(
+            sorted(affected),
+            sorted(&walked),
+            "the pins under moved boxes found other boxes to project than a walk"
+        );
+        assert_eq!(
+            sorted(pending),
+            sorted(&walked_subtrees),
+            "the pins under moved boxes found other subtrees to project than a walk"
+        );
     }
 }
 

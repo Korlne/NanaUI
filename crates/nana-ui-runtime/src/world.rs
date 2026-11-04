@@ -2591,6 +2591,7 @@ impl UiWorld {
         previous: &nana_ui_core::LayoutStyle,
         next: &nana_ui_core::LayoutStyle,
     ) {
+        self.nodes.note_accessibility_pin(id);
         // Whether a block holds a strut reads its children's display, and
         // which strut its own face (`resolve_block_struts`).
         if previous.display != next.display

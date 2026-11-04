@@ -323,13 +323,26 @@ Scene（2026-11-03）：图元是用绝对坐标的布局盒（加祖先变换�
 | 简单页 | width | 整帧 | 122 | 119 |
 | 控件页 | text | 整帧 | 22 | 22 |
 
-每次编辑的指令（`RUNS=240` 与 `RUNS=40` 之差除以 200）：控件页改行高 407 M → 54 M（无头）、597 M → 64 M（VISIBLE=1），简单页 31 M → 31 M。控件页布局段的下降来自 `settle_layout_moves` 不再把平移根下面的 2 万个按钮标 RENDER。剩下的大头是无障碍（2.2 ms，`project_viewport_entries`）。
+每次编辑的指令（`RUNS=240` 与 `RUNS=40` 之差除以 200）：控件页改行高 407 M → 54 M（无头）、597 M → 64 M（VISIBLE=1），简单页 31 M → 31 M。控件页布局段的下降来自 `settle_layout_moves` 不再把平移根下面的 2 万个按钮标 RENDER。剩下的大头是无障碍（2.2 ms，`project_viewport_entries`；已在收尾一步降到亚毫秒，见下）。
 
 painter 段（`nana-text-paint-benchmark --workload reflow`，交替 8 轮读最小值，ms）：1 000 标签 flush 2.07 → 1.76、batch 0.151 → 0.192，合计 2.22 → 1.95；10 000 标签 flush 27.7 → 23.4、batch 2.47 → 2.59，合计 30.1 → 26.0。两边都不重建文字实例（`text_instance_rebuilds` 0），平移行上传量相同；batch 多出的约 20 ns/标签是重定基时为每个节点读一次放置原点（`DrawAttributes.origin`），flush 少的是 Scene 不再为每个平移的标签重建图元、剔除索引不再逐个重算。快照套件与 3e9c83b80 的输出逐字节相同（680 张，`gallery-sidebar-collapsed-dark` 为已知抖动）。NativeMarkdown 先试过放进本地坐标：整篇文档的排版从内容盒一路累加，按本地累加再放到页面上和按页面累加在末位不同，`gallery-rich-text` 两张快照的 Mermaid 曲线有 7 个像素差 1 级，所以它留在页面坐标里（平移时重新提取）。
 
 公开接口变化（第 4 阶段）：`ScenePrimitive` 的几何（`bounds`、批量矩形、笔画点、`Path` / `Chart` 的 `origin`、`LayerBegin` 的裁剪、`LayerMask.origin`、节点自己的裁剪）改为节点本地坐标（读页面的 visual 除外）；页面位置用新增的 `UiScene::primitive_layout_bounds` / `place_rect`。`SceneDraw` 新增 `origin` 字段与 `place`、`placed_bounds`、`geometry_transform`，`transform` 不再含原点，`clips` 全在页面上。`ExtractedNode.component_geometry` 改为本地坐标（`UiWorld::component_geometry` 仍是页面坐标，不变）；新增 `StandardVisual::geometry_reads_page`。`UiScene::node_bounds` 恢复为现在的页面盒子（与 `node_layout_bounds` 相同）。
 
 `component-gallery` 的语义快照另有 8 个与此无关的差异（对话框、空状态等文字的 `line_height` 由 `Relative` 变为 `normal`），来自 b1bc92819，不含这些改动的树上同样出现，基线没有重录。
+
+相对几何收尾·无障碍（2026-11-04）：平移的根下面不再逐个走记录（`reach_moved_subtree` 原来每个根整棵走一遍），改为从 `NodeStore` 记着的钉住盒子（参照系不是父节点、裁剪、不交恒等、Select/TreeView/MenuSurface/ModalFrame）往上找最近的平移根（`reach_moved_pins`，O(钉子数 × 深度)）；根到页面不交恒等时仍整棵走。剩下的是平移的根本身的重投影：`axis_aligned` 原来在有任何 visual 时整体退回变换链现算（控件页每个子节点一次 `hit_motion_layout` 与变换合成），现在逐个看链上的盒子；被问的盒子与它的隐藏判定不再进记忆表（原来每个子节点两次哈希插入、表反复扩容），子节点筛选按子节点数预留。做法见 [relative-geometry.md](relative-geometry.md) 3.7。与 6838427fb 交替 8 轮、每轮交换先后读最小值（负载 11–17，µs，绝对值比安静时高）：
+
+| 页面 | 编辑 | 阶段 | 6838427fb | 本次 |
+| --- | --- | --- | ---: | ---: |
+| 控件页 62 001 节点 | height | 无障碍 | 3 165 | 635 |
+| 控件页 | height | 整帧 | 5 783 | 2 567 |
+| 简单页 42 001 盒 | height | 无障碍 | 1 113 | 362 |
+| 简单页 | height | 整帧 | 2 454 | 1 460 |
+| 简单页 | width | 整帧 | 127 | 128 |
+| 控件页 | text | 整帧 | 24 | 24 |
+
+分段（临时计时，负载 4–8，读最小值）：控件页原来往下走的那一遍 680 µs → 16 µs，1 013 个平移行的投影 1 833 → 595 µs；简单页 210 → 14 µs、635 → 344 µs。每次编辑的指令（`RUNS=240` 与 `RUNS=40` 之差除以 200）：控件页改行高 55 M → 26 M，简单页 31 M → 23 M。无障碍剩下的是每个平移行自己的投影（相对偏移确实变了）：节点本身、十个子节点的隐藏与对齐判定、放进 delta 的整份 `AccessibilityNode`。
 
 已做的（2026-11-02）：发布阶段每个结果的四个切片在复用的暂存表里建好、按最终长度一次分配，空切片不分配（`Arc::<[T]>::default()`），按父分组的子集改为一张排序表，不再每个父节点一个 `Vec`；意图缓存键的环境哈希从 SipHash 换成固定种子的 foldhash，`seeded_intrinsic` 换成 hashbrown；`ConstraintClass` 的相等与哈希一趟读出归一化后的标签与值，不再各自归一化两遍；`RetainedIntrinsicMetrics` 每个内容的变体表按一增长（首个 push 原本预留 4 个，320 B 只用 80 B）；`MeasurePlanSlots` 的两个槽装箱（原本每个容器 528 B 内联在表里，通常只用一个槽）；整页 pass 按节点数和容器数预先给各表留好容量；锚点记忆表在父节点已结算时不再分配。
 

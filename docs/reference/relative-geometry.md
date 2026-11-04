@@ -111,7 +111,13 @@ Taffy 做同一次编辑只要 0.48 ms。真正重新排布的只有约 1 000 �
 
 ### 3.7 无障碍
 
-`AccessibilityNode.bounds` 已经是相对父节点的（47aa93fb2）。写回时本地偏移变了的盒子直接标 ACCESSIBILITY，随父节点平移的后代不写回也不标。第 3 阶段起无障碍只看平移的根（`SystemWork::layout_moved`）：`reach_moved_subtree` 从每个根往下走一遍记录（不读盒子、不进记忆表），找出没跟着动的（参照系在根外：`fixed`、包含块在根上面的绝对定位）、裁剪溢出的（视口坐标的裁剪从它而来，整棵子树重投影），以及从页面到它一路有变换、滚动、粘性或特殊 visual 的（交给 `keeps_relative_bounds` 精确判定）；走到另一个平移根就停。只改了尺寸的根（不在 `layout_moved` 里）只在自身带变换时重投影子节点。`check_kept_accessibility` 照旧在小世界里对没投影的节点逐个比对冷投影。
+`AccessibilityNode.bounds` 已经是相对父节点的（47aa93fb2）。写回时本地偏移变了的盒子直接标 ACCESSIBILITY，随父节点平移的后代不写回也不标。第 3 阶段起无障碍只看平移的根（`SystemWork::layout_moved`），收尾一步起连根下面也不走：
+
+- **钉住的盒子**（`NodeRecord::pins_accessibility`）：参照系不是父节点（`fixed`、逃逸的绝对定位、触发式菜单的菜单项）、裁剪溢出（视口坐标的 `clip` 从它而来）、交给子节点的不是恒等（滚动偏移、变换、3D 上下文、`absolute` / `fixed` / `sticky`，即 `hands_accessibility_identity` 不成立），或带 Select、TreeView、MenuSurface、ModalFrame 这类从几何派生虚拟节点或改写自身盒子的 visual。其余盒子随父节点平移时相对偏移逐位不变，它下面没钉住的盒子也一样。`NodeStore` 记着这个集合（`accessibility_pins`，超集）：决定它的字段一写就重算该节点——样式解析（`note_layout_anchor_change`）、滚动偏移、写回或换参照系时参照系变了、visual 设置、插入；节点移除时删掉；读的时候再按现状核一次。
+- **从钉子找**（`reach_moved_pins`）：根到页面一路交恒等、根不是模态框、没有动画叠加和裁剪 visual（`moved_root_hands_identity`）时，对每个钉子往上找最近的平移根，路上碰到会改变子节点投影的盒子（参照系不是父节点、裁剪、不交恒等、模态框）就交给那个盒子；找到的钉子从它自己起按原来的规则走（`reach_moved_subtree`：没跟着动的进 `affected`，裁剪的整棵子树重投影，不交恒等的盒子下面逐个 `keeps_relative_bounds`），交恒等的盒子下面不再往下。代价 O(钉子数 × 深度)，和被平移的节点数无关。
+- 根本身不交恒等（祖先有滚动或变换、根是 `absolute`、有动画叠加或裁剪 visual）时仍从根往下走整棵子树：滚动或变换下视口盒是 `变换 · 布局盒`，平移后父子相减在末位不一定相等，冷对照要求逐位一致，所以这些子树里的盒子逐个精确判定。
+- **投影本身**：平移的根自己的相对偏移确实变了，要重投影，代价落在它的子节点筛选（每个子节点问一次隐藏、视口盒）。`axis_aligned` 原来有任何 visual、z-index、浮层宿主就整体退回变换链现算；现在只看链上每个盒子（滚动、变换、`fixed` / `sticky`、3D、父节点是打开的触发式菜单），全局只留动画叠加和裁剪 visual（每个活着的 ModalFrame 都是裁剪 visual，所以不会把 surface 当成布局盒）；被问的盒子本身不进记忆表，只记它上面的链，隐藏判定同样。测试与 `layout-verify` 构建里 `axis_aligned` 每答一次「对齐」都现算一遍视口盒断言等于布局盒。
+- 校验：测试与 `layout-verify` 下 4 096 个节点以内的世界，`check_moved_pins` 每次把同一批根按旧规则整棵走一遍，断言两边找出的节点集合与子树集合相同，并逐个节点核对钉住的盒子都记在集合里；`check_kept_accessibility` 照旧对没投影的节点逐个比对冷投影。只改了尺寸的根（不在 `layout_moved` 里）只在自身带变换时重投影子节点。
 
 ## 4. 验证
 
@@ -140,5 +146,7 @@ Taffy 做同一次编辑只要 0.48 ms。真正重新排布的只有约 1 000 �
 第 3 阶段已落地：提取 3.74 → 0.08 ms（其中 Scene 的 delta 约 1.95 → 0.05 ms），无障碍 2.86 → 0.80 ms，布局 2.06 → 0.47 ms（`spread_layout_moves` 删除），命中 0.65 → 0.24 ms，整帧 11.7 → 1.7 ms，每次编辑指令 127 M → 32 M；改宽度、改控件文字持平（做法见 3.5、3.7，数字见 `resource-budgets.md`）。
 
 第 4 阶段已落地：图元、节点自己的裁剪和组件几何改为本地坐标，painter 先把几何放到节点原点再变换（3.5、3.6）；`place_painted_records` 与 `component_geometry.is_none()` 守卫删除，平移的子树一个图元也不重建，剔除索引整棵平移。控件页（`CONTROLS=1 edits 2000 height`，62 001 节点）改行高的提取段 59.7 → 0.4 ms、整帧 67 → 4 ms，无头运行提取段 41 → 0.3 ms；简单页提取段 79 → 60 µs；`nana-text-paint-benchmark --workload reflow` 的 flush+batch 合计下降（数字见 `resource-budgets.md`）。快照与 3e9c83b80 逐像素相同。
+
+收尾·无障碍已落地：平移的根下面只处理钉住的盒子，`axis_aligned` 不再因为有 visual 就整体退回变换链现算（3.7）。与 6838427fb 交替 8 轮读最小值：控件页改行高无障碍 3.17 → 0.64 ms、整帧 5.8 → 2.6 ms，简单页无障碍 1.11 → 0.36 ms，每次编辑指令控件页 55 M → 26 M、简单页 31 M → 23 M；改宽度、改控件文字持平（数字见 `resource-budgets.md`）。
 
 **目标**：改行高时整帧和 Taffy 布局在同一数量级，个位数毫秒；改宽度和改控件文字不回退。
