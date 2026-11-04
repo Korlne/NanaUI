@@ -179,10 +179,12 @@ fn page(spec: Spec) -> (AppContext, NanaTextEngineShaper, Ids) {
     let extra = b.detached(row_style(false));
     let extra_cell = b.element(extra, block(false));
     b.label(extra_cell, "Extra");
-    // Inserted and, unless `spec.extra_row`, detached again: a row the list
-    // held once, as a warm page's would be.
-    b.queue.insert(list, extra, Some(before));
-    if !spec.extra_row {
+    // Out of the tree unless `spec.extra_row`: detached, as a warm page's
+    // removed row is. Left with no parent it would be a root of the
+    // document.
+    if spec.extra_row {
+        b.queue.insert(list, extra, Some(before));
+    } else {
         b.queue.detach(extra);
     }
     let row_leaf = leaves[2];
@@ -313,23 +315,24 @@ fn an_atom_leaving_the_flow_moves_the_line_box() {
 /// A row holding a label inserted into the list and removed again.
 #[test]
 fn rows_inserted_and_removed_move_the_line_box() {
-    let mut spec = Spec {
-        extra_row: true,
-        ..Spec::default()
-    };
+    let mut spec = Spec::default();
     let (mut warm, mut shaper, ids) = page(spec);
     for _ in 0..2 {
-        spec.extra_row = false;
-        step(&mut warm, &mut shaper, spec, |queue| {
-            queue.detach(ids.extra);
-        });
         spec.extra_row = true;
         step(&mut warm, &mut shaper, spec, |queue| {
             queue.insert(ids.list, ids.extra, Some(ids.before));
         });
+        spec.extra_row = false;
+        step(&mut warm, &mut shaper, spec, |queue| {
+            queue.detach(ids.extra);
+        });
     }
     // And a row that holds a line box removed for good: the cold page keeps
     // it detached.
+    spec.extra_row = true;
+    step(&mut warm, &mut shaper, spec, |queue| {
+        queue.insert(ids.list, ids.extra, Some(ids.before));
+    });
     spec.extra_row = false;
     step(&mut warm, &mut shaper, spec, |queue| {
         queue.despawn_subtree(ids.extra);

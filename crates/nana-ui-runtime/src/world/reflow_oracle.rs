@@ -99,7 +99,9 @@ impl Builder {
         node(self.next - 1)
     }
 
-    /// An element with no parent yet.
+    /// An element with no parent yet. Until it is inserted it is a root of
+    /// the document, laid out and painted as one; one meant to stay out of
+    /// the tree is detached as well.
     pub(super) fn detached(&mut self, layout: LayoutStyle) -> StableNodeId {
         let id = self.take();
         self.queue
