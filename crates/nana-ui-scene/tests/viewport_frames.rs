@@ -192,7 +192,7 @@ struct Page {
     /// What the deltas handed out, applied one over the other.
     accessibility: BTreeMap<StableNodeId, AccessibilityNode>,
     /// The first row of the root and of the scaled box.
-    rows: [StableNodeId; 2],
+    rows: [StableNodeId; 3],
 }
 
 /// Root (turned, relative) → six rows, the list (a scroller of eight
@@ -272,7 +272,7 @@ fn build() -> Page {
     let mut page = Page {
         runtime,
         accessibility: BTreeMap::new(),
-        rows: [cells[0].0, scaled[0].0],
+        rows: [cells[0].0, scaled[0].0, nested[0].0],
     };
     let update = flush(&mut page.runtime);
     take(&mut page, update);
@@ -404,7 +404,7 @@ fn boxes_placed_from_the_viewport_turn_and_scale_as_a_full_projection_does() {
     for node in [STICKY, FIXED, ESCAPING, LIST] {
         pinned.extend(subtree(&page, node));
     }
-    let mut heights = [20.0_f32; 2];
+    let mut heights = [20.0_f32; 3];
     let mut scroll = 0.0;
     let scales = [
         (scale(1.37, 1.37), scale(0.85, 1.1)),
@@ -462,7 +462,7 @@ fn boxes_placed_from_the_viewport_turn_and_scale_as_a_full_projection_does() {
             );
             // Moves by an uneven step under the root and under the scale,
             // then a move, a scroll and a turn in one frame.
-            let which = step % 2;
+            let which = step % 3;
             heights[which] += 1.37;
             let (moved, height) = (page.rows[which], heights[which]);
             edit(&mut page, &mut twin, &format!("{at}: moved"), |queue| {

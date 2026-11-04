@@ -10857,7 +10857,11 @@ fn write_layout_does_not_extract_bit_identical_descendants() {
         "bit-identical middle-row label must not be extracted because its ancestor was written"
     );
     assert!(work.layout_frontier_seeds.is_empty());
-    assert_eq!(work.input_hit_test, work.render_extraction);
+    assert_eq!(work.input_hit_test, [node(2), node(5), node(7)]);
+    // The document's own box stayed, but its result records where the
+    // column sits and how tall it is: the record extraction holds of it is
+    // made again. Nothing else of it is marked.
+    assert_eq!(work.render_extraction, [node(1), node(2), node(5), node(7)]);
     // The shifted row's label moved with it on the page, and kept its offset
     // from the row: its accessible bounds, relative to the row's, hold.
     assert_eq!(work.accessibility, [node(2), node(5), node(7)]);

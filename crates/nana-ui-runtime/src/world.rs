@@ -2087,6 +2087,13 @@ impl UiWorld {
                     bits |= DirtyMask::RESHAPED;
                 }
                 self.mark_moved_by_layout(id, bits, false);
+            } else {
+                // A result that changed only where its children sit (a fixed
+                // column whose first row grew) projects nothing new, but the
+                // record extraction made of it holds the result: extract it
+                // again, or a renderer keeps the old one -- and keeps it under
+                // a later move of an ancestor.
+                self.mark(id, DirtyMask::RENDER);
             }
             if sticky_changed {
                 self.mark(id, DirtyMask::RENDER);
