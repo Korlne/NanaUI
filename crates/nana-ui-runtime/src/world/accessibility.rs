@@ -73,6 +73,33 @@ fn upright(a: f32, b: f32, c: f32, d: f32) -> bool {
     b == 0.0 && c == 0.0 && a > 0.0 && d > 0.0
 }
 
+/// Whether a box whose transform style went from `before` to `after` hands
+/// the accessible bounds of what it holds the same space
+/// ([`AccessibleSpace`]): no 3D context on either side, and its own 2D
+/// transform turns (a rotation, a skew or a flip: the space is its own
+/// layout px, whatever the turn) both times, or scales its box upright by
+/// the same factors both times (none, or a translation, is a scale of one).
+/// Then what it holds placed by its offset keeps its bounds to the bit, and
+/// only the box itself and the boxes placed from the viewport under it can
+/// project differently ([`crate::SystemWork::transform_kept`]).
+pub(super) fn keeps_accessible_space(
+    before: &nana_ui_core::LayoutStyle,
+    after: &nana_ui_core::LayoutStyle,
+) -> bool {
+    let flat = |style: &nana_ui_core::LayoutStyle| {
+        style.transform_3d.is_none() && style.css_perspective.is_none() && !style.preserve_3d
+    };
+    // The scale it hands on, `None` where it turns.
+    let space = |style: &nana_ui_core::LayoutStyle| match style.transform {
+        None => Some([1.0f32.to_bits(); 2]),
+        Some(turn) if upright(turn.a, turn.b, turn.c, turn.d) => {
+            Some([turn.a.to_bits(), turn.d.to_bits()])
+        }
+        Some(_) => None,
+    };
+    flat(before) && flat(after) && space(before) == space(after)
+}
+
 /// The inverse of the affine `[a, b, c, d, e, f]` (`x' = a·x + c·y + e`),
 /// unless it is singular.
 fn invert_affine([a, b, c, d, e, f]: [f32; 6]) -> Option<[f32; 6]> {
@@ -1927,10 +1954,35 @@ impl UiWorld {
                 && (tree_plain
                     || (self.clip_visuals == 0 && (!self.clips_overflow(*id) || !reshaped(id))))
         };
-        let (moved_seeds, mut pending): (Vec<StableNodeId>, Vec<StableNodeId>) =
-            work.input_hit_test.iter().partition(|id| carries(id));
-        pending.extend(&work.transform);
+        // A box whose transform changed and gave what it holds the same
+        // space: it projects again, and of what it holds only the boxes
+        // placed from the viewport (found from the pins), where it holds
+        // its own box upright in its space, cuts nothing and nothing else
+        // marked it. Any other projects its subtree again.
+        let kept_turn = |id: &StableNodeId| work.transform_kept.binary_search(id).is_ok();
+        let (moved_seeds, mut pending): (Vec<StableNodeId>, Vec<StableNodeId>) = work
+            .input_hit_test
+            .iter()
+            .partition(|id| carries(id) && !kept_turn(id));
+        pending.extend(work.transform.iter().filter(|id| !kept_turn(id)));
         let mut memo = ProjectionMemo::default();
+        let mut turn_roots = Vec::new();
+        for &id in &work.transform_kept {
+            if moved(&id)
+                && work.layout_moved.binary_search(&id).is_err()
+                && !self.clips_overflow(id)
+                && self.moved_root_hands_offsets(id, &mut memo)
+            {
+                turn_roots.push(id);
+            } else {
+                pending.push(id);
+            }
+        }
+        if !turn_roots.is_empty() {
+            pending.retain(|id| turn_roots.binary_search(id).is_err());
+            affected.extend(&turn_roots);
+            self.reach_turned_pins(&turn_roots, &mut pending);
+        }
         // A plain tree places every box in flow, from its parent, and has
         // no clip, transform or scroll: what a moved box holds keeps its
         // bounds.
@@ -2061,7 +2113,11 @@ impl UiWorld {
             }
         }
         #[cfg(any(test, feature = "layout-verify"))]
-        self.check_kept_accessibility(&moved_seeds, &affected);
+        {
+            let mut seeds = moved_seeds.clone();
+            seeds.extend(&turn_roots);
+            self.check_kept_accessibility(&seeds, &affected);
+        }
         let mut removed = work.accessibility_removals.clone();
         let plain = affected.len() >= 64 && tree_plain;
         let mut updated = Vec::with_capacity(affected.len());
@@ -2226,6 +2282,47 @@ impl UiWorld {
         }
     }
 
+    /// The pinned boxes ([`NodeRecord::pins_accessibility`]) under `roots`
+    /// -- boxes whose transform changed and gave what they hold the same
+    /// space ([`keeps_accessible_space`]), holding their own boxes upright
+    /// in theirs ([`Self::moved_root_hands_offsets`]) -- into `pending`,
+    /// whose subtrees project again. Everything else under such a root is
+    /// placed by its offset, in a space the new transform did not change,
+    /// and keeps its bounds to the bit. Unlike a move, nothing under a turn
+    /// stays where it stood: a box measured from a block above the root, or
+    /// escaping a clip above it, is still carried by its transform, so the
+    /// nearest pin below the root is found whatever frame it is measured
+    /// from; a pin below another pin is that one's subtree. O(pins × depth).
+    fn reach_turned_pins(&self, roots: &[StableNodeId], pending: &mut Vec<StableNodeId>) {
+        for pin in self.nodes.accessibility_pins() {
+            let Some(record) = self.nodes.get(pin) else {
+                continue;
+            };
+            if !record.pins_accessibility(self.nodes.visual(pin)) {
+                continue;
+            }
+            let mut at = record.hierarchy.parent;
+            let reached = loop {
+                let Some(id) = at else {
+                    break false;
+                };
+                if roots.binary_search(&id).is_ok() {
+                    break true;
+                }
+                let Some(above) = self.nodes.get(id) else {
+                    break false;
+                };
+                if above.pins_accessibility(self.nodes.visual(id)) {
+                    break false;
+                }
+                at = above.hierarchy.parent;
+            };
+            if reached {
+                pending.push(pin);
+            }
+        }
+    }
+
     /// What under `root`, a box layout moved, projects again although nothing
     /// marked it, into `affected`, and the boxes whose whole subtree does
     /// into `pending`, walking from the boxes in `open` (each with whether
@@ -2304,6 +2401,18 @@ impl UiWorld {
             };
             if !follows {
                 affected.push(id);
+                // What it holds is placed from it: by offset, where it
+                // holds its own box upright in its space; otherwise from
+                // viewport boxes less its own, which stand where they stood
+                // but are summed through a chain the move changed, and do
+                // not keep their difference to the bit.
+                if !(record.hands_accessibility_offsets()
+                    && self
+                        .accessible_space(id, memo)
+                        .is_some_and(|space| space.unit.is_some()))
+                {
+                    pending.push(id);
+                }
                 continue;
             }
             if layout_moved.binary_search(&id).is_ok() {

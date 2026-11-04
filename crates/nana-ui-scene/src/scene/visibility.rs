@@ -376,18 +376,37 @@ fn first_difference_nodes<V: std::fmt::Debug + PartialEq>(
     ))
 }
 
+/// Compare two culling bounds edge by edge, each within
+/// [`MAX_PROJECTION_ULPS`] of the largest edge of the fresh bound. The four
+/// edges are the extremes of the same corners, put through the same
+/// transform: each is a sum of terms about as large as the box stands far
+/// from the origin, and rounds at that scale. An edge a turn brings near
+/// zero is the difference of such terms, so its own ulps would read their
+/// rounding as drift.
 #[cfg(debug_assertions)]
 fn bounds_match(retained: Option<Bounds>, fresh: Option<Bounds>) -> bool {
     match (retained, fresh) {
         (None, None) => true,
-        (Some(retained), Some(fresh)) => [
-            (retained.left, fresh.left),
-            (retained.top, fresh.top),
-            (retained.right, fresh.right),
-            (retained.bottom, fresh.bottom),
-        ]
-        .into_iter()
-        .all(|(retained, fresh)| projection_component_matches(retained, fresh)),
+        (Some(retained), Some(fresh)) => {
+            let edges = [
+                (retained.left, fresh.left),
+                (retained.top, fresh.top),
+                (retained.right, fresh.right),
+                (retained.bottom, fresh.bottom),
+            ];
+            let scale = edges
+                .iter()
+                .map(|(_, fresh)| fresh.abs())
+                .fold(0.0_f32, f32::max);
+            // The spacing of `f32` at the box's scale.
+            let ulp = f32::from_bits(scale.to_bits() + 1) - scale;
+            edges.into_iter().all(|(retained, fresh)| {
+                projection_component_matches(retained, fresh)
+                    || (retained.is_finite()
+                        && fresh.is_finite()
+                        && (retained - fresh).abs() <= MAX_PROJECTION_ULPS as f32 * ulp)
+            })
+        }
         _ => false,
     }
 }
@@ -858,11 +877,42 @@ mod tests {
         let fresh = Some(fresh_bounds);
         assert!(bounds_match(retained, fresh));
         assert!(!bounds_match(retained, None));
+        // Edges round at the box's scale: nine ulps of its largest edge
+        // off is drift.
+        let ulp = f32::from_bits(115.67_f32.to_bits() + 1) - 115.67;
         assert!(!bounds_match(
             retained,
             Some(Bounds {
-                top: f32::from_bits(12.0_f32.to_bits() + 9),
+                top: 12.0 + 9.0 * ulp,
                 ..fresh_bounds
+            })
+        ));
+    }
+
+    #[test]
+    fn an_edge_turned_near_zero_rounds_at_the_scale_of_its_box() {
+        // A row under a turned list moved by a translation of its culling
+        // bounds: its left edge is the difference of terms of some hundred
+        // pixels, 55 of its own ulps (and a fraction of one of the box's)
+        // from a fresh projection.
+        let retained = Some(Bounds {
+            left: -0.77558,
+            top: 144.04854,
+            right: 113.47804,
+            bottom: 201.87564,
+        });
+        let fresh = Bounds {
+            left: -0.775_583_27,
+            top: 144.04854,
+            right: 113.47804,
+            bottom: 201.87564,
+        };
+        assert!(bounds_match(retained, Some(fresh)));
+        assert!(!bounds_match(
+            retained,
+            Some(Bounds {
+                left: -0.7765,
+                ..fresh
             })
         ));
     }

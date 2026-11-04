@@ -187,6 +187,7 @@ impl RuntimeDocument {
         let mut hit_geometry_changed = false;
         let mut accessibility_subtrees = BTreeSet::new();
         let mut accessibility_moved = BTreeSet::new();
+        let mut transform_kept: Vec<StableNodeId> = Vec::new();
         let mut layout_moved: Vec<StableNodeId> = Vec::new();
         let mut layout_reshaped: Vec<StableNodeId> = Vec::new();
 
@@ -231,6 +232,7 @@ impl RuntimeDocument {
             hit_geometry_changed |= !work.style.is_empty()
                 || !work.layout_frontier_seeds.is_empty()
                 || !work.transform.is_empty()
+                || !work.transform_kept.is_empty()
                 || !work.state.is_empty();
             // Same seed rule as `project_accessibility_delta`: hit-test and
             // transform subtrees moved in viewport space, scheduled-layout
@@ -244,7 +246,15 @@ impl RuntimeDocument {
                     accessibility_subtrees.insert(id);
                 }
             }
-            accessibility_subtrees.extend(work.transform.iter().copied());
+            // A transform that gave what its box holds the same space is no
+            // subtree seed: its box is in `accessibility_moved` by its INPUT.
+            accessibility_subtrees.extend(
+                work.transform
+                    .iter()
+                    .filter(|id| work.transform_kept.binary_search(id).is_err())
+                    .copied(),
+            );
+            transform_kept.extend(work.transform_kept.iter().copied());
             layout_moved.extend(work.layout_moved.iter().copied());
             layout_reshaped.extend(work.layout_reshaped.iter().copied());
 
@@ -284,6 +294,11 @@ impl RuntimeDocument {
                     layout_reshaped.sort_unstable();
                     layout_reshaped.dedup();
                     layout_reshaped
+                },
+                transform_kept: {
+                    transform_kept.sort_unstable();
+                    transform_kept.dedup();
+                    transform_kept
                 },
                 input_hit_test: accessibility_subtrees
                     .union(&accessibility_moved)

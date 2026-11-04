@@ -18,6 +18,9 @@
 //!                                          # the rows in a scroller scrolled before the edits
 //! ROTATED=1 cargo run --release -- edits 2000 height
 //!                                          # the rows in a column turned by 0.05 rad
+//! ROTATED=1 cargo run --release -- edits 2000 transform
+//!                                          # turn the rows' column by another angle each edit
+//!                                          # (`scale`: scale it); a plain page turns its root
 //! cargo run --release -- edits 200,2000   # one edit a product frame: layout and frame time
 //! RUNS=240 /usr/bin/time -l target/release/nana-stack-depth edits 2000 height
 //!                                          # 240 edits; less RUNS=40, over 200: one edit's instructions
@@ -47,6 +50,10 @@ use nana_ui_scene::RuntimeDocument;
 thread_local! {
     /// The scroller a `SCROLLED=1` page holds its rows in.
     static SCROLLER: std::cell::Cell<Option<StableNodeId>> = const { std::cell::Cell::new(None) };
+    /// The column holding the rows, which the `transform` and `scale` edits
+    /// turn or scale: the turned column on a `ROTATED=1` page, the page's
+    /// root otherwise.
+    static ROWS: std::cell::Cell<Option<StableNodeId>> = const { std::cell::Cell::new(None) };
 }
 
 const ENGINES: [&str; 3] = ["nana-layout", "nana-frame", "taffy"];
@@ -134,6 +141,7 @@ fn nana_page(cx: &mut AppContext, document: DocumentId, rows: usize, cells: usiz
         }
         root = list;
     }
+    ROWS.with(|rows| rows.set(Some(root.stable_id())));
     // `CONTROLS=1`: a page of controls, not bare boxes -- every cell holds a
     // label and a button, so the passes meet visuals, text and their tables.
     let controls = std::env::var_os("CONTROLS").is_some();
@@ -333,7 +341,9 @@ fn taffy_wide(rows: usize, cells: usize) -> (f64, f64, isize, isize) {
 /// (`RuntimeDocument::flush`) after the first: the least layout stage and
 /// the least whole flush over `runs` edits, in microseconds. `width` and
 /// `height` toggle the target leaf's width or minimum height (the second
-/// moves every row below it); `text` toggles a controls page's label.
+/// moves every row below it); `text` toggles a controls page's label;
+/// `transform` turns the rows' column (by 0.05 or 0.06 rad on a `ROTATED=1`
+/// page, 0.01 or 0.02 otherwise) and `scale` scales it (1.01 or 1.02).
 fn nana_edits(rows: usize, cells: usize, edit: &str, runs: usize) -> (f64, f64) {
     let document = DocumentId::new(1).unwrap();
     let mut runtime = RuntimeDocument::new(document);
@@ -382,6 +392,38 @@ fn nana_edits(rows: usize, cells: usize, edit: &str, runs: usize) -> (f64, f64) 
                     value: value.into(),
                 },
             );
+        } else if edit == "transform" || edit == "scale" {
+            let rows = ROWS.with(|rows| rows.get()).unwrap();
+            let mut style = cx.world().node_style(rows).unwrap().clone();
+            let turn = if std::env::var_os("ROTATED").is_some() {
+                0.05
+            } else {
+                0.01
+            };
+            // The first edit changes it: the page starts at `turn`.
+            let step = if on { 0.01 } else { 0.0 };
+            let (sin, cos) = (turn + step as f32).sin_cos();
+            let scale = 1.01 + step as f32;
+            std::sync::Arc::make_mut(&mut style.layout).transform = Some(if edit == "transform" {
+                nana_ui_core::PaintTransform {
+                    a: cos,
+                    b: sin,
+                    c: -sin,
+                    d: cos,
+                    e: 0.0,
+                    f: 0.0,
+                }
+            } else {
+                nana_ui_core::PaintTransform {
+                    a: scale,
+                    b: 0.0,
+                    c: 0.0,
+                    d: scale,
+                    e: 0.0,
+                    f: 0.0,
+                }
+            });
+            queue.set_style(rows, style);
         } else {
             let mut style = cx.world().node_style(target).unwrap().clone();
             let spec = std::sync::Arc::make_mut(&mut style.layout);
@@ -824,7 +866,8 @@ fn main() {
                 let boxes = 1 + rows * (1 + if controls { 3 } else { 2 } * 10);
                 for edit in &edits {
                     let (layout, whole) = nana_edits(rows, 10, edit, runs);
-                    let taffy = if controls {
+                    // Taffy lays out; it has no paint transform to turn.
+                    let taffy = if controls || matches!(*edit, "transform" | "scale") {
                         "-".to_owned()
                     } else {
                         format!("{:.1} µs", taffy_edits(rows, 10, edit, 40))

@@ -4120,14 +4120,31 @@ impl UiWorld {
         if transform_changed {
             // Scene extract and hit-test read `layout.transform`; LAYOUT
             // does not, so paint-transform is not a layout dirty.
-            self.mark_subtree(id, DirtyMask::TRANSFORM | DirtyMask::INPUT);
-            // Only this node is extracted again. A descendant's
-            // primitives are built in its own space and projected by
-            // the chain above it, and the renderer re-projects a
-            // retained descendant from the ancestor's new transform
-            // rather than rebuilding it. Extracting the subtree every
-            // frame of an animation would hand back the same geometry.
-            self.mark(id, DirtyMask::RENDER);
+            //
+            // Only this node is marked. Extraction: a descendant's
+            // primitives are built in its own space and projected by the
+            // chain above it, and the renderer re-projects a retained
+            // descendant from the ancestor's new transform rather than
+            // rebuilding it; extracting the subtree every frame of an
+            // animation would hand back the same geometry. Hit testing: an
+            // entry that hands its children its own layout coordinates
+            // (`HitEntry::local_children`) is built again on its own, any
+            // other patches its whole branch, and the pinned entries below
+            // are built again either way. Accessibility: a transform that
+            // gives what the box holds the same space projects the box and
+            // the boxes placed from the viewport under it
+            // (`SystemWork::transform_kept`); any other projects the
+            // subtree from `SystemWork::transform`.
+            if !stacking_changed
+                && super::accessibility::keeps_accessible_space(&previous_resolved, &resolved)
+            {
+                self.mark_transform_kept(id);
+            } else {
+                self.mark(
+                    id,
+                    DirtyMask::TRANSFORM | DirtyMask::INPUT | DirtyMask::RENDER,
+                );
+            }
         } else if stacking_changed {
             self.mark_subtree(id, DirtyMask::INPUT | DirtyMask::RENDER);
         }

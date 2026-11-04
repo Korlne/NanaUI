@@ -2116,6 +2116,19 @@ impl UiWorld {
         self.marking_layout_move = false;
     }
 
+    /// Mark `id`, whose own 2D transform changed while what it hands its
+    /// children did not ([`SystemWork::transform_kept`]). Its INPUT mark is
+    /// no subtree seed for accessibility, as a layout move's is not, unless
+    /// something else marks INPUT on it too.
+    pub(super) fn mark_transform_kept(&mut self, id: StableNodeId) {
+        self.marking_layout_move = true;
+        self.mark(
+            id,
+            DirtyMask::TRANSFORM | DirtyMask::TRANSFORM_KEPT | DirtyMask::INPUT | DirtyMask::RENDER,
+        );
+        self.marking_layout_move = false;
+    }
+
     /// The nodes of `batch` with no box: ones layout sees hidden (see
     /// [`Self::omits_layout_box`]), and what is inside them. They publish no
     /// result, as a cold layout gives them none, and whatever result one
@@ -3308,6 +3321,7 @@ impl UiWorld {
             text: Vec::new(),
             layout_frontier_seeds: Vec::new(),
             transform: Vec::new(),
+            transform_kept: Vec::new(),
             input_hit_test: Vec::new(),
             focus_ime: Vec::new(),
             accessibility: Vec::new(),
@@ -3429,6 +3443,7 @@ impl UiWorld {
         bump_list(work.text.len());
         bump_list(work.layout_frontier_seeds.len());
         bump_list(work.transform.len());
+        bump_list(work.transform_kept.len());
         bump_list(work.input_hit_test.len());
         bump_list(work.focus_ime.len());
         bump_list(work.accessibility.len());
@@ -3492,6 +3507,7 @@ impl UiWorld {
             (work.state, DirtyMask::STATE),
             (work.text, DirtyMask::TEXT),
             (work.transform, DirtyMask::TRANSFORM),
+            (work.transform_kept, DirtyMask::TRANSFORM_KEPT),
             (
                 work.input_hit_test,
                 DirtyMask::INPUT | DirtyMask::INPUT_ELSEWHERE,

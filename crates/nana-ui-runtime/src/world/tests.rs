@@ -7595,10 +7595,14 @@ fn turning_a_container_moves_its_subtree_without_re_extracting_it() {
     );
     world.commit(turn).unwrap();
     let work = world.take_system_work();
-    // The whole subtree moved in viewport space, which hit-testing and
-    // accessibility both have to know.
-    assert_eq!(work.transform, vec![node(1), node(2), node(3)]);
-    assert_eq!(work.input_hit_test, vec![node(1), node(2), node(3)]);
+    // The whole subtree moved in viewport space, but only the turned box is
+    // marked: hit testing patches its branch from its entry, and
+    // accessibility projects its subtree from the transform list -- this
+    // turn gives what it holds a new space (none to a quarter turn).
+    assert_eq!(work.transform, vec![node(1)]);
+    assert!(work.transform_kept.is_empty());
+    assert_eq!(work.input_hit_test, vec![node(1)]);
+    assert!(work.accessibility_moved.is_empty());
     // The renderer does not: a descendant's primitives live in its own space
     // and are projected by the chain above it, which the scene re-projects
     // from the retained node rather than rebuilding.

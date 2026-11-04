@@ -7,9 +7,29 @@ pub(super) struct DrawAttributes {
     /// The placement epoch [`Self::origin`] was read at.
     placement: u64,
     delta: AffineTransform,
+    /// The node's projection its primitives were built against, and the
+    /// current one, where they differ: a transform built as the former is
+    /// drawn as the latter itself, not rebased through an inverse.
+    rebased: Option<(AffineTransform, AffineTransform)>,
     parent_clips: Arc<[ClipRegion]>,
     /// Where the node's geometry is drawn from ([`UiScene::paint_origin`]).
     origin: [f32; 2],
+}
+
+impl DrawAttributes {
+    /// `transform`, a primitive's or its own clip's as built, as it is
+    /// drawn now. One built as the node's projection is drawn as the
+    /// current projection: `current · inverse(base) · base` rounds an ulp
+    /// or so off `current`, which turns a pure translation -- what a painter
+    /// snaps to the grid -- into a near-identity scale once an ancestor
+    /// stops turning. Anything else (a painter's local transform on top) is
+    /// rebased by the delta.
+    fn rebase(&self, transform: AffineTransform) -> AffineTransform {
+        match self.rebased {
+            Some((base, current)) if transform == base => current,
+            _ => self.delta.then(transform),
+        }
+    }
 }
 
 /// What a placed clip chain was put together from.
@@ -183,16 +203,18 @@ impl UiScene {
             // budget (`960.0` against `959.9986`), and it moves every retained
             // bound. An epoch bump on its own — a colour change on a parent
             // is enough — must not.
-            let delta = if same_drawn_transform(current, base_transform) {
-                AffineTransform::IDENTITY
+            let (delta, rebased) = if same_drawn_transform(current, base_transform) {
+                (AffineTransform::IDENTITY, None)
             } else {
-                inverse(base_transform)
-                    .map_or(AffineTransform::IDENTITY, |inverse| current.then(inverse))
+                inverse(base_transform).map_or((AffineTransform::IDENTITY, None), |inverse| {
+                    (current.then(inverse), Some((base_transform, current)))
+                })
             };
             let attributes = DrawAttributes {
                 epoch: self.attribute_epoch,
                 placement: self.placement_epoch,
                 delta,
+                rebased,
                 parent_clips,
                 origin: self.paint_origin(extracted),
             };
@@ -232,7 +254,7 @@ impl UiScene {
                     &primitive.clips,
                     own_from,
                     own_from,
-                    AffineTransform::IDENTITY,
+                    None,
                     built_at,
                 ),
             ),
@@ -246,14 +268,14 @@ impl UiScene {
                 parent_clip_count,
             } => (
                 attributes.origin,
-                attributes.delta.then(primitive.transform),
+                attributes.rebase(primitive.transform),
                 self.placed_own_clips(
                     primitive,
                     revision,
                     &attributes.parent_clips,
                     attributes.parent_clips.len(),
                     parent_clip_count.min(primitive.clips.len()),
-                    attributes.delta,
+                    Some(&attributes),
                     attributes.origin,
                 ),
             ),
@@ -270,7 +292,8 @@ impl UiScene {
 
     /// `primitive`'s clip chain as drawn: the first `kept` clips of
     /// `inherited` (on the page), then its own clips from `own_from` on,
-    /// rebased by `delta` and put at `origin`. Most primitives have none of
+    /// rebased by `rebase` ([`DrawAttributes::rebase`], none when they are
+    /// current) and put at `origin`. Most primitives have none of
     /// their own, and the inherited list is the one the ancestor walk
     /// already holds; a chain that has to be put together is kept until the
     /// scene or the projection changes.
@@ -282,14 +305,17 @@ impl UiScene {
         inherited: &Arc<[ClipRegion]>,
         kept: usize,
         own_from: usize,
-        delta: AffineTransform,
+        rebase: Option<&DrawAttributes>,
         origin: [f32; 2],
     ) -> Arc<[ClipRegion]> {
         let own = &primitive.clips[own_from..];
         if own.is_empty() && kept == inherited.len() {
             return Arc::clone(inherited);
         }
-        let identity = delta == AffineTransform::IDENTITY;
+        let rebase = rebase.filter(|attributes| {
+            attributes.delta != AffineTransform::IDENTITY || attributes.rebased.is_some()
+        });
+        let identity = rebase.is_none();
         if origin == [0.0, 0.0] && identity && Arc::ptr_eq(inherited, &primitive.clips) {
             return Arc::clone(&primitive.clips);
         }
@@ -305,8 +331,8 @@ impl UiScene {
         }
         let mut clips = inherited[..kept].to_vec();
         clips.extend(own.iter().cloned().map(|mut clip| {
-            if !identity {
-                clip.transform = delta.then(clip.transform);
+            if let Some(rebase) = rebase {
+                clip.transform = rebase.rebase(clip.transform);
             }
             clip.bounds = super::offset_rect(clip.bounds, origin);
             clip
@@ -331,9 +357,7 @@ impl UiScene {
         Some(match self.primitive_projection(primitive)? {
             NodeProjection::Retained => primitive.transform,
             NodeProjection::Moved(delta) => delta.then(primitive.transform),
-            NodeProjection::Rebased { attributes, .. } => {
-                attributes.delta.then(primitive.transform)
-            }
+            NodeProjection::Rebased { attributes, .. } => attributes.rebase(primitive.transform),
         })
     }
 }

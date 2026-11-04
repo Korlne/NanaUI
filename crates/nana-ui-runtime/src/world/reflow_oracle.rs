@@ -254,6 +254,7 @@ fn frame(
                 .extend(&work.accessibility_removals);
             drained.input_hit_test.extend(&work.input_hit_test);
             drained.transform.extend(&work.transform);
+            drained.transform_kept.extend(&work.transform_kept);
             drained.layout_moved.extend(&work.layout_moved);
             drained.layout_reshaped.extend(&work.layout_reshaped);
             for id in &work.input_hit_test {
@@ -318,6 +319,10 @@ fn frame(
         drained.layout_moved.dedup();
         drained.layout_reshaped.sort_unstable();
         drained.layout_reshaped.dedup();
+        drained.transform.sort_unstable();
+        drained.transform.dedup();
+        drained.transform_kept.sort_unstable();
+        drained.transform_kept.dedup();
     }
     // `last_work_counters` keeps the last frame that drained work across idle
     // frames, which reads as that work repeating (#397); an idle frame
