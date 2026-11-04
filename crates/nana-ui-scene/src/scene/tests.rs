@@ -1049,6 +1049,7 @@ fn menu_surface_paints_row_icon_and_iconless_labels() {
                 disabled: false,
                 checked: false,
                 icon: Some(nana_ui_core::Icon::Add),
+                image: None,
                 accessible_name: None,
                 mark: nana_ui_runtime::MenuItemMark::Command,
             },
@@ -1060,6 +1061,7 @@ fn menu_surface_paints_row_icon_and_iconless_labels() {
                 disabled: false,
                 checked: false,
                 icon: None,
+                image: None,
                 accessible_name: None,
                 mark: nana_ui_runtime::MenuItemMark::Command,
             },
@@ -1105,6 +1107,7 @@ fn menu_surface_paints_row_icon_and_iconless_labels() {
                 checked: false,
                 disabled: false,
                 background: None,
+                image: None,
                 icon: Some((
                     nana_ui_core::Icon::Add,
                     LayoutBox {
@@ -1141,6 +1144,7 @@ fn menu_surface_paints_row_icon_and_iconless_labels() {
                 checked: false,
                 disabled: false,
                 background: None,
+                image: None,
                 icon: None,
             },
         ],
@@ -5089,6 +5093,7 @@ fn action_menu_item_label_and_hint_text_primitives_enable_ellipsis() {
         label: Arc::from("Reveal in Finder"),
         hint: Some(Arc::from("/Users/dev/very-long-project-folder-name")),
         icon: Some(nana_ui_core::Icon::Folder),
+        image: None,
         danger: false,
         active: false,
         disabled: false,
@@ -5105,6 +5110,7 @@ fn action_menu_item_label_and_hint_text_primitives_enable_ellipsis() {
             },
             [0.8, 0.8, 0.8, 1.0],
         )),
+        image: None,
         label: region("/Users/dev/very-long-project-folder-name", 32.0, 100.0),
         hint: Some(region(
             "/Users/dev/very-long-project-folder-name",
@@ -11867,4 +11873,216 @@ fn issue388_a_right_to_left_switch_thumb_is_the_mirror_image() {
     let (rtl_on, _) = paint(nana_ui_core::DirSpec::Rtl, 1.0);
     assert!(on.x > track.x + track.width / 2.0);
     assert!(rtl_on.x + rtl_on.width < track.x + track.width / 2.0);
+}
+
+/// Lays `build`'s document out, extracts it, and returns the scene with the
+/// host-texture primitives each node paints: `(node, slot resource,
+/// bounds)`.
+fn host_texture_pictures(
+    build: impl FnOnce(&mut nana_ui_runtime::AppContext, nana_ui_runtime::DocumentId),
+) -> (UiScene, Vec<(StableNodeId, Arc<str>, SceneRect)>) {
+    use nana_ui_runtime::{AppContext, DocumentId, LayoutViewport};
+    let mut cx = AppContext::new();
+    let document = DocumentId::new(1).unwrap();
+    build(&mut cx, document);
+    cx.layout_document(document, LayoutViewport::new(320.0, 320.0))
+        .unwrap();
+    let mut scene = UiScene::new();
+    scene.apply_delta(cx.world().extract_document(document), []);
+    let pictures = scene
+        .primitives()
+        .filter_map(|primitive| match &primitive.kind {
+            ScenePrimitiveKind::Custom { node, .. }
+                if node.renderer.as_ref() == nana_ui_runtime::HOST_TEXTURE_RENDERER =>
+            {
+                Some((primitive.node, Arc::clone(&node.resource), primitive.bounds))
+            }
+            _ => None,
+        })
+        .collect();
+    (scene, pictures)
+}
+
+/// The circle placeholder quads `node` paints the size of `bounds`.
+fn picture_placeholders(scene: &UiScene, node: StableNodeId, bounds: SceneRect) -> usize {
+    scene
+        .primitives()
+        .filter(|primitive| {
+            primitive.node == node
+                && primitive.bounds == bounds
+                && matches!(
+                    &primitive.kind,
+                    ScenePrimitiveKind::Quad { corner_radius, .. }
+                        if *corner_radius == corner_radii(bounds.width * 0.5)
+                )
+        })
+        .count()
+}
+
+#[test]
+fn menu_row_pictures_paint_their_host_texture_slot_over_a_placeholder_circle() {
+    use nana_ui_runtime::{ActionMenuItem, ContextMenu, ContextMenuItem};
+    let mut ids = Vec::new();
+    let (scene, pictures) = host_texture_pictures(|cx, document| {
+        for item in [
+            ActionMenuItem::new("Alice").leading_image("thumb.alice"),
+            ActionMenuItem::new("Nobody").leading_image(""),
+        ] {
+            ids.push(cx.create_component(document, item).unwrap().stable_id());
+        }
+        ids.push(
+            cx.create_component(
+                document,
+                ContextMenu::new(8.0, 12.0).items([
+                    ContextMenuItem::new("bob", "Bob").image("thumb.bob"),
+                    ContextMenuItem::new("nobody", "Nobody").image(""),
+                    ContextMenuItem::new("plain", "Plain"),
+                ]),
+            )
+            .unwrap()
+            .stable_id(),
+        );
+    });
+    let [alice, nobody, menu] = ids[..] else {
+        unreachable!()
+    };
+    // Each picture is the slot's own resource string on its node, as an
+    // Avatar of that slot paints it; empty slots paint none.
+    assert_eq!(
+        pictures
+            .iter()
+            .map(|(node, resource, _)| (*node, resource.as_ref()))
+            .collect::<Vec<_>>(),
+        [(alice, "thumb.alice"), (menu, "thumb.bob")]
+    );
+    for (node, _, bounds) in &pictures {
+        assert_eq!(bounds.width, bounds.height);
+        assert_eq!(picture_placeholders(&scene, *node, *bounds), 1);
+        let custom = scene
+            .primitives()
+            .find(|primitive| {
+                primitive.node == *node
+                    && matches!(primitive.kind, ScenePrimitiveKind::Custom { .. })
+            })
+            .unwrap();
+        let ScenePrimitiveKind::Custom {
+            node: custom,
+            corner_radius,
+            ..
+        } = &custom.kind
+        else {
+            unreachable!()
+        };
+        assert_eq!(custom.fit, nana_ui_core::ContentFit::Cover);
+        assert_eq!(custom.revision, 0);
+        assert_eq!(*corner_radius, corner_radii(bounds.width * 0.5));
+    }
+    assert_eq!(scene.conflicting_external_resource(), None);
+    // A host reads every picture the scene needs, one node's several too.
+    assert_eq!(
+        scene.custom_resources().collect::<Vec<_>>(),
+        ["thumb.alice", "thumb.bob"]
+    );
+    // The empty slots still paint their circle.
+    let ComponentGeometry::ActionMenuItem {
+        image: Some(empty), ..
+    } = scene
+        .nodes
+        .get(&nobody)
+        .unwrap()
+        .component_geometry
+        .as_deref()
+        .unwrap()
+    else {
+        panic!("placeholder geometry");
+    };
+    assert_eq!(
+        picture_placeholders(&scene, nobody, scene_rect(empty.bounds)),
+        1
+    );
+    let ComponentGeometry::MenuSurface { options, .. } = scene
+        .nodes
+        .get(&menu)
+        .unwrap()
+        .component_geometry
+        .as_deref()
+        .unwrap()
+    else {
+        panic!("menu geometry");
+    };
+    let empty = options[1].image.as_ref().expect("placeholder row");
+    assert_eq!(
+        picture_placeholders(&scene, menu, scene_rect(empty.bounds)),
+        1
+    );
+    assert!(options[2].image.is_none());
+}
+
+#[test]
+fn a_closed_select_paints_the_shown_options_picture() {
+    use nana_ui_runtime::{Select, SelectOption};
+    let options = || {
+        [
+            SelectOption::new("a", "Alice").image("thumb.alice"),
+            SelectOption::new("b", "Bob"),
+        ]
+    };
+    let mut ids = Vec::new();
+    let (scene, pictures) = host_texture_pictures(|cx, document| {
+        let column = cx
+            .create_component(document, nana_ui_runtime::Stack::column(0.0))
+            .unwrap();
+        for value in ["a", "b"] {
+            let select = cx
+                .create_component(document, Select::new(Some(value)).options(options()))
+                .unwrap();
+            cx.append_child(column, select).unwrap();
+            ids.push(select.stable_id());
+        }
+    });
+    assert_eq!(
+        pictures
+            .iter()
+            .map(|(node, resource, _)| (*node, resource.as_ref()))
+            .collect::<Vec<_>>(),
+        [(ids[0], "thumb.alice")],
+        "only the field showing Alice paints a picture"
+    );
+    assert_eq!(picture_placeholders(&scene, ids[0], pictures[0].2), 1);
+}
+
+#[test]
+fn an_open_select_menu_paints_row_pictures_in_its_own_layer() {
+    use nana_ui_runtime::{Select, SelectOption};
+    let mut select = None;
+    let (scene, pictures) = host_texture_pictures(|cx, document| {
+        select = Some(
+            cx.create_component(
+                document,
+                Select::new(Some("b"))
+                    .options([
+                        SelectOption::new("a", "Alice").image("thumb.alice"),
+                        SelectOption::new("b", "Bob"),
+                    ])
+                    .opened(true),
+            )
+            .unwrap()
+            .stable_id(),
+        );
+    });
+    let select = select.unwrap();
+    assert_eq!(pictures.len(), 1);
+    assert_eq!(
+        (pictures[0].0, pictures[0].1.as_ref()),
+        (select, "thumb.alice")
+    );
+    let picture = scene
+        .primitives()
+        .find(|primitive| matches!(primitive.kind, ScenePrimitiveKind::Custom { .. }))
+        .unwrap();
+    assert!(
+        is_select_menu_slot(picture.id.slot),
+        "drawn with the menu's rows"
+    );
+    assert!(picture.z_index >= 1_000);
 }

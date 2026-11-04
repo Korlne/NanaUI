@@ -2,7 +2,7 @@
 
 `ActionMenu` 是绑在触发器上的动作菜单。它里面是一个 `Popover`，对齐改成起始边，宽度、间距和内边距用菜单自己的默认值。开关跟 popover 一样，写在 `open` 上，由控件自己切换。
 
-控件表里没有 `<ActionMenu>`：模板里的控件是叶子，菜单的条目却是它的子节点。条目 `<ActionMenuItem>` 在控件表里（`label`、`accessible_name`、`disabled`、`danger`、`active`，`@activate`）。Rust 写法有 `action_menu(label)`，触发器文字、可访问名和开关是 `fields::action_menu` 的 `label`、`accessible_name`、`open`；`label` 写成空字符串时菜单关上，触发器也不显示。
+控件表里没有 `<ActionMenu>`：模板里的控件是叶子，菜单的条目却是它的子节点。条目 `<ActionMenuItem>` 在控件表里（`label`、`accessible_name`、`leading_image`、`disabled`、`danger`、`active`，`@activate`）。Rust 写法有 `action_menu(label)`，触发器文字、可访问名和开关是 `fields::action_menu` 的 `label`、`accessible_name`、`open`；`label` 写成空字符串时菜单关上，触发器也不显示。
 
 ## 基本用法
 
@@ -83,6 +83,8 @@ action_menu("预设").children((
 
 `.leading` 放一个图标。
 
+`.leading_image(slot)` 在图标的位置放一张圆图，画的是宿主纹理槽 `slot`，和同一个槽的 [Avatar](avatar.md) 一样（Cover，裁成圆，场景里是同一个 `nana.host-texture` 资源，名字就是槽名）。两个都写时图优先。边长是这一行文字的行高，比图标大一档，行不变高；没有图的条目照旧排。空槽画 Subtle 占位圆，标签位置不变；缺槽拒绝帧的约定和 Avatar 一样。图只作装饰，读屏只读标签。视图里绑 `.leading_image(..)`（`Option<TextureSlotName>`，字段 `fields::action_menu_item::leading_image`）。
+
 `.danger(true)` 走危险色。
 
 `.disabled` 禁掉这一项。
@@ -119,6 +121,7 @@ action_menu("预设").children((
 | `ActionMenuItem::new(label)` | — | 条目 |
 | `.hint` | — | 一行补充，空字符串会被丢掉 |
 | `.leading` | — | 放一个图标 |
+| `.leading_image(slot)` | `Option<TextureSlotName>` | 图标位置的圆图，画宿主纹理槽；和 `.leading` 都写时图优先 |
 | `.danger` | — | `.danger(true)` 走危险色 |
 | `.disabled` | — | 禁掉这一项 |
 | `.active` | — | 标出当前项 |

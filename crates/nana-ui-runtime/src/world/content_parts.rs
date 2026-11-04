@@ -265,6 +265,7 @@ impl UiWorld {
         if let StandardVisual::Select {
             label,
             hint,
+            image,
             placeholder,
             size,
             options,
@@ -287,6 +288,7 @@ impl UiWorld {
                 *size,
                 label,
                 hint.as_ref().map(|text| text.as_ref()),
+                image.is_some(),
                 *placeholder,
                 |text, size| measure.width(text, size, None),
                 natural_label.or_else(|| self.text_natural_width(id)),
@@ -499,14 +501,24 @@ impl UiWorld {
             );
         }
         if let StandardVisual::ActionMenuItem {
-            hint, icon, size, ..
+            hint,
+            icon,
+            image,
+            size,
+            ..
         } = visual
         {
+            // A picture takes the icon's lane, a line box across.
+            let leading = if image.is_some() {
+                Some(crate::menus::row_image_size(*size, self.theme.typography()))
+            } else {
+                icon.map(|_| size.text_size_in(self.theme.typography()))
+            };
             return crate::layout_engine::parts::menu_content_parts(
                 bounds,
                 size.padding_x_in(self.style_model.metrics),
                 self.theme.spacing().md,
-                icon.map(|_| size.text_size_in(self.theme.typography())),
+                leading,
                 hint.as_ref().map(|hint| {
                     self.chrome_text_measure(id)
                         .width(hint, self.theme.typography().hint, None)

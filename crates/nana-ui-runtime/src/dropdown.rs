@@ -59,6 +59,7 @@ impl DropdownOption {
             disabled: self.disabled,
             checked: false,
             icon: None,
+            image: None,
             accessible_name: None,
             mark: crate::MenuItemMark::Command,
         })
@@ -352,6 +353,7 @@ impl Dropdown {
                     disabled: option.disabled,
                     checked: chosen && matches!(self.selection, DropdownSelection::Multiple(_)),
                     icon: None,
+                    image: None,
                     accessible_name: None,
                     mark: match &self.selection {
                         DropdownSelection::Multiple(_) => crate::MenuItemMark::Check(chosen),
@@ -490,6 +492,7 @@ impl ComponentView for Dropdown {
         let visual = StandardVisual::Select {
             label: Arc::clone(&label),
             hint: None,
+            image: None,
             placeholder,
             size: self.size,
             opened: self.opened && !self.inactive(),

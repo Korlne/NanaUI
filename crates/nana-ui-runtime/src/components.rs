@@ -1046,6 +1046,9 @@ pub enum StandardVisual {
         /// The quieter text drawn after `label` in the field: the hint of the
         /// option it shows. See [`crate::SelectOption::hint`].
         hint: Option<Arc<str>>,
+        /// The round picture in front of `label`: the image of the option it
+        /// shows. See [`crate::SelectOption::image`].
+        image: Option<crate::TextureSlotName>,
         placeholder: bool,
         size: ControlSize,
         opened: bool,
@@ -1088,6 +1091,9 @@ pub enum StandardVisual {
         label: Arc<str>,
         hint: Option<Arc<str>>,
         icon: Option<Icon>,
+        /// A round picture in the icon's place; see
+        /// [`crate::ActionMenuItem::leading_image`].
+        image: Option<crate::TextureSlotName>,
         danger: bool,
         active: bool,
         disabled: bool,
@@ -1255,6 +1261,10 @@ pub struct SelectOptionData {
     pub disabled: bool,
     pub checked: bool,
     pub icon: Option<Icon>,
+    /// A round host-texture picture in front of the label, in the icon's
+    /// place (it wins over [`Self::icon`]). An empty or unregistered slot
+    /// shows the placeholder circle, so the label stays where it would be.
+    pub image: Option<crate::TextureSlotName>,
     /// Spoken name when [`Self::label`] is ambiguous. `None` keeps the label.
     pub accessible_name: Option<Arc<str>>,
     pub mark: MenuItemMark,
@@ -1831,6 +1841,8 @@ pub enum ComponentGeometry {
         label: ComponentTextRegion,
         /// The shown option's hint after the label, when there is room.
         hint: Option<ComponentTextRegion>,
+        /// The shown option's picture in front of the label.
+        image: Option<ComponentImage>,
         handle: LayoutBox,
         handle_color: [f32; 4],
         background: Option<[f32; 4]>,
@@ -1855,6 +1867,7 @@ pub enum ComponentGeometry {
     },
     ActionMenuItem {
         icon: Option<(Icon, LayoutBox, [f32; 4])>,
+        image: Option<ComponentImage>,
         label: ComponentTextRegion,
         hint: Option<ComponentTextRegion>,
         background: Option<[f32; 4]>,
@@ -2063,6 +2076,20 @@ pub struct SelectOptionGeometry {
     pub disabled: bool,
     pub background: Option<[f32; 4]>,
     pub icon: Option<(Icon, LayoutBox, [f32; 4])>,
+    pub image: Option<ComponentImage>,
+}
+
+/// A round host-texture picture in a row's leading lane: a menu row's or a
+/// select field's avatar. Scene paints `placeholder` as the circle and the
+/// slot over it (cover fit, the same `nana.host-texture` resource an
+/// [`crate::Avatar`] of that slot paints), so an empty slot, or one the host
+/// has not registered, still shows the circle and holds the label in place.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ComponentImage {
+    pub bounds: LayoutBox,
+    /// The registry slot; empty paints only the placeholder.
+    pub resource: crate::TextureSlotName,
+    pub placeholder: [f32; 4],
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

@@ -7,7 +7,8 @@ use crate::{
     AccessibilityRole, AccessibilityState, ComponentElevation, ComponentGeometry,
     ComponentTextRegion, ComputedStyle, InteractionState, InteractionStyle, LayoutBox,
     MutationQueue, NodeKind, NodeStyle, SelectMenuGeometry, SelectMenuScroll, SelectOptionData,
-    SemanticPaint, StableNodeId, StandardVisual, TextContent, TextVerticalAlignment, UiWorld,
+    SemanticPaint, StableNodeId, StandardVisual, TextContent, TextVerticalAlignment,
+    TextureSlotName, UiWorld,
 };
 
 /// Width of the drop-down arrow at the end of the field.
@@ -21,6 +22,17 @@ use crate::popover::MENU_ITEM_GAP;
 const MENU_CHECK_RESERVE: f32 = nana_ui_core::type_scale::LINE;
 /// Between a label and its hint, in the field and in a menu row.
 pub(crate) const HINT_GAP: f32 = nana_ui_core::space::MD;
+/// Between an option's picture and its label, in the field and in a menu
+/// row: the gap a menu row leaves after its icon.
+pub(crate) const IMAGE_GAP: f32 = nana_ui_core::space::MD;
+
+/// Edge of an option's round picture ([`SelectOption::image`]): the line box
+/// of the select's text, as a menu row's picture
+/// ([`crate::menus::row_image_size`]); this control's text sizes come from the
+/// type scale rather than the installed theme.
+pub(crate) const fn image_size(size: ControlSize) -> f32 {
+    size.line_height()
+}
 
 /// Option identity stays application-owned. Disabled options remain visible.
 #[derive(Debug, Clone, PartialEq)]
@@ -31,6 +43,9 @@ pub struct SelectOption {
     /// Quieter text that goes with the label — the original beside a
     /// translated name. See [`Self::hint`].
     pub hint: Option<Arc<str>>,
+    /// A round host-texture picture in front of the label. See
+    /// [`Self::image`].
+    pub image: Option<TextureSlotName>,
     pub disabled: bool,
 }
 
@@ -41,8 +56,20 @@ impl SelectOption {
             label: label.into(),
             content: None,
             hint: None,
+            image: None,
             disabled: false,
         }
+    }
+
+    /// Show the host texture `slot` as a round picture in front of the
+    /// label, in the menu row and, while this option is the one shown, in
+    /// the field, the way an [`crate::Avatar`] of that slot shows it. It
+    /// takes the text's line box. An empty slot, or one the host has not
+    /// registered, shows the placeholder circle and the label stays put.
+    /// Decorative: the label names the option.
+    pub fn image(mut self, slot: impl Into<TextureSlotName>) -> Self {
+        self.image = Some(slot.into());
+        self
     }
 
     /// Quieter text drawn after the label, in the menu row at its end and in
@@ -251,6 +278,12 @@ impl Select {
             .and_then(|index| self.options[index].hint.clone())
     }
 
+    /// The picture of the option the field shows; none over a placeholder.
+    pub fn display_image(&self) -> Option<TextureSlotName> {
+        self.selected_index()
+            .and_then(|index| self.options[index].image.clone())
+    }
+
     pub fn toggle_open(&mut self) -> bool {
         if self.inactive() {
             return false;
@@ -455,6 +488,7 @@ impl crate::ComponentView for Select {
         let visual = StandardVisual::Select {
             label: Arc::clone(&label),
             hint: hint.clone(),
+            image: self.display_image(),
             placeholder,
             size: self.size,
             opened: self.menu_open(),
@@ -473,6 +507,7 @@ impl crate::ComponentView for Select {
                     disabled: option.disabled,
                     checked: false,
                     icon: None,
+                    image: option.image.clone(),
                     accessible_name: None,
                     mark: crate::MenuItemMark::Radio(self.value.as_deref() == Some(&*option.value)),
                 })
@@ -538,6 +573,7 @@ pub(crate) fn select_geometry(
     bounds: LayoutBox,
     label: &Arc<str>,
     hint: Option<&Arc<str>>,
+    image: Option<&TextureSlotName>,
     placeholder: bool,
     size: ControlSize,
     opened: bool,
@@ -604,6 +640,10 @@ pub(crate) fn select_geometry(
     let handle =
         crate::layout_engine::parts::part_bounds(parts, crate::LayoutPartKind::TrailingContent)
             .unwrap_or_default();
+    let image = image.filter(|_| !placeholder).and_then(|slot| {
+        crate::layout_engine::parts::part_bounds(parts, crate::LayoutPartKind::LeadingContent)
+            .map(|bounds| crate::menus::row_image(slot, bounds, palette))
+    });
     ComponentGeometry::Select {
         label: ComponentTextRegion {
             bounds: label_box,
@@ -613,6 +653,7 @@ pub(crate) fn select_geometry(
             font_weight: None,
         },
         hint,
+        image,
         handle,
         handle_color,
         background: style.background,
@@ -647,6 +688,14 @@ fn select_menu_geometry(
     // option currently is: deriving it from `any(checked)` shifted every label
     // 16px sideways the moment the first option became checked.
     let check_reserve = if checkable { MENU_CHECK_RESERVE } else { 0.0 };
+    // A row with a picture fronts its label with it; a menu that fits its
+    // options holds that lane beside the widest label.
+    let image_lane = image_size(size) + IMAGE_GAP;
+    let image_reserve = if options.iter().any(|option| option.image.is_some()) {
+        image_lane
+    } else {
+        0.0
+    };
     // A menu that fits its options holds the widest row, though its field
     // was given less, and the lane a scrolling menu's bar takes from its rows.
     let fitted_width = fitted_options.map(|widest| {
@@ -658,7 +707,12 @@ fn select_menu_geometry(
         } else {
             0.0
         };
-        widest + MENU_PAD * 2.0 + size.padding_x_in(metrics) * 2.0 + check_reserve + lane
+        widest
+            + MENU_PAD * 2.0
+            + size.padding_x_in(metrics) * 2.0
+            + check_reserve
+            + image_reserve
+            + lane
     });
     let (surface_x, width) = resolve_menu_horizontal(field, fitted_width, room);
     let surface = LayoutBox {
@@ -719,6 +773,23 @@ fn select_menu_geometry(
                 width: (bounds.width - size.padding_x_in(metrics) * 2.0 - check_reserve).max(0.0),
                 height: bounds.height,
             };
+            let image = option.image.as_ref().map(|slot| {
+                let extent = image_size(size).min(bounds.height);
+                let image = crate::menus::row_image(
+                    slot,
+                    LayoutBox {
+                        x: label_box.x,
+                        y: bounds.y + (bounds.height - extent) / 2.0,
+                        width: extent,
+                        height: extent,
+                    },
+                    palette,
+                );
+                let lane = (extent + IMAGE_GAP).min(label_box.width);
+                label_box.x += lane;
+                label_box.width -= lane;
+                image
+            });
             // Measuring a hint shapes text; a row out of sight is not drawn.
             let hint = overlaps_vertically(bounds, rows_viewport)
                 .then(|| menu_option_hint(option, &mut label_box, size, palette, measure))
@@ -743,6 +814,7 @@ fn select_menu_geometry(
                 disabled: option.disabled,
                 background: selected.then_some(palette.selected.as_rgba_array()),
                 icon: None,
+                image,
             }
         })
         .collect();
@@ -2227,5 +2299,84 @@ mod tests {
         assert_eq!(select.menu_scroll, SelectMenuScroll::default());
         assert!(select.toggle_open());
         assert_eq!(select.menu_scroll, SelectMenuScroll::default());
+    }
+
+    #[test]
+    fn an_option_picture_fronts_its_label_in_the_menu_and_in_the_field() {
+        let options = vec![
+            SelectOption::new("a", "Alice").image("thumb.alice"),
+            SelectOption::new("b", "Bob"),
+            SelectOption::new("c", "Carol").image(""),
+        ];
+        let plain: Vec<_> = options
+            .iter()
+            .cloned()
+            .map(|mut option| {
+                option.image = None;
+                option
+            })
+            .collect();
+        let (context, selects, _) = stacked(vec![
+            Select::new(Some("a")).options(options.clone()).opened(true),
+            Select::new(Some("b")).options(options.clone()),
+            Select::new(Some("b")).options(plain),
+            Select::new(Some("c")).options(options),
+        ]);
+        let extent = image_size(ControlSize::Medium);
+        let field = |index: usize| match context
+            .world()
+            .component_geometry(selects[index].stable_id())
+        {
+            Some(ComponentGeometry::Select { label, image, .. }) => (label.bounds, image),
+            other => panic!("expected a select, got {other:?}"),
+        };
+        let frame = |index: usize| {
+            context
+                .world()
+                .layout_box(selects[index].stable_id())
+                .unwrap()
+        };
+
+        // The menu: a row with a picture fronts its label with it; a row
+        // without one keeps its label at the lane's start; an empty slot
+        // keeps the circle.
+        let menu = open_menu(&context, selects[0]);
+        let lane = menu.options[1].label.bounds.x;
+        assert_eq!(menu.options[1].image, None);
+        let image = menu.options[0].image.clone().expect("picture");
+        assert_eq!(image.resource.as_str(), "thumb.alice");
+        assert_eq!(image.bounds.x, lane);
+        assert_eq!((image.bounds.width, image.bounds.height), (extent, extent));
+        assert_eq!(
+            image.bounds.y + extent / 2.0,
+            menu.options[0].bounds.y + menu.options[0].bounds.height / 2.0
+        );
+        assert_eq!(menu.options[0].label.bounds.x, lane + extent + IMAGE_GAP);
+        let empty = menu.options[2].image.clone().expect("placeholder");
+        assert!(empty.resource.is_empty());
+        assert_eq!(
+            menu.options[2].label.bounds.x,
+            menu.options[0].label.bounds.x
+        );
+
+        // The closed field shows the picture of the option it shows.
+        let (label, image) = field(0);
+        let image = image.expect("the shown option's picture");
+        assert_eq!(image.resource.as_str(), "thumb.alice");
+        assert_eq!((image.bounds.width, image.bounds.height), (extent, extent));
+        assert_eq!(label.x, image.bounds.x + extent + IMAGE_GAP);
+        let (bob_label, bob_image) = field(1);
+        assert_eq!(bob_image, None, "Bob has no picture");
+        let (plain_label, plain_image) = field(2);
+        assert_eq!(plain_image, None);
+        assert_eq!(
+            bob_label.x - frame(1).x,
+            plain_label.x - frame(2).x,
+            "a field without a picture lays out as before"
+        );
+        assert_eq!(image.bounds.x - frame(0).x, plain_label.x - frame(2).x);
+        let (carol_label, carol_image) = field(3);
+        assert!(carol_image.expect("placeholder").resource.is_empty());
+        assert_eq!(carol_label.x - frame(3).x, label.x - frame(0).x);
     }
 }

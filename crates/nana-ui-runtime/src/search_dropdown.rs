@@ -185,6 +185,7 @@ impl SearchDropdown {
                     disabled: false,
                     checked: false,
                     icon: None,
+                    image: None,
                     accessible_name: None,
                     mark: crate::MenuItemMark::Command,
                 }),
@@ -323,6 +324,7 @@ impl SearchDropdown {
                     disabled: false,
                     checked: false,
                     icon: None,
+                    image: None,
                     accessible_name: None,
                     mark: crate::MenuItemMark::Radio(self.value.as_ref() == Some(&option.value)),
                 }
@@ -395,6 +397,7 @@ impl ComponentView for SearchDropdown {
             // The field shows what it searches, label and hint as one line.
             label: Arc::clone(&label),
             hint: None,
+            image: None,
             placeholder,
             size: self.size,
             opened: self.opened && !self.inactive(),

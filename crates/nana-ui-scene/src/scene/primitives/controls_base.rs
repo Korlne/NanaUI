@@ -555,11 +555,30 @@ pub(super) fn build(context: &GeometryPaintContext<'_>, emit: &mut impl FnMut(Sc
         Some(ComponentGeometry::Select {
             label,
             hint,
+            image,
             handle,
             handle_color,
             menu,
             ..
         }) => own_frame(|| {
+            if let Some(image) = image {
+                // Slots 2..=7 are the label, the arrow and the hint; 8 is
+                // the open menu's surface.
+                emit_component_image(
+                    &VisualPrimitiveContext {
+                        node: id,
+                        transform,
+                        clips,
+                        opacity,
+                        z_index: node.z_index,
+                        document_order: node_order,
+                    },
+                    9,
+                    10,
+                    image,
+                    emit,
+                );
+            }
             emit(component_text_primitive(
                 id,
                 2,
@@ -701,6 +720,22 @@ pub(super) fn build(context: &GeometryPaintContext<'_>, emit: &mut impl FnMut(Sc
                             ),
                             None,
                         ));
+                    }
+                    if let Some(image) = &option.image {
+                        emit_component_image(
+                            &VisualPrimitiveContext {
+                                node: id,
+                                transform,
+                                clips: menu_clips,
+                                opacity,
+                                z_index: menu_z,
+                                document_order: node_order,
+                            },
+                            collection_slot(SELECT_MENU_IMAGE_BACKDROPS, index),
+                            collection_slot(SELECT_MENU_IMAGES, index),
+                            image,
+                            emit,
+                        );
                     }
                     let mut label = component_text_primitive(
                         id,

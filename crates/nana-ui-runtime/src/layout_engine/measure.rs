@@ -663,11 +663,20 @@ fn visual_beside_text(id: StableNodeId, world: &UiWorld) -> VisualContent {
             }
         }
         // Its text already asks for the widest option (`text_natural_width`);
-        // the arrow stands beside it.
+        // the arrow stands beside it, and the picture lane before it while
+        // any option can show one.
         Some(crate::StandardVisual::Select {
-            fit_options: true, ..
+            fit_options: true,
+            options,
+            size,
+            ..
         }) => VisualContent {
-            width: crate::select::HANDLE_WIDTH,
+            width: crate::select::HANDLE_WIDTH
+                + if options.iter().any(|option| option.image.is_some()) {
+                    crate::select::image_size(*size) + crate::select::IMAGE_GAP
+                } else {
+                    0.0
+                },
             ..VisualContent::default()
         },
         _ => VisualContent::default(),

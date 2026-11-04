@@ -9,10 +9,10 @@ use crate::popover::{menu_surface_style, project_anchored_menu};
 use crate::view_components::project_common;
 use crate::{
     AccessibilityRole, AccessibilityState, AppContext, ComponentElevation, ComponentGeometry,
-    ComponentTextRegion, ComputedStyle, Entity, FrameworkError, InteractionState, InteractionStyle,
-    LayoutBox, MenuSurfaceKind, MutationQueue, NodeKind, NodePointer, NodePointerHooks, NodeStyle,
-    SelectOptionData, SemanticPaint, StableNodeId, StandardVisual, TextContent, TextInputState,
-    TextVerticalAlignment, UiWorld,
+    ComponentImage, ComponentTextRegion, ComputedStyle, Entity, FrameworkError, InteractionState,
+    InteractionStyle, LayoutBox, MenuSurfaceKind, MutationQueue, NodeKind, NodePointer,
+    NodePointerHooks, NodeStyle, SelectOptionData, SemanticPaint, StableNodeId, StandardVisual,
+    TextContent, TextInputState, TextVerticalAlignment, TextureSlotName, UiWorld,
 };
 
 const MENU_WIDTH: f32 = crate::popover::ACTION_MENU_WIDTH;
@@ -32,6 +32,10 @@ pub struct ActionMenuItem {
     pub accessible_name: Arc<str>,
     pub hint: Option<Arc<str>>,
     pub leading: Option<Icon>,
+    /// A round host-texture picture in front of the label, in
+    /// [`Self::leading`]'s place (it wins when both are set). See
+    /// [`Self::leading_image`].
+    pub leading_image: Option<TextureSlotName>,
     pub size: ControlSize,
     pub active: bool,
     pub danger: bool,
@@ -69,6 +73,7 @@ impl ActionMenuItem {
             accessible_name: Arc::from(""),
             hint: None,
             leading: None,
+            leading_image: None,
             size,
             active: false,
             danger: false,
@@ -104,6 +109,17 @@ impl ActionMenuItem {
 
     pub fn leading(mut self, leading: Icon) -> Self {
         self.leading = Some(leading);
+        self
+    }
+
+    /// Show the host texture `slot` as a round picture in front of the label,
+    /// the way an [`crate::Avatar`] of that slot shows it, in place of
+    /// [`Self::leading`]. It takes the row's text line: a little larger than
+    /// an icon, so a face reads. An empty slot, or one the host has not
+    /// registered, shows the placeholder circle and the label stays put.
+    /// Decorative: the label names the item.
+    pub fn leading_image(mut self, slot: impl Into<TextureSlotName>) -> Self {
+        self.leading_image = Some(slot.into());
         self
     }
 
@@ -187,6 +203,7 @@ impl crate::ComponentView for ActionMenuItem {
             label: Arc::clone(label),
             hint: self.hint.clone(),
             icon: self.leading,
+            image: self.leading_image.clone(),
             danger: self.danger,
             active: self.active,
             disabled: self.disabled,
@@ -374,6 +391,10 @@ pub struct ContextMenuItem {
     pub accessible_name: Option<Arc<str>>,
     pub hint: Option<Arc<str>>,
     pub icon: Option<Icon>,
+    /// A round host-texture picture in front of the label, in
+    /// [`Self::icon`]'s place (it wins when both are set). See
+    /// [`Self::image`].
+    pub image: Option<TextureSlotName>,
     pub disabled: bool,
     pub danger: bool,
     pub mark: crate::MenuItemMark,
@@ -388,6 +409,7 @@ impl ContextMenuItem {
             accessible_name: None,
             hint: None,
             icon: None,
+            image: None,
             disabled: false,
             danger: false,
             mark: crate::MenuItemMark::Command,
@@ -428,6 +450,13 @@ impl ContextMenuItem {
 
     pub fn icon(mut self, icon: Icon) -> Self {
         self.icon = Some(icon);
+        self
+    }
+
+    /// Show the host texture `slot` as a round picture in front of the label,
+    /// in place of [`Self::icon`]; see [`ActionMenuItem::leading_image`].
+    pub fn image(mut self, slot: impl Into<TextureSlotName>) -> Self {
+        self.image = Some(slot.into());
         self
     }
 
@@ -746,6 +775,7 @@ impl crate::ComponentView for ContextMenu {
                 disabled: item.disabled,
                 checked: item.mark.shows_mark(),
                 icon: item.icon,
+                image: item.image,
                 accessible_name: item.accessible_name,
                 mark: item.mark,
             })
@@ -896,7 +926,7 @@ pub(crate) fn action_menu_item_geometry_in(
         hint.map(|hint| measure.width(hint, theme.typography().hint, None)),
     );
     action_menu_item_geometry_from_parts(
-        label, hint, icon, danger, disabled, size, style, palette, theme, &parts,
+        label, hint, icon, None, danger, disabled, size, style, palette, theme, &parts,
     )
 }
 
@@ -905,6 +935,7 @@ pub(crate) fn action_menu_item_geometry_from_parts(
     label: &Arc<str>,
     hint: Option<&Arc<str>>,
     icon: Option<Icon>,
+    image: Option<&TextureSlotName>,
     danger: bool,
     disabled: bool,
     size: ControlSize,
@@ -922,8 +953,15 @@ pub(crate) fn action_menu_item_geometry_from_parts(
     } else {
         palette.muted.as_rgba_array()
     };
+    let leading = part_bounds(parts, LayoutPartKind::LeadingContent);
+    // The picture takes the icon's lane; the parts sized it for whichever
+    // the row shows.
+    let image = image
+        .zip(leading)
+        .map(|(slot, bounds)| row_image(slot, bounds, palette));
     let icon = icon
-        .zip(part_bounds(parts, LayoutPartKind::LeadingContent))
+        .filter(|_| image.is_none())
+        .zip(leading)
         .map(|(icon, bounds)| (icon, bounds, icon_color));
     let foreground = if disabled {
         palette.faint.as_rgba_array()
@@ -934,6 +972,7 @@ pub(crate) fn action_menu_item_geometry_from_parts(
     };
     ComponentGeometry::ActionMenuItem {
         icon,
+        image,
         label: ComponentTextRegion {
             bounds: part_bounds(parts, LayoutPartKind::TextContent).unwrap_or_default(),
             content: Arc::clone(label).into(),
@@ -1088,8 +1127,16 @@ pub(crate) fn context_menu_geometry_in(
             } else {
                 palette.muted.as_rgba_array()
             };
-            let (label_x, icon) =
-                menu_option_icon(content, option.icon, size, icon_color, metrics, theme);
+            let (label_x, icon, image) = menu_option_icon(
+                content,
+                option.icon,
+                option.image.as_ref(),
+                size,
+                icon_color,
+                palette,
+                metrics,
+                theme,
+            );
             let label_right = row.x + row.width - size.padding_x_in(metrics);
             let label_box = LayoutBox {
                 x: label_x,
@@ -1137,6 +1184,7 @@ pub(crate) fn context_menu_geometry_in(
                 disabled: option.disabled,
                 background: selected.then_some(palette.hover.as_rgba_array()),
                 icon,
+                image,
             }
         })
         .collect();
@@ -1180,16 +1228,37 @@ pub(crate) fn context_menu_option_at(
         .position(|option| !option.disabled && option.bounds.contains(x, y))
 }
 
+/// A context menu row's leading lane: the picture when it has one (centred
+/// on the row, [`row_image_size`] across), else its icon on the text's glyph
+/// centre. Returns where the label starts.
+#[allow(clippy::too_many_arguments)]
 fn menu_option_icon(
     row: LayoutBox,
     icon: Option<Icon>,
+    image: Option<&TextureSlotName>,
     size: ControlSize,
     color: [f32; 4],
+    palette: &SemanticPalette,
     metrics: ThemeMetrics,
     theme: &nana_ui_core::CompiledTheme,
-) -> (f32, Option<(Icon, LayoutBox, [f32; 4])>) {
-    let icon_size = size.text_size_in(theme.typography());
+) -> (
+    f32,
+    Option<(Icon, LayoutBox, [f32; 4])>,
+    Option<ComponentImage>,
+) {
     let mut cursor = row.x + size.padding_x_in(metrics);
+    if let Some(slot) = image {
+        let extent = row_image_size(size, theme.typography()).min(row.height);
+        let bounds = LayoutBox {
+            x: cursor,
+            y: row.y + (row.height - extent) / 2.0,
+            width: extent,
+            height: extent,
+        };
+        cursor += extent + theme.spacing().md;
+        return (cursor, None, Some(row_image(slot, bounds, palette)));
+    }
+    let icon_size = size.text_size_in(theme.typography());
     let icon = icon.map(|icon| {
         let bounds = LayoutBox {
             x: cursor,
@@ -1211,7 +1280,35 @@ fn menu_option_icon(
         cursor += icon_size + theme.spacing().md;
         (icon, bounds, color)
     });
-    (cursor, icon)
+    (cursor, icon, None)
+}
+
+/// Edge of a menu row's round picture ([`ActionMenuItem::leading_image`]):
+/// the row's text line box. One step past the text size an icon takes, so a
+/// face reads, and no taller than the line the row's label already holds, so
+/// a row with a picture is as tall as one without.
+pub(crate) const fn row_image_size(
+    size: ControlSize,
+    typography: nana_ui_core::TypographyTokens,
+) -> f32 {
+    match size {
+        ControlSize::Large => typography.line_tall,
+        ControlSize::Small | ControlSize::Medium => typography.line,
+    }
+}
+
+/// A row's picture in `bounds`, over the placeholder circle an empty
+/// [`crate::Avatar`] shows (`Subtle`).
+pub(crate) fn row_image(
+    slot: &TextureSlotName,
+    bounds: LayoutBox,
+    palette: &SemanticPalette,
+) -> ComponentImage {
+    ComponentImage {
+        bounds,
+        resource: slot.clone(),
+        placeholder: palette.subtle.as_rgba_array(),
+    }
 }
 
 fn value_segments(value: &str) -> Vec<&str> {
@@ -1862,6 +1959,7 @@ mod tests {
                 disabled: false,
                 checked: false,
                 icon: Some(Icon::Add),
+                image: None,
                 accessible_name: None,
                 mark: crate::MenuItemMark::Command,
             },
@@ -1873,6 +1971,7 @@ mod tests {
                 disabled: false,
                 checked: false,
                 icon: None,
+                image: None,
                 accessible_name: None,
                 mark: crate::MenuItemMark::Command,
             },
@@ -2114,6 +2213,227 @@ mod tests {
         assert!(
             (filtered.x + filtered.width - viewport.width).abs() < 0.01,
             "{filtered:?}"
+        );
+    }
+
+    /// Lays `items` out in a 240px column and returns each one's geometry
+    /// with its box.
+    fn laid_out_items(
+        items: Vec<ActionMenuItem>,
+    ) -> (AppContext, Vec<(ComponentGeometry, LayoutBox)>) {
+        let mut context = AppContext::new();
+        let column = context
+            .create_component(
+                document(),
+                crate::Stack::column(0.0).with_layout(|layout| {
+                    layout.width = Some(LengthSpec::Px(240.0));
+                }),
+            )
+            .unwrap();
+        let ids: Vec<_> = items
+            .into_iter()
+            .map(|item| {
+                let item = context.create_component(document(), item).unwrap();
+                context.append_child(column, item).unwrap();
+                item.stable_id()
+            })
+            .collect();
+        context
+            .layout_document(document(), crate::LayoutViewport::new(320.0, 320.0))
+            .unwrap();
+        let geometry = ids
+            .iter()
+            .map(|id| {
+                (
+                    context.world().component_geometry(*id).unwrap(),
+                    context.world().layout_box(*id).unwrap(),
+                )
+            })
+            .collect();
+        (context, geometry)
+    }
+
+    #[test]
+    fn action_menu_item_picture_takes_the_icon_lane_a_line_box_across() {
+        let (context, items) = laid_out_items(vec![
+            ActionMenuItem::new("Alice")
+                .leading(Icon::Add)
+                .leading_image("thumb.alice"),
+            ActionMenuItem::new("Nobody").leading_image(""),
+            ActionMenuItem::new("Add").leading(Icon::Add),
+            ActionMenuItem::new("Plain"),
+        ]);
+        let theme = context.world().theme();
+        let extent = row_image_size(ControlSize::Small, theme.typography());
+        let gap = theme.spacing().md;
+        let padding = ControlSize::Small.padding_x_in(context.world().theme_metrics());
+        let parts = |index: usize| match &items[index].0 {
+            ComponentGeometry::ActionMenuItem {
+                icon, image, label, ..
+            } => (*icon, image.clone(), label.bounds),
+            other => panic!("expected an action menu item, got {other:?}"),
+        };
+
+        // The picture wins over the icon, sits where the icon would start,
+        // centred on the row, and the label follows it.
+        let (icon, image, label) = parts(0);
+        let row = items[0].1;
+        let image = image.expect("picture");
+        assert_eq!(icon, None);
+        assert_eq!(image.resource.as_str(), "thumb.alice");
+        assert_eq!(image.bounds.x, row.x + padding);
+        assert_eq!((image.bounds.width, image.bounds.height), (extent, extent));
+        assert!(extent > ControlSize::Small.text_size_in(theme.typography()));
+        assert_eq!(
+            image.bounds.y + extent / 2.0,
+            row.y + row.height / 2.0,
+            "centred on the row"
+        );
+        assert_eq!(label.x, image.bounds.x + extent + gap);
+        assert_eq!(
+            image.placeholder,
+            context.world().style_model().palette.subtle.as_rgba_array()
+        );
+
+        // An empty slot keeps its circle and its label where a face's would be.
+        let (_, empty, empty_label) = parts(1);
+        let empty = empty.expect("placeholder");
+        assert!(empty.resource.is_empty());
+        assert_eq!(empty.bounds.width, extent);
+        assert_eq!(empty_label.x, label.x);
+
+        // Rows without a picture lay out as before.
+        let (icon, image, icon_label) = parts(2);
+        let (icon, icon_box, _) = icon.expect("icon");
+        assert_eq!(icon, Icon::Add);
+        assert_eq!(image, None);
+        assert_eq!(icon_box.x, items[2].1.x + padding);
+        assert_eq!(
+            icon_label.x,
+            icon_box.x + ControlSize::Small.text_size_in(theme.typography()) + gap
+        );
+        let (icon, image, plain_label) = parts(3);
+        assert_eq!((icon, image), (None, None));
+        assert_eq!(plain_label.x, items[3].1.x + padding);
+        // A picture does not make its row taller.
+        assert!(items.iter().all(|(_, row)| row.height == items[3].1.height));
+    }
+
+    #[test]
+    fn action_menu_item_picture_is_decorative() {
+        let mut context = AppContext::new();
+        let item = context
+            .create_component(
+                document(),
+                ActionMenuItem::new("Alice").leading_image("thumb.alice"),
+            )
+            .unwrap();
+        let nodes = context.world().project_accessibility(document());
+        let node = nodes
+            .iter()
+            .find(|node| node.id == item.stable_id())
+            .expect("item node");
+        assert_eq!(node.label.as_deref(), Some("Alice"));
+        assert!(
+            nodes
+                .iter()
+                .all(|node| node.role != crate::AccessibilityRole::Image),
+            "no image node for the picture"
+        );
+    }
+
+    #[test]
+    fn context_menu_item_picture_projects_into_rows_and_takes_the_icon_lane() {
+        let mut context = AppContext::new();
+        let menu = context
+            .create_component(
+                document(),
+                ContextMenu::new(8.0, 12.0).items([
+                    ContextMenuItem::new("alice", "Alice").image("thumb.alice"),
+                    ContextMenuItem::new("add", "Add").icon(Icon::Add),
+                ]),
+            )
+            .unwrap();
+        match context.world().standard_visual(menu.stable_id()) {
+            Some(StandardVisual::MenuSurface { rows, .. }) => {
+                assert_eq!(
+                    rows[0].image.as_ref().map(TextureSlotName::as_str),
+                    Some("thumb.alice")
+                );
+                assert_eq!(rows[1].image, None);
+            }
+            other => panic!("context menu visual: {other:?}"),
+        }
+
+        let theme = nana_ui_core::builtin_theme(nana_ui_core::ThemeAppearance::Dark);
+        let metrics = nana_ui_core::UI_METRICS;
+        let palette = SemanticPalette::for_appearance(nana_ui_core::ThemeAppearance::Dark);
+        let row = |label: &str, icon: Option<Icon>, image: Option<&str>| SelectOptionData {
+            key: None,
+            label: Arc::from(label),
+            content: None,
+            hint: None,
+            disabled: false,
+            checked: false,
+            icon,
+            image: image.map(TextureSlotName::from),
+            accessible_name: None,
+            mark: crate::MenuItemMark::Command,
+        };
+        let rows = [
+            row("Alice", Some(Icon::Add), Some("thumb.alice")),
+            row("Nobody", None, Some("")),
+            row("Add", Some(Icon::Add), None),
+            row("Plain", None, None),
+        ];
+        let bounds = LayoutBox {
+            x: 0.0,
+            y: 0.0,
+            width: 220.0,
+            height: 160.0,
+        };
+        let ComponentGeometry::MenuSurface { options, .. } = context_menu_geometry(
+            bounds,
+            None,
+            &rows,
+            None,
+            &palette,
+            metrics,
+            &Arc::from("Search"),
+        ) else {
+            panic!("expected context menu geometry");
+        };
+        let extent = row_image_size(ControlSize::Small, theme.typography());
+        let gap = theme.spacing().md;
+        let lane = options[3].label.bounds.x;
+
+        let image = options[0].image.clone().expect("picture");
+        assert_eq!(options[0].icon, None, "the picture wins over the icon");
+        assert_eq!(image.resource.as_str(), "thumb.alice");
+        assert_eq!(image.bounds.x, lane);
+        assert_eq!((image.bounds.width, image.bounds.height), (extent, extent));
+        assert_eq!(
+            image.bounds.y + extent / 2.0,
+            options[0].bounds.y + options[0].bounds.height / 2.0
+        );
+        assert_eq!(options[0].label.bounds.x, lane + extent + gap);
+
+        let empty = options[1].image.clone().expect("placeholder");
+        assert!(empty.resource.is_empty());
+        assert_eq!(options[1].label.bounds.x, options[0].label.bounds.x);
+
+        let (_, icon_box, _) = options[2].icon.expect("icon");
+        assert_eq!(options[2].image, None);
+        assert_eq!(icon_box.x, lane);
+        assert_eq!(
+            options[2].label.bounds.x,
+            lane + ControlSize::Small.text_size_in(theme.typography()) + gap
+        );
+        assert_eq!(options[3].image, None);
+        assert_eq!(options[3].icon, None);
+        assert_eq!(
+            lane,
+            bounds.x + theme.spacing().xs + ControlSize::Small.padding_x_in(metrics)
         );
     }
 }

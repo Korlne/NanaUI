@@ -1226,18 +1226,31 @@ pub(crate) fn form_field_parts(
 /// Trigger text, optional hint and the arrow handle share one retained row.
 /// The spacer is solved with the same Flex primitive but is not published as
 /// a semantic part, so a select still has one node and one ordinary text run.
+/// `image`: the shown option has a picture ([`crate::SelectOption::image`]),
+/// a line box square before the label; its absence lays out no lane.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn select_trigger_parts(
     bounds: LayoutBox,
     size: nana_ui_core::ControlSize,
     label: &str,
     hint: Option<&str>,
+    image: bool,
     placeholder: bool,
     measure: impl Fn(&str, f32) -> f32,
     natural_label: Option<f32>,
     reverse: bool,
 ) -> ContentParts {
     let handle_width = crate::select::HANDLE_WIDTH.min(bounds.width);
-    let label_area = (bounds.width - handle_width).max(0.0);
+    let image_part = (image && !placeholder).then(|| {
+        let extent = crate::select::image_size(size)
+            .min(bounds.height)
+            .min((bounds.width - handle_width).max(0.0));
+        let mut part = FlexPart::new(LayoutPartKind::LeadingContent, Size::new(extent, extent));
+        part.gap_after = crate::select::IMAGE_GAP;
+        part
+    });
+    let image_lane = image_part.map_or(0.0, |part| part.preferred.width + part.gap_after);
+    let label_area = (bounds.width - handle_width - image_lane).max(0.0);
     let label_natural = natural_label.unwrap_or_else(|| measure(label, size.text_size()));
     let hint_size = size.caption_size();
     let hint_natural = hint
@@ -1283,9 +1296,15 @@ pub(crate) fn select_trigger_parts(
         FlexDirection::Row,
         JustifySpec::Start,
         reverse,
-        [Some(label_part), hint_part, Some(spacer), Some(handle)],
+        [
+            image_part,
+            Some(label_part),
+            hint_part,
+            Some(spacer),
+            Some(handle),
+        ],
     );
-    content_parts([solved[0], solved[1], solved[3]])
+    content_parts([solved[1], solved[2], solved[4], solved[0]])
 }
 
 /// Splits an option row's already-reserved text lane into label and hint

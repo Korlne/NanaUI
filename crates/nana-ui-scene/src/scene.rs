@@ -231,6 +231,14 @@ const SELECT_MENU_SCROLLBAR: u32 = 13;
 /// A context menu row's hint at its end, one slot per row. Fixed row slots
 /// below 256 are already shared by backgrounds, labels and icons.
 const CONTEXT_MENU_HINTS: u32 = 14;
+/// A context menu row's picture: its placeholder circle, then the host
+/// texture over it, one slot per row in each.
+const CONTEXT_MENU_IMAGE_BACKDROPS: u32 = 15;
+const CONTEXT_MENU_IMAGES: u32 = 16;
+/// An open select menu's row pictures, as a context menu's. They belong to
+/// the menu's layer with its other namespaces (`is_select_menu_slot`).
+const SELECT_MENU_IMAGE_BACKDROPS: u32 = 17;
+const SELECT_MENU_IMAGES: u32 = 18;
 /// An open select menu's surface, under its rows. Slots 3..=6 are the
 /// field's arrow and 7 its hint: the surface used to take slot 4 and hid an
 /// arrow stroke for as long as the menu was open.
@@ -335,10 +343,13 @@ fn triggered_overlay_surface_key(primitive: &ScenePrimitive) -> Option<SceneOrde
 }
 
 /// An open select menu's surface, rows and bar: the surface slot and the
-/// menu's namespaces, `SELECT_MENU_BACKGROUNDS` to `SELECT_MENU_SCROLLBAR`.
+/// menu's namespaces, `SELECT_MENU_BACKGROUNDS` to `SELECT_MENU_SCROLLBAR`
+/// and its row pictures'.
 fn is_select_menu_slot(slot: u64) -> bool {
     slot == SELECT_MENU_SURFACE_SLOT
         || (u64::from(SELECT_MENU_BACKGROUNDS)..=u64::from(SELECT_MENU_SCROLLBAR))
+            .contains(&(slot >> 32))
+        || (u64::from(SELECT_MENU_IMAGE_BACKDROPS)..=u64::from(SELECT_MENU_IMAGES))
             .contains(&(slot >> 32))
 }
 
@@ -1957,6 +1968,18 @@ impl UiScene {
                 })
                 .map(|held| &held.primitive)
         })
+    }
+
+    /// The resource of every custom-render primitive the scene paints, in
+    /// paint order: the host textures it needs this frame. A node may paint
+    /// several (a menu's row pictures), so a host keeping textures alive
+    /// reads them here rather than from each node's own custom render.
+    pub fn custom_resources(&self) -> impl Iterator<Item = &str> {
+        self.primitives()
+            .filter_map(|primitive| match &primitive.kind {
+                ScenePrimitiveKind::Custom { node, .. } => Some(node.resource.as_ref()),
+                _ => None,
+            })
     }
 
     /// The record the scene holds for `id`: the one its last delta gave it.
@@ -5436,6 +5459,60 @@ fn visual_quad(
             surface: Box::default(),
         },
     }
+}
+
+/// A row's round picture ([`nana_ui_runtime::ComponentImage`]): the
+/// placeholder circle at slot `backdrop`, and over it, at slot `picture`, the
+/// host texture cover-fitted into the same circle, the `nana.host-texture`
+/// node (revision 0) an `Avatar` of that slot paints, so the two can show
+/// one slot in a frame. An empty slot paints only the circle; a slot the
+/// host has not registered is skipped by the painter and leaves it showing.
+fn emit_component_image(
+    context: &VisualPrimitiveContext<'_>,
+    backdrop: u64,
+    picture: u64,
+    image: &nana_ui_runtime::ComponentImage,
+    emit: &mut impl FnMut(ScenePrimitive),
+) {
+    let bounds = scene_rect(image.bounds);
+    let radius = corner_radii(bounds.width.min(bounds.height) * 0.5);
+    emit(visual_quad(
+        context,
+        backdrop,
+        bounds,
+        VisualQuadStyle {
+            background: Some(image.placeholder),
+            border_color: None,
+            border_width: 0.0,
+            corner_radius: radius,
+        },
+    ));
+    if image.resource.is_empty() {
+        return;
+    }
+    emit(ScenePrimitive {
+        id: PrimitiveId {
+            node: context.node,
+            slot: picture,
+        },
+        node: context.node,
+        bounds,
+        transform: context.transform,
+        clips: Arc::clone(context.clips),
+        opacity: context.opacity,
+        z_index: context.z_index,
+        document_order: context.document_order,
+        kind: ScenePrimitiveKind::Custom {
+            node: nana_ui_runtime::CustomRenderNode::new(
+                nana_ui_runtime::HOST_TEXTURE_RENDERER,
+                image.resource.to_resource(),
+                0,
+            )
+            .with_fit(nana_ui_core::ContentFit::Cover),
+            mask: None,
+            corner_radius: radius,
+        },
+    });
 }
 
 /// Build a component quad that keeps an explicit authoring-space colour.

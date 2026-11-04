@@ -48,7 +48,9 @@ widget(
 
 `.items` 接收 `ContextMenuItem::new(value, label)`。
 
-`.hint`、`.icon`、`.disabled` 和 `.danger` 写在条目上。
+`.hint`、`.icon`、`.image`、`.disabled` 和 `.danger` 写在条目上。
+
+`.image(slot)` 在图标的位置放一张圆图，画的是宿主纹理槽 `slot`，规则同 [ActionMenu](action-menu.md#条目) 的 `.leading_image`：图优先于图标，边长是行高，空槽画占位圆，图只作装饰。
 
 斜杠分开的值（`parent/child`）是一层树。
 
@@ -103,6 +105,7 @@ widget(
 | `.items` | — | 接收 `ContextMenuItem::new(value, label)` |
 | `.hint` | — | 写在条目上 |
 | `.icon` | — | 写在条目上 |
+| `.image(slot)` | `TextureSlotName` | 写在条目上：图标位置的圆图，画宿主纹理槽 |
 | `.disabled` | — | 写在条目上 |
 | `.danger` | — | 写在条目上 |
 | `.searchable` | — | `.searchable(true)` 加上过滤框，查询存在已提交的 `TextInputState` 里 |

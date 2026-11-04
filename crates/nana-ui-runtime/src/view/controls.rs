@@ -864,6 +864,13 @@ impl FieldText for TextureSlotName {
     }
 }
 
+impl FieldText for Option<TextureSlotName> {
+    /// Empty text is `None`.
+    fn parse(text: &str) -> Result<Self, String> {
+        Ok((!text.is_empty()).then(|| TextureSlotName::from(text)))
+    }
+}
+
 impl FieldText for Option<Arc<str>> {
     /// Empty text is `None`.
     fn parse(text: &str) -> Result<Self, String> {

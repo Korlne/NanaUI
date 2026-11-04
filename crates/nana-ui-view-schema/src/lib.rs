@@ -272,6 +272,7 @@ macro_rules! for_each_control {
                 content: InlineContent = inline,
                 label: Arc<str> = set,
                 accessible_name: Arc<str> = set,
+                leading_image: Option<TextureSlotName> = set,
                 disabled: bool = set,
                 danger: bool = set,
                 active: bool = set,

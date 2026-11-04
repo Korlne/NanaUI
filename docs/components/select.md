@@ -32,6 +32,8 @@ select().placeholder("语言").options(options).model(language)
 
 `.hint(text)` 给选项配一段次要文字，例如译名后面的原文：`SelectOption::new("x", "头部左右转").hint("FaceAngleX")`。菜单里它在这一行的末尾，比标签小一号、用次要色；收起的框里跟在所选项的标签后面。宽度先给标签，提示放不下时省略，连一小段都放不下就不画。读屏把它读在标签之后，画不下时也读。空字符串就是没有。
 
+`.image(slot)` 给选项配一张圆图，画的是宿主纹理槽 `slot`，和同一个槽的 [Avatar](avatar.md) 一样（Cover，裁成圆，场景里是同一个 `nana.host-texture` 资源，名字就是槽名）。菜单里它在这一行标签的前面；收起的框里，所选项有图时画在标签前面。边长是这个尺寸文字的行高，比图标大一档，行不变高。没配图的选项照旧排，不留空位。空槽画 Subtle 占位圆，标签位置不变；缺槽拒绝帧的约定和 Avatar 一样。图只作装饰，读屏只读标签。
+
 `options` 可以是 `Vec<SelectOption>`，也可以是这个类型的信号。这是单值字段，不是多选。
 
 ## 加载、禁用和名字
@@ -160,7 +162,7 @@ layout.min_width = Some(LengthSpec::Px(122.0));
 | 属性 | 类型 | 说明 |
 | --- | --- | --- |
 | `value` | `Option<Arc<str>>` | 当前选中。`model` 在选中后写成 `Some(event.value)` |
-| `options` | `Vec<SelectOption>` | 也可以是这个类型的信号。选项可带 `.hint`，见上文 |
+| `options` | `Vec<SelectOption>` | 也可以是这个类型的信号。选项可带 `.hint`、`.image`，见上文 |
 | `label` | `Option<Arc<str>>` | 读屏名字，不画出来。不写时由 `labelled_by` 或设置行起名，再没有就读显示的选项 |
 | `placeholder` | `Option<Arc<str>>` | 不写就是 `None` |
 | `disabled` | `bool` | 常量、信号或闭包 |

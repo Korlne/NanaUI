@@ -266,8 +266,29 @@ pub(super) fn build(context: &GeometryPaintContext<'_>, emit: &mut impl FnMut(Sc
             }
         }),
         Some(ComponentGeometry::ActionMenuItem {
-            icon, label, hint, ..
+            icon,
+            image,
+            label,
+            hint,
+            ..
         }) => own_frame(|| {
+            if let Some(image) = image {
+                // Slots 2..=4 are the label, the icon and the hint.
+                emit_component_image(
+                    &VisualPrimitiveContext {
+                        node: id,
+                        transform,
+                        clips,
+                        opacity,
+                        z_index: node.z_index,
+                        document_order: node_order,
+                    },
+                    5,
+                    6,
+                    image,
+                    emit,
+                );
+            }
             if let Some((icon, icon_bounds, color)) = icon {
                 emit(ScenePrimitive {
                     id: PrimitiveId { node: id, slot: 3 },
@@ -494,6 +515,22 @@ pub(super) fn build(context: &GeometryPaintContext<'_>, emit: &mut impl FnMut(Sc
                             corner_radius: corner_radii(node.chrome_radii.menu_row),
                         },
                     ));
+                }
+                if let Some(image) = &option.image {
+                    emit_component_image(
+                        &VisualPrimitiveContext {
+                            node: id,
+                            transform,
+                            clips,
+                            opacity,
+                            z_index: node.z_index,
+                            document_order: node_order,
+                        },
+                        collection_slot(CONTEXT_MENU_IMAGE_BACKDROPS, index),
+                        collection_slot(CONTEXT_MENU_IMAGES, index),
+                        image,
+                        emit,
+                    );
                 }
                 if let Some((icon, icon_bounds, color)) = option.icon {
                     emit(ScenePrimitive {
