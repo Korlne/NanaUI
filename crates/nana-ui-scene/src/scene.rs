@@ -2540,7 +2540,7 @@ impl UiScene {
         };
         // How far each root moved, less what the nearest moved root above it
         // already moves it by in the culling index.
-        let layout_shifts: Vec<(StableNodeId, [f32; 2])> = {
+        let layout_shifts: Vec<(StableNodeId, Option<[f32; 2]>)> = {
             let total: NodeMap<[f32; 2]> = stood
                 .iter()
                 .filter_map(|(&id, &stood)| {
@@ -2568,7 +2568,29 @@ impl UiScene {
                                 .flatten()
                         });
                     }
-                    (id, [dx - above[0], dy - above[1]])
+                    // The shift is on the page, before the transforms above
+                    // the root: its subtree's drawn bounds move by it
+                    // through their linear part. A root's own transform is
+                    // about where it stands, so it moves with it and does
+                    // not take part. Under a projection the bounds do not
+                    // move by any one offset: they are derived again.
+                    let (dx, dy) = (dx - above[0], dy - above[1]);
+                    let inherited = self
+                        .nodes
+                        .get(&id)
+                        .map_or(AffineTransform::IDENTITY, |node| {
+                            self.draw_ancestor_state(node).0
+                        });
+                    if inherited.is_projective() {
+                        return (id, None);
+                    }
+                    let [a, b, c, d, _, _] = inherited.0;
+                    let shift = if [a, b, c, d] == [1.0, 0.0, 0.0, 1.0] {
+                        [dx, dy]
+                    } else {
+                        [a * dx + c * dy, b * dx + d * dy]
+                    };
+                    (id, Some(shift))
                 })
                 .collect()
         };
@@ -2678,7 +2700,9 @@ impl UiScene {
                 // A moved subtree's bounds move with its root, less what a
                 // moved root above it already moved them by.
                 for &(root, shift) in &layout_shifts {
-                    if shift != [0.0, 0.0] {
+                    if let Some(shift) = shift
+                        && shift != [0.0, 0.0]
+                    {
                         visibility.translate_subtree(root, shift);
                     }
                 }
@@ -2709,6 +2733,11 @@ impl UiScene {
                     for &id in &unfollowing_moved {
                         visibility.update(self, &[id]);
                         visibility.refresh_subtree(self, id);
+                    }
+                }
+                for &(root, shift) in &layout_shifts {
+                    if shift.is_none() {
+                        visibility.refresh_subtree(self, root);
                     }
                 }
                 if inherited_geometry_changed {
@@ -2875,11 +2904,15 @@ impl UiScene {
             Err(_) => return,
         }
         if let Some(visibility) = self.visibility.get() {
-            if visibility.translated() {
-                return;
-            }
             let fresh = VisibilityIndex::new(self, Arc::clone(plan));
-            if let Some(mismatch) = visibility.mismatch(&fresh) {
+            // A translated index keeps its shifts pending above the leaves:
+            // compare what a query reads there.
+            let mismatch = if visibility.translated() {
+                visibility.placed_mismatch(&fresh)
+            } else {
+                visibility.mismatch(&fresh)
+            };
+            if let Some(mismatch) = mismatch {
                 panic!("retained visibility index disagrees with a fresh build: {mismatch}");
             }
         }

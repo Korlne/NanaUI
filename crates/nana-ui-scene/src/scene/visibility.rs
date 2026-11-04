@@ -140,10 +140,15 @@ fn primitive_bounds(scene: &UiScene, id: PrimitiveId) -> Option<Bounds> {
     // Destination groups need their complete source, including pixels that a
     // blur or blend can move into the viewport. Do not cull their source leaves.
     // A scroll edge fade moves none, and a long list under one must still cull.
-    if scene
-        .opacity_groups(id.node)
-        .iter()
-        .any(|group| !group.is_edge_fade_only())
+    // The groups are the ones the primitive is painted in: a triggered menu's
+    // trigger is outside the fade its hanging surface opens with, a modal's
+    // scrim outside its card's. The node's groups hold the primitive's, so
+    // none there is none here.
+    if !scene.opacity_groups(id.node).is_empty()
+        && scene
+            .primitive_opacity_groups(primitive)
+            .iter()
+            .any(|group| !group.is_edge_fade_only())
     {
         return None;
     }
@@ -353,6 +358,22 @@ fn projection_component_matches(retained: f32, fresh: f32) -> bool {
         }
     };
     ordered(retained).abs_diff(ordered(fresh)) <= MAX_PROJECTION_ULPS
+}
+
+#[cfg(debug_assertions)]
+fn first_difference_nodes<V: std::fmt::Debug + PartialEq>(
+    retained: &NodeMap<V>,
+    fresh: &NodeMap<V>,
+) -> Option<String> {
+    let node = retained
+        .keys()
+        .chain(fresh.keys())
+        .find(|node| retained.get(node) != fresh.get(node))?;
+    Some(format!(
+        "{node:?}: retained {:?} vs fresh {:?}",
+        retained.get(node),
+        fresh.get(node)
+    ))
 }
 
 #[cfg(debug_assertions)]
@@ -667,6 +688,67 @@ impl VisibilityIndex {
         }
         first_difference("nodes", &self.nodes, &other.nodes)
             .or_else(|| first_difference("descendants", &self.descendants, &other.descendants))
+    }
+
+    /// Each leaf's bound where a query finds it -- the one held, moved by
+    /// every translation still owed to it from above -- against `fresh`'s,
+    /// for an index the scroll and move fast paths have translated: their
+    /// internal bounds and pending shifts differ from a fresh build's by
+    /// construction, what a query reads at a leaf must not. Every internal
+    /// bound, placed the same way, must still cover its children.
+    #[cfg(debug_assertions)]
+    pub(super) fn placed_mismatch(&self, fresh: &Self) -> Option<String> {
+        let mut owed = vec![[0.0f32, 0.0]; self.bounds.len()];
+        for at in 2..self.bounds.len() {
+            let parent = at / 2;
+            owed[at] = [
+                owed[parent][0] + self.shifts[parent][0],
+                owed[parent][1] + self.shifts[parent][1],
+            ];
+        }
+        let placed = |at: usize| self.bounds[at].map(|bounds| bounds.translated(owed[at]));
+        for offset in 0..self.plan.operations.len() {
+            let at = self.leaf + offset;
+            if !bounds_match(placed(at), fresh.bounds[at]) {
+                let origin = self.slot_origin(at);
+                return Some(format!(
+                    "leaf bounds[{at}] {origin}: retained {:?} (held {:?}, owed {:?}) vs fresh {:?}",
+                    placed(at),
+                    self.bounds[at],
+                    owed[at],
+                    fresh.bounds[at]
+                ));
+            }
+        }
+        for at in (1..self.leaf).rev() {
+            let Some(cover) = placed(at) else {
+                continue;
+            };
+            for child in [at * 2, at * 2 + 1] {
+                let covered = match placed(child) {
+                    Some(inner) => {
+                        let slack = |a: f32| a.abs().max(1.0) * 1e-5;
+                        cover.left <= inner.left + slack(inner.left)
+                            && cover.top <= inner.top + slack(inner.top)
+                            && cover.right >= inner.right - slack(inner.right)
+                            && cover.bottom >= inner.bottom - slack(inner.bottom)
+                    }
+                    // An unknown child is conservatively visible; a bounded
+                    // parent over it would cull it.
+                    None => child >= self.leaf + self.plan.operations.len(),
+                };
+                if !covered {
+                    return Some(format!(
+                        "bounds[{at}] {:?} does not cover bounds[{child}] {:?} {}",
+                        cover,
+                        placed(child),
+                        self.slot_origin(child)
+                    ));
+                }
+            }
+        }
+        first_difference_nodes(&self.nodes, &fresh.nodes)
+            .or_else(|| first_difference_nodes(&self.descendants, &fresh.descendants))
     }
 
     /// Which operation, primitive and node a bounds or shift slot belongs to.

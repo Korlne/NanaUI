@@ -165,16 +165,11 @@ fn near(a: [f32; 4], b: [f32; 4]) -> bool {
 /// is the cold one, put at the cold origin, through the cold transform, cut
 /// by the cold clips: a painter that snaps the transform's translation and
 /// takes text phase from where the geometry lands draws the cold pixels.
+///
+/// The culling half holds with a popover open too: its trigger is outside
+/// the fade its hanging surface opens with, so the retained index bounds the
+/// trigger as a cold one does.
 fn assert_scene_is_cold(runtime: &RuntimeDocument, frame: &str) {
-    assert_scene_paints_cold(runtime, frame, true);
-}
-
-/// [`assert_scene_is_cold`], the culling half only when `culling` asks for
-/// it. Opening a popover leaves the retained culling index answering its
-/// trigger for a viewport the trigger is not in (a superset, which a
-/// painter clips away), with or without a move: a known gap in the index,
-/// not in what a move keeps.
-fn assert_scene_paints_cold(runtime: &RuntimeDocument, frame: &str, culling: bool) {
     let world = runtime.context().world();
     let document = DocumentId::new(1).unwrap();
     let scene = runtime.scene();
@@ -277,7 +272,6 @@ fn assert_scene_paints_cold(runtime: &RuntimeDocument, frame: &str, culling: boo
     // What a painter culls to: a scene that keeps its culling bounds through
     // moves (it built them on the first frame, below) answers what a fresh
     // one does, at the viewport edges included.
-    let viewports = if culling { 3 } else { 0 };
     for viewport in [
         SceneRect {
             x: 0.0,
@@ -297,10 +291,7 @@ fn assert_scene_paints_cold(runtime: &RuntimeDocument, frame: &str, culling: boo
             width: 20.0,
             height: 7.0,
         },
-    ]
-    .into_iter()
-    .take(viewports)
-    {
+    ] {
         assert_eq!(
             scene.visible_operations(viewport).unwrap(),
             cold.visible_operations(viewport).unwrap(),
@@ -734,7 +725,7 @@ fn moved_controls_that_read_little_of_the_page_keep_what_they_built() {
     flush(&mut runtime);
     assert_scene_is_cold(&runtime, "first frame");
     let mut padding = 0.0;
-    let mut step = |runtime: &mut RuntimeDocument, frame: &str, culling: bool| {
+    let mut step = |runtime: &mut RuntimeDocument, frame: &str| {
         padding += 1.37;
         let mut queue = MutationQueue::new();
         queue.set_style(id(COLUMN), column_style(padding));
@@ -742,11 +733,11 @@ fn moved_controls_that_read_little_of_the_page_keep_what_they_built() {
         let update = runtime
             .flush(LayoutViewport::new(300.0, 800.0), &mut MeasureTextShaper)
             .unwrap();
-        assert_scene_paints_cold(runtime, frame, culling);
+        assert_scene_is_cold(runtime, frame);
         update.scene.stats
     };
     for frame in ["moved", "moved again", "moved a third time"] {
-        let stats = step(&mut runtime, frame, true);
+        let stats = step(&mut runtime, frame);
         assert_eq!(
             stats.rebuilt_primitives, 0,
             "{frame}: a pure move rebuilt primitives ({stats:?})"
@@ -765,8 +756,83 @@ fn moved_controls_that_read_little_of_the_page_keep_what_they_built() {
         .update_component(popover, |popover, _| popover.open = true)
         .unwrap();
     flush(&mut runtime);
-    assert_scene_paints_cold(&runtime, "opened", false);
+    assert_scene_is_cold(&runtime, "opened");
     for frame in ["opened and moved", "opened and moved again"] {
-        step(&mut runtime, frame, false);
+        step(&mut runtime, frame);
+    }
+}
+
+/// The rows stand in a scroller scrolled by an uneven amount, and the first
+/// row grows by an uneven step again and again: the rows below move inside
+/// the scroll, between scrolls of their own and with one in the same
+/// frame. A move rebuilds no primitive, and after every frame the scene
+/// paints, and culls, what a cold one does.
+#[test]
+fn rows_moved_in_a_scrolled_column_paint_like_a_cold_scene() {
+    use nana_ui_core::OverflowSpec;
+    use nana_ui_runtime::ScrollOffset;
+    let scroller = |padding: f32| {
+        let mut style = column_style(padding);
+        let layout = Arc::make_mut(&mut style.layout);
+        layout.height = Some(LengthSpec::Px(90.0));
+        layout.overflow_y = OverflowSpec::Auto;
+        style
+    };
+    let mut runtime = document();
+    let mut queue = MutationQueue::new();
+    queue.set_style(id(COLUMN), scroller(0.0));
+    runtime.context_mut().commit_mutations(queue).unwrap();
+    flush(&mut runtime);
+    assert_scene_is_cold(&runtime, "first frame");
+    let mut scroll = 30.37;
+    let commit = |runtime: &mut RuntimeDocument, queue: MutationQueue| {
+        runtime.context_mut().commit_mutations(queue).unwrap();
+        runtime
+            .flush(LayoutViewport::new(300.0, 800.0), &mut MeasureTextShaper)
+            .unwrap()
+            .scene
+            .stats
+    };
+    let mut queue = MutationQueue::new();
+    queue.set_scroll_offset(id(COLUMN), ScrollOffset { x: 0.0, y: scroll });
+    commit(&mut runtime, queue);
+    assert_scene_is_cold(&runtime, "scrolled");
+    let mut height = 20.0;
+    let grow = |queue: &mut MutationQueue, height: f32| {
+        let mut layout = (*row_style()).clone();
+        layout.height = Some(LengthSpec::Px(height));
+        queue.set_style(
+            row_id(0),
+            NodeStyle {
+                layout: Arc::new(layout),
+                ..NodeStyle::default()
+            },
+        );
+    };
+    for round in 0..2 {
+        for step in 0..4 {
+            height += 1.37;
+            let frame = format!("round {round}, step {step}");
+            let mut queue = MutationQueue::new();
+            grow(&mut queue, height);
+            let stats = commit(&mut runtime, queue);
+            assert_eq!(
+                stats.rebuilt_primitives, 0,
+                "{frame}: a pure move rebuilt primitives ({stats:?})"
+            );
+            assert_scene_is_cold(&runtime, &frame);
+        }
+        scroll += 11.13;
+        let mut queue = MutationQueue::new();
+        queue.set_scroll_offset(id(COLUMN), ScrollOffset { x: 0.0, y: scroll });
+        commit(&mut runtime, queue);
+        assert_scene_is_cold(&runtime, &format!("round {round}: scrolled"));
+        scroll -= 5.29;
+        height += 1.37;
+        let mut queue = MutationQueue::new();
+        queue.set_scroll_offset(id(COLUMN), ScrollOffset { x: 0.0, y: scroll });
+        grow(&mut queue, height);
+        commit(&mut runtime, queue);
+        assert_scene_is_cold(&runtime, &format!("round {round}: scrolled and moved"));
     }
 }
