@@ -65,7 +65,7 @@ settings_row("静音").control(switch(""))
 
 `UiWorld::project_accessibility` 保留连接可见控件所需的结构祖先。`visibility: hidden` 的容器输出中性的 Generic：它自己的标签、值、描述、原来的角色和交互状态都不对外提供。显式 `visibility: visible` 的孩子继续有完整的父子链和语义。隐藏的叶子，以及不生成布局盒的子树，不进入投影。重新可见之后，恢复的是当前业务状态里的语义。
 
-节点的 `bounds` 相对父节点的空间，转过的节点另带 `transform`（节点到父节点是 `translate(bounds.x, bounds.y) · transform`），`clip` 在视口坐标里；要屏幕坐标，拿着相对树时用 `AccessibilityPlacements`，直接从世界取用 `project_accessibility_in_viewport`（见 [应用 API](../../reference/application-api.md#无障碍节点的坐标)）。
+节点的 `bounds` 相对父节点的空间，转过或缩放过的节点另带 `transform`（节点到父节点是 `translate(bounds.x, bounds.y) · transform`；正缩放是 `diag(a, d)`，页面根、`fixed`、`sticky`、逃逸的绝对定位被转过或缩放过时也带），`clip` 在视口坐标里；要屏幕坐标，拿着相对树时用 `AccessibilityPlacements`，直接从世界取用 `project_accessibility_in_viewport`（见 [应用 API](../../reference/application-api.md#无障碍节点的坐标)）。
 
 启用 `accesskit-tree` 的嵌入式宿主用 `AccessTreeProjector` 消费完整树或 `AccessibilityDelta`。隐藏的结构容器是没有点击、没有聚焦操作的 GenericContainer，孩子的操作和焦点还在。`AccessTreeProjector::new` 只建立保留状态。第一次要完整树时调用 `full_update()`。
 
