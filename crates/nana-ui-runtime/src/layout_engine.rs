@@ -2343,17 +2343,10 @@ struct MeasurePlan {
     /// The container's child list, compared by pointer. A structural edit
     /// copy-on-writes this `Arc`, so a different pointer is a different list.
     children: Arc<Vec<StableNodeId>>,
-    /// The container's own shaped text, which competes with the children for
-    /// the content size.
-    text_metrics: Option<crate::TextMetrics>,
-    /// That text's unwrapped width, when it wrapped narrower.
-    text_natural_width: Option<f32>,
-    /// The width that text was last wrapped against.
-    text_wrap_limit: Option<f32>,
-    /// The face metrics its line boxes started from (`UiWorld::block_strut`).
-    strut: Option<crate::FontStrut>,
-    /// What the container's visual draws beside that text.
-    visual: VisualContent,
+    /// The container's own content beside its children: `None` for a
+    /// container with none (no text, strut or visual), as most are, so the
+    /// plan stays small.
+    own: Option<Box<PlanOwnContent>>,
     /// Available size in-flow children were measured against. Flex uses one
     /// value for every child. A grid stores the content box here; each item's
     /// contribution lives on [`GridTrackPlan`], and a fill axis is applied
@@ -2388,6 +2381,39 @@ struct MeasurePlan {
     /// and re-checking the children a later pass reaches would not find it.
     /// It is never reused; a walk of the children records a fresh one.
     stale: bool,
+}
+
+/// What a container measured of its own beside its children
+/// ([`MeasurePlan::own`]).
+#[derive(Clone, Copy, PartialEq)]
+struct PlanOwnContent {
+    /// The container's own shaped text, which competes with the children for
+    /// the content size.
+    text_metrics: Option<crate::TextMetrics>,
+    /// That text's unwrapped width, when it wrapped narrower.
+    text_natural_width: Option<f32>,
+    /// The width that text was last wrapped against.
+    text_wrap_limit: Option<f32>,
+    /// The face metrics its line boxes started from (`UiWorld::block_strut`).
+    strut: Option<crate::FontStrut>,
+    /// What the container's visual draws beside that text.
+    visual: VisualContent,
+}
+
+impl PlanOwnContent {
+    /// Nothing at all, to the bit: what a plan leaves out (`own: None`).
+    fn is_none(&self) -> bool {
+        self.text_metrics.is_none()
+            && self.text_natural_width.is_none()
+            && self.text_wrap_limit.is_none()
+            && self.strut.is_none()
+            && self.visual.is_nothing()
+    }
+
+    /// Boxed, or `None` when there is nothing.
+    fn boxed(self) -> Option<Box<Self>> {
+        (!self.is_none()).then(|| Box::new(self))
+    }
 }
 
 /// The measure plans retained for one container.
@@ -2465,17 +2491,34 @@ impl MeasurePlan {
         visual: VisualContent,
         writing: nana_ui_core::WritingContext,
     ) -> bool {
+        let own_matches = match self.own.as_deref() {
+            // Compared as the fields were: with `==`, against nothing.
+            None => {
+                strut.is_none()
+                    && text_metrics.is_none()
+                    && text_natural_width.is_none()
+                    && text_wrap_limit.is_none()
+                    && visual == VisualContent::default()
+            }
+            Some(own) => {
+                own.strut == strut
+                    && own.text_metrics == text_metrics
+                    && own.text_natural_width == text_natural_width
+                    && own.text_wrap_limit == text_wrap_limit
+                    && own.visual == visual
+            }
+        };
         self.writing == writing
-            && self.strut == strut
+            && own_matches
             && self.available == available
             && self.parent_direction == parent_direction
             && viewport_basis(&self.style, self.viewport) == viewport_basis(style, viewport)
             && self.parent_font_px == parent_font_px
-            && self.text_metrics == text_metrics
-            && self.text_natural_width == text_natural_width
-            && self.text_wrap_limit == text_wrap_limit
-            && self.visual == visual
             && (Arc::ptr_eq(&self.style, style) || measure_inputs_equal(&self.style, style))
+    }
+
+    fn text_metrics(&self) -> Option<crate::TextMetrics> {
+        self.own.as_ref().and_then(|own| own.text_metrics)
     }
 
     fn entry(&self, child: StableNodeId) -> Option<&MeasuredChild> {

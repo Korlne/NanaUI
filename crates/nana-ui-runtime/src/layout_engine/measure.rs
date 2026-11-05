@@ -557,6 +557,17 @@ pub(super) struct VisualContent {
     lead: Option<super::parts::LeadingParts>,
 }
 
+impl VisualContent {
+    /// The default, to the bit: no width, height or text (not even `-0.0`)
+    /// and no leading parts.
+    pub(super) fn is_nothing(&self) -> bool {
+        self.width.to_bits() == 0
+            && self.height.to_bits() == 0
+            && self.text.to_bits() == 0
+            && self.lead.is_none()
+    }
+}
+
 fn visual_content(id: StableNodeId, world: &UiWorld) -> VisualContent {
     VisualContent {
         lead: world.leading_parts(id),
@@ -1838,11 +1849,14 @@ fn measure_node_level(
                 style: Arc::clone(&style_arc),
                 writing,
                 children: Arc::clone(&child_ids),
-                text_metrics,
-                text_natural_width,
-                text_wrap_limit,
-                strut: world.block_strut(id),
-                visual,
+                own: PlanOwnContent {
+                    text_metrics,
+                    text_natural_width,
+                    text_wrap_limit,
+                    strut: world.block_strut(id),
+                    visual,
+                }
+                .boxed(),
                 child_available: content_available,
                 child_direction: direction,
                 entries,
@@ -2462,7 +2476,7 @@ fn flex_line_measure_delta(
     if plan.sequential || !flex_line_local_style(style) {
         return Ok(None);
     }
-    if plan.text_metrics.is_some() || nodes.world.standard_visual_ref(id).is_some() {
+    if plan.text_metrics().is_some() || nodes.world.standard_visual_ref(id).is_some() {
         return Ok(None);
     }
     let direction = plan.child_direction;
@@ -2670,14 +2684,19 @@ fn grid_measure_delta(
 ) -> Result<Option<Size>, UiWorldError> {
     // The track extent below is the children's alone, not the band laid out
     // before them.
-    if plan.grid.is_none() || plan.visual.lead.is_some() {
+    if plan.grid.is_none()
+        || plan
+            .own
+            .as_ref()
+            .is_some_and(|own| own.visual.lead.is_some())
+    {
         return Ok(None);
     }
     let style = plan.style.as_ref();
     if style.is_subgrid_columns() || style.is_subgrid_rows() {
         return Ok(None);
     }
-    if plan.text_metrics.is_some() || nodes.world.standard_visual_ref(id).is_some() {
+    if plan.text_metrics().is_some() || nodes.world.standard_visual_ref(id).is_some() {
         return Ok(None);
     }
     if style.width.is_some_and(LengthSpec::is_content_sized)

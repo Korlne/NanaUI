@@ -1176,7 +1176,7 @@ pub(super) fn ifc_line_measure_delta(
     if plan.sequential
         || plan.child_direction != FlexDirection::Row
         || !ifc_plan_style(style, plan.writing)
-        || plan.text_metrics.is_some()
+        || plan.text_metrics().is_some()
         || nodes.world.standard_visual_ref(id).is_some()
     {
         return Ok(None);
