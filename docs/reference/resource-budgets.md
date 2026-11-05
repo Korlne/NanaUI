@@ -47,7 +47,17 @@
 | CSS：`calc()` 的括号与数学函数 | `MAX_CALC_DEPTH` 16 | 值无效 |
 | CSS：`var()` 引用链 | `MAX_VAR_DEPTH` 32 | 当作未解析：用回退值；自引用 `--a: var(--a)` 也在此终止 |
 
-每个解析器都有一条测试，在 512 KiB 的线程上解析一万层（缩进树取源码预算能装下的最深）：`nana-ui-diagram/tests/deep_nesting.rs`、`nana-ui-css/tests/deep_nesting.rs`，以及 `rich_text`、`i18n::message`、`paint_script` 各自的单元测试。上限之内的深度同样要受栈预算约束：CSS 嵌套块每层的帧在 debug 下约 6.5 KiB（样式规则的处理拆到了 `parse_style_rule`，不在递归的帧里），32 层约 210 KiB；railroad 48 层在 debug 下要 256–512 KiB，是这些解析器里最紧的。
+每个解析器都有一条测试，在 512 KiB 的线程上解析一万层（缩进树取源码预算能装下的最深）：`nana-ui-diagram/tests/deep_nesting.rs`、`nana-ui-css/tests/deep_nesting.rs`，以及 `rich_text`、`i18n::message`、`paint_script` 各自的单元测试。上限之内的深度同样要受栈预算约束：CSS 嵌套块每层的帧在 debug 下约 6.5 KiB（样式规则的处理拆到了 `parse_style_rule`，不在递归的帧里），32 层约 210 KiB。
+
+railroad 的嵌套上限按「括号与调用」数（`MAX_DEPTH` 48 个 primary），但一层括号之内表达式还能再套好几层（`!( … )***` 是谓词加三个重复记号，七层），解析之后 `measure` 和 `draw` 按表达式的层数递归。所以解析与布局都只把递归留在帧里：`Fail` 装箱（`Result<Expr, Fail>` 从 48 B 降到 40 B），只读一个 token 的分支在 `primary_token`、重复记号与 `-` 例外在 `repetition_marks` / `except` / `predicated`、调用的组装在 `build_call`、每种节点的算术、文字和路径在 `*_node` / `draw_*` 之外的函数里。aarch64 macOS debug 下每层的帧：
+
+| 路径 | 改前 | 改后 |
+| --- | ---: | ---: |
+| 解析，一层括号（`alt → seq → term → primary → primary_inner`） | 7.1 KiB | 3.0 KiB |
+| 解析，一层调用（再加 `call`） | 10.1 KiB | 3.7 KiB |
+| 布局，一层表达式（`measure` + 分支 / `draw` + 分支） | 3.0 / 3.6 KiB | 0.4–0.7 / 0.3–0.5 KiB |
+
+上限深度下整次渲染要的栈（二分到页）：改前 debug 最深的是谓词加重复记号，要约 1.2 MiB，在 512 KiB 线程上会溢出，调用嵌套约 480 KiB；改后 debug 各种嵌套都在 180 KiB 以内，release 在 180 KiB 以内（改前 210 KiB）。门禁 `deep_nesting::railroad_at_its_depth_limit_fits_half_the_thread`：七种嵌套各 47 层括号在 256 KiB（512 KiB 的一半）线程上渲染成功且不少于不嵌套时的图元，48 层返回 `TooLarge(ClusterDepth)`；debug 与 `--release` 都跑。改前的代码跑它在 debug 下栈溢出。
 
 ### 应用模型的嵌套
 
@@ -570,5 +580,4 @@ painter 段（`nana-text-paint-benchmark --workload reflow`，交替 8 轮读最
 - **冷布局吞吐与每盒内存**：上面两张表 NanaUI 仍落后 Taffy 约 3 倍（时间）与 2 倍（内存）。剩下的成本是摊开的，没有单点：每盒约 16 次分配（每个容器的 `descend`、`flow`、`child_sizes`、计划条目等 `Vec`，单去掉它们省不出多少时间）、每个节点在测量里的十来项判定（在场、浮层分支、菜单分支、行盒记忆，各自一次按 id 的查表）、每次写入落四张意图缓存表、十几张按 `StableNodeId` 的哈希表（`LayoutInputMap` 的输入表每条 264 B，一万盒时 2.8 MB，查一次就是一次缓存未命中；`style()` 每盒被调约 18 次，分散在 14 处）、以及约 4.8 KB 的 `LayoutStyle`（一次判定常常要碰几条缓存行）。再往下要换存储：按节点下标的稠密数组代替这些表、`LayoutResult` 不再给每个子节点存三份几何，这是结构改动，需要先对 `WorkCounters` 合同和消费者（Scene、命中、无障碍、`issue205` 等测试）逐个确认。
 - **往已布局的界面里挂深子树**：挂载本身已是线性（见下），但插入时沿祖先清理布局结果的两条链（`suppress_layout_result_chain`、`clear_layout_result_chain`）在世界里已有布局结果时仍走到最近的固定尺寸边界，代价是「插入的节点数 × 深度」。首次挂载时表是空的，直接跳过。要在已处理过的祖先处提前停，得先确认边界节点的样式在两次插入之间不会变，否则会读到过期结果。
 - **`AppContext` / `UiWorld` 内联大小**：把大块字段装箱，构造路径的帧就能回到预算内。
-- **railroad 解析的 debug 帧**：`alt → seq → term → primary` 每层五个帧、合计 5 KiB 以上，48 层在 debug 下余量不到一倍。把 `Result<Expr, Fail>` 的大小压下来，或把上限降到 32。
 - **移动端实机**：`stack` 的 iOS 与 Android 分支只做过交叉 `cargo check`（`aarch64-apple-ios`、`aarch64-linux-android`，后者先 `source scripts/android-env.sh`），没有在设备上跑过深树门禁。

@@ -218,14 +218,19 @@ fn tokenize(lines: &[&str], notation: Notation, cx: &mut ParseCx<'_>) -> Vec<Tok
     out
 }
 
-enum Fail {
+/// Why a rule stopped parsing. Boxed so the `Result<Expr, Fail>` every
+/// level of the recursive descent returns stays the size of an `Expr`:
+/// the frames of `alt -> seq -> term -> primary` hold several of them.
+struct Fail(Box<FailKind>);
+
+enum FailKind {
     Syntax(usize, String),
     Fatal(DiagramError),
 }
 
 impl From<DiagramError> for Fail {
     fn from(e: DiagramError) -> Self {
-        Self::Fatal(e)
+        Self(Box::new(FailKind::Fatal(e)))
     }
 }
 
@@ -278,7 +283,10 @@ impl Parser<'_, '_> {
     }
 
     fn fail<T>(&self, message: impl Into<String>) -> Result<T, Fail> {
-        Err(Fail::Syntax(self.line(), message.into()))
+        Err(Fail(Box::new(FailKind::Syntax(
+            self.line(),
+            message.into(),
+        ))))
     }
 
     fn count(&mut self, expr: Expr) -> Result<Expr, Fail> {
@@ -342,12 +350,14 @@ impl Parser<'_, '_> {
                         None => rules.push(Rule { name, expr }),
                     }
                 }
-                Err(Fail::Syntax(line, message)) => {
-                    self.cx
-                        .warn(line, format!("rule `{name}` skipped: {message}"));
-                    self.resync();
-                }
-                Err(Fail::Fatal(e)) => return Err(e),
+                Err(fail) => match *fail.0 {
+                    FailKind::Syntax(line, message) => {
+                        self.cx
+                            .warn(line, format!("rule `{name}` skipped: {message}"));
+                        self.resync();
+                    }
+                    FailKind::Fatal(e) => return Err(e),
+                },
             }
         }
         Ok(rules)
@@ -408,6 +418,19 @@ impl Parser<'_, '_> {
         if self.notation == Notation::Abnf {
             return self.abnf_term();
         }
+        let predicate = self.predicate();
+        let mut expr = self.primary()?;
+        expr = self.repetition_marks(expr)?;
+        if self.notation == Notation::Ebnf && self.at_punct("-") {
+            self.pos += 1;
+            let except = self.primary()?;
+            expr = self.except(expr, except)?;
+        }
+        self.predicated(expr, predicate)
+    }
+
+    /// A PEG `!` or `&` before a term.
+    fn predicate(&mut self) -> Option<&'static str> {
         let predicate = match self.peek() {
             Some(Tok::Punct("!")) => Some("not"),
             Some(Tok::Punct("&")) => Some("and"),
@@ -416,7 +439,15 @@ impl Parser<'_, '_> {
         if predicate.is_some() {
             self.pos += 1;
         }
-        let mut expr = self.primary()?;
+        predicate
+    }
+
+    // `repetition_marks`, `except` and `predicated` are apart from
+    // [`Self::term`] so their temporaries are not in the frame every nesting
+    // level of the descent pays.
+
+    /// The `*`, `+` and `?` after a term's primary.
+    fn repetition_marks(&mut self, mut expr: Expr) -> Result<Expr, Fail> {
         let mut marks = 0;
         loop {
             if marks == 4 {
@@ -432,15 +463,19 @@ impl Parser<'_, '_> {
             self.pos += 1;
             expr = self.count(expr)?;
         }
-        if self.notation == Notation::Ebnf && self.at_punct("-") {
-            self.pos += 1;
-            let except = self.primary()?;
-            expr = self.count(Expr::Sequence(vec![
-                expr,
-                Expr::Comment("except".into()),
-                except,
-            ]))?;
-        }
+        Ok(expr)
+    }
+
+    /// An EBNF `expr - except`.
+    fn except(&mut self, expr: Expr, except: Expr) -> Result<Expr, Fail> {
+        self.count(Expr::Sequence(vec![
+            expr,
+            Expr::Comment("except".into()),
+            except,
+        ]))
+    }
+
+    fn predicated(&mut self, expr: Expr, predicate: Option<&'static str>) -> Result<Expr, Fail> {
         match predicate {
             Some(label) => self.count(Expr::Group(Box::new(expr), Some(label.into()))),
             None => Ok(expr),
@@ -449,6 +484,13 @@ impl Parser<'_, '_> {
 
     /// `[min] "*" [max] element` or `n element`.
     fn abnf_term(&mut self) -> Result<Expr, Fail> {
+        let (min, star, max) = self.abnf_repeat_prefix();
+        let item = self.primary()?;
+        self.abnf_repeat(item, min, star, max)
+    }
+
+    /// The `[min] "*" [max]` or `n` before an ABNF element.
+    fn abnf_repeat_prefix(&mut self) -> (Option<u32>, bool, Option<u32>) {
         let mut min = None;
         let mut star = false;
         let mut max = None;
@@ -477,7 +519,17 @@ impl Parser<'_, '_> {
                 self.pos += 1;
             }
         }
-        let item = self.primary()?;
+        (min, star, max)
+    }
+
+    /// An ABNF element under its repetition prefix.
+    fn abnf_repeat(
+        &mut self,
+        item: Expr,
+        min: Option<u32>,
+        star: bool,
+        max: Option<u32>,
+    ) -> Result<Expr, Fail> {
         let (lo, hi) = match (min, star, max) {
             (None, false, _) => return Ok(item),
             (Some(n), false, _) => (n, Some(n)),
@@ -504,14 +556,28 @@ impl Parser<'_, '_> {
     fn primary(&mut self) -> Result<Expr, Fail> {
         self.depth += 1;
         if self.depth > MAX_DEPTH {
-            return Err(Fail::Fatal(DiagramError::TooLarge(LimitKind::ClusterDepth)));
+            return Err(DiagramError::TooLarge(LimitKind::ClusterDepth).into());
         }
         let result = self.primary_inner();
         self.depth -= 1;
         result
     }
 
+    /// Only the recursive arms of a primary: everything that ends at one
+    /// token is read by [`Self::primary_token`], whose temporaries are then
+    /// not in the frame every nesting level pays.
     fn primary_inner(&mut self) -> Result<Expr, Fail> {
+        match self.primary_token()? {
+            Primary::Done(expr) => Ok(expr),
+            Primary::Group(close) => {
+                let inner = self.alt(false)?;
+                self.close_group(close, inner)
+            }
+            Primary::Call(f, name) => self.call(f, &name),
+        }
+    }
+
+    fn primary_token(&mut self) -> Result<Primary, Fail> {
         let Some(token) = self.toks.get(self.pos).cloned() else {
             return self.fail("the rule ends early");
         };
@@ -534,25 +600,13 @@ impl Parser<'_, '_> {
                     .is_some_and(|t| t.glued && t.tok == Tok::Punct("("));
                 if call && let Some(f) = Function::named(&name) {
                     self.pos += 1;
-                    return self.call(f, &name);
+                    return Ok(Primary::Call(f, name));
                 }
                 Expr::NonTerminal(name)
             }
-            Tok::Punct("(") => {
-                let inner = self.alt(false)?;
-                self.expect(")")?;
-                return Ok(inner);
-            }
-            Tok::Punct("[") => {
-                let inner = self.alt(false)?;
-                self.expect("]")?;
-                Expr::Optional(Box::new(inner))
-            }
-            Tok::Punct("{") => {
-                let inner = self.alt(false)?;
-                self.expect("}")?;
-                zero_or_more(inner, None)
-            }
+            Tok::Punct("(") => return Ok(Primary::Group(")")),
+            Tok::Punct("[") => return Ok(Primary::Group("]")),
+            Tok::Punct("{") => return Ok(Primary::Group("}")),
             Tok::Punct(".") if self.notation == Notation::Peg => {
                 Expr::Special("any character".into())
             }
@@ -561,7 +615,17 @@ impl Parser<'_, '_> {
                 return self.fail(format!("unexpected `{p}`"));
             }
         };
-        self.count(expr)
+        self.count(expr).map(Primary::Done)
+    }
+
+    /// The closing bracket of a group and what the bracket means.
+    fn close_group(&mut self, close: &'static str, inner: Expr) -> Result<Expr, Fail> {
+        self.expect(close)?;
+        match close {
+            "]" => self.count(Expr::Optional(Box::new(inner))),
+            "}" => self.count(zero_or_more(inner, None)),
+            _ => Ok(inner),
+        }
     }
 
     fn expect(&mut self, p: &str) -> Result<(), Fail> {
@@ -598,6 +662,13 @@ impl Parser<'_, '_> {
             }
         }
         self.pos += 1;
+        self.build_call(f, args)
+    }
+
+    /// The diagram a constructor call's arguments make. Apart from
+    /// [`Self::call`], which recurses, so its temporaries stay out of that
+    /// frame.
+    fn build_call(&mut self, f: Function, args: Vec<Expr>) -> Result<Expr, Fail> {
         let text = |e: Option<&Expr>| -> String {
             match e {
                 Some(
@@ -651,6 +722,14 @@ impl Parser<'_, '_> {
         };
         self.count(expr)
     }
+}
+
+/// A primary read from its first token: finished, or the group or call
+/// the descent recurses into.
+enum Primary {
+    Done(Expr),
+    Group(&'static str),
+    Call(Function, String),
 }
 
 #[derive(Debug, Clone, Copy)]

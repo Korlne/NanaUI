@@ -154,6 +154,72 @@ fn brackets_ten_thousand_deep_fail_cleanly() {
     assert!(render_small(json).is_ok());
 }
 
+/// Render on a thread with `stack` bytes.
+fn render_on(stack: usize, source: String) -> Result<usize, DiagramError> {
+    std::thread::Builder::new()
+        .stack_size(stack)
+        .spawn(move || {
+            render(
+                &source,
+                &FixedMeasure,
+                &DiagramMetrics::DEFAULT,
+                &Limits::DEFAULT,
+            )
+            .map(|scene| scene.items.len())
+        })
+        .unwrap()
+        .join()
+        .unwrap()
+}
+
+/// Railroad groups and calls nest up to `MAX_DEPTH` (48) primaries: 47
+/// brackets around one leaf. At that depth every way of nesting renders in
+/// half the 512 KiB thread, debug builds included (`cargo test` and
+/// `cargo test --release`); one more bracket is refused. The PEG case is
+/// the deepest expression a bracket can carry, a predicate and three
+/// repetition marks (seven expression levels), which `measure` and `draw`
+/// recurse through.
+#[test]
+fn railroad_at_its_depth_limit_fits_half_the_thread() {
+    const HALF: usize = STACK / 2;
+    let cases: [(&str, &str, &str, &str); 7] = [
+        ("railroad-beta", "(", "\"a\"", ")"),
+        ("railroad-ebnf-beta", "[", "\"a\"", "]"),
+        ("railroad-ebnf-beta", "{", "\"a\"", "}"),
+        ("railroad-ebnf-beta", "\"a\" - (", "\"b\"", ")"),
+        ("railroad-abnf-beta", "0*5(", "\"a\"", ")"),
+        ("railroad-beta", "zeroOrMore(", "\"a\"", ", \",\")"),
+        ("railroad-peg-beta", "!(", "\"a\"", ")***"),
+    ];
+    for (header, open, leaf, close) in cases {
+        let source = |depth: usize| {
+            let define = if header == "railroad-peg-beta" {
+                "<-"
+            } else {
+                "="
+            };
+            format!(
+                "{header}\nr {define} {}{leaf}{}",
+                open.repeat(depth),
+                close.repeat(depth)
+            )
+        };
+        // A rule that failed to parse would be skipped: fewer items than
+        // the same rule unnested.
+        let flat = render_on(STACK, source(0)).unwrap();
+        let items = render_on(HALF, source(47));
+        assert!(
+            items.as_ref().is_ok_and(|&n| n >= flat),
+            "{header} `{open}` x47: {items:?}, unnested {flat}"
+        );
+        assert_eq!(
+            render_on(HALF, source(48)),
+            Err(DiagramError::TooLarge(LimitKind::ClusterDepth)),
+            "{header} `{open}` x48"
+        );
+    }
+}
+
 #[test]
 fn config_ten_thousand_deep_is_skipped() {
     let init = format!(
