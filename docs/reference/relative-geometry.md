@@ -175,7 +175,7 @@ abs(child) = abs(frame) + local(child)
 
 - 转过的盒子自己被撑高或平移：变换原点（默认中心）跟着动，但子孙在它的本地坐标里，只重建它自己的条目。
 - 改变换（`TRANSFORM` 或 `TRANSFORM_KEPT` 只标盒子自己）：前后都交出本地坐标时只重建它自己，脏节点下面的钉住条目照旧重建；其余情况（纯平移、变成或不再是这种条目、透视、3D）原地重建不成立，走 `patch_hit_subtree` 整棵修补它的分支。
-- 滚动：`shift_hit_test_scroll` 只改 `shift` 并刷新祖先包围盒，O(深度)；在交出本地坐标的条目上按恒等线性部分换算。驱动在同一帧既有滚动又有别的脏节点时丢掉滚动增量、交给补丁处理；这时滚动容器的 `scroll` 与现在的值不同，走子树补丁。
+- 滚动：`shift_hit_test_scroll` 只改 `shift` 并刷新祖先包围盒，O(深度)；在交出本地坐标的条目上按恒等线性部分换算。驱动在同一帧既有滚动又有别的脏节点时丢掉滚动增量、交给补丁处理；这时滚动容器的 `scroll` 与现在的值不同，走子树补丁。快路径（`hit_test_work_is_scroll_only`）要求 INPUT 脏节点全是本帧滚过的容器，且都不在 `non_scroll_hit_dirty` 里：这个集合由 `mark` / `mark_moved` / `mark_ancestors` 记下滚动以外的 INPUT 标记（滚动只走 `mark_scroll_compatible`），容器自己改了盒子又同帧滚动时据此走补丁；它在条目按现在几何建好时删去——整树重建删掉本文档的、按范围重建删掉传入的脏节点与钉住条目、滚动里修补的粘性分支删掉自己——取走工作后又被标 INPUT 的节点保留到下一帧。
 
 ### 4.4 仍整棵修补的
 
@@ -439,5 +439,6 @@ cargo run --release -p component-gallery --bin ui-snapshots --features snapshots
 | be0a703c8 | 节点空间分类 `NodeSpace` 与 `space_pins` / `page_bound` 索引 |
 | 596930d22 | 自带变换的盒子原地改尺寸一律当遍历根 |
 | e443a2a1e、e41729572、138c79333 | 拆分 `world/accessibility/`、`world/hit_test/`、`nana-ui-scene/src/scene/` |
+| 2572617f5 | 接回合并 3fab98a65 丢掉的 `non_scroll_hit_dirty` 判定与清空：滚动容器同帧改盒子不再走滚动快路径 |
 
 各阶段的基准见 [资源预算 · CPU 时间](resource-budgets.md#cpu-时间)。逐项的做法与变异实验记录在各提交的提交信息里，以及当时版本的本文（`git show <提交>:docs/reference/relative-geometry.md`）。
