@@ -4729,7 +4729,26 @@ impl UiWorld {
             writing: view.writing,
             containing_writing: view.containing_writing,
             text_metrics: view.text_metrics,
-            modal: view.modal.map(|modal| *modal),
+            modal: self.modal_layout_input(id),
+        })
+    }
+
+    /// What a modal frame's slots lay out from: its kind, slots and the
+    /// metrics of its texts. `None` for every other node.
+    pub(crate) fn modal_layout_input(&self, id: StableNodeId) -> Option<crate::ModalLayoutInput> {
+        if !self.nodes.has_visuals() {
+            return None;
+        }
+        let StandardVisual::ModalFrame { kind, slots, .. } = self.nodes.visual(id)? else {
+            return None;
+        };
+        let presentation = self.nodes.modal_text(id).copied().unwrap_or_default();
+        Some(crate::ModalLayoutInput {
+            kind: *kind,
+            slots: slots.clone(),
+            title: presentation.title,
+            description: presentation.description,
+            body_text: presentation.body,
         })
     }
 
@@ -4774,29 +4793,16 @@ impl UiWorld {
         };
         Ok(LayoutInputView {
             children: &record.hierarchy.children,
-            facts: facts_of(style.arc()),
+            // An owned style (motion, overlays, a hidden box) is decided
+            // when a measurement asks: most such nodes are only placed.
+            facts: match &style {
+                LayoutStyleRef::Borrowed(style) => facts_of(style),
+                LayoutStyleRef::Owned(_) => crate::layout_engine::StyleFacts::UNKNOWN,
+            },
             style,
             writing: record_writing(record),
             containing_writing: record_containing_writing(record),
             text_metrics,
-            modal: self
-                .nodes
-                .has_visuals()
-                .then(|| self.nodes.visual(id))
-                .flatten()
-                .and_then(|visual| {
-                    let StandardVisual::ModalFrame { kind, slots, .. } = visual else {
-                        return None;
-                    };
-                    let presentation = self.nodes.modal_text(id).copied().unwrap_or_default();
-                    Some(Box::new(crate::ModalLayoutInput {
-                        kind: *kind,
-                        slots: slots.clone(),
-                        title: presentation.title,
-                        description: presentation.description,
-                        body_text: presentation.body,
-                    }))
-                }),
         })
     }
 
@@ -7138,7 +7144,9 @@ fn record_containing_writing(record: &NodeRecord) -> nana_ui_core::WritingContex
 
 /// What a layout pass reads of a node ([`UiWorld::layout_input_view`]):
 /// [`LayoutInput`] borrowing the record's child list and, where it can, its
-/// layout style, with the rare modal part on the heap.
+/// layout style. The rare modal part is asked for where it is used
+/// ([`UiWorld::modal_layout_input`]): a pass's table holds one of these per
+/// node it reads, and 48 bytes keep a slot at 56.
 #[derive(Debug)]
 pub(crate) struct LayoutInputView<'a> {
     pub children: &'a Arc<Vec<StableNodeId>>,
@@ -7148,7 +7156,6 @@ pub(crate) struct LayoutInputView<'a> {
     pub writing: nana_ui_core::WritingContext,
     pub containing_writing: nana_ui_core::WritingContext,
     pub text_metrics: Option<crate::TextMetrics>,
-    pub modal: Option<Box<crate::ModalLayoutInput>>,
 }
 
 /// A node's layout style as a pass holds it: borrowed from the world, or an

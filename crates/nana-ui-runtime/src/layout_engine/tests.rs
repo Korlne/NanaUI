@@ -4785,7 +4785,6 @@ fn lazy_layout_input_avoids_a_single_item_projection_batch() {
             && view.writing == expected.writing
             && view.containing_writing == expected.containing_writing
             && view.text_metrics == expected.text_metrics
-            && view.modal.as_deref() == expected.modal.as_ref()
     };
     assert!(inputs.get(id(1)).unwrap().is_some_and(matches));
     assert!(inputs.get(id(1)).unwrap().is_some_and(matches));
@@ -7724,4 +7723,14 @@ fn issue199_inline_span_keeps_atomic_descendants_and_unboxes_only_real_blocks() 
         boxes["root"].height, 20.0,
         "a block nested through spans remains in its outer flow"
     );
+}
+
+/// A pass's table of inputs holds one slot per node it reads, from the
+/// lowest to the highest id it met, and a scoped pass over rows spread
+/// across a page fills it to the page's highest id every frame. 56 bytes a
+/// slot keep the table of a 62 001-node page in one allocation size class
+/// below the one the system maps afresh (and faults in) on every frame.
+#[test]
+fn a_pass_input_slot_stays_small() {
+    assert!(std::mem::size_of::<Option<(StableNodeId, PassInput<'static>)>>() <= 56);
 }

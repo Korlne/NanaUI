@@ -894,7 +894,7 @@ fn measure_node_level(
     let context = parent
         .and_then(|id| nodes.contexts.get(&id).copied().or(previous_context))
         .map(crate::FormattingContextKind::cache_id);
-    let Some(node) = nodes.get(id)? else {
+    let Some((node, style_facts)) = nodes.get_with_facts(id)? else {
         return Ok(Size::default());
     };
     // A root container with children can derive its default width from the
@@ -910,7 +910,7 @@ fn measure_node_level(
     // twice. Only the key drops the axis; the measure below still uses
     // `available`.
     let mut keyed_available = available;
-    if node.children.is_empty() && !node.facts.block_containing_size_affects_leaf(node.writing) {
+    if node.children.is_empty() && !style_facts.block_containing_size_affects_leaf(node.writing) {
         keyed_available.height = 0.0;
     }
     // A box whose size on an axis is its own -- a definite length, limits and
@@ -918,7 +918,7 @@ fn measure_node_level(
     // extent it is offered on that axis: what it hands its children comes
     // from that length. A resize that reaches its parent then finds its
     // measurement instead of walking its children again.
-    let (own_width, own_height) = node.facts.sizes_own_axes(node.writing);
+    let (own_width, own_height) = style_facts.sizes_own_axes(node.writing);
     if own_width {
         keyed_available.width = 0.0;
     }
@@ -929,11 +929,11 @@ fn measure_node_level(
         id,
         keyed_available,
         parent_direction,
-        node.facts.viewport_basis(viewport),
+        style_facts.viewport_basis(viewport),
         parent_font_px,
         node.writing,
         node.containing_writing,
-        node.facts.constraint_class(keyed_available),
+        style_facts.constraint_class(keyed_available),
         direction_sensitive,
     );
     // Retained intrinsic facts are shared across formatting contexts. They
@@ -962,7 +962,6 @@ fn measure_node_level(
     }
     // Copy the node facts out before any further world lookup. `node` borrows
     // the input map, and the style closure below is that borrow's last use.
-    let style_facts = node.facts;
     let style_arc = forced.map_or_else(|| node.style.shared(), StyleRef::Owned);
     let child_ids: &Arc<Vec<StableNodeId>> = node.children;
     let text_metrics = node.text_metrics;

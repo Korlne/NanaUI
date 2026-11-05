@@ -409,10 +409,9 @@ impl<V> DenseNodeMap<V> {
     /// Room for ids up to `highest` without growing.
     pub(crate) fn with_highest(highest: StableNodeId) -> Self {
         let mut map = Self::default();
-        let index = highest.get() as usize;
-        if highest.get() <= DENSE_LIMIT {
-            map.dense.resize_with(index + 1, || None);
-        }
+        // Ids past the limit live in the overflow.
+        let index = highest.get().min(DENSE_LIMIT) as usize;
+        map.dense.resize_with(index + 1, || None);
         map
     }
 
@@ -506,15 +505,14 @@ impl<V> DenseNodeMap<V> {
         self.dense.reserve(additional);
     }
 
-    /// Room for every id up to `highest` without growing. A table of every
-    /// node of a document indexes ids from 1 to the highest, which is more
-    /// slots than nodes ([`Self::reserve`] for as many ids as nodes falls
-    /// one short and doubles the vector at its last insert).
+    /// Room for every id up to `highest` (those the vector holds) without
+    /// growing. A table of every node of a document indexes ids from 1 to
+    /// the highest, which is more slots than nodes ([`Self::reserve`] for as
+    /// many ids as nodes falls one short and doubles the vector at its last
+    /// insert).
     pub(crate) fn reserve_through(&mut self, highest: StableNodeId) {
-        if highest.get() > DENSE_LIMIT {
-            return;
-        }
-        let slots = highest.get() as usize + 1;
+        // Ids past the limit live in the overflow.
+        let slots = highest.get().min(DENSE_LIMIT) as usize + 1;
         self.dense.reserve(slots.saturating_sub(self.dense.len()));
     }
 

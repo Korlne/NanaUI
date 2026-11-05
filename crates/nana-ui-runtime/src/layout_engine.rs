@@ -593,13 +593,9 @@ impl RuntimeLayoutEngine {
             collapse_omitted_boxes(&affected, &mut nodes, retained, &mut output);
         }
         // Publish recomputed boxes from the placed set; no document_order walk.
-        let mut emitted = output
-            .iter()
-            .map(|(&id, &box_)| (id, box_))
-            .collect::<Vec<_>>();
-        emitted.sort_unstable_by_key(|(id, _)| *id);
+        let emitted = output.sorted();
         // A first layout's table of boxes is the pass's, whole.
-        retained.boxes.absorb(&mut output);
+        output.move_into(&mut retained.boxes);
         // A first layout's retained tables are empty: they take the pass's
         // tables whole instead of copying them entry by entry.
         retained.used_padding.absorb(&mut nodes.used_padding);
@@ -2576,6 +2572,11 @@ impl StyleFacts {
     /// usable aspect ratio, a full percent fill on either axis.
     const ASPECT_RATIO: u16 = 1 << 6;
     const FULL_PERCENT_FILL: u16 = 1 << 7;
+    /// Set on every answer [`Self::of`] gives.
+    const KNOWN: u16 = 1 << 8;
+
+    /// Not decided yet: [`LayoutInputMap::facts`] decides it.
+    pub(crate) const UNKNOWN: Self = Self(0);
 
     pub(crate) fn of(style: &LayoutStyle) -> Self {
         let horizontal = nana_ui_core::WritingContext::default();
@@ -2583,7 +2584,8 @@ impl StyleFacts {
         let (own_width, own_height) = measure::sizes_own_axes(style, horizontal);
         let bit = |on: bool, flag: u16| if on { flag } else { 0 };
         Self(
-            bit(viewport.width, Self::VIEWPORT_WIDTH)
+            Self::KNOWN
+                | bit(viewport.width, Self::VIEWPORT_WIDTH)
                 | bit(viewport.height, Self::VIEWPORT_HEIGHT)
                 | bit(own_width, Self::OWN_WIDTH)
                 | bit(own_height, Self::OWN_HEIGHT)
@@ -2660,12 +2662,82 @@ impl StyleFacts {
     }
 }
 
-/// The boxes a pass placed, by node: a dense table, as [`crate::store::DenseNodeMap`]
-/// lays one out. A full pass places every node of the document in roughly the
-/// order they were made, so this indexes a vector sized once for the
-/// document and hands the boxes back in id order; a scoped pass touches a few
-/// ids far apart, which the map keeps in its overflow.
-type PassOutput = crate::store::DenseNodeMap<LayoutBox>;
+/// The boxes a pass placed, by node. A full pass places every node of the
+/// document: a dense table ([`crate::store::DenseNodeMap`]) sized once for
+/// the document, which hands the boxes back in id order and becomes the
+/// retained table whole. A scoped pass places a few nodes, possibly spread
+/// over the whole id range (the rows below an edit near the top), and keeps
+/// them in a hash map: a dense table would grow to the highest id and be
+/// allocated, zeroed and walked every frame.
+enum PassOutput {
+    Dense(crate::store::DenseNodeMap<LayoutBox>),
+    Sparse(crate::NodeMap<LayoutBox>),
+}
+
+impl Default for PassOutput {
+    fn default() -> Self {
+        Self::Sparse(crate::NodeMap::default())
+    }
+}
+
+impl PassOutput {
+    /// A dense table with room for every id of `ids`.
+    fn with_highest_of(ids: &[StableNodeId]) -> Self {
+        Self::Dense(crate::store::DenseNodeMap::with_highest_of(ids))
+    }
+
+    fn insert(&mut self, id: StableNodeId, layout: LayoutBox) -> Option<LayoutBox> {
+        match self {
+            Self::Dense(map) => map.insert(id, layout),
+            Self::Sparse(map) => map.insert(id, layout),
+        }
+    }
+
+    fn get(&self, id: &StableNodeId) -> Option<&LayoutBox> {
+        match self {
+            Self::Dense(map) => map.get(id),
+            Self::Sparse(map) => map.get(id),
+        }
+    }
+
+    fn contains_key(&self, id: &StableNodeId) -> bool {
+        self.get(id).is_some()
+    }
+
+    fn remove(&mut self, id: &StableNodeId) -> Option<LayoutBox> {
+        match self {
+            Self::Dense(map) => map.remove(id),
+            Self::Sparse(map) => map.remove(id),
+        }
+    }
+
+    /// `id`'s box, an empty one placed first if it has none.
+    fn or_default(&mut self, id: StableNodeId) -> &mut LayoutBox {
+        match self {
+            Self::Dense(map) => map.entry(id).or_default(),
+            Self::Sparse(map) => map.entry(id).or_default(),
+        }
+    }
+
+    /// Every box, in id order.
+    fn sorted(&self) -> Vec<(StableNodeId, LayoutBox)> {
+        let mut emitted: Vec<_> = match self {
+            Self::Dense(map) => map.iter().map(|(&id, &layout)| (id, layout)).collect(),
+            Self::Sparse(map) => map.iter().map(|(&id, &layout)| (id, layout)).collect(),
+        };
+        emitted.sort_unstable_by_key(|(id, _)| *id);
+        emitted
+    }
+
+    /// Move every box into `boxes`: a dense table whole when `boxes` is
+    /// empty (a first layout).
+    fn move_into(self, boxes: &mut crate::store::DenseNodeMap<LayoutBox>) {
+        match self {
+            Self::Dense(mut map) => boxes.absorb(&mut map),
+            Self::Sparse(map) => boxes.extend(map),
+        }
+    }
+}
 
 /// Working lists a pass's walks reuse instead of allocating one per
 /// container: each container's walk takes the lists it needs (its flow,
@@ -2986,6 +3058,38 @@ impl<'a> LayoutInputMap<'a> {
                 Err(error) => Err(error),
             }
         })
+    }
+
+    /// [`Self::get`] with the [`StyleFacts`] of the node's style: those its
+    /// input carries, or, for a style the input owns (decided only when a
+    /// measurement asks, since most of those nodes are only placed), from
+    /// the memo.
+    fn get_with_facts(
+        &mut self,
+        id: StableNodeId,
+    ) -> Result<Option<(&PassInput<'a>, StyleFacts)>, UiWorldError> {
+        let world = self.world;
+        let materialized = &mut self.materialized;
+        let memo = &self.style_facts;
+        let Some(node) = self.nodes.get_or_try_insert(id, || {
+            match world.layout_input_view(id, |style| Self::facts_in(memo, style)) {
+                Ok(input) => {
+                    *materialized = materialized.saturating_add(1);
+                    Ok(Some(input))
+                }
+                Err(UiWorldError::MissingNode(_)) => Ok(None),
+                Err(error) => Err(error),
+            }
+        })?
+        else {
+            return Ok(None);
+        };
+        let facts = if node.facts.has(StyleFacts::KNOWN) {
+            node.facts
+        } else {
+            Self::facts_in(memo, node.style.arc())
+        };
+        Ok(Some((node, facts)))
     }
 
     /// [`StyleFacts`] of `style`, from the pass's memo of the styles it met.
@@ -3410,14 +3514,14 @@ fn collapse_omitted_boxes(
             // No box, and so no frame other than a cold layout's.
             if retained.frames.contains_key(&node) {
                 nodes.frames.insert(node, crate::LayoutFrame::Parent);
-                output.entry(node).or_default();
+                output.or_default(node);
             }
             if retained
                 .boxes
                 .get(&node)
                 .is_some_and(|kept| *kept != LayoutBox::default())
             {
-                output.entry(node).or_default();
+                output.or_default(node);
             }
             if let Some(record) = nodes.world.node(node) {
                 stack.extend(record.children.iter().copied());

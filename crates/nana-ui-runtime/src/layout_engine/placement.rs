@@ -1406,7 +1406,7 @@ fn place_node_head<'a>(
         children: node.children,
         writing: node.writing,
         containing_writing: node.containing_writing,
-        modal: node.modal.clone(),
+        modal: nodes.world.modal_layout_input(id).map(Box::new),
     };
     let style_arc = facts.style.shared();
     // Explicit boundaries and native atomic entries need a saved placement for independent reflow.
@@ -1504,7 +1504,7 @@ fn place_node_body<'a>(
                 children: node.children,
                 writing: node.writing,
                 containing_writing: node.containing_writing,
-                modal: node.modal.clone(),
+                modal: nodes.world.modal_layout_input(id).map(Box::new),
             }
         }
     };
