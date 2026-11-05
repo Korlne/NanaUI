@@ -1055,8 +1055,14 @@ impl PassIntrinsicFacts {
 
     /// The fact for `key`, appended (unseen, unrecorded) when there is none.
     fn slot(&mut self, key: IntrinsicCacheKey) -> &mut PassFact {
+        let index = self.slot_index(key);
+        &mut self.facts[index]
+    }
+
+    /// Where [`Self::slot`]'s fact lies.
+    fn slot_index(&mut self, key: IntrinsicCacheKey) -> usize {
         if let Some(index) = self.find(&key) {
-            return &mut self.facts[index];
+            return index;
         }
         let index = u32::try_from(self.facts.len()).expect("a pass holds under 4G facts");
         let older = match crate::StableNodeId::new(key.content) {
@@ -1074,7 +1080,41 @@ impl PassIntrinsicFacts {
             recorded: None,
             older,
         });
-        self.facts.last_mut().expect("pushed above")
+        index as usize
+    }
+
+    /// [`Self::insert`], [`Self::record`] and [`Self::note_latest`] for one
+    /// measurement, finding its fact once: what a measured box tells the
+    /// pass and the retained cache.
+    pub(crate) fn insert_measured(
+        &mut self,
+        id: crate::StableNodeId,
+        key: IntrinsicCacheKey,
+        metrics: IntrinsicMetrics,
+        context: Option<FormattingContextId>,
+    ) {
+        let normalized = IntrinsicCacheKey {
+            constraints: key.constraints.normalized(),
+            ..key
+        };
+        if normalized != key {
+            // `record` keeps the key as given: two facts, as before.
+            self.insert(key, metrics, context);
+            self.record(key, metrics);
+            self.note_latest(id, &key);
+            return;
+        }
+        let mut shown = metrics.normalized();
+        shown.generation = IntrinsicGeneration::default().get();
+        let index = self.slot_index(key);
+        let fact = &mut self.facts[index];
+        let newly = !fact.visible;
+        fact.metrics = shown;
+        fact.context = context;
+        fact.visible = true;
+        fact.recorded = Some(metrics);
+        self.visible += usize::from(newly);
+        self.latest.insert(id, index as u32);
     }
 
     /// Make `metrics` what lookups of `key` answer ([`IntrinsicCache::insert`]):

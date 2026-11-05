@@ -3646,9 +3646,8 @@ impl PassIntrinsicCache {
             2 => Some(crate::FormattingContextId::new(2)),
             _ => None,
         };
-        self.cache.insert(cache_key, metrics, context);
-        self.cache.record(cache_key, metrics);
-        self.cache.note_latest(key.id, &cache_key);
+        self.cache
+            .insert_measured(key.id, cache_key, metrics, context);
     }
 
     /// Record facts for the retained cache without making them visible to

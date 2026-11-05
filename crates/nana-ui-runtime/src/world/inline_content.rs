@@ -328,6 +328,36 @@ impl UiWorld {
             memo.insert(id, true);
             return true;
         }
+        // Measured bottom up, a box usually finds every child it waits on
+        // settled already, or a leaf, which holds a line box exactly when it
+        // lays one out itself: then it settles here, with no walk to set up.
+        let mut deeper = false;
+        for &child in self.child_ids(id) {
+            let holds = match bears(child) {
+                Bears::No => false,
+                Bears::Holds => true,
+                Bears::IfItHolds => match memo.get(&child) {
+                    Some(&known) => known,
+                    None if self.child_ids(child).is_empty() => {
+                        let holds = self.lays_out_own_line(child);
+                        memo.insert(child, holds);
+                        holds
+                    }
+                    None => {
+                        deeper = true;
+                        false
+                    }
+                },
+            };
+            if holds {
+                memo.insert(id, true);
+                return true;
+            }
+        }
+        if !deeper {
+            memo.insert(id, false);
+            return false;
+        }
         // Post-order: a box is settled once every child it depends on is.
         // Each box reads its children once: a child that holds a line box,
         // or one already known to hold one, settles it; otherwise it waits
