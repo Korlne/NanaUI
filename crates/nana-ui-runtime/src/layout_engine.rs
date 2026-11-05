@@ -429,6 +429,10 @@ impl RuntimeLayoutEngine {
             PassOutput::default()
         };
         let mut intrinsic = PassIntrinsicCache::with_capacity(nodes.len());
+        let highest = full_order.iter().max().copied();
+        if let Some(highest) = highest {
+            intrinsic.reserve_through(highest);
+        }
         // A full pass a caller asked for leaves its plans to nobody (the
         // retained cache was just cleared, or the map is thrown away). The
         // first layout of a document is the base of the scoped passes after
@@ -589,12 +593,13 @@ impl RuntimeLayoutEngine {
             collapse_omitted_boxes(&affected, &mut nodes, retained, &mut output);
         }
         // Publish recomputed boxes from the placed set; no document_order walk.
-        let mut emitted = output.into_iter().collect::<Vec<_>>();
+        let mut emitted = output
+            .iter()
+            .map(|(&id, &box_)| (id, box_))
+            .collect::<Vec<_>>();
         emitted.sort_unstable_by_key(|(id, _)| *id);
-        retained.boxes.reserve(emitted.len());
-        for (id, box_) in &emitted {
-            retained.boxes.insert(*id, *box_);
-        }
+        // A first layout's table of boxes is the pass's, whole.
+        retained.boxes.absorb(&mut output);
         // A first layout's retained tables are empty: they take the pass's
         // tables whole instead of copying them entry by entry.
         retained.used_padding.absorb(&mut nodes.used_padding);
@@ -713,8 +718,8 @@ impl RuntimeLayoutEngine {
         intrinsic.execution_stats.line_boxes_settled = nodes.line_boxes_settled.get();
         retained.execution_stats = intrinsic.execution_stats;
         let universe = if force_full { nodes.len() } else { world.len() };
-        if force_full {
-            retained.intrinsics.reserve(nodes.len());
+        if let Some(highest) = highest {
+            retained.intrinsics.reserve_through(highest);
         }
         for (key, size) in std::mem::take(&mut intrinsic.used_order) {
             retained
@@ -2746,11 +2751,14 @@ impl<'a> LayoutInputMap<'a> {
         self.nodes = nodes;
         // A full pass writes every box's padding and every container's
         // context and plans: size the tables once rather than regrowing them.
-        self.used_padding.reserve(ids.len());
-        self.contexts.reserve(containers);
-        self.far_start.reserve(containers);
+        // The dense ones index ids up to the highest, whatever holds a slot.
+        if let Some(&highest) = ids.iter().max() {
+            self.used_padding.reserve_through(highest);
+            self.contexts.reserve_through(highest);
+            self.far_start.reserve_through(highest);
+            self.measure_plans.reserve_through(highest);
+        }
         self.container_plans.reserve(containers);
-        self.measure_plans.reserve(containers);
         Ok(())
     }
 
@@ -3609,6 +3617,13 @@ impl PassIntrinsicCache {
             placement_levels: recursion::LevelStack::default(),
             boundaries: std::collections::VecDeque::new(),
         }
+    }
+
+    /// Room for every id up to `highest` in the per-node tables a full pass
+    /// fills.
+    fn reserve_through(&mut self, highest: StableNodeId) {
+        self.used_newest.reserve_through(highest);
+        self.cache.reserve_through(highest);
     }
 
     fn levels(&mut self, recursion: recursion::Recursion) -> &mut recursion::LevelStack {

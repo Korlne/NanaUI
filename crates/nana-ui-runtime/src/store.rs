@@ -506,6 +506,18 @@ impl<V> DenseNodeMap<V> {
         self.dense.reserve(additional);
     }
 
+    /// Room for every id up to `highest` without growing. A table of every
+    /// node of a document indexes ids from 1 to the highest, which is more
+    /// slots than nodes ([`Self::reserve`] for as many ids as nodes falls
+    /// one short and doubles the vector at its last insert).
+    pub(crate) fn reserve_through(&mut self, highest: StableNodeId) {
+        if highest.get() > DENSE_LIMIT {
+            return;
+        }
+        let slots = highest.get() as usize + 1;
+        self.dense.reserve(slots.saturating_sub(self.dense.len()));
+    }
+
     /// Move every entry of `from` into this map: the whole table when this
     /// one is empty (a first layout's retained cache), entry by entry
     /// otherwise.

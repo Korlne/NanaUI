@@ -1032,6 +1032,12 @@ impl PassIntrinsicFacts {
         }
     }
 
+    /// Room for every id up to `highest` in the per-node indexes.
+    pub(crate) fn reserve_through(&mut self, highest: crate::StableNodeId) {
+        self.newest.reserve_through(highest);
+        self.latest.reserve_through(highest);
+    }
+
     fn find(&self, key: &IntrinsicCacheKey) -> Option<usize> {
         let mut index = match crate::StableNodeId::new(key.content) {
             Some(id) => self.newest.get(&id).copied().unwrap_or(NO_FACT),
