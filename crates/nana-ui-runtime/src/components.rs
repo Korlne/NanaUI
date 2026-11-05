@@ -1311,6 +1311,9 @@ pub struct TriggeredMenuOverlay {
     /// An icon trigger's glyph size ([`crate::Popover::trigger_icon_size`]);
     /// `None` keeps the standard trigger glyph.
     pub trigger_icon_size: Option<f32>,
+    /// A labelled tool trigger ([`crate::Popover::trigger_tool`]): the gap
+    /// between its glyph and its label. `None` for a glyph or a label alone.
+    pub trigger_label_gap: Option<f32>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

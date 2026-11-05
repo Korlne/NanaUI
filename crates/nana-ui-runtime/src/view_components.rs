@@ -54,6 +54,30 @@ pub(crate) fn compact_icon_style(mut style: NodeStyle) -> NodeStyle {
     style
 }
 
+/// A heading's labelled tool box: as tall as [`compact_icon_style`]'s square
+/// (the theme's page-spacing target, 24px by default), sized across by its
+/// content, with no block padding. The inline inset stays the caller's.
+pub(crate) fn tool_box(mut style: NodeStyle) -> NodeStyle {
+    use nana_ui_core::LengthSpec::Px;
+    style.square = None;
+    style.control_height = None;
+    style.control_padding_y = None;
+    let layout = Arc::make_mut(&mut style.layout);
+    layout.height = Some(Px(24.0));
+    layout.min_height = Some(Px(24.0));
+    let edge = crate::theme_intent::space(nana_ui_core::SpacingStep::Page);
+    layout.theme.height = Some(edge.clone());
+    layout.theme.min_height = Some(edge);
+    layout
+        .theme
+        .control_typography(nana_ui_core::ControlSize::Small);
+    layout.font_size = Some(nana_ui_core::ControlSize::Small.text_size());
+    layout.padding_top = Some(Px(0.0));
+    layout.padding_bottom = Some(Px(0.0));
+    layout.flex_shrink = Some(0.0);
+    style
+}
+
 pub(crate) fn format_range_value(value: f64, step: f64) -> Arc<str> {
     let decimals = (0_i32..=6)
         .find(|decimals| {
@@ -758,6 +782,19 @@ impl Button {
             },
             style_override: false,
         }
+    }
+
+    /// A heading's labelled tool: as tall as an [`IconButton::tool`] (the
+    /// theme's page-spacing square, 24px by default) with the small step's
+    /// inset, type and glyph, so it stands in `heading_tools` beside icon
+    /// tools without growing the heading line. For the one action of a group
+    /// that should read at a glance (adding the first item, say); pick its
+    /// emphasis with [`Self::kind`]. A later [`Self::size`] or
+    /// [`Self::layout`] replaces the tool's box.
+    pub fn tool(label: impl Into<String>) -> Self {
+        let mut button = Self::new(label).size(nana_ui_core::ControlSize::Small);
+        button.style = tool_box(button.style);
+        button
     }
 
     pub fn icon(mut self, icon: nana_ui_core::Icon) -> Self {

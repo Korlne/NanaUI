@@ -411,10 +411,12 @@ pub(super) fn build(context: &GeometryPaintContext<'_>, emit: &mut impl FnMut(Sc
                         ),
                     },
                 });
-            } else if let Some(trigger) = trigger {
+            }
+            // A labelled tool trigger has both: the glyph, then its label.
+            if let Some(trigger) = trigger {
                 emit(component_text_primitive(
                     id,
-                    2,
+                    if trigger_icon.is_some() { 3 } else { 2 },
                     trigger,
                     TextHorizontalAlignment::Start,
                     false,

@@ -367,6 +367,38 @@ impl UiWorld {
             // across the trigger inside its inline padding (the border lies
             // within that inset), the trigger's whole height. An avatar or a
             // child drawing the trigger lays out no part of its own.
+            if let (Some(_), Some(gap)) = (
+                trigger_icon,
+                overlay.and_then(|overlay| overlay.trigger_label_gap),
+            ) {
+                // A labelled tool: the glyph ends `gap` before the label's
+                // lane, which runs inside the padding as a text trigger's.
+                let padding = self.used_layout_padding(id);
+                let extent = overlay
+                    .and_then(|overlay| overlay.trigger_icon_size)
+                    .unwrap_or(crate::popover::TRIGGER_ICON_SIZE)
+                    .min(bounds.height);
+                let lane = bounds.x + padding.left;
+                return content_parts([
+                    Some(crate::LayoutPart::new(
+                        crate::LayoutPartKind::LeadingContent,
+                        LayoutBox {
+                            x: lane - gap - extent,
+                            y: bounds.y + (bounds.height - extent) / 2.0,
+                            width: extent,
+                            height: extent,
+                        },
+                    )),
+                    Some(crate::LayoutPart::new(
+                        crate::LayoutPartKind::TextContent,
+                        LayoutBox {
+                            x: lane,
+                            width: (bounds.width - padding.left - padding.right).max(0.0),
+                            ..bounds
+                        },
+                    )),
+                ]);
+            }
             if trigger_icon.is_some() {
                 let extent = overlay
                     .and_then(|overlay| overlay.trigger_icon_size)

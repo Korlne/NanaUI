@@ -92,6 +92,13 @@ pub struct Popover {
     /// state's, a compact trigger's fit. A radius it writes is the
     /// trigger's corners. See [`Self::trigger_style`].
     pub trigger_style: Option<NodeStyle>,
+    /// Paint the trigger as this [`nana_ui_core::ButtonKind`] of the theme's
+    /// button recipe (resting fill, ink, hover and press) instead of the menu
+    /// button chrome; `None` keeps the chrome. See [`Self::trigger_tool`].
+    pub trigger_kind: Option<nana_ui_core::ButtonKind>,
+    /// Show [`Self::trigger`] beside [`Self::trigger_icon`] instead of only
+    /// speaking it. See [`Self::trigger_tool`].
+    pub trigger_labelled: bool,
 }
 
 impl Popover {
@@ -115,6 +122,8 @@ impl Popover {
             compact_trigger: false,
             trigger_icon_size: None,
             trigger_style: None,
+            trigger_kind: None,
+            trigger_labelled: false,
         }
     }
 
@@ -214,6 +223,29 @@ impl Popover {
         self
     }
 
+    /// Paint the trigger as `kind` of the button recipe; see
+    /// [`Self::trigger_kind`](field@Self::trigger_kind).
+    pub fn trigger_kind(mut self, kind: nana_ui_core::ButtonKind) -> Self {
+        self.trigger_kind = Some(kind);
+        self
+    }
+
+    /// A heading's labelled tool that opens this menu: `icon` and `label`
+    /// side by side in a [`crate::Button::tool`]'s box, painted as `kind`.
+    pub fn trigger_tool(
+        mut self,
+        icon: Icon,
+        label: impl Into<Arc<str>>,
+        kind: nana_ui_core::ButtonKind,
+    ) -> Self {
+        self.trigger = label.into();
+        self.trigger_icon = Some(icon);
+        self.trigger_kind = Some(kind);
+        self.trigger_labelled = true;
+        self.compact_trigger = true;
+        self
+    }
+
     /// Fit an icon trigger into a 24×24 logical-pixel heading tool. A
     /// custom-content trigger instead takes exactly its content's box, with
     /// no inset and no fixed height. Text triggers retain their regular
@@ -277,6 +309,10 @@ impl crate::ComponentView for Popover {
             self.compact_trigger,
             &self.accessible_name,
             self.trigger_style.as_ref(),
+            TriggerTool {
+                kind: self.trigger_kind,
+                labelled: self.trigger_labelled,
+            },
             false,
         );
     }
@@ -363,6 +399,23 @@ impl ActionMenu {
         self.popover = self.popover.trigger_style(style);
         self
     }
+
+    /// Paint the trigger as `kind`; see [`Popover::trigger_kind`].
+    pub fn trigger_kind(mut self, kind: nana_ui_core::ButtonKind) -> Self {
+        self.popover = self.popover.trigger_kind(kind);
+        self
+    }
+
+    /// A heading's labelled tool; see [`Popover::trigger_tool`].
+    pub fn trigger_tool(
+        mut self,
+        icon: Icon,
+        label: impl Into<Arc<str>>,
+        kind: nana_ui_core::ButtonKind,
+    ) -> Self {
+        self.popover = self.popover.trigger_tool(icon, label, kind);
+        self
+    }
 }
 
 impl Default for ActionMenu {
@@ -421,9 +474,21 @@ impl crate::ComponentView for ActionMenu {
             self.popover.compact_trigger,
             &self.popover.accessible_name,
             self.popover.trigger_style.as_ref(),
+            TriggerTool {
+                kind: self.popover.trigger_kind,
+                labelled: self.popover.trigger_labelled,
+            },
             self.disabled,
         );
     }
+}
+
+/// How a trigger stands in as a heading's tool: its button kind and whether
+/// it shows its label beside its glyph.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct TriggerTool {
+    pub(crate) kind: Option<nana_ui_core::ButtonKind>,
+    pub(crate) labelled: bool,
 }
 
 pub(crate) fn project_menu_surface(
@@ -446,12 +511,26 @@ pub(crate) fn project_menu_surface(
     compact_trigger: bool,
     accessible_name: &Arc<str>,
     trigger_style: Option<&NodeStyle>,
+    tool: TriggerTool,
     disabled: bool,
 ) {
     let open = world.project_menu_presence(id, open && !disabled, mutations);
     // A child that draws the trigger only counts while it is one.
     let trigger_content = trigger_content.filter(|content| world.parent_id(*content) == Some(id));
     let has_trigger = trigger.is_some() || trigger_icon.is_some() || trigger_content.is_some();
+    let labelled = tool.labelled
+        && trigger_icon.is_some()
+        && trigger_content.is_none()
+        && trigger.as_deref().is_some_and(|label| !label.is_empty());
+    // A labelled tool's glyph takes the small step's type size unless set.
+    let trigger_icon_size = if labelled {
+        Some(trigger_icon_size.unwrap_or_else(|| {
+            nana_ui_core::ControlSize::Small.text_size_in(world.theme().typography())
+        }))
+    } else {
+        trigger_icon_size
+    };
+    let labelled_gap = labelled.then(|| world.theme().spacing().sm);
     let has_chrome = open || has_trigger;
     if has_chrome {
         let visual = StandardVisual::MenuSurface {
@@ -470,6 +549,7 @@ pub(crate) fn project_menu_surface(
                 gap,
                 trigger_content,
                 trigger_icon_size: trigger_icon_size.filter(|_| trigger_icon.is_some()),
+                trigger_label_gap: labelled_gap,
             }),
             query: None,
             rows: Arc::from([]),
@@ -485,7 +565,7 @@ pub(crate) fn project_menu_surface(
     // surface can size itself to the text instead of a fixed box. Icon
     // triggers keep their label as the accessible name only; the square chrome
     // comes from the style instead of text measurement.
-    let trigger_text = if trigger_icon.is_some() || trigger_content.is_some() {
+    let trigger_text = if (trigger_icon.is_some() && !labelled) || trigger_content.is_some() {
         ""
     } else {
         trigger.as_deref().unwrap_or("")
@@ -509,7 +589,21 @@ pub(crate) fn project_menu_surface(
             padding,
         )
     };
-    let style = if compact_trigger && trigger_icon.is_some() && trigger_content.is_none() {
+    let style = if let (true, Some(gap), Some(glyph)) =
+        (compact_trigger, labelled_gap, trigger_icon_size)
+    {
+        // The label is measured as text; the glyph and its gap ride in the
+        // leading inset.
+        let mut style = crate::view_components::tool_box(trigger_button_style());
+        let inset = world.theme().metrics().small_control_padding_x();
+        let layout = Arc::make_mut(&mut style.layout);
+        layout.padding_left = Some(LengthSpec::Px(inset + glyph + gap));
+        layout.padding_right = Some(LengthSpec::Px(inset));
+        style.control_padding_x = None;
+        style
+    } else if labelled {
+        style
+    } else if compact_trigger && trigger_icon.is_some() && trigger_content.is_none() {
         crate::view_components::compact_icon_style(style)
     } else if compact_trigger && trigger_content.is_some() {
         fitted_content_style(style)
@@ -520,6 +614,26 @@ pub(crate) fn project_menu_surface(
         bare_trigger_style(style, open)
     } else {
         style
+    };
+    let style = match tool.kind.filter(|_| has_trigger) {
+        Some(kind) => {
+            let variant = world.theme().recipes().button().variant(kind);
+            let mut style = style;
+            style.foreground = Some(variant.foreground);
+            style.background = if open {
+                Some(variant.pressed_background)
+            } else {
+                variant.background
+            };
+            style.border = variant.border;
+            if variant.border.is_none() {
+                Arc::make_mut(&mut style.layout).border_width = Some(0.0);
+            }
+            style.interaction.hovered.background = Some(variant.hovered_background);
+            style.interaction.pressed.background = Some(variant.pressed_background);
+            style
+        }
+        None => style,
     };
     let style = match trigger_style.filter(|_| has_trigger) {
         Some(over) => style.overlaid(over),
@@ -823,6 +937,7 @@ pub(crate) fn menu_surface_geometry(
     trigger_icon: Option<Icon>,
     trigger_image: Option<&Arc<str>>,
     trigger_content: bool,
+    trigger_labelled: bool,
     style: &crate::ComputedStyle,
     palette: &SemanticPalette,
     surface: LayoutBox,
@@ -836,7 +951,7 @@ pub(crate) fn menu_surface_geometry(
     let trigger_h = if has_trigger { bounds.height } else { 0.0 };
     // In icon and image modes the trigger text is only the accessible name, so
     // no text region is emitted and the chrome owns the visuals.
-    let label = if trigger_icon.is_none() && trigger_image.is_none() {
+    let label = if (trigger_icon.is_none() || trigger_labelled) && trigger_image.is_none() {
         trigger.filter(|value| !value.is_empty())
     } else {
         None
@@ -1873,6 +1988,7 @@ mod tests {
                         gap: 0.0,
                         trigger_content: None,
                         trigger_icon_size: size,
+                        trigger_label_gap: None,
                     }),
                     query: None,
                     rows: Arc::from([]),

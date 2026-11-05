@@ -2350,6 +2350,7 @@ impl UiWorld {
                     *trigger_icon,
                     trigger_image.as_ref(),
                     trigger_content.is_some(),
+                    overlay.is_some_and(|overlay| overlay.trigger_label_gap.is_some()),
                     style,
                     &self.style_model.palette,
                     surface,

@@ -296,6 +296,7 @@ impl ComponentView for HoverCard {
                 padding: 0.0,
                 gap: self.gap,
                 trigger_content: None,
+                trigger_label_gap: None,
             }),
             query: None,
             rows: Arc::from([]),

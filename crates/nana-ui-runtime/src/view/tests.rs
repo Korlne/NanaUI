@@ -3701,6 +3701,63 @@ fn a_heading_row_keeps_its_tools_and_a_foot_fade_takes_no_input() {
     assert!(fade.paint.mask.is_some());
 }
 
+/// A labelled heading tool, a button or a menu's trigger, is as tall as an
+/// icon tool, so either keeps the heading line's height.
+#[test]
+fn a_labelled_heading_tool_is_as_tall_as_an_icon_tool() {
+    let (mut cx, document, parent) = setup();
+    let view = cx
+        .mount_view(parent, || {
+            heading_row(
+                text("面捕来源"),
+                heading_tools(
+                    crate::view::row().children((
+                        widget(crate::IconButton::tool(nana_ui_core::Icon::Close, "关闭")),
+                        widget(
+                            Button::tool("添加")
+                                .icon(nana_ui_core::Icon::Add)
+                                .kind(nana_ui_core::ButtonKind::Primary),
+                        ),
+                        widget(crate::ActionMenu::new().trigger_tool(
+                            nana_ui_core::Icon::Add,
+                            "添加对象",
+                            nana_ui_core::ButtonKind::Subtle,
+                        )),
+                    )),
+                ),
+            )
+        })
+        .unwrap();
+    cx.layout_document(document, LayoutViewport::new(320.0, 240.0))
+        .unwrap();
+    let [_, tools] = children(&cx, view.roots()[0])[..] else {
+        panic!("title and tools");
+    };
+    let mut leaves = children(&cx, tools);
+    while leaves.len() == 1 {
+        leaves = children(&cx, leaves[0]);
+    }
+    let [icon, labelled, menu] = leaves[..] else {
+        panic!("three tools, got {}", leaves.len());
+    };
+    let menu_id = menu;
+    let icon = cx.world().layout_box(icon).unwrap();
+    for tool in [labelled, menu] {
+        let tool = cx.world().layout_box(tool).unwrap();
+        assert_eq!(tool.height, icon.height);
+        assert_eq!(tool.y, icon.y);
+        assert!(
+            tool.width > icon.width,
+            "the label shows: {tool:?} vs {icon:?}"
+        );
+    }
+    assert_eq!(
+        cx.world().text(menu_id),
+        Some("添加对象"),
+        "the menu's label is laid out"
+    );
+}
+
 /// A settings group marks its first and last shown row, whichever rows are
 /// shown, reading through a keyed list and a conditional block to their
 /// rows; other content takes a place without being marked.
