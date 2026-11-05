@@ -1170,6 +1170,15 @@ pub struct UiWorld {
     /// Children a run of removals from one parent already took out of its
     /// list, in one pass; their own mutations skip that edit (#389).
     unlinked_ahead: NodeSet,
+    /// The result chains the commit being applied has walked; `None`
+    /// outside its apply loop. See [`ResultChainMemo`].
+    result_chain_memo: Option<ResultChainMemo>,
+    /// Nodes the result chains visited, for cost tests.
+    #[cfg(test)]
+    result_chain_steps: u64,
+    /// Walk every result chain in full, for tests that compare against it.
+    #[cfg(test)]
+    result_chain_memo_off: bool,
     /// Child-list entries removals have shifted, filtered or renumbered, in
     /// validation and apply, for cost tests.
     #[cfg(test)]
@@ -1380,6 +1389,11 @@ impl UiWorld {
             #[cfg(test)]
             block_read_steps: 0,
             unlinked_ahead: NodeSet::default(),
+            result_chain_memo: None,
+            #[cfg(test)]
+            result_chain_steps: 0,
+            #[cfg(test)]
+            result_chain_memo_off: false,
             #[cfg(test)]
             child_list_steps: 0,
             viewport_basis: HashMap::default(),
@@ -1883,16 +1897,138 @@ impl UiWorld {
             // Nothing published yet, so nothing to clear up the chain.
             return;
         }
+        self.walk_layout_result_chain(start, start_changes_border, ResultChainWalk::Clear);
+    }
+
+    /// Walk from `start` up its ancestors, applying `walk` to each, to the
+    /// first that absorbs the change: a fixed metric boundary
+    /// ([`Self::is_fixed_metric_boundary`]), past `start` itself when
+    /// `start_changes_border`.
+    ///
+    /// While a commit applies, the walk stops at an ancestor an earlier walk
+    /// of that commit already took ([`ResultChainMemo`]): what lies above it
+    /// was done then, and only shrinks while the commit applies.
+    fn walk_layout_result_chain(
+        &mut self,
+        start: StableNodeId,
+        start_changes_border: bool,
+        walk: ResultChainWalk,
+    ) {
+        let memo = self.result_chain_memo.is_some();
+        let mut taken = Vec::new();
+        let mut end = None;
         let mut current = Some(start);
         while let Some(node) = current {
+            if memo
+                && node != start
+                && let Some(anchor) = self.result_chain_taken(node, walk)
+            {
+                #[cfg(any(test, feature = "layout-verify"))]
+                self.verify_result_chain_done(node, walk);
+                end = anchor;
+                break;
+            }
+            #[cfg(test)]
+            {
+                self.result_chain_steps += 1;
+            }
             let boundary = self.is_fixed_metric_boundary(node);
-            self.layout_results.remove(&node);
-            self.layout_results_suppressed.remove(&node);
+            match walk {
+                ResultChainWalk::Clear => {
+                    self.layout_results.remove(&node);
+                    self.layout_results_suppressed.remove(&node);
+                }
+                ResultChainWalk::Suppress => self.suppress_layout_result(node),
+            }
+            if memo && node != start {
+                taken.push(node);
+            }
             let absorbs = boundary && !(node == start && start_changes_border);
             if absorbs {
+                end = Some(node);
                 break;
             }
             current = self.parent_id(node);
+        }
+        if let Some(memo) = self.result_chain_memo.as_mut() {
+            let cleared = walk == ResultChainWalk::Clear;
+            for node in taken {
+                memo.insert(node, ResultChainStep { end, cleared });
+            }
+        }
+    }
+
+    /// Where the walk through `node` this commit already took ended, when
+    /// it still covers what a `walk` reaching `node` from a child would do:
+    /// `None` for the top of the tree, else the boundary it stopped at,
+    /// which must still be one. A suppressing walk is covered by either
+    /// kind (a cleared result has nothing left to suppress); a clearing one
+    /// only by a clearing one.
+    fn result_chain_taken(
+        &self,
+        node: StableNodeId,
+        walk: ResultChainWalk,
+    ) -> Option<Option<StableNodeId>> {
+        let step = self.result_chain_memo.as_ref()?.get(&node)?;
+        if walk == ResultChainWalk::Clear && !step.cleared {
+            return None;
+        }
+        match step.end {
+            Some(boundary) if !self.is_fixed_metric_boundary(boundary) => None,
+            end => Some(end),
+        }
+    }
+
+    /// Every test checks a walk the memo cut short against the one it
+    /// skipped: from `node` on, that walk would have changed nothing.
+    #[cfg(any(test, feature = "layout-verify"))]
+    fn verify_result_chain_done(&self, node: StableNodeId, walk: ResultChainWalk) {
+        let mut current = Some(node);
+        while let Some(node) = current {
+            let done = match walk {
+                ResultChainWalk::Clear => {
+                    !self.layout_results.contains_key(&node)
+                        && !self.layout_results_suppressed.contains(&node)
+                }
+                ResultChainWalk::Suppress => {
+                    !self.layout_results.contains_key(&node)
+                        || self.layout_results_suppressed.contains(&node)
+                }
+            };
+            assert!(
+                done,
+                "a result chain cut short at {node:?} left a stale result"
+            );
+            if self.is_fixed_metric_boundary(node) {
+                break;
+            }
+            current = self.parent_id(node);
+        }
+    }
+
+    /// Forget the chains this commit walked before `mutation` moves a node
+    /// they pass through: a walk is remembered only while the parents along
+    /// it stay. A node created or inserted fresh is in no remembered chain
+    /// unless it is remembered itself; removals and moves forget them all.
+    fn forget_result_chains_before(&mut self, mutation: &crate::UiMutation) {
+        let Some(memo) = self.result_chain_memo.as_ref() else {
+            return;
+        };
+        if memo.is_empty() {
+            return;
+        }
+        let forget = match mutation {
+            crate::UiMutation::Create { id, .. } => memo.contains_key(id),
+            crate::UiMutation::Insert { child, .. } => {
+                memo.contains_key(child) || self.parent_id(*child).is_some()
+            }
+            crate::UiMutation::Detach { .. }
+            | crate::UiMutation::ParkSubtree { .. }
+            | crate::UiMutation::DespawnSubtree { .. } => true,
+            _ => false,
+        };
+        if forget && let Some(memo) = self.result_chain_memo.as_mut() {
+            memo.clear();
         }
     }
 
@@ -1950,16 +2086,7 @@ impl UiWorld {
             // Nothing published yet, so nothing to suppress up the chain.
             return;
         }
-        let mut current = Some(start);
-        while let Some(node) = current {
-            let boundary = self.is_fixed_metric_boundary(node);
-            self.suppress_layout_result(node);
-            let absorbs = boundary && !(node == start && start_changes_border);
-            if absorbs {
-                break;
-            }
-            current = self.parent_id(node);
-        }
+        self.walk_layout_result_chain(start, start_changes_border, ResultChainWalk::Suppress);
     }
 
     /// Invalidate a node's result and every result whose placement or clip
@@ -6803,6 +6930,43 @@ const METRIC_EXPORTS: LayoutDependencyFootprint = LayoutDependencyFootprint::int
     .union(LayoutDependencyFootprint::DEPENDS_ON_SIBLING_PREFIX)
     .union(LayoutDependencyFootprint::CONTEXT_LOCAL_COUPLING);
 
+/// Which result chain a walk is: one that drops results, or one that hides
+/// them until publish confirms them.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ResultChainWalk {
+    Clear,
+    Suppress,
+}
+
+/// The ancestors the result chains of one commit have walked through, each
+/// with where its walk ended (see [`UiWorld::walk_layout_result_chain`]).
+///
+/// Inserting a subtree into a laid-out page walks from every parent that
+/// gains a child to the nearest fixed boundary: each node inserted under a
+/// deep one paid the whole depth again. A later walk of the same commit can
+/// stop where an earlier one passed, because
+///
+/// - results only leave the two tables while a commit applies (publish runs
+///   after its last mutation), so what a walk did above that node stays done;
+/// - the walk from there follows the same parents, which nothing moves while
+///   the entry stands ([`UiWorld::forget_result_chains_before`]), and a node
+///   on it that became a boundary since only stops it sooner;
+/// - where the walk stopped at a boundary, the boundary is checked again: one
+///   that no longer is would let the walk run further, so the entry is not
+///   used.
+///
+/// The node a walk starts from is not entered: every node created starts
+/// one, and inserting a remembered node forgets them all.
+type ResultChainMemo = crate::NodeMap<ResultChainStep>;
+
+#[derive(Clone, Copy)]
+struct ResultChainStep {
+    /// The boundary the walk stopped at, `None` at the top of the tree.
+    end: Option<StableNodeId>,
+    /// The walk cleared results; a suppressing one only hid them.
+    cleared: bool,
+}
+
 fn definite_fixed_border(style: &LayoutStyle) -> bool {
     matches!(style.width, Some(LengthSpec::Px(value)) if value.is_finite() && value >= 0.0)
         && matches!(style.height, Some(LengthSpec::Px(value)) if value.is_finite() && value >= 0.0)
@@ -7423,5 +7587,6 @@ mod issue398;
 mod line_box_memo;
 mod list_item_tooltip;
 mod reflow_oracle;
+mod result_chain_memo;
 #[cfg(test)]
 mod tests;

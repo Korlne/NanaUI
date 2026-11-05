@@ -3162,7 +3162,13 @@ impl UiWorld {
         let mut layout_result_ids = Vec::new();
         let mutations = queue.as_slice();
         let mut run_end = 0;
+        self.result_chain_memo = Some(Default::default());
+        #[cfg(test)]
+        if self.result_chain_memo_off {
+            self.result_chain_memo = None;
+        }
         for (index, mutation) in mutations.iter().enumerate() {
+            self.forget_result_chains_before(mutation);
             if index >= run_end {
                 run_end = index + self.unlink_removal_run(&mutations[index..]);
             }
@@ -3215,6 +3221,8 @@ impl UiWorld {
                 }
             }
         }
+        // Results are published below: a walk after this one starts over.
+        self.result_chain_memo = None;
         debug_assert!(
             self.unlinked_ahead.is_empty(),
             "a removal run left children its mutations never reached"

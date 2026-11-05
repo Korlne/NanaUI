@@ -32,6 +32,8 @@
 //! RUNS=240 /usr/bin/time -l target/release/nana-stack-depth edits 2000 height
 //!                                          # 240 edits; less RUNS=40, over 200: one edit's instructions
 //! cargo run --release -- stages 250,500    # a deep frame's least time per stage
+//! cargo run --release -- insert 100,200,400 deep,wide,under-deep
+//!                                          # mount into a laid-out page: mount and next frame
 //! ```
 //!
 //! A probe runs the work once on a thread of the stack it is given; a stack
@@ -528,6 +530,86 @@ fn nana_edits(rows: usize, cells: usize, edit: &str, runs: usize) -> (f64, f64) 
     (layout, whole)
 }
 
+/// `insert`: lay a wide page of `rows` rows out, then mount `size` more
+/// nodes into it in one `mount_view` under the target leaf (`shape`
+/// `deep`: a chain `size` columns deep; `wide`: `size` sibling columns as
+/// the view's roots; `under-deep`: a chain 400 deep first, then `size`
+/// siblings at its bottom). Returns the least mount (build and insert
+/// commits) and the least frame after it, in microseconds.
+fn nana_insert(rows: usize, size: usize, shape: &str, runs: usize) -> (f64, f64) {
+    let (mut mount, mut frame) = (f64::INFINITY, f64::INFINITY);
+    for _ in 0..runs {
+        let document = DocumentId::new(1).unwrap();
+        let mut runtime = RuntimeDocument::new(document);
+        let mut target = nana_page(runtime.context_mut(), document, rows, 10);
+        let viewport = LayoutViewport::new(1280.0, 800.0);
+        runtime.flush(viewport, &mut FixedShaper).unwrap();
+        let chain = |depth: usize| {
+            let mut view = text("leaf").into_any();
+            for _ in 0..depth {
+                view = widget(Stack::column(0.0).with_layout(|l| *l = padded()))
+                    .children((view,))
+                    .into_any();
+            }
+            view
+        };
+        if shape == "under-deep" {
+            let made = runtime
+                .context_mut()
+                .mount_view(target, move || chain(400))
+                .unwrap();
+            runtime.flush(viewport, &mut FixedShaper).unwrap();
+            let mut bottom = made.roots()[0];
+            while let Some(child) = runtime
+                .context()
+                .world()
+                .node(bottom)
+                .and_then(|node| node.children.first().copied())
+            {
+                if runtime
+                    .context()
+                    .world()
+                    .node(child)
+                    .unwrap()
+                    .children
+                    .is_empty()
+                {
+                    break;
+                }
+                bottom = child;
+            }
+            target = bottom;
+        }
+        let start = Instant::now();
+        match shape {
+            "deep" => {
+                runtime
+                    .context_mut()
+                    .mount_view(target, move || chain(size))
+                    .unwrap();
+            }
+            "wide" | "under-deep" => {
+                runtime
+                    .context_mut()
+                    .mount_view(target, move || {
+                        (0..size)
+                            .map(|_| {
+                                widget(Stack::column(0.0).with_layout(|l| *l = padded())).into_any()
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap();
+            }
+            other => panic!("unknown shape {other}"),
+        }
+        mount = mount.min(start.elapsed().as_secs_f64() * 1e6);
+        let start = Instant::now();
+        runtime.flush(viewport, &mut FixedShaper).unwrap();
+        frame = frame.min(start.elapsed().as_secs_f64() * 1e6);
+    }
+    (mount, frame)
+}
+
 /// [`nana_edits`] in Taffy: the least `compute_layout` after each edit.
 fn taffy_edits(rows: usize, cells: usize, edit: &str, runs: usize) -> f64 {
     use taffy::prelude::*;
@@ -911,6 +993,27 @@ fn main() {
                     println!(
                         "| nana | {boxes} | {edit} | {layout:.1} µs | {whole:.1} µs | {taffy} |"
                     );
+                }
+            }
+        }
+        Some("insert") => {
+            // Mount into a laid-out page: `insert 100,200,400 deep|wide|under-deep`.
+            let sizes: Vec<usize> = match arg(1) {
+                Some(list) => list.split(',').map(|n| n.parse().unwrap()).collect(),
+                None => vec![100, 200, 400],
+            };
+            let shapes: Vec<&str> = match arg(2) {
+                Some(list) => list.split(',').collect(),
+                None => vec!["deep", "wide", "under-deep"],
+            };
+            let rows = std::env::var("ROWS").map_or(200, |rows| rows.parse().unwrap());
+            let runs = std::env::var("RUNS").map_or(10, |runs| runs.parse().unwrap());
+            println!("| shape | nodes | mount | frame after |");
+            println!("| --- | ---: | ---: | ---: |");
+            for shape in shapes {
+                for &size in &sizes {
+                    let (mount, frame) = nana_insert(rows, size, shape, runs);
+                    println!("| {shape} | {size} | {mount:.0} µs | {frame:.0} µs |");
                 }
             }
         }
