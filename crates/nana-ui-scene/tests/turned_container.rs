@@ -883,3 +883,85 @@ fn text_under_a_turned_container_projects_as_before() {
         set_outer(queue, Some(turn(0.5, 1.0)), None);
     });
 }
+
+/// A popover opened on the page beside the turned container: its open
+/// motion is a presentation overlay, so no box is placed by its offset and
+/// every accessible box comes from its viewport box. The first row grown
+/// in place by an uneven step resizes the container, whose turn about its
+/// centre moves everything it holds on the viewport: the cells and leaves
+/// of the rows that did not move project again, as a cold projection does,
+/// not only the container's children.
+#[test]
+fn rows_moved_under_a_turn_with_a_popover_open_keep_a_cold_projection() {
+    use nana_ui_runtime::Popover;
+    let mut pages = [build(), build()];
+    let popovers = pages.each_mut().map(|page| {
+        let popover = page
+            .runtime
+            .context_mut()
+            .create_detached_component(document_id(), Popover::new().trigger("More"))
+            .unwrap();
+        let mut queue = MutationQueue::new();
+        queue.insert(id(PAGE), popover.stable_id(), None);
+        page.runtime.context_mut().commit_mutations(queue).unwrap();
+        popover
+    });
+    let [mut page, mut twin] = pages;
+    edit(&mut page, &mut twin, "popover", |_, _| {});
+    for (page, popover) in [&mut page, &mut twin].into_iter().zip(popovers) {
+        page.runtime
+            .context_mut()
+            .update_component(popover, |popover, _| popover.open = true)
+            .unwrap();
+    }
+    edit(&mut page, &mut twin, "opened", |_, _| {});
+    let mut height = 20.0;
+    for step in 0..6 {
+        height += 1.37;
+        let row = page.rows[0];
+        edit(
+            &mut page,
+            &mut twin,
+            &format!("opened, moved {step}"),
+            |_, queue| {
+                queue.set_style(row, row_style(height));
+            },
+        );
+    }
+}
+
+/// The container turned in depth instead (a `transform_3d` with a
+/// perspective): the first row grown in place moves its centre, so every
+/// box it holds moves on the viewport and is the box around projected
+/// corners, checked box by box.
+#[test]
+fn rows_grown_under_a_3d_turn_keep_a_cold_projection() {
+    use nana_ui_core::PaintMat4;
+    let deep = || {
+        let mut style = outer_style(None, None);
+        Arc::make_mut(&mut style.layout).transform_3d = Some(
+            PaintMat4::perspective(800.0)
+                .unwrap()
+                .then(PaintMat4::rotate_y(0.5)),
+        );
+        style
+    };
+    let mut page = build();
+    let mut twin = build();
+    edit(&mut page, &mut twin, "turned in depth", |_, queue| {
+        queue.set_style(id(OUTER), deep());
+    });
+    let mut height = 20.0;
+    for step in 0..6 {
+        height += 1.37;
+        let row = page.rows[0];
+        edit(
+            &mut page,
+            &mut twin,
+            &format!("grown {step}"),
+            |_, queue| {
+                queue.set_style(row, row_style(height));
+            },
+        );
+    }
+}

@@ -2337,26 +2337,38 @@ impl UiWorld {
                     }
                 } else if let Some(node) = self.nodes.get(id) {
                     let space = node.space;
-                    if space.transformed() && self.moved_root_hands_offsets(id, &mut memo) {
+                    // Its own transform turns about a centre the new size
+                    // moved (a 2D transform, a `transform_3d` or a
+                    // perspective): everything it holds moved on the
+                    // viewport, as under a moved box.
+                    let turns_about_its_size = space.transformed()
+                        || space.intersects(NodeSpace::TRANSFORM_3D | NodeSpace::PERSPECTIVE);
+                    if turns_about_its_size {
                         resized_roots.push(id);
-                        pin_roots.push(id);
+                        if space.transformed() && self.moved_root_hands_offsets(id, &mut memo) {
+                            // What it holds keeps its offsets in its space:
+                            // only the pins under it can change.
+                            pin_roots.push(id);
+                        } else {
+                            // Placed from viewport boxes (a motion overlay,
+                            // a clip visual, a 3D context, a modal frame):
+                            // what it holds is checked box by box, all the
+                            // way down, not only its children.
+                            walked.push(id);
+                        }
                         continue;
                     }
                     // Resized where it stood: what it holds stays on the
-                    // page, unless its own transform turns about a centre
-                    // the new size moved, or its box is turned or projected
-                    // in the viewport, so its accessible box is the box
-                    // around turned corners, whose origin the new size
-                    // moves.
-                    if space.transformed()
-                        || space.intersects(NodeSpace::TRANSFORM_3D | NodeSpace::PERSPECTIVE)
-                        || !std::iter::successors(Some(node), |record| {
-                            record
-                                .hierarchy
-                                .parent
-                                .and_then(|parent| self.nodes.get(parent))
-                        })
-                        .all(|record| record.space.hands_offsets())
+                    // page, unless its box is turned or projected in the
+                    // viewport, so its accessible box is the box around
+                    // turned corners, whose origin the new size moves.
+                    if !std::iter::successors(Some(node), |record| {
+                        record
+                            .hierarchy
+                            .parent
+                            .and_then(|parent| self.nodes.get(parent))
+                    })
+                    .all(|record| record.space.hands_offsets())
                         || self
                             .accessible_space(id, &mut memo)
                             .is_none_or(|space| space.unit.is_none())
