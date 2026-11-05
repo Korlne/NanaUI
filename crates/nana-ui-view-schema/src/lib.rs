@@ -107,8 +107,9 @@ macro_rules! for_each_control {
                 high_label: Option<Arc<str>> = set,
                 orientation: RangeSpanOrientation = set,
                 disabled: bool = set,
+                value_thumbs: bool = set,
             }
-            with { on_input: RangeSpanInput, on_change: RangeSpanChanged }
+            with { on_input: RangeSpanInput, on_change: RangeSpanChanged, on_enter: RangeSpanEntered }
             model span: (f64, f64) => RangeSpanInput |event| (event.low, event.high);
             Curve => curve(step: f64) for CurveField {
                 values: Vec<f64> = curve,

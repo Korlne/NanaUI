@@ -411,9 +411,9 @@ pub use property_grid::{
 };
 pub use qr_code::{QrCode, QrCodeError};
 pub use range_span::{
-    RangeSpanChanged, RangeSpanDragState, RangeSpanDragging, RangeSpanField, RangeSpanHandle,
-    RangeSpanInput, RangeSpanOrientation, RangeSpanThumb, range_span_thumb_extent,
-    range_span_track_inset,
+    RangeSpanChanged, RangeSpanDragState, RangeSpanDragging, RangeSpanEntered, RangeSpanField,
+    RangeSpanHandle, RangeSpanInput, RangeSpanOrientation, RangeSpanThumb, range_span_thumb_extent,
+    range_span_track_inset, range_span_value_thumb_height, range_span_value_track_inset,
 };
 #[cfg(feature = "controls")]
 pub use reorder_list::{

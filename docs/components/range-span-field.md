@@ -51,6 +51,12 @@ Arc::make_mut(&mut field.style.layout).height = Some(LengthSpec::Px(180.0));
 
 两个滑块之间是一条实心强调色（`Accent`）细条，粗细约为轨道的三分之二，居中、两端圆角；区间外是中性色轨道（`BorderStrong`）。滑块与 [RangeField](range-field.md) 的滑块同样。禁用时轨道转 `Border`，区间转 `Faint`，滑块转禁用色。
 
+## 数值胶囊
+
+`value_thumbs={true}`（或 `RangeSpanField::value_thumbs(true)`）把两个滑块画成写着自己数值的强调色胶囊，与 [RangeField](range-field.md) 的 `value_thumb` 同样：胶囊一样宽，宽到放得下最小值、最大值和两个滑块的值，高度是 `range_span_value_thumb_height(size, typography, spacing)`。竖向时控件默认宽度就是胶囊加焦点环，轨道内缩变成半个胶囊高加焦点环，旁边要对齐的画用 `range_span_value_track_inset(size, typography, spacing)`（主题从绘制上下文的 `cx.theme()` 取）。实时指示画在胶囊下面，不盖住数字。
+
+按在胶囊上、挪动不超过一小段再抬起是点击：不移动滑块，原地换成数字输入框，选中当前值、拿到焦点；挪远了才是拖动。焦点在胶囊上时按回车、空格或无障碍的按下也一样。回车提交、Esc 还原，之后焦点回到那个滑块；焦点离开控件也结束输入。提交时先发 `RangeSpanEntered { thumb, value }`：输入的是哪个滑块、值是多少（夹进范围、对齐步进，但不停在另一个滑块那里），再按这个值和另一个滑块排好的一对值发 `RangeSpanInput` / `RangeSpanChanged`，越过另一个滑块时两者交换。应用自己按另一种方向保存这一对值时（比如允许上下颠倒），听 `RangeSpanEntered` 就知道改的是哪一端。
+
 ## 实时指示
 
 `indicator` 是轨道上的一个圆点，不吸附步进、不响应输入，画在滑块上面。超出范围的值画在较近的一端，非有限值不画。只改它不会动布局和别的节点：控件的整条轨道是一个自绘节点，改的只是这个节点的绘制键。程序里也可以用 `cx.set_range_span_indicator(field, Some(v))`。
@@ -85,6 +91,7 @@ Arc::make_mut(&mut field.style.layout).height = Some(LengthSpec::Px(180.0));
 | `label` | `Option<Arc<str>>` | 分组名，也是没有自己名字的滑块的名字 |
 | `low_label` / `high_label` | `Option<Arc<str>>` | 两个滑块的读屏名字 |
 | `disabled` | `bool` | 滑块不可聚焦、不收指针，轨道和滑块转为禁用色 |
+| `value_thumbs` | `bool` | 滑块画成数值胶囊，点击就地输入，见「数值胶囊」 |
 | `page_step` | — | 不在模板字段表里。翻页步进，默认 `step` 的十倍 |
 | `size` | — | 不在模板字段表里。`ControlSize`，决定滑块直径和内缩 |
 
@@ -95,6 +102,7 @@ Arc::make_mut(&mut field.style.layout).height = Some(LengthSpec::Px(180.0));
 | `on_input`，模板 `on:RangeSpanInput` 或 `@input` | `&RangeSpanInput` | 每一次可见取值，含拖拽中的预览 |
 | `on_change`，模板 `on:RangeSpanChanged` 或 `@change` | `&RangeSpanChanged` | 提交：抬起且动了、键盘步进、无障碍增减和设值、程序设置。取消的拖拽不提交 |
 | `.on` 听 `RangeSpanDragging` | `&RangeSpanDragging` | `{ dragging }`。拖动起止 |
+| `on_enter`，模板 `on:RangeSpanEntered` | `&RangeSpanEntered` | `{ thumb, value }`。数值胶囊里输入并提交的那个滑块和值，先于它落成的 `RangeSpanChanged` |
 
 ## 程序接口
 
@@ -104,12 +112,13 @@ Arc::make_mut(&mut field.style.layout).height = Some(LengthSpec::Px(180.0));
 | `set_range_span_thumb(field, thumb, value)` | 提交一个滑块，停在另一个滑块那里 |
 | `adjust_range_span(field, thumb, RangeAdjustment)` | 像按键一样步进一个滑块 |
 | `set_range_span_indicator(field, Option<f64>)` | 只移动实时指示 |
+| `begin_range_span_edit(field, thumb)` | 在这个数值胶囊上开始输入；没有数值胶囊或禁用时不做 |
 
 ## 插槽
 
 | 插槽 | 说明 |
 | --- | --- |
-| 无 | 两个滑块节点由控件自己装配 |
+| 无 | 两个滑块节点（有数值胶囊时还有输入框）由控件自己装配 |
 
 控件没有登记到组件注册表，没有对应标签；只在 Rust 和 `view!` 里用。
 

@@ -1262,7 +1262,8 @@ impl AppContext {
                 self.end_focused_scrub_edit(document)?;
             }
             // a range's typing ends with Escape, whether the draft changed
-            let range = self.end_focused_range_edit(document)?;
+            let range = self.end_focused_range_edit(document)?
+                | self.end_focused_range_span_edit(document)?;
             if reverted || range {
                 return Ok(true);
             }
@@ -1532,7 +1533,8 @@ impl AppContext {
                     let committed = self.commit_focused_number_input(document)?;
                     // a scrub field's typing ends with Enter, committed or not
                     let ended = self.end_focused_scrub_edit(document)?
-                        | self.end_focused_range_edit(document)?;
+                        | self.end_focused_range_edit(document)?
+                        | self.end_focused_range_span_edit(document)?;
                     return Ok(committed || ended);
                 }
                 _ => {}

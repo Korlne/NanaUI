@@ -16,10 +16,10 @@ use crate::{
     Activate, AppContext, Avatar, Button, Card, Checkbox, Chip, CurveChanged, CurveField,
     CurveInput, Divider, EmptyState, Entity, GpuTextureView, IconButton, ListItem, NodeStyle,
     NumberChanged, NumberInput, Progress, RangeChanged, RangeField, RangeInput, RangeSpanChanged,
-    RangeSpanField, RangeSpanInput, RangeSpanOrientation, RangeSpanThumb, ScrollView, Select,
-    SelectChanged, SelectOption, SelectToggled, Spinner, StableNodeId, Stack, StatusBadge, Switch,
-    Text, TextArea, TextChanged, TextInput, TextSubmitted, TextureSlotName, Thumbnail,
-    ThumbnailPick, ToggleChanged,
+    RangeSpanEntered, RangeSpanField, RangeSpanInput, RangeSpanOrientation, RangeSpanThumb,
+    ScrollView, Select, SelectChanged, SelectOption, SelectToggled, Spinner, StableNodeId, Stack,
+    StatusBadge, Switch, Text, TextArea, TextChanged, TextInput, TextSubmitted, TextureSlotName,
+    Thumbnail, ThumbnailPick, ToggleChanged,
 };
 use crate::{
     AppTitleBar, Breadcrumb, Dialog, Drawer, FormField, GpuView, IconGlyph, InteractiveCard,

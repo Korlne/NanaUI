@@ -8,19 +8,27 @@
 //! field. Pointer, keyboard and assistive input all write the field, which
 //! emits [`RangeSpanInput`] / [`RangeSpanChanged`] / [`RangeSpanDragging`]
 //! with the same meaning [`crate::RangeField`]'s three events have.
+//!
+//! With [`RangeSpanField::value_thumbs`] each thumb is a capsule with its
+//! value written in it, as a [`crate::RangeField::value_thumb`] is: a click
+//! on one (or Enter, Space or an assistive press while it has focus) types a
+//! value in a number field laid over it, and [`RangeSpanEntered`] says which
+//! thumb was typed and what, before the pair it lands on is committed.
 
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use nana_ui_core::{
-    ControlHeight, ControlSize, LengthSpec, PositionSpec, SemanticColorRole, space,
+    ControlHeight, ControlSize, LengthSpec, NumberFieldSpec, PositionSpec, SemanticColorRole,
+    SpacingTokens, TypographyTokens, space,
 };
 
-use crate::view_components::{format_range_value, project_common};
+use crate::view_components::{NumberChanged, NumberInput, format_range_value, project_common};
 use crate::{
     AccessibilityRole, AccessibilityState, AppContext, BoxPaint, ComponentView, DocumentId, Entity,
-    FrameworkError, InteractionState, LayoutBox, MutationQueue, NodeKind, NodePainter, NodeStyle,
-    PaintContext, Painter, RangeAdjustment, SelectionOrientation, StableNodeId, UiWorld,
+    FocusWithinChanged, FrameworkError, InteractionState, LayoutBox, MutationQueue, NodeKind,
+    NodePainter, NodeStyle, PaintContext, PaintText, Painter, RangeAdjustment,
+    SelectionOrientation, StableNodeId, TextHorizontalAlignment, TextVerticalAlignment, UiWorld,
 };
 
 /// Which way a [`RangeSpanField`] runs.
@@ -67,6 +75,26 @@ pub const fn range_span_track_inset(size: ControlSize) -> f32 {
     range_span_thumb_extent(size) / 2.0 + focus_ring_outset()
 }
 
+/// A value thumb's height ([`RangeSpanField::value_thumbs`]): the height of
+/// a [`crate::RangeField::value_thumb`] capsule of the same size.
+pub fn range_span_value_thumb_height(
+    size: ControlSize,
+    typography: TypographyTokens,
+    spacing: SpacingTokens,
+) -> f32 {
+    crate::world::range_value_thumb_height(size, typography, spacing)
+}
+
+/// [`range_span_track_inset`] of a vertical field with value thumbs: half a
+/// capsule's height plus its focus ring.
+pub fn range_span_value_track_inset(
+    size: ControlSize,
+    typography: TypographyTokens,
+    spacing: SpacingTokens,
+) -> f32 {
+    range_span_value_thumb_height(size, typography, spacing) / 2.0 + focus_ring_outset()
+}
+
 /// A two-thumb range: `low ..= high` inside `minimum ..= maximum`, with an
 /// optional live [`indicator`](Self::indicator).
 #[derive(Debug, Clone, PartialEq)]
@@ -92,9 +120,38 @@ pub struct RangeSpanField {
     pub size: ControlSize,
     pub disabled: bool,
     pub dragging: Option<RangeSpanDragState>,
+    /// Each thumb is a capsule with its value in it, and a click on it types
+    /// a value; see the module documentation.
+    pub value_thumbs: bool,
     pub style: NodeStyle,
     /// The two thumb nodes, low first, once assembled.
     pub(crate) thumbs: Option<[StableNodeId; 2]>,
+    /// The value capsules' measure, once assembled with value thumbs.
+    pub(crate) capsule: Option<ValueCapsule>,
+    /// The thumb a value is being typed for.
+    pub(crate) editing: Option<RangeSpanThumb>,
+    /// The number field typing lays over the thumb, once assembled.
+    pub(crate) input: Option<StableNodeId>,
+}
+
+/// How large a value thumb is and how its value is written: every thumb of
+/// a field as wide as its widest value, so none changes width as it moves.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct ValueCapsule {
+    width: f32,
+    height: f32,
+    font_size: f32,
+    font_weight: u16,
+}
+
+impl ValueCapsule {
+    /// Along the track and across it.
+    fn extents(self, orientation: RangeSpanOrientation) -> (f32, f32) {
+        match orientation {
+            RangeSpanOrientation::Horizontal => (self.width, self.height),
+            RangeSpanOrientation::Vertical => (self.height, self.width),
+        }
+    }
 }
 
 /// A pointer drag on a [`RangeSpanField`].
@@ -110,6 +167,39 @@ pub struct RangeSpanDragState {
     pub grab_offset: f64,
     pub initial_low: f64,
     pub initial_high: f64,
+    /// The thumb the press landed on; `None` for a press on the track.
+    pub grabbed: Option<RangeSpanThumb>,
+    /// Where the press landed, in layout space.
+    pub press: (f32, f32),
+    /// The pointer has travelled far enough from the press to be a drag
+    /// rather than a click.
+    pub moved: bool,
+}
+
+/// How far a press may wander and still be a click on a value thumb.
+const CLICK_SLOP: f32 = space::XS;
+
+/// A value typed for one thumb of a field with
+/// [`value_thumbs`](RangeSpanField::value_thumbs): the value, quantized into
+/// the range but not held on its side of the other thumb. Emitted before
+/// the [`RangeSpanInput`] / [`RangeSpanChanged`] of the pair it lands on,
+/// which is the value and the other thumb in order: a value typed past the
+/// other thumb takes its place. An application that keeps the pair the
+/// other way round reads this to know which end was typed.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RangeSpanEntered {
+    pub thumb: RangeSpanThumb,
+    pub value: f64,
+}
+
+impl RangeSpanThumb {
+    /// The thumb on the other side.
+    pub fn other(self) -> Self {
+        match self {
+            RangeSpanThumb::Low => RangeSpanThumb::High,
+            RangeSpanThumb::High => RangeSpanThumb::Low,
+        }
+    }
 }
 
 /// Every pair the field shows, including a drag or keyboard step in flight.
@@ -171,8 +261,12 @@ impl RangeSpanField {
             size: ControlSize::Medium,
             disabled: false,
             dragging: None,
+            value_thumbs: false,
             style: NodeStyle::default(),
             thumbs: None,
+            capsule: None,
+            editing: None,
+            input: None,
         };
         field.set_span(low, high);
         field
@@ -208,6 +302,11 @@ impl RangeSpanField {
     }
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
+        self
+    }
+    /// See [`Self::value_thumbs`](field@Self::value_thumbs).
+    pub fn value_thumbs(mut self, value_thumbs: bool) -> Self {
+        self.value_thumbs = value_thumbs;
         self
     }
     /// Sets the page step, ignoring a non-finite or non-positive value.
@@ -312,9 +411,26 @@ impl RangeSpanField {
         }
     }
 
-    /// See [`range_span_track_inset`].
+    /// See [`range_span_track_inset`]; with value thumbs, half a capsule
+    /// along the track plus its focus ring.
     pub fn track_inset(&self) -> f32 {
-        range_span_track_inset(self.size)
+        match self.value_capsule() {
+            Some(capsule) => capsule.extents(self.orientation).0 / 2.0 + focus_ring_outset(),
+            None => range_span_track_inset(self.size),
+        }
+    }
+
+    /// The thumbs' capsule, while they are value thumbs and measured.
+    fn value_capsule(&self) -> Option<ValueCapsule> {
+        self.capsule.filter(|_| self.value_thumbs)
+    }
+
+    /// The thumbs' extent across the track, focus ring included.
+    fn thumb_girth(&self) -> f32 {
+        match self.value_capsule() {
+            Some(capsule) => capsule.extents(self.orientation).1 + 2.0 * focus_ring_outset(),
+            None => 2.0 * range_span_track_inset(self.size),
+        }
     }
 
     /// The (unquantized) value a pointer at `x`, `y` points at, for a field
@@ -382,6 +498,8 @@ impl RangeSpanField {
             maximum,
             step: self.step,
             value_text: format_range_value(value, self.step),
+            capsule: self.value_capsule(),
+            editing: self.editing == Some(thumb),
         }
     }
 
@@ -401,7 +519,7 @@ impl RangeSpanField {
             }
             if vertical {
                 if layout.width.is_none() {
-                    layout.width = Some(LengthSpec::Px(inset * 2.0));
+                    layout.width = Some(LengthSpec::Px(self.thumb_girth()));
                 }
                 if layout.height.is_none() {
                     layout.height = Some(LengthSpec::Fill);
@@ -422,6 +540,7 @@ impl RangeSpanField {
                 .indicator
                 .filter(|value| value.is_finite())
                 .map(|value| self.ratio(value)),
+            under_thumbs: self.value_thumbs,
         }));
         style
     }
@@ -445,6 +564,9 @@ impl ComponentView for RangeSpanField {
     fn reconcile(&mut self, mut next: Self) {
         next.thumbs = self.thumbs;
         next.dragging = self.dragging;
+        next.capsule = self.capsule;
+        next.input = self.input;
+        next.editing = self.editing.filter(|_| next.value_thumbs && !next.disabled);
         *self = next;
     }
 
@@ -505,6 +627,9 @@ pub struct RangeSpanHandle {
     maximum: f64,
     step: f64,
     value_text: Arc<str>,
+    capsule: Option<ValueCapsule>,
+    /// A value is being typed for this thumb: the number field covers it.
+    editing: bool,
 }
 
 impl RangeSpanHandle {
@@ -513,39 +638,84 @@ impl RangeSpanHandle {
     }
 
     fn style(&self) -> NodeStyle {
-        let inset = range_span_track_inset(self.size);
-        // The node is the thumb plus its ring, centred on the track point
-        // `inset + ratio * (extent - 2 * inset)` of the field's box.
-        let along = |ratio: f32| LengthSpec::CalcPercentOffset {
-            percent: ratio * 100.0,
-            offset_px: -2.0 * ratio * inset,
+        let ring = focus_ring_outset();
+        // The node is the thumb plus its ring, `along` long down the track
+        // and `girth` across it.
+        let (along_extent, girth, painter) = match self.capsule {
+            Some(capsule) => {
+                let (along, across) = capsule.extents(self.orientation);
+                (
+                    along + 2.0 * ring,
+                    across + 2.0 * ring,
+                    NodePainter::new(ValueThumbPainter {
+                        text: Arc::clone(&self.value_text),
+                        font_size: capsule.font_size,
+                        font_weight: capsule.font_weight,
+                        editing: self.editing,
+                    }),
+                )
+            }
+            None => {
+                let extent = 2.0 * range_span_track_inset(self.size);
+                (
+                    extent,
+                    extent,
+                    NodePainter::new(ThumbPainter {
+                        extent: range_span_thumb_extent(self.size),
+                    }),
+                )
+            }
         };
-        let centred = LengthSpec::CalcPercentOffset {
-            percent: 50.0,
-            offset_px: -inset,
-        };
-        let (left, top) = match self.orientation {
-            RangeSpanOrientation::Horizontal => (along(self.ratio), centred),
-            RangeSpanOrientation::Vertical => (centred, along(1.0 - self.ratio)),
+        let (left, top) = thumb_offsets(self.orientation, self.ratio, along_extent, girth);
+        let (width, height) = match self.orientation {
+            RangeSpanOrientation::Horizontal => (along_extent, girth),
+            RangeSpanOrientation::Vertical => (girth, along_extent),
         };
         NodeStyle {
             layout: Arc::new(nana_ui_core::LayoutStyle {
                 position: PositionSpec::Absolute,
                 offset_left: Some(left),
                 offset_top: Some(top),
-                width: Some(LengthSpec::Px(inset * 2.0)),
-                height: Some(LengthSpec::Px(inset * 2.0)),
+                width: Some(LengthSpec::Px(width)),
+                height: Some(LengthSpec::Px(height)),
                 ..nana_ui_core::LayoutStyle::default()
             }),
-            painter: Some(NodePainter::new(ThumbPainter {
-                extent: range_span_thumb_extent(self.size),
-            })),
+            painter: Some(painter),
             ..NodeStyle::default()
         }
     }
 }
 
+/// Where a box `along` long and `girth` across sits in the field's box so
+/// that its centre is on the track point `ratio` of the way along (the
+/// track running half the box's length in from each end) and on the
+/// track's line.
+fn thumb_offsets(
+    orientation: RangeSpanOrientation,
+    ratio: f32,
+    along: f32,
+    girth: f32,
+) -> (LengthSpec, LengthSpec) {
+    let at = |ratio: f32| LengthSpec::CalcPercentOffset {
+        percent: ratio * 100.0,
+        offset_px: -ratio * along,
+    };
+    let centred = LengthSpec::CalcPercentOffset {
+        percent: 50.0,
+        offset_px: -girth / 2.0,
+    };
+    match orientation {
+        RangeSpanOrientation::Horizontal => (at(ratio), centred),
+        RangeSpanOrientation::Vertical => (centred, at(1.0 - ratio)),
+    }
+}
+
 impl ComponentView for RangeSpanHandle {
+    const BEHAVIOR: crate::TypeBehavior<Self> = crate::TypeBehavior {
+        activation: Some(crate::AppContext::activate_range_span_handle),
+        ..crate::TypeBehavior::NONE
+    };
+
     fn node_kind(&self) -> NodeKind {
         NodeKind::Element {
             tag: "range-span-thumb".into(),
@@ -586,6 +756,9 @@ struct TrackPainter {
     low: f32,
     high: f32,
     indicator: Option<f32>,
+    /// The indicator is drawn under the thumbs, so a value capsule's text
+    /// stays readable where the live value passes it.
+    under_thumbs: bool,
 }
 
 impl TrackPainter {
@@ -638,10 +811,33 @@ impl Painter for TrackPainter {
                 );
             }
         }
+        if self.under_thumbs {
+            self.paint_indicator(cx);
+        }
     }
 
-    /// Over the thumbs, so the live value stays readable where a thumb sits.
+    /// Over plain thumbs, so the live value stays readable where a thumb
+    /// sits; value thumbs keep their text instead.
     fn paint_over_children(&self, cx: &mut PaintContext<'_>) {
+        if !self.under_thumbs {
+            self.paint_indicator(cx);
+        }
+    }
+
+    fn paint_key(&self) -> u64 {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        self.vertical.hash(&mut hasher);
+        self.inset.to_bits().hash(&mut hasher);
+        self.low.to_bits().hash(&mut hasher);
+        self.high.to_bits().hash(&mut hasher);
+        self.indicator.map(f32::to_bits).hash(&mut hasher);
+        self.under_thumbs.hash(&mut hasher);
+        hasher.finish()
+    }
+}
+
+impl TrackPainter {
+    fn paint_indicator(&self, cx: &mut PaintContext<'_>) {
         let Some(ratio) = self.indicator else {
             return;
         };
@@ -660,16 +856,6 @@ impl Painter for TrackPainter {
             SemanticColorRole::Text
         };
         cx.rounded_rect(point, dot / 2.0, BoxPaint::fill(color));
-    }
-
-    fn paint_key(&self) -> u64 {
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        self.vertical.hash(&mut hasher);
-        self.inset.to_bits().hash(&mut hasher);
-        self.low.to_bits().hash(&mut hasher);
-        self.high.to_bits().hash(&mut hasher);
-        self.indicator.map(f32::to_bits).hash(&mut hasher);
-        hasher.finish()
     }
 }
 
@@ -716,6 +902,74 @@ impl Painter for ThumbPainter {
 
     fn paint_key(&self) -> u64 {
         u64::from(self.extent.to_bits())
+    }
+}
+
+/// A value thumb: an accent capsule with the value in it, as a
+/// [`crate::RangeField::value_thumb`] draws it, and its focus ring. Not drawn
+/// while its value is typed: the number field lies over it.
+#[derive(Debug, Clone, PartialEq)]
+struct ValueThumbPainter {
+    text: Arc<str>,
+    font_size: f32,
+    font_weight: u16,
+    editing: bool,
+}
+
+impl Painter for ValueThumbPainter {
+    fn paint(&self, cx: &mut PaintContext<'_>) {
+        if self.editing {
+            return;
+        }
+        let state = cx.state();
+        let bounds = cx.bounds();
+        let outset = focus_ring_outset();
+        let capsule = LayoutBox {
+            x: bounds.x + outset,
+            y: bounds.y + outset,
+            width: (bounds.width - 2.0 * outset).max(0.0),
+            height: (bounds.height - 2.0 * outset).max(0.0),
+        };
+        // A disabled capsule loses the accent; its text takes the faint
+        // colour, as a disabled value thumb's does.
+        let (fill, text) = if state.disabled {
+            (SemanticColorRole::Border, SemanticColorRole::Faint)
+        } else if state.hovered || state.pressed {
+            (
+                SemanticColorRole::AccentStrong,
+                SemanticColorRole::AccentText,
+            )
+        } else {
+            (SemanticColorRole::Accent, SemanticColorRole::AccentText)
+        };
+        cx.rounded_rect(capsule, capsule.height / 2.0, BoxPaint::fill(fill));
+        cx.text(
+            capsule,
+            PaintText::new(Arc::clone(&self.text))
+                .size(self.font_size)
+                .weight(self.font_weight)
+                .color(text)
+                .align(
+                    TextHorizontalAlignment::Center,
+                    TextVerticalAlignment::Center,
+                ),
+        );
+        if state.focused {
+            cx.rounded_rect(
+                bounds,
+                bounds.height.min(bounds.width) / 2.0,
+                BoxPaint::default().border(SemanticColorRole::FocusBorder, space::XXS),
+            );
+        }
+    }
+
+    fn paint_key(&self) -> u64 {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        self.text.hash(&mut hasher);
+        self.font_size.to_bits().hash(&mut hasher);
+        self.font_weight.hash(&mut hasher);
+        self.editing.hash(&mut hasher);
+        hasher.finish()
     }
 }
 
@@ -931,6 +1185,9 @@ impl AppContext {
                 grab_offset,
                 initial_low: field.low,
                 initial_high: field.high,
+                grabbed,
+                press: (x, y),
+                moved: false,
             });
             cx.mutations().capture_pointer(pointer_id, field_id);
             cx.emit(RangeSpanDragging { dragging: true });
@@ -964,15 +1221,27 @@ impl AppContext {
         let Some(bounds) = self.world().layout_box(target) else {
             return Ok(false);
         };
-        let Some((pointer, offset)) = self.read(field, |field| {
+        let Some((pointer, offset, moved)) = self.read(field, |field| {
             let drag = field
                 .dragging
                 .filter(|drag| drag.pointer_id == pointer_id)?;
-            Some((field.value_at(bounds, x, y), drag.grab_offset))
+            let (press_x, press_y) = drag.press;
+            let moved = drag.moved || (x - press_x).hypot(y - press_y) > CLICK_SLOP;
+            Some((field.value_at(bounds, x, y), drag.grab_offset, moved))
         })?
         else {
             return Ok(false);
         };
+        self.update_component(field, |field, _| {
+            if let Some(drag) = field.dragging.as_mut() {
+                drag.moved = moved;
+            }
+        })?;
+        // A value thumb stays put until the press is a drag: a click on it
+        // types a value instead.
+        if !moved && self.read(field, |field| field.value_capsule().is_some())? {
+            return Ok(false);
+        }
         self.drag_range_span_to(field, pointer + offset)
     }
 
@@ -1035,13 +1304,17 @@ impl AppContext {
             .document_of(target)
             .and_then(|document| self.world().pointer_capture(document, pointer_id))
             == Some(target);
-        self.update_component(field, |field, cx| {
+        let mut clicked = None;
+        let ended = self.update_component(field, |field, cx| {
             if held {
                 cx.mutations().release_pointer(pointer_id, target);
             }
             let Some(drag) = field.dragging.take_if(|drag| drag.pointer_id == pointer_id) else {
                 return false;
             };
+            if !cancel && !drag.moved && field.value_capsule().is_some() {
+                clicked = drag.grabbed;
+            }
             if (field.low, field.high) != (drag.initial_low, drag.initial_high) {
                 if cancel || field.disabled {
                     field.low = drag.initial_low;
@@ -1059,7 +1332,12 @@ impl AppContext {
             }
             cx.emit(RangeSpanDragging { dragging: false });
             true
-        })
+        })?;
+        if let Some(thumb) = clicked {
+            // A click on a value thumb types a value.
+            self.begin_range_span_edit(field, thumb)?;
+        }
+        Ok(ended)
     }
 
     /// Whether `pointer_id` drags the field at `target`.
@@ -1076,13 +1354,25 @@ impl AppContext {
             .unwrap_or(false)
     }
 
-    /// Lifecycle: create the two thumb nodes once, then keep them on the
-    /// field's props.
+    /// Lifecycle: create the two thumb nodes (and, with value thumbs, the
+    /// number field typing uses) once, then keep them on the field's props.
     pub(crate) fn sync_range_span(
         &mut self,
         field: Entity<RangeSpanField>,
     ) -> Result<(), FrameworkError> {
+        let capsule = self.measure_value_capsule(field)?;
+        if self.read(field, |field| {
+            field.value_thumbs && field.capsule != capsule
+        })? {
+            // Writing the measure runs this upkeep again, with it in place.
+            return self.update_component(field, |field, _| field.capsule = capsule);
+        }
         let snapshot = self.read(field, Clone::clone)?;
+        let document = self
+            .world()
+            .node(field.stable_id())
+            .ok_or(FrameworkError::MissingView(field.stable_id()))?
+            .document;
         let assembled = snapshot.thumbs.filter(|thumbs| {
             thumbs.iter().all(|id| {
                 self.world().parent_id(*id) == Some(field.stable_id())
@@ -1090,11 +1380,6 @@ impl AppContext {
             })
         });
         let Some([low, high]) = assembled else {
-            let document = self
-                .world()
-                .node(field.stable_id())
-                .ok_or(FrameworkError::MissingView(field.stable_id()))?
-                .document;
             let low =
                 self.create_detached_component(document, snapshot.handle(RangeSpanThumb::Low))?;
             let high =
@@ -1114,7 +1399,213 @@ impl AppContext {
                 },
             )?;
         }
+        if !snapshot.value_thumbs {
+            if let Some(input) = snapshot.input {
+                self.update_component(Entity::<NumberInput>::from_stable_id(input), |input, _| {
+                    Arc::make_mut(&mut input.style.layout).hidden = true;
+                })?;
+            }
+            return Ok(());
+        }
+        let input = match snapshot.input.filter(|id| self.world().contains(*id)) {
+            Some(input) => input,
+            None => {
+                let input =
+                    self.create_detached_component(document, NumberInput::continuous(0.0))?;
+                self.observe(input, field, |field, event: &NumberChanged, cx| {
+                    let Some(thumb) = field.editing else {
+                        return;
+                    };
+                    if field.disabled {
+                        return;
+                    }
+                    let value = field.quantize(event.value);
+                    cx.emit(RangeSpanEntered { thumb, value });
+                    let before = (field.low, field.high);
+                    field.set_span(value, field.value(thumb.other()));
+                    if before != (field.low, field.high) {
+                        commit_span(field, cx);
+                    }
+                })?;
+                // Typing ends when the focus leaves the field.
+                self.on(field, |field, event: &FocusWithinChanged, _| {
+                    if !event.focused {
+                        field.editing = None;
+                    }
+                })?;
+                self.append_children(field.stable_id(), &[low, high, input.stable_id()])?;
+                let id = input.stable_id();
+                return self.update_component(field, |field, _| field.input = Some(id));
+            }
+        };
+        let theme = self.world().theme();
+        let field_height = snapshot.size.height_in(theme.metrics());
+        let spacing = theme.spacing();
+        let edited = snapshot.editing.filter(|_| !snapshot.disabled);
+        let placement = edited
+            .zip(snapshot.value_capsule())
+            .map(|(thumb, capsule)| {
+                // Over the capsule, a little wider, as a range's typing is.
+                let width = capsule.width + spacing.md + spacing.md;
+                let (along, girth) = match snapshot.orientation {
+                    RangeSpanOrientation::Horizontal => (width, field_height),
+                    RangeSpanOrientation::Vertical => (field_height, width),
+                };
+                let travel = capsule.extents(snapshot.orientation).0 + 2.0 * focus_ring_outset();
+                let ratio = snapshot.ratio(snapshot.value(thumb));
+                // Centred where the thumb is: its offsets, moved by half the
+                // difference between the field and the thumb.
+                let (left, top) = thumb_offsets(snapshot.orientation, ratio, travel, girth);
+                let shift = (travel - along) / 2.0;
+                let shifted = |offset: LengthSpec| match offset {
+                    LengthSpec::CalcPercentOffset { percent, offset_px } => {
+                        LengthSpec::CalcPercentOffset {
+                            percent,
+                            offset_px: offset_px + shift,
+                        }
+                    }
+                    other => other,
+                };
+                let (left, top) = match snapshot.orientation {
+                    RangeSpanOrientation::Horizontal => (shifted(left), top),
+                    RangeSpanOrientation::Vertical => (left, shifted(top)),
+                };
+                (left, top, width, snapshot.handle(thumb).label)
+            });
+        let spec = NumberFieldSpec {
+            minimum: Some(snapshot.minimum),
+            maximum: Some(snapshot.maximum),
+            step: snapshot.step,
+            precision: format_range_value(snapshot.step, snapshot.step)
+                .split_once('.')
+                .map_or(0, |(_, decimals)| decimals.len() as u8),
+        };
+        self.update_component(Entity::<NumberInput>::from_stable_id(input), |input, _| {
+            input.spec = spec;
+            if input.size != snapshot.size {
+                // The builder's size writes the style the field is drawn with.
+                *input = std::mem::replace(input, NumberInput::continuous(0.0)).size(snapshot.size);
+            }
+            input.steppers = false;
+            input.disabled = snapshot.disabled;
+            let layout = Arc::make_mut(&mut input.style.layout);
+            layout.hidden = placement.is_none();
+            layout.position = PositionSpec::Absolute;
+            if let Some((left, top, width, label)) = placement.clone() {
+                layout.offset_left = Some(left);
+                layout.offset_top = Some(top);
+                layout.width = Some(LengthSpec::Px(width));
+                // Held to the height it is centred by.
+                layout.height = Some(LengthSpec::Px(field_height));
+                input.label = label;
+            }
+        })?;
         Ok(())
+    }
+
+    /// The value capsules of `field`, measured on its own text: as wide as
+    /// the widest of its bounds and its thumbs' values. `None` without value
+    /// thumbs.
+    fn measure_value_capsule(
+        &self,
+        field: Entity<RangeSpanField>,
+    ) -> Result<Option<ValueCapsule>, FrameworkError> {
+        let snapshot = self.read(field, Clone::clone)?;
+        if !snapshot.value_thumbs {
+            return Ok(None);
+        }
+        let theme = self.world().theme();
+        let (typography, spacing) = (theme.typography(), theme.spacing());
+        let font_size = snapshot.size.text_size_in(typography);
+        let font_weight = typography.medium;
+        let measure = self.world().chrome_text_measure(field.stable_id());
+        let text = [
+            snapshot.minimum,
+            snapshot.maximum,
+            snapshot.low,
+            snapshot.high,
+        ]
+        .into_iter()
+        .map(|value| {
+            measure.tabular_width(
+                &format_range_value(value, snapshot.step),
+                font_size,
+                Some(font_weight),
+            )
+        })
+        .fold(0.0, f32::max);
+        Ok(Some(ValueCapsule {
+            width: (text + spacing.md + spacing.md).max(spacing.page + spacing.page),
+            height: range_span_value_thumb_height(snapshot.size, typography, spacing),
+            font_size,
+            font_weight,
+        }))
+    }
+
+    /// Start typing a value for `thumb`: its capsule makes way for the
+    /// number field, which shows the value, selected, with the focus.
+    /// Refused unless the field draws value thumbs and is enabled.
+    pub fn begin_range_span_edit(
+        &mut self,
+        field: Entity<RangeSpanField>,
+        thumb: RangeSpanThumb,
+    ) -> Result<bool, FrameworkError> {
+        let document = self.document_of_node(field.stable_id())?;
+        let Some(value) = self.update_component(field, |field, _| {
+            if field.disabled || field.value_capsule().is_none() {
+                return None;
+            }
+            field.editing = Some(thumb);
+            Some(field.value(thumb))
+        })?
+        else {
+            return Ok(false);
+        };
+        let Some(input) = self.read(field, |field| field.input)? else {
+            return Ok(false);
+        };
+        self.update_component(Entity::<NumberInput>::from_stable_id(input), |input, _| {
+            input.assign(value);
+        })?;
+        self.focus_node(document, input)?;
+        self.select_all_focused_text(document)?;
+        Ok(true)
+    }
+
+    /// Leave typing on the field whose number field has the focus (Enter
+    /// committed it, Escape reverted it): the typed thumb takes the focus
+    /// back.
+    pub(crate) fn end_focused_range_span_edit(
+        &mut self,
+        document: DocumentId,
+    ) -> Result<bool, FrameworkError> {
+        let Some(field) = self
+            .world()
+            .focused(document)
+            .and_then(|input| self.world().parent_id(input))
+            .and_then(|parent| self.view_entity::<RangeSpanField>(parent))
+        else {
+            return Ok(false);
+        };
+        let Some(thumb) = self.update_component(field, |field, _| field.editing.take())? else {
+            return Ok(false);
+        };
+        if let Some(node) = self.read(field, |field| field.thumb_node(thumb))? {
+            self.focus_node_in_place(document, node)?;
+        }
+        Ok(true)
+    }
+
+    /// Enter, Space or an assistive press on a value thumb types a value;
+    /// a plain thumb has no activation.
+    pub(crate) fn activate_range_span_handle(
+        &mut self,
+        handle: Entity<RangeSpanHandle>,
+    ) -> Result<bool, FrameworkError> {
+        let Some((field, Some(thumb))) = self.range_span_target(handle.stable_id()) else {
+            return Ok(false);
+        };
+        self.begin_range_span_edit(field, thumb)
     }
 }
 
@@ -1363,6 +1854,154 @@ mod tests {
         );
     }
 
+    fn value_field() -> RangeSpanField {
+        let mut field = RangeSpanField::new(-10.0, 20.0, -30.0, 30.0, 1.0)
+            .vertical()
+            .size(ControlSize::Small)
+            .value_thumbs(true)
+            .low_label("下端")
+            .high_label("上端");
+        Arc::make_mut(&mut field.style.layout).height = Some(LengthSpec::Px(180.0));
+        field
+    }
+
+    fn relayout(context: &mut AppContext) {
+        context
+            .layout_document(document(), LayoutViewport::new(300.0, 200.0))
+            .unwrap();
+        context.rebuild_hit_test(document());
+    }
+
+    fn typed(input: &mut HeadlessInput, context: &mut AppContext, text: &str) {
+        input
+            .route(
+                context,
+                nana_ui_input::InputPayload::Text(nana_ui_input::CommittedText {
+                    text: text.to_owned(),
+                    key: None,
+                }),
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn value_thumbs_are_capsules_as_wide_as_the_widest_value_and_set_the_inset() {
+        let (mut context, field, _) = mounted(value_field());
+        relayout(&mut context);
+        let capsule = context.read(field, |field| field.capsule).unwrap().unwrap();
+        let theme = context.world().theme();
+        let height =
+            range_span_value_thumb_height(ControlSize::Small, theme.typography(), theme.spacing());
+        assert_eq!(capsule.height, height);
+        let inset =
+            range_span_value_track_inset(ControlSize::Small, theme.typography(), theme.spacing());
+        assert_eq!(
+            context.read(field, RangeSpanField::track_inset).unwrap(),
+            inset
+        );
+        let bounds = context.world().layout_box(field.stable_id()).unwrap();
+        // The field is as wide as a capsule and its ring.
+        assert_eq!(bounds.width, capsule.width + 2.0 * focus_ring_outset());
+        let low = thumb(&context, field, RangeSpanThumb::Low);
+        let thumb_box = context.world().layout_box(low).unwrap();
+        assert_eq!(thumb_box.height, height + 2.0 * focus_ring_outset());
+        let length = bounds.height - 2.0 * inset;
+        let (_, y) = centre(&context, low);
+        let expected = bounds.y + bounds.height - inset - (20.0 / 60.0) * length;
+        assert!((y - expected).abs() < 0.01, "{y} vs {expected}");
+    }
+
+    #[test]
+    fn a_click_on_a_value_thumb_types_and_a_value_past_the_other_thumb_takes_its_place() {
+        let (mut context, field, seen) = mounted(value_field());
+        relayout(&mut context);
+        let entered = Arc::new(Mutex::new(Vec::new()));
+        let log = Arc::clone(&entered);
+        context
+            .on(field, move |_, event: &RangeSpanEntered, _| {
+                log.lock().unwrap().push((event.thumb, event.value));
+            })
+            .unwrap();
+        let low = thumb(&context, field, RangeSpanThumb::Low);
+        let (x, y) = centre(&context, low);
+        let mut input = HeadlessInput::bind(&mut context, document());
+        // A press that wanders less than the slop is a click: nothing moves.
+        input
+            .pointer(&mut context, PointerPhase::Down, x, y)
+            .unwrap();
+        input
+            .pointer(&mut context, PointerPhase::Move, x, y - 2.0)
+            .unwrap();
+        input
+            .pointer(&mut context, PointerPhase::Up, x, y - 2.0)
+            .unwrap();
+        assert_eq!(pair(&context, field), (-10.0, 20.0));
+        assert_eq!(
+            context.read(field, |field| field.editing).unwrap(),
+            Some(RangeSpanThumb::Low)
+        );
+        let number = context.read(field, |field| field.input).unwrap().unwrap();
+        assert_eq!(context.world().focused(document()), Some(number));
+        relayout(&mut context);
+        let over = context.world().layout_box(number).unwrap();
+        assert!(
+            (over.y + over.height / 2.0 - y).abs() < 1.0,
+            "the number field lies over the thumb: {over:?} at {y}"
+        );
+        seen.lock().unwrap().clear();
+        typed(&mut input, &mut context, "25");
+        key(&mut input, &mut context, "Enter");
+        assert_eq!(*entered.lock().unwrap(), vec![(RangeSpanThumb::Low, 25.0)]);
+        assert_eq!(pair(&context, field), (20.0, 25.0));
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec![Seen::Input(20.0, 25.0), Seen::Changed(20.0, 25.0)]
+        );
+        assert_eq!(context.read(field, |field| field.editing).unwrap(), None);
+        assert_eq!(context.world().focused(document()), Some(low));
+
+        // Escape leaves typing and changes nothing.
+        key(&mut input, &mut context, "Enter");
+        assert!(
+            context
+                .read(field, |field| field.editing)
+                .unwrap()
+                .is_some()
+        );
+        typed(&mut input, &mut context, "0");
+        key(&mut input, &mut context, "Escape");
+        assert_eq!(pair(&context, field), (20.0, 25.0));
+        assert_eq!(context.read(field, |field| field.editing).unwrap(), None);
+    }
+
+    #[test]
+    fn a_value_thumb_drags_once_the_press_has_moved() {
+        let (mut context, field, seen) = mounted(value_field());
+        relayout(&mut context);
+        let high = thumb(&context, field, RangeSpanThumb::High);
+        let (x, y) = centre(&context, high);
+        let mut input = HeadlessInput::bind(&mut context, document());
+        input
+            .pointer(&mut context, PointerPhase::Down, x, y)
+            .unwrap();
+        input
+            .pointer(&mut context, PointerPhase::Move, x, y - 30.0)
+            .unwrap();
+        input
+            .pointer(&mut context, PointerPhase::Up, x, y - 30.0)
+            .unwrap();
+        let (low, moved) = pair(&context, field);
+        assert_eq!(low, -10.0);
+        assert!(moved > 20.0, "{moved}");
+        assert_eq!(context.read(field, |field| field.editing).unwrap(), None);
+        assert!(
+            seen.lock()
+                .unwrap()
+                .iter()
+                .any(|event| matches!(event, Seen::Changed(_, high) if *high == moved))
+        );
+    }
+
     #[test]
     fn a_press_on_a_thumb_grabs_it_captures_and_commits_once_on_release() {
         let (mut context, field, seen) = mounted(vertical_field());
@@ -1600,6 +2239,7 @@ mod tests {
             low: 0.25,
             high: 0.75,
             indicator: None,
+            under_thumbs: false,
         };
         let measure = |_: &crate::PaintText, _: f32, _: Option<f32>| crate::TextSize::default();
         let bars = |disabled: bool| {
