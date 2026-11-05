@@ -6635,6 +6635,11 @@ impl UiWorld {
         // synthesize broad Runtime/UNKNOWN seeds and defeat retained plans.
         let subtree_bits = bits & !DirtyMask::LAYOUT;
         let root_layout = bits & DirtyMask::LAYOUT;
+        if self.record(root).hierarchy.children.is_empty() {
+            // A leaf, as most nodes a build mounts are: no walk.
+            let _ = self.mark(root, subtree_bits | root_layout);
+            return;
+        }
         let mut stack = vec![root];
         while let Some(id) = stack.pop() {
             let children = Arc::clone(&self.record(id).hierarchy.children);
@@ -6659,9 +6664,12 @@ impl UiWorld {
     }
 
     fn set_subtree_mount_state(&mut self, root: StableNodeId, state: MountState) {
-        let ids = self.subtree_ids(root);
-        for id in &ids {
-            self.record_mut(*id).mount = state;
+        if self.record(root).hierarchy.children.is_empty() {
+            self.record_mut(root).mount = state;
+        } else {
+            for id in self.subtree_ids(root) {
+                self.record_mut(id).mount = state;
+            }
         }
         if state == MountState::Mounted {
             self.mark_subtree(root, DirtyMask::ALL);
@@ -6671,6 +6679,11 @@ impl UiWorld {
     /// Gives `root` depth `depth` and its descendants theirs below it; see
     /// [`crate::store::Hierarchy::depth`]. Walks the subtree on the heap.
     pub(super) fn set_subtree_depth(&mut self, root: StableNodeId, depth: u16) {
+        let hierarchy = self.hierarchy_mut(root);
+        if hierarchy.children.is_empty() {
+            hierarchy.depth = depth;
+            return;
+        }
         let mut open = vec![(root, depth)];
         while let Some((id, depth)) = open.pop() {
             let hierarchy = self.hierarchy_mut(id);
@@ -6726,8 +6739,12 @@ impl UiWorld {
     }
 
     fn leave_live_document(&mut self, root: StableNodeId) {
-        let subtree = self.subtree_ids(root);
-        self.retire_subtree_from_document(&subtree);
+        if self.record(root).hierarchy.children.is_empty() {
+            self.retire_subtree_from_document(std::slice::from_ref(&root));
+        } else {
+            let subtree = self.subtree_ids(root);
+            self.retire_subtree_from_document(&subtree);
+        }
         self.detached.insert(root);
         if self.mount_state(root) == Some(MountState::Parked) {
             self.detached_mounted.remove(&root);

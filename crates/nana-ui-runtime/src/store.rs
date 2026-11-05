@@ -27,6 +27,9 @@ static INTERNED_KIND_DIV: LazyLock<Arc<NodeKind>> =
 static INTERNED_DEFAULT_STYLE: LazyLock<Arc<ComputedStyle>> =
     LazyLock::new(|| Arc::new(ComputedStyle::default()));
 
+/// How many element tags a store shares kinds for ([`NodeStore::intern_kind`]).
+const KINDS: usize = 256;
+
 fn intern_kind(kind: &NodeKind) -> Arc<NodeKind> {
     match kind {
         NodeKind::Document => Arc::clone(&INTERNED_KIND_DOCUMENT),
@@ -174,14 +177,31 @@ pub(crate) fn shared_accessibility(state: &AccessibilityState) -> Arc<Accessibil
 }
 
 impl NodeRecord {
+    #[cfg(test)]
     pub fn new(document: DocumentId, kind: &NodeKind, interaction: InteractionState) -> Self {
+        Self::with_kind(document, intern_kind(kind), interaction)
+    }
+
+    /// [`Self::new`] with the kind already shared ([`NodeStore::intern_kind`]).
+    pub(crate) fn with_kind(
+        document: DocumentId,
+        kind: Arc<NodeKind>,
+        interaction: InteractionState,
+    ) -> Self {
+        let style = NodeStyle::default();
+        let space = crate::node_space::NodeSpace::of(
+            &style.layout,
+            crate::LayoutFrame::Parent,
+            &kind,
+            None,
+        );
         Self {
             document,
-            kind: intern_kind(kind),
+            kind,
             hierarchy: Hierarchy::default(),
             mount: MountState::default(),
-            style: NodeStyle::default(),
-            resolved_layout: NodeStyle::default().layout,
+            resolved_layout: Arc::clone(&style.layout),
+            style,
             resolved: ResolvedStyle::interned_default(),
             layout_depends_on_viewport: false,
             block_reads: crate::world::BlockExtentReads::default(),
@@ -191,19 +211,14 @@ impl NodeRecord {
             text_metrics: TextMetrics::default(),
             local_layout: LayoutBox::default(),
             layout_frame: crate::LayoutFrame::Parent,
-            space: crate::node_space::NodeSpace::of(
-                &NodeStyle::default().layout,
-                crate::LayoutFrame::Parent,
-                kind,
-                None,
-            ),
+            space,
             layout_padding: None,
             layout_far_start: None,
             layout_context: None,
             layout_context_generation: 0,
             scroll_offset: ScrollOffset::default(),
             interaction,
-            accessibility: shared_accessibility(&AccessibilityState::default()),
+            accessibility: Arc::clone(&DEFAULT_ACCESSIBILITY),
             dirty: DirtyMask::all(),
             render_full_epoch: 0,
             render_moved_epoch: u64::MAX,
@@ -712,6 +727,8 @@ impl NodeTable {
 #[derive(Default)]
 pub(crate) struct NodeStore {
     nodes: NodeTable,
+    /// One shared kind per element tag ([`Self::intern_kind`]).
+    kinds: HashMap<String, Arc<NodeKind>>,
     visuals: HashMap<StableNodeId, StandardVisual>,
     /// Nodes whose space ([`NodeRecord::space`]) pins accessibility
     /// ([`crate::node_space::NodeSpace::pins_accessibility`]): their
@@ -806,6 +823,23 @@ pub(crate) type TextViewportPin = ScrollOffset;
 impl NodeStore {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// `kind` as a record holds it: every element of one tag shares an
+    /// `Arc`, so a page of a few tags holds a few kinds, not one per node.
+    /// Past [`KINDS`] distinct tags, a new tag gets its own.
+    pub(crate) fn intern_kind(&mut self, kind: &NodeKind) -> Arc<NodeKind> {
+        let NodeKind::Element { tag } = kind else {
+            return intern_kind(kind);
+        };
+        if let Some(kept) = self.kinds.get(tag.as_str()) {
+            return Arc::clone(kept);
+        }
+        let kept = intern_kind(kind);
+        if self.kinds.len() < KINDS {
+            self.kinds.insert(tag.clone(), Arc::clone(&kept));
+        }
+        kept
     }
 
     pub fn len(&self) -> usize {

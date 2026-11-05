@@ -1380,7 +1380,9 @@ impl UiWorld {
         }
         match mutation {
             UiMutation::Create { id, document, kind } => {
-                let mut record = NodeRecord::new(*document, kind, initial_interaction(kind));
+                let kind_arc = self.nodes.intern_kind(kind);
+                let mut record =
+                    NodeRecord::with_kind(*document, kind_arc, initial_interaction(kind));
                 record.render_full_epoch = self.render_epoch.get();
                 self.nodes.insert(*id, record);
                 self.record_topology_invalidation(*id);
