@@ -260,6 +260,22 @@ Scene（2026-11-03）：图元是用绝对坐标的布局盒（加祖先变换�
 
 根列的重新测量（2026-11-03，接上段）：那 1.5 ms 不是缓存命中路径慢，是根列根本没用上测量计划。`Stack` 默认 `height: Shrink`，而顺序计划（`sequential`，一个子项变了只把它的差补进记下的总和）要求主轴尺寸 `is_none()`；`Shrink` 与 `Auto` 在 `resolve_axis` 里同样解析为没有长度，`finish_intrinsic_size` 取内容派生的默认值，与不写完全一样，于是放宽为「没写、`auto` 或 `shrink`」。其余内容尺寸关键字（`min-content` 等）与带 min/max 的仍排除。改高度的这一帧，根列不再逐行命中 2 000 次（测量命中 2 025 → 28，测量计划复用 1 → 2）。新测试 `content_growth_under_a_child_moves_its_siblings_when_the_container_shrinks` 让 `Shrink`/`Auto` 列与不写高度的列重测同样多的子项（2 个；改前 14 个，变异实验确认会变红），每一步都与完整重算逐盒比对。与 275f9229c 交替 8 轮读最小值（负载约 5.5）：改行高布局 16.33 → 15.17 ms，整帧 30.37 → 29.05 ms，每次编辑指令 297 M → 286 M（−3.5%）；改宽度（行也是 `Shrink`）布局 0.84 → 0.12 ms，已低于 Taffy 的 0.46 ms；控件页（`CONTROLS=1 edits 1355 height`）布局 20.9 → 19.7 ms。rebase 到相对几何第 1 阶段（35045d816）之后再量（交替 6 轮读最小值，负载约 6.6）：改行高布局 3.81 → 2.29 ms（−40%），整帧 17.67 → 16.31 ms，每次编辑指令 166 M → 155 M（−6.7%）；改宽度 0.78 → 0.11 ms。第 1 阶段把平移的成本拿掉以后，这 1.5 ms 的根列重测就成了改行高布局里最大的一块。
 
+相对几何（2026-11-03 至 11-05，设计见 [relative-geometry.md](relative-geometry.md)）把布局、命中、提取与 Scene、painter、无障碍都改成「盒子里的东西存在盒子自己的坐标里」，平移一棵子树只改根的偏移。下表是改造前后的总览（`perf/micro/stack-depth`，`PRINT_STAGES=1 edits 2000 …`，整帧最小值，µs）：「改造前」取该页面第一次被量到时的基线提交，「现在」取最后一次量到它的那一轮；各行来自不同轮次、负载不同，只看量级，逐步的 A/B 见后面各段。
+
+| 页面 | 编辑 | 改造前（提交） | 改造前 | 现在 |
+| --- | --- | --- | ---: | ---: |
+| 简单页 42 001 盒 | height | ba8ba044f | 30 424 | 1 094 |
+| 控件页 62 001 节点 | height | ba8ba044f | 85 988 | 1 180 |
+| 混合页（`CONTROLS=1 MIXED=1`） | height | 7fa3b81b4 | 34 237 | 1 180 |
+| 简单页 `SCROLLED=1` | height | 21f8058fa | 35 741 | 1 255 |
+| 简单页 `ROTATED=1` | height | 9f4fc87be | 27 075 | 1 216 |
+| 简单页（根列） | transform | 54e3425e7 | 39 219 | 17.7 |
+| 简单页 `ROTATED=1` | transform / scale | 54e3425e7 | 37 619 / 38 038 | 17.8 / 17.8 |
+| 简单页 | width | ba8ba044f | 795 | 121.5 |
+| 控件页 | text | ba8ba044f | 22.4 | 21.2 |
+
+每次改行高的指令：简单页 326 M → 23 M，控件页 834 M → 25 M（ba8ba044f 对 2f0479886）。之后各段按时间顺序记每一步。
+
 相对几何第 1 阶段（2026-11-03，设计见 [relative-geometry.md](relative-geometry.md)）：布局盒改为相对参照系（父节点、包含块或页面）的偏移，`NodeRecord`、引擎的保留盒子与计划原点、`LayoutResult` 都按本地存；`translate_moved_children` 删除，只挪了位置的容器父节点只写它自己的偏移，子孙一个也不碰，结果不重建也不重发布。对外的 `layout_box` 等沿参照系链从上往下累加得到绝对值。命中索引和 Scene 仍读绝对盒子，过渡期由提交时的 `spread_layout_moves` 把平移子树的后代标成「只是移动」。42 001 盒（与 275f9229c 交替 8 轮读最小值，负载 5.5–7.1，µs）：
 
 | 编辑 | 阶段 | 275f9229c | 第 1 阶段 |
@@ -290,7 +306,7 @@ Scene（2026-11-03）：图元是用绝对坐标的布局盒（加祖先变换�
 
 每次编辑的指令（`RUNS=240` 与 `RUNS=40` 两次 `time -l` 之差除以 200）：height 167.7 M → 139.5 M（−17%）。命中阶段剩下的 0.66 ms：1 012 个写回的行各重建自己那一条（`hit_test_entries_moved` 1 008，`hit_test_nodes_rebuilt` 1 012）、按深度刷新祖先包围盒，以及在约 2 万个仍标 INPUT 的后代里跳过随父节点平移的那些（`layout_followers`，第 3 阶段已随这些标记一起去掉）。
 
-相对几何第 3 阶段（2026-11-03）：提交不再把平移子树的后代标脏（`spread_layout_moves`、`layout_followers` 删除），只发平移的根。Scene 按参照系链放置记录，不画东西的记录留在提取时的空间、靠变换跟上，画东西的记录在 Scene 里重新放置并重建（painter 把纯平移吸附到整像素，见 [relative-geometry.md](relative-geometry.md) 3.5）；无障碍只从平移的根往下走一遍记录。42 001 盒（与 715cc0331 交替 8 轮、每轮交换先后读最小值，负载 3.3–4.1，µs；Scene 一行是另做的临时计时，提取阶段里 `apply_delta_with_moves` 那一段，6 轮）：
+相对几何第 3 阶段（2026-11-03）：提交不再把平移子树的后代标脏（`spread_layout_moves`、`layout_followers` 删除），只发平移的根。Scene 按参照系链放置记录，不画东西的记录留在提取时的空间、靠变换跟上，画东西的记录在 Scene 里重新放置并重建（painter 把纯平移吸附到整像素，见 [相对几何 · 提取与 Scene](relative-geometry.md#_5-提取与-scene)）；无障碍只从平移的根往下走一遍记录。42 001 盒（与 715cc0331 交替 8 轮、每轮交换先后读最小值，负载 3.3–4.1，µs；Scene 一行是另做的临时计时，提取阶段里 `apply_delta_with_moves` 那一段，6 轮）：
 
 | 编辑 | 阶段 | 715cc0331 | 第 3 阶段 |
 | --- | --- | ---: | ---: |
@@ -309,7 +325,7 @@ Scene（2026-11-03）：图元是用绝对坐标的布局盒（加祖先变换�
 
 公开接口变化：`ExtractedNode` 新增 `local_layout`、`layout_frame`（字面量构造要补上）；`ExtractedMove` 新增同名两项，只给平移的根发；`SystemWork` 新增 `layout_moved`；`UiScene` 新增 `node_layout_bounds`。`UiScene::extracted_node(id).layout` 与 `node_bounds` 现在是记录所在的空间，平移子树里不画东西的记录可能停在提取时的位置；现在的位置用 `node_layout_bounds`，绘制位置仍是 `draw_node_bounds` / `draw_primitive`。
 
-相对几何第 4 阶段（2026-11-04）：图元、节点自己的裁剪和 `ExtractedNode.component_geometry` 改为节点本地坐标，painter 先把几何放到节点原点（每个坐标一次加法）再变换、再把平移吸附到整像素，所以布局平移不再被当成滚动吸附，挪了小数像素的子树和冷场景逐像素相同（做法见 [relative-geometry.md](relative-geometry.md) 3.5、3.6）。`place_painted_records` 与提取的 `component_geometry.is_none()` 守卫删除：平移的子树一个图元也不重建、按钮输入框不再重新提取，剔除索引整棵平移（`translate_subtree`），只有读页面的 visual（Select、MenuSurface、NativeMarkdown）和读了自己位置的节点（`origin_bound`）还按节点处理。与 3e9c83b80 交替 8 轮、每轮交换先后读最小值（负载 2–6.5，µs；VISIBLE=1 是 `perf/micro/stack-depth` 新增的开关，每帧后调 `visible_operations`，即有 painter 时）：
+相对几何第 4 阶段（2026-11-04）：图元、节点自己的裁剪和 `ExtractedNode.component_geometry` 改为节点本地坐标，painter 先把几何放到节点原点（每个坐标一次加法）再变换、再把平移吸附到整像素，所以布局平移不再被当成滚动吸附，挪了小数像素的子树和冷场景逐像素相同（做法见 [相对几何 · 提取与 Scene](relative-geometry.md#_5-提取与-scene)与 [相对几何 · painter](relative-geometry.md#_6-painter)）。`place_painted_records` 与提取的 `component_geometry.is_none()` 守卫删除：平移的子树一个图元也不重建、按钮输入框不再重新提取，剔除索引整棵平移（`translate_subtree`），只有读页面的 visual（Select、MenuSurface、NativeMarkdown）和读了自己位置的节点（`origin_bound`）还按节点处理。与 3e9c83b80 交替 8 轮、每轮交换先后读最小值（负载 2–6.5，µs；VISIBLE=1 是 `perf/micro/stack-depth` 新增的开关，每帧后调 `visible_operations`，即有 painter 时）：
 
 | 页面 | 编辑 | 阶段 | 3e9c83b80 | 第 4 阶段 |
 | --- | --- | --- | ---: | ---: |
@@ -331,7 +347,7 @@ painter 段（`nana-text-paint-benchmark --workload reflow`，交替 8 轮读最
 
 `component-gallery` 的语义快照另有 8 个与此无关的差异（对话框、空状态等文字的 `line_height` 由 `Relative` 变为 `normal`），来自 b1bc92819，不含这些改动的树上同样出现，基线没有重录。
 
-相对几何收尾·无障碍（2026-11-04）：平移的根下面不再逐个走记录（`reach_moved_subtree` 原来每个根整棵走一遍），改为从 `NodeStore` 记着的钉住盒子（参照系不是父节点、裁剪、不交恒等、Select/TreeView/MenuSurface/ModalFrame）往上找最近的平移根（`reach_moved_pins`，O(钉子数 × 深度)）；根到页面不交恒等时仍整棵走。剩下的是平移的根本身的重投影：`axis_aligned` 原来在有任何 visual 时整体退回变换链现算（控件页每个子节点一次 `hit_motion_layout` 与变换合成），现在逐个看链上的盒子；被问的盒子与它的隐藏判定不再进记忆表（原来每个子节点两次哈希插入、表反复扩容），子节点筛选按子节点数预留。做法见 [relative-geometry.md](relative-geometry.md) 3.7。与 6838427fb 交替 8 轮、每轮交换先后读最小值（负载 11–17，µs，绝对值比安静时高）：
+相对几何收尾·无障碍（2026-11-04）：平移的根下面不再逐个走记录（`reach_moved_subtree` 原来每个根整棵走一遍），改为从 `NodeStore` 记着的钉住盒子（参照系不是父节点、裁剪、不交恒等、Select/TreeView/MenuSurface/ModalFrame）往上找最近的平移根（`reach_moved_pins`，O(钉子数 × 深度)）；根到页面不交恒等时仍整棵走。剩下的是平移的根本身的重投影：`axis_aligned` 原来在有任何 visual 时整体退回变换链现算（控件页每个子节点一次 `hit_motion_layout` 与变换合成），现在逐个看链上的盒子；被问的盒子与它的隐藏判定不再进记忆表（原来每个子节点两次哈希插入、表反复扩容），子节点筛选按子节点数预留。做法见 [相对几何 · 无障碍](relative-geometry.md#_7-无障碍)。与 6838427fb 交替 8 轮、每轮交换先后读最小值（负载 11–17，µs，绝对值比安静时高）：
 
 | 页面 | 编辑 | 阶段 | 6838427fb | 本次 |
 | --- | --- | --- | ---: | ---: |
@@ -344,7 +360,7 @@ painter 段（`nana-text-paint-benchmark --workload reflow`，交替 8 轮读最
 
 分段（临时计时，负载 4–8，读最小值）：控件页原来往下走的那一遍 680 µs → 16 µs，1 013 个平移行的投影 1 833 → 595 µs；简单页 210 → 14 µs、635 → 344 µs。每次编辑的指令（`RUNS=240` 与 `RUNS=40` 之差除以 200）：控件页改行高 55 M → 26 M，简单页 31 M → 23 M。无障碍剩下的是每个平移行自己的投影（相对偏移确实变了）：节点本身、十个子节点的隐藏与对齐判定、放进 delta 的整份 `AccessibilityNode`。
 
-相对几何收尾·读页面的节点（2026-11-04）：NativeMarkdown、关着的 Select 与 MenuSurface 的组件几何改为本地坐标，平移时沿用记录；只有打开的 Select / MenuSurface 记在 `NodeStore` 的 `page_geometry` 里，`settle_layout_moves` 只扫这个集合（原来每次平移扫所有带 visual 的节点）。做法见 [relative-geometry.md](relative-geometry.md) 3.5。与 7fa3b81b4 交替 8 轮、每轮交换先后读最小值（负载 7–14，µs，`RUNS=40 PRINT_STAGES=1 edits 2000 height`）：
+相对几何收尾·读页面的节点（2026-11-04）：NativeMarkdown、关着的 Select 与 MenuSurface 的组件几何改为本地坐标，平移时沿用记录；只有打开的 Select / MenuSurface 记在 `NodeStore` 的 `page_bound` 索引里（当时是单独的集合，be0a703c8 起由节点空间分类 `NodeSpace::page_bound` 维护），`settle_layout_moves` 只扫这个集合（原来每次平移扫所有带 visual 的节点）。做法见 [相对几何 · 提取与 Scene](relative-geometry.md#_5-提取与-scene)。与 7fa3b81b4 交替 8 轮、每轮交换先后读最小值（负载 7–14，µs，`RUNS=40 PRINT_STAGES=1 edits 2000 height`）：
 
 | 页面 | 阶段 | 7fa3b81b4 | 本次 |
 | --- | --- | ---: | ---: |
@@ -359,7 +375,7 @@ painter 段（`nana-text-paint-benchmark --workload reflow`，交替 8 轮读最
 | 简单页 42 001 盒 | 整帧 | 1 212 | 1 245 |
 | 控件页 | text 整帧 | 23.2 | 23.5 |
 
-混合页是控件页每个奇数格的按钮换成关着的 Select、每行第一格换成一段 Markdown（Markdown 那一格要用 `--features rich-text` 构建临时副本，提交的基准只带 Select）。简单页没有 visual，两边走同一条路径，差别在噪声内。混合页的无障碍仍是大头：Select 从几何派生虚拟节点，是钉住的盒子（3.7）。
+混合页是控件页每个奇数格的按钮换成关着的 Select、每行第一格换成一段 Markdown（Markdown 那一格要用 `--features rich-text` 构建临时副本，提交的基准只带 Select）。简单页没有 visual，两边走同一条路径，差别在噪声内。混合页的无障碍仍是大头：Select 从几何派生虚拟节点，当时是钉住的盒子（关着的 Select 在下面的「无障碍滚动与 Select」一步起不再钉住）。
 
 相对几何端到端（2026-11-04）：改造前 ba8ba044f 对最终的 2f0479886，同一份 `perf/micro/stack-depth` 各自构建 release，交替 8 轮、每轮交换先后读最小值（负载 2.4–3.1，µs，`PRINT_STAGES=1 edits 2000 …`）：
 
@@ -378,7 +394,7 @@ painter 段（`nana-text-paint-benchmark --workload reflow`，交替 8 轮读最
 
 每次改行高的指令（`/usr/bin/time -l`，`RUNS=240` 减 `RUNS=40` 再除以 200）：简单页 326 M → 23 M，控件页 834 M → 25 M。改行高两页都从几十毫秒降到约 1.2 ms，与 Taffy 单做布局（约 0.48 ms）同一数量级；改宽度 0.80 → 0.13 ms；改控件文字持平（差别在 1–1.5 µs，噪声量级）。控件页的 ba8ba044f 一行包含当时按钮、输入框每次平移都重新提取的代价。混合页（`MIXED=1`）在 ba8ba044f 上不存在，没有端到端数字，见上一段。
 
-相对几何收尾·无障碍滚动与 Select（2026-11-04）：相对 bounds 在只有平移、滚动和正缩放的链上由本地偏移算出（`(a·(x − sx), d·(y − sy), a·w, d·h)`），冷投影与保留路径同一个公式，滚动过的容器、缩放的祖先下平移只投影根，下面只看钉子；滚动不再钉住，关着的 Select 不再钉住；盒子没变的裁剪种子（内容变长的滚动容器）不再整棵子树重投影（新增 `SystemWork::layout_reshaped`）；滚动下投影一行时，子节点有无视口盒直接用父节点的变换判断。做法见 [relative-geometry.md](relative-geometry.md) 3.7。基准新增 `SCROLLED=1`：行放进一个窗口高的滚动容器，第一帧后滚到 12 345.5 px 再编辑。与 21f8058fa（同一份打了 `SCROLLED` 补丁的基准源码）交替 8 轮、每轮交换先后读最小值（负载 6.6–10.8，µs，`PRINT_STAGES=1 edits 2000 …`）：
+相对几何收尾·无障碍滚动与 Select（2026-11-04）：相对 bounds 在只有平移、滚动和正缩放的链上由本地偏移算出（`(a·(x − sx), d·(y − sy), a·w, d·h)`），冷投影与保留路径同一个公式，滚动过的容器、缩放的祖先下平移只投影根，下面只看钉子；滚动不再钉住，关着的 Select 不再钉住；盒子没变的裁剪种子（内容变长的滚动容器）不再整棵子树重投影（新增 `SystemWork::layout_reshaped`）；滚动下投影一行时，子节点有无视口盒直接用父节点的变换判断。做法见 [相对几何 · 无障碍](relative-geometry.md#_7-无障碍)。基准新增 `SCROLLED=1`：行放进一个窗口高的滚动容器，第一帧后滚到 12 345.5 px 再编辑。与 21f8058fa（同一份打了 `SCROLLED` 补丁的基准源码）交替 8 轮、每轮交换先后读最小值（负载 6.6–10.8，µs，`PRINT_STAGES=1 edits 2000 …`）：
 
 | 页面 | 编辑 | 阶段 | 21f8058fa | 本次 |
 | --- | --- | --- | ---: | ---: |
@@ -396,7 +412,7 @@ painter 段（`nana-text-paint-benchmark --workload reflow`，交替 8 轮读最
 
 控件页改行高单独再交替 8 轮（负载 5–7）：无障碍 383 → 354、整帧 1 410 → 1 346，上表的差别是噪声（同一轮里布局、提取这些没改的阶段也一起变慢）。混合页这里不带 Markdown（提交的基准只带 Select），和上一段的 3.7 ms 不是同一个页面，但同样是 Select 钉子的代价。滚动页剩下的大头是命中测试（15–31 ms，两边相同），无障碍剩下的是每个平移行在滚动链下的自身投影。
 
-相对几何收尾·滚动容器（2026-11-04）：滚动容器里平移的行原地重建自己的命中条目（条件从「普通条目」放宽为「交给子节点的变换、滚动没变」，种子取父条目现在的变换，再按上面的 `shift` 换回索引的空间），原来滚动容器带裁剪和 `shift`、行的变换带滚动，一次改行高整棵重建滚动容器子树；剔除按图元自己的不透明度组判断（打开 Popover 不再多报触发器），平移量过继承变换的线性部分；无障碍子节点筛选每个父节点只问一次链。做法见 [relative-geometry.md](relative-geometry.md) 3.4、3.5、3.7。与 40b898c12（同一份基准源码，各自 release 构建、独立 target）交替 8 轮、每轮交换先后读最小值（负载 3.9–7.4，µs，`PRINT_STAGES=1 edits 2000 …`）：
+相对几何收尾·滚动容器（2026-11-04）：滚动容器里平移的行原地重建自己的命中条目（条件从「普通条目」放宽为「交给子节点的变换、滚动没变」，种子取父条目现在的变换，再按上面的 `shift` 换回索引的空间），原来滚动容器带裁剪和 `shift`、行的变换带滚动，一次改行高整棵重建滚动容器子树；剔除按图元自己的不透明度组判断（打开 Popover 不再多报触发器），平移量过继承变换的线性部分；无障碍子节点筛选每个父节点只问一次链。做法见 [相对几何 · 命中索引](relative-geometry.md#_4-命中索引)、[相对几何 · 提取与 Scene](relative-geometry.md#_5-提取与-scene)与 [相对几何 · 无障碍](relative-geometry.md#_7-无障碍)。与 40b898c12（同一份基准源码，各自 release 构建、独立 target）交替 8 轮、每轮交换先后读最小值（负载 3.9–7.4，µs，`PRINT_STAGES=1 edits 2000 …`）：
 
 | 页面 | 编辑 | 阶段 | 40b898c12 | 本次 |
 | --- | --- | --- | ---: | ---: |
@@ -413,7 +429,7 @@ painter 段（`nana-text-paint-benchmark --workload reflow`，交替 8 轮读最
 
 滚动页的布局、提取也一起降了一半以上：原来每次编辑重建 4–6 万个命中条目，分配与缓存的压力落到了同一帧的其它阶段。普通页的命中多了约 8 µs（每个原地重建的行多一次向上取 `shift` 和逃逸判定），整帧在噪声内。滚动页比普通页还多约 0.35 ms：滚动容器内容范围的整树重填（O(行数)）和每个平移行在滚动链下的无障碍投影。
 
-相对几何收尾·内容范围（2026-11-04）：滚动容器内容范围的索引（`ContentBoundsIndex`）只读移动了的子节点，叶子原地写入、上面的节点按层合并一次，不再在一半以上子节点移动时整树重填；只换了自己盒子的条目一次查表就地结算；无障碍子节点筛选把父节点的变换提到循环外；`holds_line_box_in` 每个盒子只读一遍子节点。做法见 [relative-geometry.md](relative-geometry.md) 3.1 与第 5 节。与 9600e796a（同一份基准源码，各自 release 构建、独立 target）交替 8 轮、每轮交换先后读最小值（负载 4.4–5.7，µs，`PRINT_STAGES=1 edits 2000 …`）；每次编辑指令取 `RUNS=2040` 与 `RUNS=40` 两次 `time -l` 之差除以 2 000，跑两遍：
+相对几何收尾·内容范围（2026-11-04）：滚动容器内容范围的索引（`ContentBoundsIndex`）只读移动了的子节点，叶子原地写入、上面的节点按层合并一次，不再在一半以上子节点移动时整树重填；只换了自己盒子的条目一次查表就地结算；无障碍子节点筛选把父节点的变换提到循环外；`holds_line_box_in` 每个盒子只读一遍子节点。做法见 [相对几何 · 布局](relative-geometry.md#_3-布局)。与 9600e796a（同一份基准源码，各自 release 构建、独立 target）交替 8 轮、每轮交换先后读最小值（负载 4.4–5.7，µs，`PRINT_STAGES=1 edits 2000 …`）；每次编辑指令取 `RUNS=2040` 与 `RUNS=40` 两次 `time -l` 之差除以 2 000，跑两遍：
 
 | 页面 | 编辑 | 阶段 | 9600e796a | 本次 |
 | --- | --- | --- | ---: | ---: |
@@ -430,9 +446,9 @@ painter 段（`nana-text-paint-benchmark --workload reflow`，交替 8 轮读最
 | 控件页 `SCROLLED=1` | height | 整帧 | 1 693 | 1 540 |
 | 控件页 `SCROLLED=1` | height | 每次编辑指令 | 30.3 M | 27.9 M |
 
-滚动页比普通页多出的部分从约 0.36 ms 降到约 0.22 ms（简单页）、0.39 → 0.23 ms（控件页）。剩下的是每个移动行一次的内容范围叶子写入、滚动链下子节点的视口盒判定和列表基线问的行盒（每行一次），都是 O(行数) 的常数项，原因见 relative-geometry.md 第 5 节末。
+滚动页比普通页多出的部分从约 0.36 ms 降到约 0.22 ms（简单页）、0.39 → 0.23 ms（控件页）。剩下的是每个移动行一次的内容范围叶子写入、滚动链下子节点的视口盒判定和列表基线问的行盒（每行一次），都是 O(行数) 的常数项，原因见 [相对几何 · 已知限制](relative-geometry.md#_10-已知限制)。
 
-相对几何收尾·无障碍变换（2026-11-04）：`AccessibilityNode` 自带 `transform`（AccessKit 的 `transform`），旋转、斜切、翻转的盒子发出自己的变换，子孙在它里面按本地偏移放置；旋转过的祖先下平移只投影根，转过的盒子和它下面的盒子不再是钉子。做法见 [relative-geometry.md](relative-geometry.md) 3.7。基准加了 `ROTATED=1`（行放在转了 0.05 rad 的列里）。与 9f4fc87be（同一份基准源码，各自 release 构建、独立 target）交替 8 轮、每轮交换先后读最小值（负载 4.5–5.8，µs，`PRINT_STAGES=1 edits 2000 …`）：
+相对几何收尾·无障碍变换（2026-11-04）：`AccessibilityNode` 自带 `transform`（AccessKit 的 `transform`），旋转、斜切、翻转的盒子发出自己的变换，子孙在它里面按本地偏移放置；旋转过的祖先下平移只投影根，转过的盒子和它下面的盒子不再是钉子。做法见 [相对几何 · 无障碍](relative-geometry.md#_7-无障碍)。基准加了 `ROTATED=1`（行放在转了 0.05 rad 的列里）。与 9f4fc87be（同一份基准源码，各自 release 构建、独立 target）交替 8 轮、每轮交换先后读最小值（负载 4.5–5.8，µs，`PRINT_STAGES=1 edits 2000 …`）：
 
 | 页面 | 编辑 | 阶段 | 9f4fc87be | 本次 |
 | --- | --- | --- | ---: | ---: |
@@ -444,9 +460,9 @@ painter 段（`nana-text-paint-benchmark --workload reflow`，交替 8 轮读最
 | 简单页 `ROTATED=1` | height | 整帧 | 27 075 | 16 786 |
 | 控件页 | text | 整帧 | 23.0 | 22.3 |
 
-控件页 `CONTROLS=1 ROTATED=1` 另与 66cb370c0 交替 8 轮（负载 3.3–4.9）：无障碍 17 668 → 1 286、整帧 50 706 → 34 715。`SCROLLED=1` 那一行是另一轮 8 次交替（负载 5.3–5.8），无障碍多约 20 µs、每次编辑指令 26.47 M → 26.93 M（`RUNS=1040` 与 `RUNS=40` 两次 `time -l` 之差除以 1 000，+1.7%）；`sample` 看不出新的热点，多出的落在每个移动行的投影本身（节点多了 28 B 的 `transform`），先记下。旋转页剩下的大头是命中（约 15 ms，两边相同）：命中原地重建只限线性部分是恒等的条目，旋转下平移仍整棵修补（relative-geometry.md 3.4）。——已由下一段的收尾·命中变换解决。
+控件页 `CONTROLS=1 ROTATED=1` 另与 66cb370c0 交替 8 轮（负载 3.3–4.9）：无障碍 17 668 → 1 286、整帧 50 706 → 34 715。`SCROLLED=1` 那一行是另一轮 8 次交替（负载 5.3–5.8），无障碍多约 20 µs、每次编辑指令 26.47 M → 26.93 M（`RUNS=1040` 与 `RUNS=40` 两次 `time -l` 之差除以 1 000，+1.7%）；`sample` 看不出新的热点，多出的落在每个移动行的投影本身（节点多了 28 B 的 `transform`），先记下。旋转页剩下的大头是命中（约 15 ms，两边相同）：命中原地重建只限线性部分是恒等的条目，旋转下平移仍整棵修补（[相对几何 · 命中索引](relative-geometry.md#_4-命中索引)）。——已由下一段的收尾·命中变换解决。
 
-相对几何收尾·命中变换（2026-11-05）：自身 2D 变换有缩放、旋转、斜切或翻转的盒子（一路没有透视和 3D 上下文）把自己的布局坐标交给子节点（`HitEntry.local_children`），子孙的命中条目不含它和它上面的变换；转过的子树里平移只重建根条目，转过的盒子自己被撑高（变换原点跟着动）也只重建它自己。做法见 [relative-geometry.md](relative-geometry.md) 3.4。与 1e9322016（同一份基准源码，各自 release 构建、独立 target）交替 8 轮、每轮交换先后读最小值（负载 2.0–2.7，µs，`PRINT_STAGES=1 edits 2000 …`）：
+相对几何收尾·命中变换（2026-11-05）：自身 2D 变换有缩放、旋转、斜切或翻转的盒子（一路没有透视和 3D 上下文）把自己的布局坐标交给子节点（`HitEntry.local_children`），子孙的命中条目不含它和它上面的变换；转过的子树里平移只重建根条目，转过的盒子自己被撑高（变换原点跟着动）也只重建它自己。做法见 [相对几何 · 命中索引](relative-geometry.md#_4-命中索引)。与 1e9322016（同一份基准源码，各自 release 构建、独立 target）交替 8 轮、每轮交换先后读最小值（负载 2.0–2.7，µs，`PRINT_STAGES=1 edits 2000 …`）：
 
 | 页面 | 编辑 | 阶段 | 1e9322016 | 本次 |
 | --- | --- | --- | ---: | ---: |
@@ -464,7 +480,7 @@ painter 段（`nana-text-paint-benchmark --workload reflow`，交替 8 轮读最
 
 改行高时旋转页重建的命中条目 42 002 → 1 013（`PRINT_COUNTERS=1`，与普通页的 1 012 只差转过的列自己）。旋转页的布局和无障碍也少了约 0.35 ms：代码没动，同一进程里不再每帧重建 4.2 万个条目、写一遍索引，缓存和分配器的状态不同，记为观察。`SCROLLED=1` 的命中多出的约 18 µs 在另一轮 8 次交替里是 261 → 263，整帧两轮都持平，看作噪声。第一版补丁里，原地重建和补丁的种子分两次往上走（`find_hit_transform` 与 `child_shift`），简单页命中多约 16 µs；合成一次（`live_child_seed`）后再测持平（上表）。
 
-相对几何收尾·改变换（2026-11-05）：改一个盒子的 `transform` 样式只标它自己。命中只重建交出本地坐标的条目自己，无障碍在交给子孙的空间不变（前后都转，或前后同一对正立缩放系数）时只投影它和它下面的钉子（`SystemWork::transform_kept`），Scene 本来就只重新提取它。做法见 [relative-geometry.md](relative-geometry.md) 3.4、3.5、3.7。基准新增 `edits 2000 transform` / `scale`：每次改行所在的列（`ROTATED=1` 是转过的列，转角 0.05 ↔ 0.06 rad；普通页是根列，0.01 ↔ 0.02 rad；`scale` 改成缩放 1.01 ↔ 1.02）。与 54e3425e7（同一份基准源码，各自 release 构建、独立 target）交替 8 轮、每轮交换先后读最小值（负载 2.3–2.9，µs，`PRINT_STAGES=1 edits 2000 …`）：
+相对几何收尾·改变换（2026-11-05）：改一个盒子的 `transform` 样式只标它自己。命中只重建交出本地坐标的条目自己，无障碍在交给子孙的空间不变（前后都转，或前后同一对正立缩放系数）时只投影它和它下面的钉子（`SystemWork::transform_kept`），Scene 本来就只重新提取它。做法见 [相对几何 · 命中索引](relative-geometry.md#_4-命中索引)、[相对几何 · 提取与 Scene](relative-geometry.md#_5-提取与-scene)与 [相对几何 · 无障碍](relative-geometry.md#_7-无障碍)。基准新增 `edits 2000 transform` / `scale`：每次改行所在的列（`ROTATED=1` 是转过的列，转角 0.05 ↔ 0.06 rad；普通页是根列，0.01 ↔ 0.02 rad；`scale` 改成缩放 1.01 ↔ 1.02）。与 54e3425e7（同一份基准源码，各自 release 构建、独立 target）交替 8 轮、每轮交换先后读最小值（负载 2.3–2.9，µs，`PRINT_STAGES=1 edits 2000 …`）：
 
 | 页面 | 编辑 | 阶段 | 54e3425e7 | 本次 |
 | --- | --- | --- | ---: | ---: |
@@ -485,7 +501,7 @@ painter 段（`nana-text-paint-benchmark --workload reflow`，交替 8 轮读最
 
 根列和改缩放只省下命中：页面根从视口外接框来，转起来子孙也从外接框来；缩放系数变了，子孙的 bounds 是乘了系数的偏移，两者无障碍仍整棵重投影（约 15 ms）。原来整帧里命中、无障碍之外约 4.5 ms 是给 4.2 万个节点逐个标脏和排空，随整棵标记一起没了。
 
-相对几何收尾·行盒记忆（2026-11-05）：行盒记忆只沿可能改变答案的种子往上清（`may_move_line_boxes`）：只改尺寸、间距、对齐、滚动、变换、指针输入的种子不清，依赖边带进前沿的节点不清；结构性种子（拓扑、可见性、原因未知）照旧沿所有受影响节点清。每遍布局后在测试与 `layout-verify` 下把留下的每条记忆与新走一遍比对。做法、守卫与变异实验见 [relative-geometry.md](relative-geometry.md) 第 5 节。临时计数（每次编辑重新结算的盒子数，`RUNS=41`）：改行高时简单页 3 → 0、`SCROLLED=1` 5 → 0、控件页 3 → 0、`CONTROLS=1 SCROLLED=1` 5 → 0、混合页 3 → 0、`ROTATED=1` 3 → 0，改宽度 2 → 0，改控件文字 2 → 2（文字是答案的输入）；每结算一个列表要读它的 2 000 行，`sample` 里 `holds_line_box_in` 从 30 个样本降到 0。与 29f4c3e4d（同一份基准源码，各自 release 构建、独立 target）交替 8 轮、每轮交换先后读最小值（负载 1.9–2.1，µs，`PRINT_STAGES=1 edits 2000 …`）：
+相对几何收尾·行盒记忆（2026-11-05）：行盒记忆只沿可能改变答案的种子往上清（`may_move_line_boxes`）：只改尺寸、间距、对齐、滚动、变换、指针输入的种子不清，依赖边带进前沿的节点不清；结构性种子（拓扑、可见性、原因未知）照旧沿所有受影响节点清。每遍布局后在测试与 `layout-verify` 下把留下的每条记忆与新走一遍比对。做法与守卫见 [相对几何 · 布局](relative-geometry.md#_3-布局)，变异实验见 d8eabffea 的提交信息。临时计数（每次编辑重新结算的盒子数，`RUNS=41`）：改行高时简单页 3 → 0、`SCROLLED=1` 5 → 0、控件页 3 → 0、`CONTROLS=1 SCROLLED=1` 5 → 0、混合页 3 → 0、`ROTATED=1` 3 → 0，改宽度 2 → 0，改控件文字 2 → 2（文字是答案的输入）；每结算一个列表要读它的 2 000 行，`sample` 里 `holds_line_box_in` 从 30 个样本降到 0。与 29f4c3e4d（同一份基准源码，各自 release 构建、独立 target）交替 8 轮、每轮交换先后读最小值（负载 1.9–2.1，µs，`PRINT_STAGES=1 edits 2000 …`）：
 
 | 页面 | 编辑 | 阶段 | 29f4c3e4d | 本次 |
 | --- | --- | --- | ---: | ---: |
@@ -501,7 +517,7 @@ painter 段（`nana-text-paint-benchmark --workload reflow`，交替 8 轮读最
 
 混合页、`ROTATED=1` 的布局差在另一轮 8 次交替（负载 1.8–2.0）里是 486 → 474、462 → 462，看作噪声；那一轮 `SCROLLED=1` 布局 530 → 505、整帧 1 388 → 1 347，简单页整帧 1 118 → 1 114。`SCROLLED=1` 与普通页的整帧差仍约 0.23 ms：无障碍多约 165 µs（滚动链下每个子节点的视口盒判定），布局多约 45 µs（内容范围每个移动行一次叶子写入、`record_layout_origin`），命中多约 15 µs。
 
-相对几何收尾·视口框架与缩放（2026-11-05）：从视口来的盒子（页面根、`fixed`、`sticky`、逃逸的绝对定位）在 2D 链上被转过或缩放过时发出自己的 `transform`，带正缩放的盒子发出 `diag(a, d)`，子孙都用未乘系数的本地偏移，于是改它们的转角或缩放系数只投影它们自己和下面的钉子；滚动链下的子节点筛选每个父节点取一次映射，变换链对普通盒子直接取父节点的映射，投影前给记忆表留容量。做法、守卫与变异实验见 [relative-geometry.md](relative-geometry.md) 3.7 与第 5 节。与 d8eabffea（同一份基准源码，各自 release 构建、独立 target）交替 8 轮、每轮交换先后读最小值（负载 2.3–3.1，µs，`PRINT_STAGES=1 edits 2000 …`）：
+相对几何收尾·视口框架与缩放（2026-11-05）：从视口来的盒子（页面根、`fixed`、`sticky`、逃逸的绝对定位）在 2D 链上被转过或缩放过时发出自己的 `transform`，带正缩放的盒子发出 `diag(a, d)`，子孙都用未乘系数的本地偏移，于是改它们的转角或缩放系数只投影它们自己和下面的钉子；滚动链下的子节点筛选每个父节点取一次映射，变换链对普通盒子直接取父节点的映射，投影前给记忆表留容量。做法与守卫见 [相对几何 · 无障碍](relative-geometry.md#_7-无障碍)，变异实验见 02c09ef2a、736e1b51b 的提交信息与当时版本的 relative-geometry.md。与 d8eabffea（同一份基准源码，各自 release 构建、独立 target）交替 8 轮、每轮交换先后读最小值（负载 2.3–3.1，µs，`PRINT_STAGES=1 edits 2000 …`）：
 
 | 页面 | 编辑 | 阶段 | d8eabffea | 本次 |
 | --- | --- | --- | ---: | ---: |
@@ -519,7 +535,18 @@ painter 段（`nana-text-paint-benchmark --workload reflow`，交替 8 轮读最
 
 `SCROLLED=1` 和普通页的无障碍差从约 171 µs 降到约 88 µs。分开量（`SCROLLED=1`，同一轮交替 6 次）：只改子节点筛选和变换链快路径时无障碍约 391–399 µs，再给记忆表留容量降到 330–337 µs。命中段在 `SCROLLED=1`、混合页、`ROTATED=1` 改行高时多约 7–12 µs（255 → 266、261 → 271、238 → 250），命中代码没动；不留容量的构建命中与基线持平，记为分配器状态的观察，整帧仍各少约 0.1 ms。
 
-相对几何收尾·打开的 Select（2026-11-05）：打开的 Select 的组件几何改为字段本地坐标，平移时只在菜单表面盒子变了（换边、截短）才重新提取。做法见 [relative-geometry.md](relative-geometry.md) 3.5。基准新增 `OPEN_SELECT=1`（与 `CONTROLS=1 MIXED=1` 一起用：编辑在第二行，第四行第二格是打开的 Select，在视口里、每次编辑都被平移，约 2 000 行移动；`OPEN_SELECT=closed` 是同一页关着）。与 6e21c8579（同一份基准源码，各自 release 构建、独立 target）交替 8 轮、每轮交换先后读最小值（负载 3.0–4.5，µs，`PRINT_STAGES=1 edits 2000 …`）：
+相对几何收尾·子节点放置与提取记录（2026-11-05，6e21c8579）：只有子节点放置变了的布局结果也标 RENDER（修正：Scene 原来一直留着旧的子节点放置）。做法见 [相对几何 · 布局](relative-geometry.md#_3-布局)。与 736e1b51b（同一份基准源码，各自 release 构建、独立 target）交替 8 轮、每轮交换先后读最小值（负载 4.3–5.1，µs，`PRINT_STAGES=1 edits 2000 …`）：
+
+| 页面 | 编辑 | 阶段 | 736e1b51b | 本次 |
+| --- | --- | --- | ---: | ---: |
+| 简单页 42 001 盒 | height | 提取 / 整帧 | 55 / 1 091.5 | 53 / 1 092.3 |
+| 控件页 62 001 节点 | height | 提取 / 整帧 | 58 / 1 171.2 | 59 / 1 174.9 |
+| 简单页 `SCROLLED=1` | height | 提取 / 整帧 | 56 / 1 251.6 | 56 / 1 254.2 |
+| 控件页 | text | 整帧 | 21.3 | 21.6 |
+
+都在噪声内：这些页面里被改的行的父节点自己的盒子也变了，本来就重新提取。
+
+相对几何收尾·打开的 Select（2026-11-05）：打开的 Select 的组件几何改为字段本地坐标，平移时只在菜单表面盒子变了（换边、截短）才重新提取。做法见 [相对几何 · 提取与 Scene](relative-geometry.md#_5-提取与-scene)。基准新增 `OPEN_SELECT=1`（与 `CONTROLS=1 MIXED=1` 一起用：编辑在第二行，第四行第二格是打开的 Select，在视口里、每次编辑都被平移，约 2 000 行移动；`OPEN_SELECT=closed` 是同一页关着）。与 6e21c8579（同一份基准源码，各自 release 构建、独立 target）交替 8 轮、每轮交换先后读最小值（负载 3.0–4.5，µs，`PRINT_STAGES=1 edits 2000 …`）：
 
 | 页面 | 编辑 | 阶段 | 6e21c8579 | 本次 |
 | --- | --- | --- | ---: | ---: |
@@ -533,6 +560,8 @@ painter 段（`nana-text-paint-benchmark --workload reflow`，交替 8 轮读最
 | 控件页 | text | 整帧 | 21.8 | 21.2 |
 
 两份构建打开与关着的差都在噪声内（同一构建两种页面之差 ±50 µs，与两份构建之差同量级）；`RUNS=240` 与 `RUNS=40` 两次 `time -l` 之差除以 200，每次编辑约 4 750 万条指令，打开与关着之差在两次测量之间就波动 ±30 万条，量不出这一个节点。收益看测试的计数：3 个选项的打开的 Select 每次没换边的平移原来重建 11 个图元，现在 0。
+
+节点空间分类与原地改尺寸（2026-11-05）：节点空间分类 `NodeSpace`（be0a703c8）是重构，与 1ab1855eb 在 81 + 13 帧代表性页面上导出的无障碍 delta 与全树、命中网格、Scene 图元与绘制、剔除和工作计数逐字节相同，`stack-depth` 交替 8 轮持平；自带变换的盒子原地改尺寸一律当遍历根（596930d22）是正确性修正，`stack-depth` 交替 8 轮持平。之后拆分 `world/accessibility/`、`world/hit_test/` 与 `nana-ui-scene/src/scene/`（e443a2a1e、e41729572、138c79333）只搬移代码，公开 API 与快照输出不变。
 
 已做的（2026-11-02）：发布阶段每个结果的四个切片在复用的暂存表里建好、按最终长度一次分配，空切片不分配（`Arc::<[T]>::default()`），按父分组的子集改为一张排序表，不再每个父节点一个 `Vec`；意图缓存键的环境哈希从 SipHash 换成固定种子的 foldhash，`seeded_intrinsic` 换成 hashbrown；`ConstraintClass` 的相等与哈希一趟读出归一化后的标签与值，不再各自归一化两遍；`RetainedIntrinsicMetrics` 每个内容的变体表按一增长（首个 push 原本预留 4 个，320 B 只用 80 B）；`MeasurePlanSlots` 的两个槽装箱（原本每个容器 528 B 内联在表里，通常只用一个槽）；整页 pass 按节点数和容器数预先给各表留好容量；锚点记忆表在父节点已结算时不再分配。
 
