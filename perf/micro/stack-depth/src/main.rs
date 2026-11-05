@@ -534,11 +534,16 @@ fn nana_edits(rows: usize, cells: usize, edit: &str, runs: usize) -> (f64, f64) 
 /// nodes into it in one `mount_view` under the target leaf (`shape`
 /// `deep`: a chain `size` columns deep; `wide`: `size` sibling columns as
 /// the view's roots; `under-deep`: a chain 400 deep first, then `size`
-/// siblings at its bottom). Returns the least mount (build and insert
-/// commits) and the least frame after it, in microseconds.
+/// siblings at its bottom, beside its text; `CHAIN` sets its depth;
+/// `under-deep-at-once`: that tree mounted in one go). Returns the least
+/// mount (build and insert commits) and the least frame after it, in
+/// microseconds. `PRINT_STAGES=1` adds the frame's least time per stage,
+/// `PRINT_COUNTERS=1` its work counters.
 fn nana_insert(rows: usize, size: usize, shape: &str, runs: usize) -> (f64, f64) {
     let (mut mount, mut frame) = (f64::INFINITY, f64::INFINITY);
-    for _ in 0..runs {
+    // The least time each stage of the frame after the mount took, by stage.
+    let mut least: Vec<(FrameStage, f64)> = Vec::new();
+    for run in 0..runs {
         let document = DocumentId::new(1).unwrap();
         let mut runtime = RuntimeDocument::new(document);
         let mut target = nana_page(runtime.context_mut(), document, rows, 10);
@@ -553,10 +558,13 @@ fn nana_insert(rows: usize, size: usize, shape: &str, runs: usize) -> (f64, f64)
             }
             view
         };
+        // `CHAIN=<depth>`: the depth of `under-deep`'s chain (400).
+        let depth = std::env::var("CHAIN").map_or(400, |depth| depth.parse().unwrap());
+        let column = || widget(Stack::column(0.0).with_layout(|l| *l = padded()));
         if shape == "under-deep" {
             let made = runtime
                 .context_mut()
-                .mount_view(target, move || chain(400))
+                .mount_view(target, move || chain(depth))
                 .unwrap();
             runtime.flush(viewport, &mut FixedShaper).unwrap();
             let mut bottom = made.roots()[0];
@@ -588,14 +596,29 @@ fn nana_insert(rows: usize, size: usize, shape: &str, runs: usize) -> (f64, f64)
                     .mount_view(target, move || chain(size))
                     .unwrap();
             }
+            "under-deep-at-once" => {
+                // `under-deep`'s tree mounted in one go: what its frame
+                // after compares with.
+                runtime
+                    .context_mut()
+                    .mount_view(target, move || {
+                        let bottom = std::iter::once(text("leaf").into_any())
+                            .chain((0..size).map(|_| column().into_any()))
+                            .collect::<Vec<_>>();
+                        let mut view = column().children(bottom).into_any();
+                        for _ in 1..depth {
+                            view = column().children((view,)).into_any();
+                        }
+                        view
+                    })
+                    .unwrap();
+            }
             "wide" | "under-deep" => {
                 runtime
                     .context_mut()
                     .mount_view(target, move || {
                         (0..size)
-                            .map(|_| {
-                                widget(Stack::column(0.0).with_layout(|l| *l = padded())).into_any()
-                            })
+                            .map(|_| column().into_any())
                             .collect::<Vec<_>>()
                     })
                     .unwrap();
@@ -606,6 +629,50 @@ fn nana_insert(rows: usize, size: usize, shape: &str, runs: usize) -> (f64, f64)
         let start = Instant::now();
         runtime.flush(viewport, &mut FixedShaper).unwrap();
         frame = frame.min(start.elapsed().as_secs_f64() * 1e6);
+        for timing in &runtime.context().last_frame_profile().stages {
+            let micros = timing.duration.as_secs_f64() * 1e6;
+            match least.iter_mut().find(|(stage, _)| *stage == timing.stage) {
+                Some((_, held)) => *held = held.min(micros),
+                None => least.push((timing.stage, micros)),
+            }
+        }
+        if run + 1 == runs && std::env::var_os("PRINT_COUNTERS").is_some() {
+            let w = runtime.context().last_work_counters();
+            eprintln!(
+                "{shape} {size}: edges {} stopped {} frontier measure {} place {} total {} changed {} measure {} hits {} misses {} place {} reused {} changed {} origin {} commits {} children {} seeds {} full {} local {} extracted {} render changed {} a11y {} hit rebuilt {:?} moved {}",
+                w.layout_dependency_edges_visited,
+                w.layout_propagations_stopped,
+                w.layout_frontier_nodes_measure,
+                w.layout_frontier_nodes_placement,
+                w.entities_total,
+                w.entities_changed,
+                w.layout_measure_nodes,
+                w.layout_measure_cache_hits,
+                w.layout_measure_cache_misses,
+                w.layout_placement_nodes,
+                w.layout_result_reused,
+                w.layout_result_changed,
+                w.layout_origin_only_updates,
+                w.layout_delta_commits,
+                w.layout_result_children_visited,
+                w.layout_frontier_seeds,
+                w.layout_full_document_fallbacks,
+                w.layout_local_subtree_fallbacks,
+                w.render_nodes_extracted,
+                w.render_nodes_changed,
+                w.accessibility_nodes_updated,
+                w.hit_test_nodes_rebuilt,
+                w.hit_test_entries_moved,
+            );
+        }
+    }
+    if std::env::var_os("PRINT_STAGES").is_some() {
+        let stages: Vec<String> = least
+            .iter()
+            .filter(|(_, micros)| *micros > 0.0)
+            .map(|(stage, micros)| format!("{stage:?} {micros:.0}"))
+            .collect();
+        eprintln!("{shape} {size}: least {} (µs)", stages.join(", "));
     }
     (mount, frame)
 }

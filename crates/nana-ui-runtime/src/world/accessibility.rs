@@ -60,6 +60,7 @@ impl UiWorld {
     }
 
     fn project_nodes(&self, ids: &[StableNodeId], relative: bool) -> Vec<AccessibilityNode> {
+        let _origins = self.remember_page_origins();
         let mut memo = ProjectionMemo::default();
         let plain = ids.len() >= 64 && self.accessibility_tree_is_plain();
         let mut projected = Vec::with_capacity(ids.len());

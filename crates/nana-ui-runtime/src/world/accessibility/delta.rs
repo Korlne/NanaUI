@@ -32,6 +32,8 @@ impl UiWorld {
         // sorting a flat vec once yields the identical sequence for far less.
         #[cfg(any(test, feature = "layout-verify"))]
         self.nodes.check_node_spaces();
+        // A subtree mounted deep in the page sums its depth once.
+        let _origins = self.remember_page_origins();
         let mut affected = work.accessibility.clone();
         // A node named by another one's text is projected again with it.
         let named = affected

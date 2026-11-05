@@ -12,6 +12,7 @@ mod input;
 mod motion;
 mod mutation;
 mod overlay_index;
+pub(crate) mod page_origins;
 mod presentation;
 pub use i18n::{LocaleGenerations, LocaleScope};
 #[cfg(feature = "controls")]
@@ -1050,6 +1051,8 @@ pub struct UiWorld {
     /// node, or something else on the page is read: geometry that depends on
     /// where the node stands.
     geometry_read_page: Cell<bool>,
+    /// Page origins a read-only pass remembers (`world/page_origins.rs`).
+    page_origins: RefCell<page_origins::PageOrigins>,
     /// Set while a layout move marks its box: the INPUT it marks is the
     /// move's alone (no [`DirtyMask::INPUT_ELSEWHERE`]).
     marking_layout_move: bool,
@@ -1341,6 +1344,7 @@ impl UiWorld {
             render_epoch: Cell::new(0),
             geometry_frame: Cell::new(None),
             geometry_read_page: Cell::new(false),
+            page_origins: RefCell::default(),
             marking_layout_move: false,
             #[cfg(any(test, feature = "layout-verify"))]
             accessibility_shipped: Default::default(),
@@ -3996,6 +4000,26 @@ impl UiWorld {
     }
 
     pub(super) fn record_layout_origin(&self, record: &NodeRecord) -> [f32; 2] {
+        if let Some(origin) = self.remembered_page_origin(record) {
+            #[cfg(any(test, feature = "layout-verify"))]
+            {
+                #[cfg(test)]
+                let walked = page_origins::steps::uncounted(|| self.walked_layout_origin(record));
+                #[cfg(not(test))]
+                let walked = self.walked_layout_origin(record);
+                assert!(
+                    origin[0].to_bits() == walked[0].to_bits()
+                        && origin[1].to_bits() == walked[1].to_bits(),
+                    "a remembered page origin {origin:?} is the walked one {walked:?}"
+                );
+            }
+            return origin;
+        }
+        self.walked_layout_origin(record)
+    }
+
+    /// [`Self::record_layout_origin`], every frame walked.
+    fn walked_layout_origin(&self, record: &NodeRecord) -> [f32; 2] {
         // Deriving a component's geometry in its own coordinates: a chain
         // through that node starts at its origin.
         let frame = self
@@ -4010,6 +4034,8 @@ impl UiWorld {
         let mut cursor = Some(record);
         let mut reached = frame.is_none();
         while let Some(node) = cursor {
+            #[cfg(test)]
+            page_origins::steps::step(page_origins::steps::Walk::PageOrigin);
             if frame.is_some_and(|frame| std::ptr::eq(frame, node)) {
                 reached = true;
                 break;
@@ -7533,6 +7559,7 @@ fn layout_style_invalidation(
     )
 }
 
+mod deep_walk_tests;
 #[cfg(test)]
 mod issue197;
 #[cfg(test)]

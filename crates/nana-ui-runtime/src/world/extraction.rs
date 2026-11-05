@@ -721,6 +721,8 @@ impl UiWorld {
         previous: impl Fn(StableNodeId) -> Option<&'a ExtractedNode>,
     ) -> (Vec<ExtractedNode>, Vec<ExtractedMove>) {
         let epoch = self.render_epoch.get();
+        // A subtree mounted deep in the page sums its depth once.
+        let _origins = self.remember_page_origins();
         let mut memo = AncestorMemo::default();
         let mut extracted = Vec::with_capacity(ids.len());
         let mut moved = Vec::new();
