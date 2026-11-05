@@ -46,6 +46,10 @@ number_input().label("数量").placeholder("0").model(count)
 
 单位跟着语言变时，在视图里绑定 `unit`。标签不再在括号里写单位。
 
+## 对齐
+
+数字默认靠起始边。样式的 `text-align`（`layout.text_align`）决定比框短的数字放在哪：`End` 靠末端（从左往右书写时是右边），`Center` 居中，`Left` / `Right` 按物理方向。光标、选区和点击都在同一处，不必另外换算。比框长的数字不受影响，照旧从起始边显示、聚焦时跟着光标滚动，和 CSS 一样。[TextInput](text-input.md) 单行时同样。
+
 ## 只读
 
 `read_only` 不接受输入。`disabled` 同样不接受。步进按钮是这颗控件自己画的，不是外面再放两个按钮。

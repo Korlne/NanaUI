@@ -6711,14 +6711,51 @@ impl UiWorld {
             // start, as a browser's does once it loses focus: a value longer
             // than the field reads from its beginning, not from the end its
             // caret was left at.
-            let inline = if !writing.inline_reversed() {
+            //
+            // A line shorter than the field sits where the field's
+            // `text-align` puts it, measured from line-left: the start edge
+            // by default, the far one for `end` (or the physical side named),
+            // halfway for `center`. A longer line ignores it, as CSS does, and
+            // scrolls by the rules above.
+            let reversed = writing.inline_reversed();
+            if inline_extent <= content_inline {
+                let gap = content_inline - inline_extent;
+                let align = self
+                    .layout_style(id)
+                    .map_or(nana_ui_core::TextAlignSpec::Start, |style| style.text_align);
+                let from_left = match align {
+                    nana_ui_core::TextAlignSpec::Left => 0.0,
+                    nana_ui_core::TextAlignSpec::Right => gap,
+                    nana_ui_core::TextAlignSpec::Center => gap * 0.5,
+                    nana_ui_core::TextAlignSpec::End => {
+                        if reversed {
+                            0.0
+                        } else {
+                            gap
+                        }
+                    }
+                    nana_ui_core::TextAlignSpec::Start | nana_ui_core::TextAlignSpec::Justify => {
+                        if reversed {
+                            gap
+                        } else {
+                            0.0
+                        }
+                    }
+                };
+                return Some(EditorFrame {
+                    content,
+                    writing,
+                    line,
+                    inline_scroll: -from_left,
+                    block_scroll: -(content_block - line) * 0.5,
+                });
+            }
+            let inline = if !reversed {
                 if focused {
                     (caret_inline - content_inline + 1.0).clamp(0.0, max_inline)
                 } else {
                     0.0
                 }
-            } else if inline_extent <= content_inline {
-                -(content_inline - inline_extent)
             } else if focused {
                 caret_inline.clamp(0.0, max_inline)
             } else {

@@ -43,6 +43,10 @@ text_input().placeholder("新任务").model(draft)
 | `invalid` | `bool` | 值不对，描 Danger 框；在设置行里，原因写在行的 `error` |
 | `character_counter` | `Option<usize>` | 在框内右侧显示已提交字数与上限，默认关闭 |
 
+## 对齐
+
+单行时，比框短的文字按样式的 `text-align` 放：默认靠起始边，`End` 靠末端，`Center` 居中，`Left` / `Right` 按物理方向；光标、选区与点击随之一致。比框长的文字不受影响，照旧滚动。多行编辑器不看它。
+
 ## 字数计数
 
 Rust 组件用 `TextInput::new("").character_counter(40)`；视图用

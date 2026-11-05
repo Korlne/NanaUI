@@ -13772,6 +13772,51 @@ fn character_counter_tracks_committed_unicode_edits_without_limiting_them() {
 }
 
 #[test]
+fn a_short_single_line_value_sits_where_text_align_puts_it() {
+    let shown = |align: Option<nana_ui_core::TextAlignSpec>| {
+        let mut cx = AppContext::new();
+        let doc = DocumentId::new(1).unwrap();
+        let mut field = NumberInput::new(32.0).steppers(false);
+        if let Some(align) = align {
+            field.style.layout_mut().text_align = align;
+        }
+        let input = cx.create_component(doc, field).unwrap();
+        let node = input.stable_id();
+        let mut layout = MutationQueue::new();
+        layout.write_layout(
+            node,
+            crate::LayoutBox {
+                x: 10.0,
+                y: 20.0,
+                width: 150.0,
+                height: 32.0,
+            },
+        );
+        cx.commit_mutations(layout).unwrap();
+        cx.resolve_styles(&[node]).unwrap();
+        cx.shape_text(&[node], &mut crate::MeasureTextShaper)
+            .unwrap();
+        let text = match cx.world().component_geometry(node).unwrap() {
+            crate::ComponentGeometry::TextInput { text, .. } => text,
+            other => panic!("missing editor geometry: {other:?}"),
+        };
+        let content = cx.world().text_input_text_box(node).unwrap();
+        (content, text.bounds)
+    };
+    let (content, start) = shown(None);
+    assert_eq!(start.x, content.x, "the start edge by default");
+    let (content, end) = shown(Some(nana_ui_core::TextAlignSpec::End));
+    assert!(end.width < content.width);
+    assert!(
+        (end.x + end.width - (content.x + content.width)).abs() < 0.5,
+        "`end` puts the line against the far edge: {end:?} in {content:?}"
+    );
+    let (content, centre) = shown(Some(nana_ui_core::TextAlignSpec::Center));
+    let gap = content.width - centre.width;
+    assert!((centre.x - (content.x + gap * 0.5)).abs() < 0.5);
+}
+
+#[test]
 fn character_counter_reserves_the_editor_frame_for_scroll_pointer_and_ime() {
     let mut cx = AppContext::new();
     let doc = DocumentId::new(1).unwrap();
