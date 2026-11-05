@@ -1190,7 +1190,7 @@ impl UiWorld {
             self.mark(id, DirtyMask::RENDER);
         }
         let seeds = (self.layout_seeds_created - seeds_before) as usize;
-        let counts = &mut self.pending_drain_counts;
+        let counts = &mut self.counters.pending_drain_counts;
         if metrics_changed || token_layout_changed || shape_changed {
             counts.theme_to_layout_seeds += seeds;
             counts.theme_metric_dependents_invalidated += dependents;
@@ -1524,13 +1524,16 @@ impl UiWorld {
             );
             let _ = self.mark(id, DirtyMask::STYLE | DirtyMask::TEXT);
         }
-        self.pending_drain_counts
+        self.counters
+            .pending_drain_counts
             .typography_scale_scope_nodes_scanned += scanned;
     }
 
     /// A typography scale was set to the one it already was: nothing visited.
     pub(super) fn note_equivalent_text_scale(&mut self) {
-        self.pending_drain_counts.typography_scale_equivalent_skips += 1;
+        self.counters
+            .pending_drain_counts
+            .typography_scale_equivalent_skips += 1;
     }
 
     /// `id`'s computed typography scale is going from `previous` to `next`.

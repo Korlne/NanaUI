@@ -332,7 +332,7 @@ fn frame(
     if drained_any {
         context.last_work_counters()
     } else {
-        context.world().frame_counters
+        context.world().counters.frame_counters
     }
 }
 

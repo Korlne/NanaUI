@@ -161,7 +161,7 @@ fn issue199_a_thousand_components_keep_state_focus_and_resource_identity() {
     }
     product_frame(&mut cx, document, viewport, &mut shaper);
     assert!(cx.take_system_work().is_empty());
-    let idle = cx.world().frame_counters;
+    let idle = cx.world().counters.frame_counters;
     assert_eq!(
         (
             idle.layout_measure_nodes,

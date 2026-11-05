@@ -442,7 +442,7 @@ fn issue384_ten_thousand_ranges_keep_one_entity_and_bounded_parts() {
         let generation = cx.world().layout_generation();
         product_frame(&mut cx, document(), viewport(), &mut shaper);
         assert!(cx.take_system_work().is_empty());
-        let idle = cx.world().frame_counters;
+        let idle = cx.world().counters.frame_counters;
         assert_eq!(
             (
                 idle.layout_measure_nodes,
@@ -819,7 +819,7 @@ fn issue384_ten_thousand_progress_bars_keep_one_entity_and_bounded_parts() {
         let generation = cx.world().layout_generation();
         product_frame(&mut cx, document(), viewport(), &mut shaper);
         assert!(cx.take_system_work().is_empty());
-        let idle = cx.world().frame_counters;
+        let idle = cx.world().counters.frame_counters;
         assert_eq!(
             (
                 idle.layout_measure_nodes,
@@ -1200,7 +1200,7 @@ fn issue384_ten_thousand_dialogs_keep_one_entity_and_bounded_parts() {
         let generation = cx.world().layout_generation();
         product_frame(&mut cx, document(), modal_viewport(), &mut shaper);
         assert!(cx.take_system_work().is_empty());
-        let idle = cx.world().frame_counters;
+        let idle = cx.world().counters.frame_counters;
         assert_eq!(
             (
                 idle.layout_measure_nodes,

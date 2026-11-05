@@ -58,7 +58,7 @@ fn assert_settled(
     let result = std::sync::Arc::clone(&cx.world().layout_results[&id].local);
     for frame in 0..8 {
         let work = product_frame(cx, document(), viewport(), shaper);
-        let own = cx.world().frame_counters;
+        let own = cx.world().counters.frame_counters;
         for counters in [work, own] {
             assert_eq!(
                 (

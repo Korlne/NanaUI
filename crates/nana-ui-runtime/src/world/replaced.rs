@@ -161,7 +161,8 @@ impl UiWorld {
         if previous == metadata {
             return;
         }
-        self.pending_drain_counts
+        self.counters
+            .pending_drain_counts
             .replaced_intrinsic_metadata_updates += 1;
         let mut dependents: Vec<StableNodeId> = self
             .replaced
@@ -170,7 +171,8 @@ impl UiWorld {
             .map(|nodes| nodes.iter().copied().collect())
             .unwrap_or_default();
         dependents.sort_unstable();
-        self.pending_drain_counts
+        self.counters
+            .pending_drain_counts
             .resource_intrinsic_dependents_notified += dependents.len();
         for id in dependents {
             let _ = self.mark(id, DirtyMask::RENDER);
@@ -217,7 +219,7 @@ impl UiWorld {
                 METRIC_EXPORTS,
             ),
         );
-        self.pending_drain_counts.replaced_layout_seeds +=
+        self.counters.pending_drain_counts.replaced_layout_seeds +=
             (self.layout_seeds_created - seeds_before) as usize;
     }
 }

@@ -824,7 +824,6 @@ struct PlannedNode {
     children: Vec<StableNodeId>,
 }
 
-/// The sole authoritative retained identity and hierarchy store.
 /// Which device the input being routed came from, for `:focus-visible`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InputModality {
@@ -832,6 +831,23 @@ pub enum InputModality {
     Pointer,
 }
 
+/// The work counters a world keeps: the last drain's, the frame's being
+/// accumulated, and two sets counted between drains. Boxed in [`UiWorld`].
+#[derive(Default)]
+struct WorldCounters {
+    last_counters: WorkCounters,
+    frame_counters: WorkCounters,
+    /// What the layout mutation authority classified since the last fold.
+    /// An effective-equivalent write dirties nothing, so its count cannot
+    /// wait for a non-empty drain to be seen.
+    pending_layout_invalidations_counted: WorkCounters,
+    /// What changes made between frames cost, counted when they were made.
+    /// Their cost belongs to the frame that resolves them: these wait for
+    /// that frame's first drain, not for the start of the frame.
+    pending_drain_counts: WorkCounters,
+}
+
+/// The sole authoritative retained identity and hierarchy store.
 pub struct UiWorld {
     input: input::WorldInputState,
     nodes: NodeStore,
@@ -1012,22 +1028,16 @@ pub struct UiWorld {
     presenters: HashMap<String, Box<dyn TextPresenter>>,
     spawned_since_drain: usize,
     despawned_since_drain: usize,
-    last_counters: WorkCounters,
-    frame_counters: WorkCounters,
+    /// Boxed with the other two sets below them: each is 1.7 KiB, and inline
+    /// the four were almost half of the world, which every construction of
+    /// a context moves.
+    counters: Box<WorldCounters>,
     frame_extracted_nodes: usize,
     frame_extracted_spans: usize,
     accumulating_frame: bool,
     /// Layout/document-order allocs recorded from `&self` hot paths.
     pending_hot_allocations: Cell<usize>,
     pending_hot_allocated_bytes: Cell<usize>,
-    /// What the layout mutation authority classified since the last fold.
-    /// An effective-equivalent write dirties nothing, so its count cannot
-    /// wait for a non-empty drain to be seen.
-    pending_layout_invalidations_counted: WorkCounters,
-    /// What changes made between frames cost, counted when they were made.
-    /// Their cost belongs to the frame that resolves them: these wait for
-    /// that frame's first drain, not for the start of the frame.
-    pending_drain_counts: WorkCounters,
     /// Layout seeds queued since the world was made: a running count the
     /// paths that make them read before and after, to say whose they were.
     layout_seeds_created: u64,
@@ -1288,15 +1298,12 @@ impl UiWorld {
             presenters: HashMap::new(),
             spawned_since_drain: 0,
             despawned_since_drain: 0,
-            last_counters: WorkCounters::default(),
-            frame_counters: WorkCounters::default(),
+            counters: Box::default(),
             frame_extracted_nodes: 0,
             frame_extracted_spans: 0,
             accumulating_frame: false,
             pending_hot_allocations: Cell::new(0),
             pending_hot_allocated_bytes: Cell::new(0),
-            pending_layout_invalidations_counted: WorkCounters::default(),
-            pending_drain_counts: WorkCounters::default(),
             layout_seeds_created: 0,
             intent_nodes: HashSet::default(),
             replaced: replaced::ReplacedIndex::default(),
@@ -1436,15 +1443,19 @@ impl UiWorld {
             return;
         }
         if invalidation.is_empty() {
-            self.pending_layout_invalidations_counted
+            self.counters
+                .pending_layout_invalidations_counted
                 .layout_invalidations_zero_delta += 1;
             return;
         }
-        self.pending_layout_invalidations_counted
+        self.counters
+            .pending_layout_invalidations_counted
             .layout_invalidations_created += 1;
         self.layout_seeds_created += 1;
         if invalidation.source == LayoutInvalidationSource::Text {
-            self.pending_layout_invalidations_counted.text_reflow_seeds += 1;
+            self.counters
+                .pending_layout_invalidations_counted
+                .text_reflow_seeds += 1;
         }
         self.queue_layout_invalidation(id, invalidation);
         // A fixed border box absorbs an inner metric. Drop that box so a
@@ -1464,7 +1475,7 @@ impl UiWorld {
 
     /// A virtual list's pass cost `rows`.
     pub(crate) fn note_virtual_rows(&mut self, rows: VirtualRowCounts) {
-        let pending = &mut self.pending_drain_counts;
+        let pending = &mut self.counters.pending_drain_counts;
         pending.virtual_row_metric_updates += rows.metric_updates;
         pending.virtual_prefix_index_updates += rows.prefix_index_updates;
         pending.virtual_rows_remeasured += rows.rows_remeasured;
@@ -1478,7 +1489,9 @@ impl UiWorld {
     /// change's.
     pub(crate) fn note_state_seeds(&mut self, before: u64) {
         let seeds = (self.layout_seeds_created - before) as usize;
-        self.pending_drain_counts.component_state_layout_seeds += seeds;
+        self.counters
+            .pending_drain_counts
+            .component_state_layout_seeds += seeds;
     }
 
     /// Queue `invalidation` for `id`, merged into a cause already pending:
@@ -2895,13 +2908,16 @@ impl UiWorld {
     /// frame accumulator while a product flush is running. An idle
     /// [`Self::take_system_work`] does not replace this snapshot.
     pub fn last_work_counters(&self) -> WorkCounters {
-        let mut counters = self.last_counters;
+        let mut counters = self.counters.last_counters;
         counters.record_hot_path_allocation(
             self.pending_hot_allocations.get(),
             self.pending_hot_allocated_bytes.get(),
         );
-        add_pending_counts(&mut counters, self.pending_layout_invalidations_counted);
-        add_pending_counts(&mut counters, self.pending_drain_counts);
+        add_pending_counts(
+            &mut counters,
+            self.counters.pending_layout_invalidations_counted,
+        );
+        add_pending_counts(&mut counters, self.counters.pending_drain_counts);
         counters.scroll_content_extent_recomputes += self.pending_scroll_extent_recomputes();
         counters.i18n.accumulate(self.i18n_gauges());
         counters
@@ -2912,17 +2928,17 @@ impl UiWorld {
         if let Some(work) = work {
             observed.record_gpu_work(work);
         }
-        self.last_counters.batch_rebuilds = observed.batch_rebuilds;
-        self.last_counters.draw_batches = observed.draw_batches;
-        self.last_counters.draw_calls = observed.draw_calls;
-        self.last_counters.gpu_upload_bytes = observed.gpu_upload_bytes;
-        self.last_counters.gpu_buffer_reallocations = observed.gpu_buffer_reallocations;
+        self.counters.last_counters.batch_rebuilds = observed.batch_rebuilds;
+        self.counters.last_counters.draw_batches = observed.draw_batches;
+        self.counters.last_counters.draw_calls = observed.draw_calls;
+        self.counters.last_counters.gpu_upload_bytes = observed.gpu_upload_bytes;
+        self.counters.last_counters.gpu_buffer_reallocations = observed.gpu_buffer_reallocations;
     }
 
     pub fn record_output_work(&mut self, work: nana_ui_core::OutputWorkObservation) {
         let mut observed = WorkCounters::default();
         observed.record_output_work(work);
-        macro_rules! replace { ($($field:ident),* $(,)?) => { $(self.last_counters.$field = observed.$field;)* }; }
+        macro_rules! replace { ($($field:ident),* $(,)?) => { $(self.counters.last_counters.$field = observed.$field;)* }; }
         replace!(
             output_extra_passes,
             output_gpu_copies,
@@ -2947,7 +2963,7 @@ impl UiWorld {
         self.commit_pending_hot_allocs();
         self.commit_pending_layout_invalidation_counts();
         self.commit_pending_theme_work();
-        self.frame_counters = WorkCounters::default();
+        self.counters.frame_counters = WorkCounters::default();
         self.text_frame_work = nana_text::TextWorkCounters::default();
         self.theme_frame_work = ThemeWorkCounters::default();
         self.frame_extracted_nodes = 0;
@@ -2978,11 +2994,11 @@ impl UiWorld {
         if self.accumulating_frame {
             self.frame_extracted_nodes = self.frame_extracted_nodes.saturating_add(nodes);
             self.frame_extracted_spans = self.frame_extracted_spans.saturating_add(spans);
-            self.last_counters.render_nodes_extracted = self.frame_extracted_nodes;
-            self.last_counters.extracted_text_spans = self.frame_extracted_spans;
+            self.counters.last_counters.render_nodes_extracted = self.frame_extracted_nodes;
+            self.counters.last_counters.extracted_text_spans = self.frame_extracted_spans;
         } else {
-            self.last_counters.render_nodes_extracted = nodes;
-            self.last_counters.extracted_text_spans = spans;
+            self.counters.last_counters.render_nodes_extracted = nodes;
+            self.counters.last_counters.extracted_text_spans = spans;
         }
     }
 
@@ -3001,14 +3017,18 @@ impl UiWorld {
     fn commit_pending_hot_allocs(&mut self) {
         let count = self.pending_hot_allocations.replace(0);
         let bytes = self.pending_hot_allocated_bytes.replace(0);
-        self.last_counters.record_hot_path_allocation(count, bytes);
+        self.counters
+            .last_counters
+            .record_hot_path_allocation(count, bytes);
         if self.accumulating_frame {
-            self.frame_counters.record_hot_path_allocation(count, bytes);
+            self.counters
+                .frame_counters
+                .record_hot_path_allocation(count, bytes);
         }
     }
 
     fn commit_pending_layout_invalidation_counts(&mut self) {
-        let counted = std::mem::take(&mut self.pending_layout_invalidations_counted);
+        let counted = std::mem::take(&mut self.counters.pending_layout_invalidations_counted);
         self.bump_last_counters(|counters| add_pending_counts(counters, counted));
     }
 
@@ -3124,9 +3144,9 @@ impl UiWorld {
     }
 
     fn bump_last_counters(&mut self, update: impl Fn(&mut WorkCounters)) {
-        update(&mut self.last_counters);
+        update(&mut self.counters.last_counters);
         if self.accumulating_frame {
-            update(&mut self.frame_counters);
+            update(&mut self.counters.frame_counters);
         }
     }
 
@@ -3314,8 +3334,9 @@ impl UiWorld {
         let ours = |world: &Self, id: StableNodeId| {
             document.is_none_or(|document| world.document_of(id) == Some(document))
         };
-        self.pending_drain_counts.scroll_content_extent_recomputes +=
-            self.take_scroll_extent_recomputes();
+        self.counters
+            .pending_drain_counts
+            .scroll_content_extent_recomputes += self.take_scroll_extent_recomputes();
         let mut ids = std::mem::take(&mut self.dirty_entities)
             .into_iter()
             .collect::<Vec<_>>();
@@ -3462,11 +3483,11 @@ impl UiWorld {
             self.pending_hot_allocations.set(0);
             self.pending_hot_allocated_bytes.set(0);
             let mut counters = work.counters();
-            let counted = std::mem::take(&mut self.pending_layout_invalidations_counted);
+            let counted = std::mem::take(&mut self.counters.pending_layout_invalidations_counted);
             add_pending_counts(&mut counters, counted);
             add_pending_counts(
                 &mut counters,
-                std::mem::take(&mut self.pending_drain_counts),
+                std::mem::take(&mut self.counters.pending_drain_counts),
             );
             counters.i18n.accumulate(self.i18n_gauges());
             // Extracted node/span fields are filled by [`Self::record_extract`]
@@ -3474,17 +3495,17 @@ impl UiWorld {
             counters.render_nodes_extracted = 0;
             counters.extracted_text_spans = 0;
             if self.accumulating_frame {
-                self.frame_counters.accumulate(counters);
-                self.last_counters = self.frame_counters;
-                self.last_counters.render_nodes_extracted = self.frame_extracted_nodes;
-                self.last_counters.extracted_text_spans = self.frame_extracted_spans;
+                self.counters.frame_counters.accumulate(counters);
+                self.counters.last_counters = self.counters.frame_counters;
+                self.counters.last_counters.render_nodes_extracted = self.frame_extracted_nodes;
+                self.counters.last_counters.extracted_text_spans = self.frame_extracted_spans;
             } else {
-                self.last_counters = counters;
+                self.counters.last_counters = counters;
             }
         } else {
             self.commit_pending_hot_allocs();
             self.commit_pending_layout_invalidation_counts();
-            let pending = std::mem::take(&mut self.pending_drain_counts);
+            let pending = std::mem::take(&mut self.counters.pending_drain_counts);
             self.bump_last_counters(|counters| add_pending_counts(counters, pending));
         }
         work

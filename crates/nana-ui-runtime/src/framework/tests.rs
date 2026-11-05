@@ -14268,3 +14268,19 @@ fn a_read_only_list_item_takes_no_pointer_focus_or_activation() {
     assert!(context.focus_node(document, live_id).unwrap());
     assert!(!context.world().accessibility(live_id).unwrap().display_only);
 }
+
+/// A context and its world are moved by value while they are made
+/// (`AppContext::new` holds the fresh world, `from_world` takes it, a
+/// `RuntimeDocument` takes the context), so each of those frames holds them
+/// whole. Their large parts are boxed (the world in the context, the work
+/// counters in the world) to keep the construction path under the 16 KiB
+/// frame budget of `docs/reference/resource-budgets.md`; this keeps them
+/// from growing back unseen. The frames themselves:
+/// `scripts/audit-stack-frames.py` on the release `deep_tree_stack` binary.
+#[test]
+fn context_and_world_stay_small_enough_to_move() {
+    let context = std::mem::size_of::<AppContext>();
+    let world = std::mem::size_of::<UiWorld>();
+    assert!(context <= 6 << 10, "AppContext is {context} bytes");
+    assert!(world <= 10 << 10, "UiWorld is {world} bytes");
+}

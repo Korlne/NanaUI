@@ -1073,7 +1073,12 @@ pub enum BuiltinComponents {
 /// Owns typed view state while [`UiWorld`] remains the retained UI authority.
 pub struct AppContext {
     pub(crate) theme_signals: Vec<crate::view::Signal<Arc<nana_ui_core::CompiledTheme>>>,
-    world: UiWorld,
+    /// Boxed: the world is about 15 KiB, four fifths of the context, and
+    /// held inline every move of a context (construction, `RuntimeDocument`)
+    /// copied it through a frame over the 16 KiB stack budget. One pointer
+    /// away costs the hot paths nothing measurable; see
+    /// `docs/reference/resource-budgets.md`.
+    world: Box<UiWorld>,
     views: HashMap<StableNodeId, Box<dyn Any + Send>, crate::BuildIdHasher>,
     /// Opt-in reproject entry points keyed by node, registered from
     /// [`ComponentView::wants_child_reproject`] when a component view is
@@ -1498,7 +1503,7 @@ impl AppContext {
 
     fn with_builtins(world: UiWorld, builtins: &impl UiExtension) -> Self {
         let mut context = Self {
-            world,
+            world: Box::new(world),
             views: HashMap::default(),
             child_reproject_views: HashMap::default(),
             theme_signals: Vec::new(),

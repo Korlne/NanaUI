@@ -17,7 +17,13 @@ impl UiWorld {
     ) {
         // Entries the scroll rewrites, clips with them, are what the hit
         // index's build sentinel adds while this runs.
-        let built = |world: &Self| world.last_counters.hit_test_nodes_rebuilt.unwrap_or(0);
+        let built = |world: &Self| {
+            world
+                .counters
+                .last_counters
+                .hit_test_nodes_rebuilt
+                .unwrap_or(0)
+        };
         let before = built(self);
         self.shift_hit_test_scroll(document, scroller, delta);
         let rewritten = built(self).saturating_sub(before);

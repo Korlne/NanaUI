@@ -1768,13 +1768,14 @@ impl UiWorld {
                 if same_resource {
                     // A frame, a texture generation, a fit: what the node shows
                     // moved and its size did not. Paint.
-                    self.pending_drain_counts.replaced_content_updates += 1;
+                    self.counters.pending_drain_counts.replaced_content_updates += 1;
                 } else {
                     self.reindex_replaced(*id);
                 }
                 self.mark(*id, DirtyMask::RENDER);
                 if same_resource {
-                    self.pending_drain_counts
+                    self.counters
+                        .pending_drain_counts
                         .replaced_content_only_layout_invalidations +=
                         (self.layout_seeds_created - seeds_before) as usize;
                 }
@@ -3320,7 +3321,7 @@ impl UiWorld {
         if scroll_viewport_size(self.nodes.scroll_metrics(id).copied())
             != scroll_viewport_size(metrics)
         {
-            self.pending_drain_counts.scroll_viewport_updates += 1;
+            self.counters.pending_drain_counts.scroll_viewport_updates += 1;
         }
         self.nodes.set_scroll_metrics(id, metrics);
         let current = self.record(id).scroll_offset;
@@ -4014,12 +4015,15 @@ impl UiWorld {
         // A write's own counts; a variant counts as a responsive result.
         if authored.is_some() {
             if changed.is_empty() && super::node_presentation_eq(&previous, style) {
-                self.pending_layout_invalidations_counted
+                self.counters
+                    .pending_layout_invalidations_counted
                     .layout_equivalent_mutations_skipped += 1;
-                self.pending_drain_counts.equivalent_style_layout_skips += 1;
+                self.counters
+                    .pending_drain_counts
+                    .equivalent_style_layout_skips += 1;
             }
             if !style_layout_invalidation.is_empty() {
-                self.pending_drain_counts.style_to_layout_seeds += 1;
+                self.counters.pending_drain_counts.style_to_layout_seeds += 1;
             }
             self.release_rewritten_holds(id, &previous_authored.layout, &next_authored.layout);
         }

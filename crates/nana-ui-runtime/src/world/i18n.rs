@@ -175,7 +175,7 @@ impl UiWorld {
             self.resolve_localized(id, self.localized_language(id), &mut counts);
         }
         counts.switch_commits += 1;
-        self.pending_drain_counts.i18n.accumulate(counts);
+        self.counters.pending_drain_counts.i18n.accumulate(counts);
         self.note_shown_since(shown);
     }
 
@@ -266,7 +266,7 @@ impl UiWorld {
     /// What localization changed that a frame shows, counted since the last
     /// drain: text shown, the language it shapes in, a scope's direction.
     fn i18n_shown(&self) -> usize {
-        let counts = &self.pending_drain_counts.i18n;
+        let counts = &self.counters.pending_drain_counts.i18n;
         counts.resolved_content_changed
             + counts.language_changed_nodes
             + counts.direction_changed_scopes
@@ -365,7 +365,7 @@ impl UiWorld {
             }
         }
         self.resolve_localized(id, self.localized_language(id), &mut counts);
-        self.pending_drain_counts.i18n.accumulate(counts);
+        self.counters.pending_drain_counts.i18n.accumulate(counts);
     }
 
     /// `id` becomes a locale scope for its subtree, takes another locale, or
@@ -571,7 +571,7 @@ impl UiWorld {
         counts.switch_transactions += 1;
         self.switch_scope(to, before, &moved, false, &mut counts);
         counts.switch_commits += 1;
-        self.pending_drain_counts.i18n.accumulate(counts);
+        self.counters.pending_drain_counts.i18n.accumulate(counts);
     }
 
     /// Whether `node` is `root` or under it, walking up no further than
@@ -607,7 +607,7 @@ impl UiWorld {
             self.resolve_localized(id, self.localized_language(id), &mut counts);
         }
         counts.switch_commits += 1;
-        self.pending_drain_counts.i18n.accumulate(counts);
+        self.counters.pending_drain_counts.i18n.accumulate(counts);
     }
 
     /// The locales of `scopes` changed from what each held before: one
@@ -627,7 +627,7 @@ impl UiWorld {
             self.switch_scope(scope, before, &nodes, true, &mut counts);
         }
         counts.switch_commits += 1;
-        self.pending_drain_counts.i18n.accumulate(counts);
+        self.counters.pending_drain_counts.i18n.accumulate(counts);
     }
 
     fn switch_scope(

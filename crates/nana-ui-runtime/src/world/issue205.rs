@@ -296,7 +296,7 @@ fn issue205_ten_thousand_plain_buttons_keep_one_entity_and_two_parts_each() {
         let generation = cx.world().layout_generation();
         product_frame(&mut cx, document, viewport, &mut shaper);
         assert!(cx.take_system_work().is_empty());
-        let idle = cx.world().frame_counters;
+        let idle = cx.world().counters.frame_counters;
         assert_eq!(
             (
                 idle.layout_measure_nodes,
@@ -469,7 +469,7 @@ fn issue205_ten_thousand_rows_keep_one_entity_and_bounded_parts() {
         }
         product_frame(&mut cx, document, viewport, &mut shaper);
         assert!(cx.take_system_work().is_empty());
-        let idle = cx.world().frame_counters;
+        let idle = cx.world().counters.frame_counters;
         assert_eq!(
             (
                 idle.layout_measure_nodes,
@@ -779,7 +779,7 @@ fn issue205_ten_thousand_form_fields_and_selects_keep_bounded_parts() {
             assert!(result.child_placements.is_empty());
         }
         product_frame(&mut cx, document, viewport, &mut shaper);
-        let idle = cx.world().frame_counters;
+        let idle = cx.world().counters.frame_counters;
         assert_eq!(
             (
                 idle.layout_measure_nodes,
@@ -978,7 +978,7 @@ fn issue205_ten_thousand_values_keep_one_entity_and_three_parts() {
         }
         product_frame(&mut cx, document, viewport, &mut shaper);
         assert!(cx.take_system_work().is_empty());
-        let idle = cx.world().frame_counters;
+        let idle = cx.world().counters.frame_counters;
         assert_eq!(
             (
                 idle.layout_measure_nodes,
@@ -1273,7 +1273,7 @@ fn issue205_ten_thousand_cards_keep_one_entity_and_four_parts() {
         }
         product_frame(&mut cx, document, viewport, &mut shaper);
         assert!(cx.take_system_work().is_empty());
-        let idle = cx.world().frame_counters;
+        let idle = cx.world().counters.frame_counters;
         assert_eq!(
             (
                 idle.layout_measure_nodes,
@@ -1579,7 +1579,7 @@ fn issue205_ten_thousand_checkboxes_keep_one_entity_and_three_parts() {
         let generation = cx.world().layout_generation();
         product_frame(&mut cx, document, viewport, &mut shaper);
         assert!(cx.take_system_work().is_empty());
-        let idle = cx.world().frame_counters;
+        let idle = cx.world().counters.frame_counters;
         assert_eq!(
             (
                 idle.layout_measure_nodes,
@@ -1753,7 +1753,7 @@ fn issue205_a_cleared_label_lays_out_as_a_cold_unlabelled_control() {
     let generation = cx.world().layout_generation();
     product_frame(&mut cx, document, viewport, &mut shaper);
     assert!(cx.take_system_work().is_empty());
-    let idle = cx.world().frame_counters;
+    let idle = cx.world().counters.frame_counters;
     assert_eq!(
         (idle.layout_measure_nodes, idle.layout_placement_nodes),
         (0, 0)
@@ -2199,7 +2199,7 @@ fn issue205_ten_thousand_switches_keep_one_entity_and_bounded_parts() {
         let generation = cx.world().layout_generation();
         product_frame(&mut cx, document, viewport, &mut shaper);
         assert!(cx.take_system_work().is_empty());
-        let idle = cx.world().frame_counters;
+        let idle = cx.world().counters.frame_counters;
         assert_eq!(
             (
                 idle.layout_measure_nodes,
@@ -2614,7 +2614,7 @@ fn issue205_ten_thousand_status_dots_keep_one_entity_and_three_parts() {
         let generation = cx.world().layout_generation();
         product_frame(&mut cx, document, viewport, &mut shaper);
         assert!(cx.take_system_work().is_empty());
-        let idle = cx.world().frame_counters;
+        let idle = cx.world().counters.frame_counters;
         assert_eq!(
             (
                 idle.layout_measure_nodes,
@@ -3190,7 +3190,7 @@ fn issue205_ten_thousand_selection_options_keep_one_entity_and_bounded_parts() {
         let generation = cx.world().layout_generation();
         product_frame(&mut cx, document, viewport, &mut shaper);
         assert!(cx.take_system_work().is_empty());
-        let idle = cx.world().frame_counters;
+        let idle = cx.world().counters.frame_counters;
         assert_eq!(
             (
                 idle.layout_measure_nodes,
@@ -3584,7 +3584,7 @@ fn issue205_ten_thousand_empty_states_keep_one_entity_and_bounded_parts() {
         }
         let generation = cx.world().layout_generation();
         product_frame(&mut cx, document, viewport, &mut shaper);
-        let idle = cx.world().frame_counters;
+        let idle = cx.world().counters.frame_counters;
         assert_eq!(
             (
                 idle.layout_measure_nodes,
@@ -4134,7 +4134,7 @@ fn issue205_ten_thousand_toasts_keep_one_entity_and_bounded_parts() {
         }
         let generation = cx.world().layout_generation();
         product_frame(&mut cx, document, viewport, &mut shaper);
-        let idle = cx.world().frame_counters;
+        let idle = cx.world().counters.frame_counters;
         assert_eq!(
             (
                 idle.layout_measure_nodes,
@@ -4570,7 +4570,7 @@ fn issue205_ten_thousand_menu_triggers_keep_one_entity_and_bounded_parts() {
         }
         let generation = cx.world().layout_generation();
         product_frame(&mut cx, document, viewport, &mut shaper);
-        let idle = cx.world().frame_counters;
+        let idle = cx.world().counters.frame_counters;
         assert_eq!(
             (
                 idle.layout_measure_nodes,

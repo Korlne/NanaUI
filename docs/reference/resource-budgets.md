@@ -77,6 +77,8 @@ railroad 的嵌套上限按「括号与调用」数（`MAX_DEPTH` 48 个 primary
 | `layout_engine::stack_budget` | 测量和放置的每层栈不超预算（debug 16 / 12 KiB，release 4 / 4 KiB），400 层的树在 1 MiB 线程上布局 | `cargo test -p nana-ui-runtime --lib stack_budget` |
 | `view::tests::a_view_deeper_than_the_stack_still_mounts` | 400 层视图在 1 MiB 线程上挂载、布局、析构 | `cargo test -p nana-ui-runtime --lib a_view_deeper` |
 | `scripts/audit-stack-frames.py` | 单个函数的栈帧 | 见下 |
+| `framework::tests::context_and_world_stay_small_enough_to_move` | 构造时按值搬动的 `AppContext` ≤ 6 KiB、`UiWorld` ≤ 10 KiB | `cargo test -p nana-ui-runtime --lib context_and_world` |
+| `deep_nesting::railroad_at_its_depth_limit_fits_half_the_thread` | railroad 七种嵌套在上限深度下 256 KiB 线程上渲染 | `cargo test -p nana-ui-diagram --test deep_nesting railroad`，再加 `--release` |
 
 `WorkCounters` 发布 `layout_measure_stack_per_level`、`layout_placement_stack_per_level`（每层的栈，字节，一帧取最大）和 `layout_placement_boundaries`（放置从队列里放了几棵子树）。
 
@@ -89,15 +91,21 @@ cargo test --release -p nana-ui-scene --test deep_tree_stack --no-run
 python3 scripts/audit-stack-frames.py target/release/deps/deep_tree_stack-<hash> --budget 16384
 ```
 
-预算：帧路径上的函数 release 不超过 16 KiB。2026-11-02 在 aarch64 macOS 上量到的超标项，都是只在启动时调用一次的构造路径，不在每帧路径上：
+预算：帧路径上的函数 release 不超过 16 KiB，构造路径（`AppContext::new` / `from_world` / `typed`、`RuntimeDocument::new`）同样。`AppContext` 与 `UiWorld` 在构造时按值搬动：`AppContext::new` 的帧里放着新建的世界，`from_world` 接过它，`RuntimeDocument` 再接过上下文，所以每一帧都整个装着它们。2026-11-05 起两者的大块字段装箱：上下文里的 `world: Box<UiWorld>`（世界占上下文的五分之四），世界里的四份 `WorkCounters`（各 1.7 KiB）合为 `counters: Box<WorldCounters>`。上下文每次访问世界、世界每次记一笔计数都多一次取指针，`perf/micro/stack-depth` 交替基准在噪声内（见下）。aarch64 macOS，`--all-features`：
 
-| 函数 | release | debug |
+| 类型 | 改前 | 改后 |
 | --- | ---: | ---: |
-| `AppContext::from_world` | 35 KiB | — |
-| `RuntimeDocument::with_context` / `new` | 21 / 18 KiB | 19 / 18 KiB |
-| `AppContext::default` | 14 KiB | — |
+| `AppContext` | 18 848 B | 3 888 B |
+| `UiWorld` | 14 968 B | 8 128 B |
 
-它们大，是因为 `AppContext`（18 KiB）和 `UiWorld`（14 KiB）按值内联在栈上、构造时搬了几次。
+| 函数（release） | 改前 | 改后 |
+| --- | ---: | ---: |
+| `AppContext::from_world` | 35.2 KiB | 6.3 KiB |
+| `RuntimeDocument::with_context` / `new` | 21.6 / 18.2 KiB | 7.2 / 3.7 KiB |
+| `AppContext::default` | 14.5 KiB | 7.8 KiB |
+| `UiWorld::new` | — | 6.9 KiB |
+
+debug 下构造路径上最大的是 `AppContext::with_builtins` 15.3 KiB（字段初始化的临时量），`from_world`、`new` 7.8 KiB，`RuntimeDocument::with_context` / `new` 5.5 / 3.7 KiB（改前 19 / 18 KiB）。门禁：`framework::tests::context_and_world_stay_small_enough_to_move` 要求 `AppContext` 不超过 6 KiB、`UiWorld` 不超过 10 KiB（`cargo test -p nana-ui-runtime --lib context_and_world`），帧本身用上面的脚本量，release 下 `nana` 的函数现在没有超过 16 KiB 的（脚本退出码 0）。
 
 debug 下帧路径上曾有几个函数远超预算：`UiWorld::derive_component_geometry` 111 KiB、`UiScene::build_node_primitives` 74 KiB、`controls_base::build` 72 KiB、`overlays::build` 28 KiB、`text::build` 19 KiB（release 分别是 9、5、6 KiB 以下）。它们都是按 `StandardVisual` 分支的大 `match`，未优化的代码给每个分支的局部变量都留了槽，走哪个分支都要全占。现在每个 12 行以上的分支都在 `own_frame(|| ...)` 里运行（runtime 的 `crate::stack::own_frame` 和 scene 的 `primitives::own_frame`，`#[inline(always)]` 的一层调用）：debug 下闭包是独立的帧，分支的局部变量只在走到它时才占栈；release 下闭包被内联，代码不变。debug 下这几个函数现在是 16、24、16 KiB 以下，最大的分支闭包 20 与 29 KiB。新加的大 `match` 分支照此办理。
 
@@ -579,5 +587,4 @@ painter 段（`nana-text-paint-benchmark --workload reflow`，交替 8 轮读最
 
 - **冷布局吞吐与每盒内存**：上面两张表 NanaUI 仍落后 Taffy 约 3 倍（时间）与 2 倍（内存）。剩下的成本是摊开的，没有单点：每盒约 16 次分配（每个容器的 `descend`、`flow`、`child_sizes`、计划条目等 `Vec`，单去掉它们省不出多少时间）、每个节点在测量里的十来项判定（在场、浮层分支、菜单分支、行盒记忆，各自一次按 id 的查表）、每次写入落四张意图缓存表、十几张按 `StableNodeId` 的哈希表（`LayoutInputMap` 的输入表每条 264 B，一万盒时 2.8 MB，查一次就是一次缓存未命中；`style()` 每盒被调约 18 次，分散在 14 处）、以及约 4.8 KB 的 `LayoutStyle`（一次判定常常要碰几条缓存行）。再往下要换存储：按节点下标的稠密数组代替这些表、`LayoutResult` 不再给每个子节点存三份几何，这是结构改动，需要先对 `WorkCounters` 合同和消费者（Scene、命中、无障碍、`issue205` 等测试）逐个确认。
 - **往已布局的界面里挂深子树**：挂载本身已是线性（见下），但插入时沿祖先清理布局结果的两条链（`suppress_layout_result_chain`、`clear_layout_result_chain`）在世界里已有布局结果时仍走到最近的固定尺寸边界，代价是「插入的节点数 × 深度」。首次挂载时表是空的，直接跳过。要在已处理过的祖先处提前停，得先确认边界节点的样式在两次插入之间不会变，否则会读到过期结果。
-- **`AppContext` / `UiWorld` 内联大小**：把大块字段装箱，构造路径的帧就能回到预算内。
 - **移动端实机**：`stack` 的 iOS 与 Android 分支只做过交叉 `cargo check`（`aarch64-apple-ios`、`aarch64-linux-android`，后者先 `source scripts/android-env.sh`），没有在设备上跑过深树门禁。

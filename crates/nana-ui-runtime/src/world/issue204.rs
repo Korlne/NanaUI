@@ -321,7 +321,7 @@ fn issue204_facades_share_identity_and_layout_work() {
             // counters (not the last non-empty snapshot) are all zero.
             product_frame(&mut cx, document, viewport(), &mut shaper);
             assert!(cx.take_system_work().is_empty(), "facade {facade}");
-            let idle = cx.world().frame_counters;
+            let idle = cx.world().counters.frame_counters;
             let world = cx.world();
             Run {
                 nodes: world.len(),
