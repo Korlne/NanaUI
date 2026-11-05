@@ -683,6 +683,9 @@ pub struct Button {
     pub has_popup: bool,
     pub style: NodeStyle,
     pub(crate) style_override: bool,
+    /// A [`Self::tool`]: its glyph is an icon tool's, drawn at the medium
+    /// step, so the thin strokes keep the label's ink.
+    pub(crate) tool_glyph: bool,
 }
 
 /// Font size of a `Card` title.
@@ -781,6 +784,7 @@ impl Button {
                 painter: None,
             },
             style_override: false,
+            tool_glyph: false,
         }
     }
 
@@ -794,6 +798,7 @@ impl Button {
     pub fn tool(label: impl Into<String>) -> Self {
         let mut button = Self::new(label).size(nana_ui_core::ControlSize::Small);
         button.style = tool_box(button.style);
+        button.tool_glyph = true;
         button
     }
 
@@ -952,10 +957,17 @@ impl ComponentView for Button {
                 },
             );
         }
+        // A tool's glyph matches the icon tools beside it: at the small
+        // step its strokes thin below a pixel and read paler than the label.
+        let glyph_step = if self.tool_glyph {
+            nana_ui_core::ControlSize::Medium
+        } else {
+            self.size
+        };
         let icon_size = self
             .icon_size
             .filter(|size| size.is_finite() && *size >= 0.0)
-            .unwrap_or(self.size.text_size_in(world.theme().typography()));
+            .unwrap_or(glyph_step.text_size_in(world.theme().typography()));
         let icon_gap = if let Some(gap) = &self.themed_icon_gap {
             gap.resolve(world.theme()).max(0.0)
         } else if self.icon_gap.is_finite() {

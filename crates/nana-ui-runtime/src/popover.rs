@@ -522,10 +522,11 @@ pub(crate) fn project_menu_surface(
         && trigger_icon.is_some()
         && trigger_content.is_none()
         && trigger.as_deref().is_some_and(|label| !label.is_empty());
-    // A labelled tool's glyph takes the small step's type size unless set.
+    // A labelled tool's glyph is an icon tool's, at the medium step, unless
+    // set: at the small step its strokes read paler than the label.
     let trigger_icon_size = if labelled {
         Some(trigger_icon_size.unwrap_or_else(|| {
-            nana_ui_core::ControlSize::Small.text_size_in(world.theme().typography())
+            nana_ui_core::ControlSize::Medium.text_size_in(world.theme().typography())
         }))
     } else {
         trigger_icon_size

@@ -396,19 +396,31 @@ pub(super) fn build(context: &GeometryPaintContext<'_>, emit: &mut impl FnMut(Sc
                     document_order: node_order,
                     kind: ScenePrimitiveKind::Icon {
                         icon: *icon,
-                        color: crate::scene::slot_color(
-                            node.style.paint_colors.color.filter(|paint| {
-                                node.standard_visual_foreground == Some(paint.to_srgb())
-                            }),
-                            node.standard_visual_foreground
-                                .or_else(|| {
-                                    node.style
-                                        .paint_colors
-                                        .color
-                                        .map(nana_ui_core::PaintColor::to_srgb)
-                                })
-                                .or(node.style.color),
-                        ),
+                        // A labelled tool's glyph takes its label's ink: the
+                        // trigger may be painted as a button kind, not as the
+                        // menu family.
+                        color: if let Some(label) = trigger {
+                            crate::scene::slot_color(
+                                node.style.paint_colors.color.filter(|paint| {
+                                    label.color.is_none_or(|color| color == paint.to_srgb())
+                                }),
+                                label.color.or(node.style.color),
+                            )
+                        } else {
+                            crate::scene::slot_color(
+                                node.style.paint_colors.color.filter(|paint| {
+                                    node.standard_visual_foreground == Some(paint.to_srgb())
+                                }),
+                                node.standard_visual_foreground
+                                    .or_else(|| {
+                                        node.style
+                                            .paint_colors
+                                            .color
+                                            .map(nana_ui_core::PaintColor::to_srgb)
+                                    })
+                                    .or(node.style.color),
+                            )
+                        },
                     },
                 });
             }
