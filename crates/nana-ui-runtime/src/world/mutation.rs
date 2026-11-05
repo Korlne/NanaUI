@@ -866,12 +866,18 @@ impl<'a> ValidationPlan<'a> {
     pub(super) fn park(&mut self, root: StableNodeId) -> Result<(), UiWorldError> {
         self.detach(root)?;
         let subtree = self.subtree(root)?;
-        self.set_parked_subtree(root, true)?;
-        let parked = subtree.iter().copied().collect::<HashSet<_>>();
-        let documents = subtree
-            .iter()
-            .map(|id| self.node(*id).map(|node| node.document))
-            .collect::<Result<HashSet<_>, _>>()?;
+        for &id in &subtree {
+            self.set_parked(id, true);
+        }
+        let parked = subtree.iter().copied().collect::<NodeSet>();
+        // A subtree almost always lies in one document.
+        let mut documents: Vec<DocumentId> = Vec::new();
+        for &id in &subtree {
+            let document = self.node(id)?.document;
+            if !documents.contains(&document) {
+                documents.push(document);
+            }
+        }
         for document in documents {
             let focused = self
                 .focus
@@ -3473,14 +3479,14 @@ impl UiWorld {
     pub(crate) fn commit_with_mount_lifecycle(
         &mut self,
         queue: MutationQueue,
-    ) -> Result<(CommitReport, HashSet<StableNodeId>, HashSet<StableNodeId>), UiWorldError> {
+    ) -> Result<(CommitReport, NodeSet, NodeSet), UiWorldError> {
         // A root put back where it already was mounts or parks nothing, so
         // only the ones actually applied count.
         let mut roots = Vec::new();
         let mut report = self.commit_applying(&queue, Some(&mut roots))?;
-        let mut parked = HashSet::new();
-        let mut inserted = HashSet::new();
-        let mut visited = HashSet::new();
+        let mut parked = NodeSet::default();
+        let mut inserted = NodeSet::default();
+        let mut visited = NodeSet::default();
         while let Some(id) = roots.pop() {
             if !self.contains(id) || !visited.insert(id) {
                 continue;

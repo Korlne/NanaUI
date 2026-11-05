@@ -337,6 +337,15 @@ impl MutationQueue {
         Self::default()
     }
 
+    /// An empty queue with room for `capacity` mutations, for a batch whose
+    /// size is known up front (a component's creation): it does not regrow.
+    pub(crate) fn with_capacity(capacity: usize) -> Self {
+        Self {
+            mutations: Vec::with_capacity(capacity),
+            writes_text: false,
+        }
+    }
+
     pub fn create(&mut self, id: StableNodeId, document: DocumentId, kind: NodeKind) {
         self.mutations
             .push(UiMutation::Create { id, document, kind });

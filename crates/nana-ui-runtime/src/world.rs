@@ -1175,7 +1175,7 @@ pub struct UiWorld {
     /// one authority: every path that gives a node a component type does it
     /// through `SetComponentType`, including the semantic-binding path that
     /// never touches `stamp_component_type`.
-    nodes_by_component: HashMap<ComponentTypeId, HashSet<StableNodeId>>,
+    nodes_by_component: HashMap<ComponentTypeId, NodeSet>,
     overlay_dependents: HashMap<StableNodeId, HashSet<StableNodeId>, BuildIdHasher>,
     /// `control -> label`: the node whose text names a control that has no
     /// label of its own ([`MutationQueue::set_labelled_by`]).
@@ -1812,6 +1812,10 @@ impl UiWorld {
     }
 
     pub(crate) fn clear_layout_results_subtree(&mut self, root: StableNodeId) {
+        if self.layout_results.is_empty() && self.layout_results_suppressed.is_empty() {
+            // Nothing published yet, so nothing to clear below `root`.
+            return;
+        }
         let mut stack = vec![root];
         while let Some(id) = stack.pop() {
             let children = self
@@ -1930,6 +1934,11 @@ impl UiWorld {
         ids: &[StableNodeId],
         source: crate::LayoutResultSource,
     ) {
+        if ids.is_empty() && self.layout_anchor_roots.is_empty() {
+            // Nothing to publish, nothing anchored: the walk below would
+            // record no counts and mark nothing.
+            return;
+        }
         *self.anchor_memo.get_mut() = Some(crate::NodeMap::default());
         self.publish_layout_results_anchored(ids, source);
         *self.anchor_memo.get_mut() = None;
@@ -6371,18 +6380,22 @@ impl UiWorld {
         let root_layout = bits & DirtyMask::LAYOUT;
         let mut stack = vec![root];
         while let Some(id) = stack.pop() {
-            let children = self.node(id).expect("hierarchy node must exist").children;
+            let children = Arc::clone(&self.record(id).hierarchy.children);
             stack.extend(children.iter().rev().copied());
             let _ = self.mark(id, subtree_bits | if id == root { root_layout } else { 0 });
         }
     }
 
     fn subtree_ids(&self, root: StableNodeId) -> Vec<StableNodeId> {
+        // Most subtrees a build parks or mounts are one node: no walk.
+        let children = &self.record(root).hierarchy.children;
+        if children.is_empty() {
+            return vec![root];
+        }
         let mut ids = Vec::new();
         let mut stack = vec![root];
         while let Some(id) = stack.pop() {
-            let children = self.node(id).expect("hierarchy node must exist").children;
-            stack.extend(children.iter().rev().copied());
+            stack.extend(self.record(id).hierarchy.children.iter().rev().copied());
             ids.push(id);
         }
         ids
@@ -6432,7 +6445,7 @@ impl UiWorld {
     }
 
     fn unlink_from_parent(&mut self, id: StableNodeId) -> bool {
-        let Some(parent) = self.node(id).expect("validated node must exist").parent else {
+        let Some(parent) = self.record(id).hierarchy.parent else {
             return false;
         };
         // Removing a child changes the parent's flow and exported metrics even
@@ -6468,7 +6481,6 @@ impl UiWorld {
     }
 
     fn retire_subtree_from_document(&mut self, subtree: &[StableNodeId]) {
-        let parked = subtree.iter().copied().collect::<HashSet<_>>();
         for &id in subtree {
             let document = self.record(id).document;
             if self.input.focused.get(&document) == Some(&id) {
@@ -6482,6 +6494,34 @@ impl UiWorld {
             self.pending_accessibility_removals.push(id);
         }
 
+        // Pointer state and animations to release: none in a page being
+        // built, whose every node parks once on creation.
+        if !(self.input.pointer_captures.is_empty()
+            && self.input.pointer_hover.is_empty()
+            && self.input.pointer_press.is_empty()
+            && self.animations.is_empty())
+        {
+            self.release_pointers_and_animations_of(subtree);
+        }
+
+        for &id in subtree {
+            self.surface_motion.remove(&id);
+            self.closing_surfaces.remove(&id);
+            self.scrim_presence.remove(&id);
+            self.hover_transitions.remove(&id);
+            if self.overlay_host(id).is_some() {
+                self.write_overlay_host(id, Some(OverlayHostState::default()));
+            }
+        }
+        self.clear_overlay_references_for(subtree);
+        // Sorted and deduplicated once, when system work takes them: doing
+        // it here, once per removed subtree, made dropping n rows O(n² log n).
+    }
+
+    /// Release the pointer captures, hovers and presses on `subtree`'s
+    /// nodes and cancel their non-overlay animations.
+    fn release_pointers_and_animations_of(&mut self, subtree: &[StableNodeId]) {
+        let parked = subtree.iter().copied().collect::<HashSet<_>>();
         let released = self
             .input
             .pointer_captures
@@ -6509,19 +6549,6 @@ impl UiWorld {
             .pointer_press
             .retain(|_, target| !parked.contains(target));
         self.drop_non_overlay_animations_for_parked(&parked);
-
-        for &id in subtree {
-            self.surface_motion.remove(&id);
-            self.closing_surfaces.remove(&id);
-            self.scrim_presence.remove(&id);
-            self.hover_transitions.remove(&id);
-            if self.overlay_host(id).is_some() {
-                self.write_overlay_host(id, Some(OverlayHostState::default()));
-            }
-        }
-        self.clear_overlay_references_for(subtree);
-        // Sorted and deduplicated once, when system work takes them: doing
-        // it here, once per removed subtree, made dropping n rows O(n² log n).
     }
 
     fn positioned_out_of_flow(&self, id: StableNodeId) -> bool {

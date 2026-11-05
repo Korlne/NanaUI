@@ -20,6 +20,10 @@ impl StickyDependencies {
         self.dependents.contains_key(&id)
     }
     pub fn remove(&mut self, id: StableNodeId) {
+        // Most worlds hold no sticky box: no lookup to hash for.
+        if self.ancestors.is_empty() {
+            return;
+        }
         if let Some(parents) = self.ancestors.remove(&id) {
             for parent in parents {
                 if let Some(nodes) = self.dependents.get_mut(&parent) {
@@ -42,6 +46,9 @@ impl StickyDependencies {
     }
 
     pub fn affected(&self, root: StableNodeId) -> Vec<StableNodeId> {
+        if self.dependents.is_empty() {
+            return Vec::new();
+        }
         self.dependents
             .get(&root)
             .into_iter()

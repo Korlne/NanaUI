@@ -2412,7 +2412,8 @@ impl AppContext {
     ) -> Result<Entity<C>, FrameworkError> {
         self.share_layouts(&mut component);
         let id = self.allocate_id();
-        let mut queue = MutationQueue::new();
+        // Creation, the projection's few writes and the type stamp.
+        let mut queue = MutationQueue::with_capacity(8);
         queue.create(id, document, component.node_kind());
         component.project(id, &self.world, &mut queue);
         self.stamp_component_type::<C>(id, &mut queue);
@@ -2462,7 +2463,8 @@ impl AppContext {
     ) -> Result<Entity<C>, FrameworkError> {
         self.share_layouts(&mut component);
         let id = self.allocate_id();
-        let mut queue = MutationQueue::new();
+        // Creation, the projection's few writes, the type stamp and parking.
+        let mut queue = MutationQueue::with_capacity(8);
         queue.create(id, document, component.node_kind());
         component.project(id, &self.world, &mut queue);
         self.stamp_component_type::<C>(id, &mut queue);

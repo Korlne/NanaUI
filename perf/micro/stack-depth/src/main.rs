@@ -8,6 +8,9 @@
 //! /usr/bin/time -l target/release/nana-stack-depth reps 3200 10 nana
 //!                                          # a fixed run: instructions and cycles per box;
 //!                                          # SKIP_LAYOUT=1 builds the page only
+//! BUILD_ALLOCS=1 cargo run --release -- wide # also the build's allocations and heap per box
+//! HOLD=1 target/release/nana-stack-depth reps 1000 1
+//!                                          # keep the page alive for `malloc_history`
 //! FRAME_PATH=1 cargo run --release -- wide  # the product frame's first layout
 //!                                          # (`layout_document_for_viewport`), not a full pass
 //! CONTROLS=1 cargo run --release -- wide    # a page of labels and buttons instead of bare boxes
@@ -232,9 +235,20 @@ fn nana_wide(rows: usize, cells: usize) -> (f64, f64, isize, isize) {
     let document = DocumentId::new(1).unwrap();
     let before = LIVE.load(Ordering::Relaxed);
     let built = Instant::now();
+    let build_calls = CALLS.load(Ordering::Relaxed);
     let mut cx = AppContext::new();
     nana_page(&mut cx, document, rows, cells);
     let calls = CALLS.load(Ordering::Relaxed);
+    // `BUILD_ALLOCS=1`: the allocation calls and live heap the build made,
+    // per box, before any layout.
+    if std::env::var_os("BUILD_ALLOCS").is_some() {
+        let boxes = (1 + rows * (1 + 2 * cells)) as f64;
+        eprintln!(
+            "build: {:.1} allocations / box, {:.0} B / box held",
+            (calls - build_calls) as f64 / boxes,
+            (LIVE.load(Ordering::Relaxed) - before) as f64 / boxes
+        );
+    }
     let start = Instant::now();
     // `SKIP_LAYOUT` leaves the build alone in a `reps` run: subtracting it
     // gives the layout's own instructions and cycles.
@@ -252,6 +266,12 @@ fn nana_wide(rows: usize, cells: usize) -> (f64, f64, isize, isize) {
     let total = built.elapsed().as_secs_f64() * 1e6;
     let calls = CALLS.load(Ordering::Relaxed) - calls;
     let held = LIVE.load(Ordering::Relaxed) - before;
+    // `HOLD=1`: keep the laid-out page alive, for a heap tool
+    // (`MallocStackLogging=1` and `malloc_history <pid> -allBySize`).
+    if std::env::var_os("HOLD").is_some() {
+        eprintln!("holding {held} B");
+        std::thread::sleep(std::time::Duration::from_secs(3600));
+    }
     drop(cx);
     (took, total, held, calls)
 }
