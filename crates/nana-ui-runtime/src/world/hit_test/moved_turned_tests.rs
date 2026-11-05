@@ -660,7 +660,7 @@ fn boxes_moved_under_a_turned_ancestor_build_only_their_own_entries() {
                 commit(page, |queue, page| {
                     let (wrapper, transform) = page.wrappers[0];
                     let style = LayoutStyle {
-                        z_index: Some(1 + round as i32),
+                        z_index: Some(1 + round),
                         ..wrapper_style(0, transform, page.preserve_3d)
                     };
                     queue.set_style(wrapper, styled(style));

@@ -303,7 +303,7 @@ fn assert_scene_is_cold(runtime: &RuntimeDocument, frame: &str) {
         let (Some(held), Some(cold)) = (scene.extracted_node(node), cold.first()) else {
             assert_eq!(
                 scene.extracted_node(node).is_some(),
-                cold.first().is_some(),
+                !cold.is_empty(),
                 "{frame}: {node:?} is extracted in one scene only"
             );
             continue;
