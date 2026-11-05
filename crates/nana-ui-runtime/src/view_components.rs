@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::layout_edits::{LayoutEdit, LengthBits, StackPreset, edit_layout};
+
 use crate::{
     AccessibilityRole, AccessibilityState, HighlightRequest, InteractionState, MutationQueue,
     NodeKind, NodeStyle, OverlayHostState, RovingEdge, ScrollOffset, SemanticPaint, StableNodeId,
@@ -6440,27 +6442,21 @@ pub struct Stack {
     structural: bool,
 }
 
-impl Stack {
-    fn base(
-        direction: nana_ui_core::FlexDirection,
-        gap: f32,
-        align: nana_ui_core::AlignSpec,
-        justify: nana_ui_core::JustifySpec,
-    ) -> Self {
-        let mut style = NodeStyle::default();
-        let layout = Arc::make_mut(&mut style.layout);
-        layout.display = Some(nana_ui_core::DisplaySpec::Flex);
-        layout.direction = Some(direction);
-        layout.gap = Some(nana_ui_core::LengthSpec::Px(gap.max(0.0)));
-        layout.align_items = align;
-        layout.justify_content = justify;
-        Self {
-            style,
-            hittable: false,
-            structural: false,
-        }
+/// [`edit_layout`] for a length edit: remembered when the length compares
+/// to the bit ([`LengthBits`]), a plain copy-on-write edit otherwise.
+fn edit_length(
+    layout: &mut Arc<nana_ui_core::LayoutStyle>,
+    length: nana_ui_core::LengthSpec,
+    edit: fn(LengthBits) -> LayoutEdit,
+    apply: impl FnOnce(&mut nana_ui_core::LayoutStyle),
+) {
+    match LengthBits::of(length) {
+        Some(bits) => edit_layout(layout, edit(bits), apply),
+        None => apply(Arc::make_mut(layout)),
     }
+}
 
+impl Stack {
     /// 承接已解析的 [`nana_ui_core::LayoutStyle`]（CSS / 直写字段）。
     ///
     /// 不套用 [`Self::row`] 一类预设默认。默认可点，与 CSS 布局盒一致。
@@ -6494,72 +6490,88 @@ impl Stack {
         &mut self.style
     }
 
+    /// One of the presets below, built as one remembered edit of the shared
+    /// default ([`edit_layout`]): every row a page builds shares one layout.
+    fn preset(preset: StackPreset, gap: f32) -> Self {
+        use nana_ui_core::{AlignSpec, FlexDirection, JustifySpec, LengthSpec};
+        let mut style = NodeStyle::default();
+        let gap = gap.max(0.0);
+        edit_layout(
+            &mut style.layout,
+            LayoutEdit::StackPreset(preset, gap.to_bits()),
+            |layout| {
+                let (direction, align) = match preset {
+                    StackPreset::Row | StackPreset::FillRow | StackPreset::Bar => {
+                        (FlexDirection::Row, AlignSpec::Center)
+                    }
+                    StackPreset::Column | StackPreset::FillColumn => {
+                        (FlexDirection::Column, AlignSpec::Stretch)
+                    }
+                };
+                layout.display = Some(nana_ui_core::DisplaySpec::Flex);
+                layout.direction = Some(direction);
+                layout.gap = Some(LengthSpec::Px(gap));
+                layout.align_items = align;
+                layout.justify_content = JustifySpec::Start;
+                let (width, height, min, flex) = match preset {
+                    StackPreset::Row => (LengthSpec::Shrink, None, false, None),
+                    StackPreset::FillRow => (LengthSpec::Fill, None, false, Some(1.0)),
+                    StackPreset::Bar => (LengthSpec::Fill, None, false, Some(0.0)),
+                    StackPreset::Column => {
+                        (LengthSpec::Fill, Some(LengthSpec::Shrink), true, Some(0.0))
+                    }
+                    StackPreset::FillColumn => {
+                        (LengthSpec::Fill, Some(LengthSpec::Fill), true, Some(1.0))
+                    }
+                };
+                layout.width = Some(width);
+                if let Some(height) = height {
+                    layout.height = Some(height);
+                }
+                if min {
+                    // `min_width(Px(0.0))`: read as CSS reads `min-width: 0`.
+                    layout.allow_shrink = true;
+                    layout.min_width = Some(LengthSpec::Px(0.0));
+                }
+                if preset == StackPreset::FillColumn {
+                    layout.min_height = Some(LengthSpec::Px(0.0));
+                }
+                if let Some(flex) = flex {
+                    layout.flex_grow = Some(flex);
+                    layout.flex_shrink = Some(flex);
+                }
+            },
+        );
+        Self {
+            style,
+            hittable: false,
+            structural: false,
+        }
+    }
+
     /// 水平排列，宽度随内容收缩，子项垂直居中。
     pub fn row(gap: f32) -> Self {
-        Self::base(
-            nana_ui_core::FlexDirection::Row,
-            gap,
-            nana_ui_core::AlignSpec::Center,
-            nana_ui_core::JustifySpec::Start,
-        )
-        .width(nana_ui_core::LengthSpec::Shrink)
+        Self::preset(StackPreset::Row, gap)
     }
 
     /// 水平排列并占满父容器剩余宽度，子项可收缩。
     pub fn fill_row(gap: f32) -> Self {
-        Self::base(
-            nana_ui_core::FlexDirection::Row,
-            gap,
-            nana_ui_core::AlignSpec::Center,
-            nana_ui_core::JustifySpec::Start,
-        )
-        .width(nana_ui_core::LengthSpec::Fill)
-        .grow(1.0)
-        .shrink(1.0)
+        Self::preset(StackPreset::FillRow, gap)
     }
 
     /// 竖直排列，高度随内容，宽度占满父容器。
     pub fn column(gap: f32) -> Self {
-        Self::base(
-            nana_ui_core::FlexDirection::Column,
-            gap,
-            nana_ui_core::AlignSpec::Stretch,
-            nana_ui_core::JustifySpec::Start,
-        )
-        .width(nana_ui_core::LengthSpec::Fill)
-        .height(nana_ui_core::LengthSpec::Shrink)
-        .min_width(nana_ui_core::LengthSpec::Px(0.0))
-        .grow(0.0)
-        .shrink(0.0)
+        Self::preset(StackPreset::Column, gap)
     }
 
     /// 竖直排列并占满父容器剩余高度，用于主内容区。
     pub fn fill_column(gap: f32) -> Self {
-        Self::base(
-            nana_ui_core::FlexDirection::Column,
-            gap,
-            nana_ui_core::AlignSpec::Stretch,
-            nana_ui_core::JustifySpec::Start,
-        )
-        .width(nana_ui_core::LengthSpec::Fill)
-        .height(nana_ui_core::LengthSpec::Fill)
-        .min_width(nana_ui_core::LengthSpec::Px(0.0))
-        .min_height(nana_ui_core::LengthSpec::Px(0.0))
-        .grow(1.0)
-        .shrink(1.0)
+        Self::preset(StackPreset::FillColumn, gap)
     }
 
     /// 水平排列占满整行但不伸展（顶栏、底栏）。
     pub fn bar(gap: f32) -> Self {
-        Self::base(
-            nana_ui_core::FlexDirection::Row,
-            gap,
-            nana_ui_core::AlignSpec::Center,
-            nana_ui_core::JustifySpec::Start,
-        )
-        .width(nana_ui_core::LengthSpec::Fill)
-        .grow(0.0)
-        .shrink(0.0)
+        Self::preset(StackPreset::Bar, gap)
     }
 
     /// 弹性空隙：把其后的兄弟推到行尾。基准宽度必须是 0，否则会铺满把兄弟挤出。
@@ -6624,23 +6636,34 @@ impl Stack {
     }
 
     pub fn gap(mut self, gap: f32) -> Self {
-        let layout = Arc::make_mut(&mut self.style.layout);
-        layout.theme.gap = None;
-        layout.gap = Some(nana_ui_core::LengthSpec::Px(gap.max(0.0)));
+        let gap = gap.max(0.0);
+        edit_layout(
+            &mut self.style.layout,
+            LayoutEdit::Gap(gap.to_bits()),
+            |layout| {
+                layout.theme.gap = None;
+                layout.gap = Some(nana_ui_core::LengthSpec::Px(gap));
+            },
+        );
         self
     }
 
     pub fn wrap(mut self, wrap: bool) -> Self {
-        Arc::make_mut(&mut self.style.layout).flex_wrap = if wrap {
+        let wrap = if wrap {
             nana_ui_core::FlexWrap::Wrap
         } else {
             nana_ui_core::FlexWrap::NoWrap
         };
+        edit_layout(&mut self.style.layout, LayoutEdit::Wrap(wrap), |layout| {
+            layout.flex_wrap = wrap;
+        });
         self
     }
 
     pub fn align(mut self, align: nana_ui_core::AlignSpec) -> Self {
-        Arc::make_mut(&mut self.style.layout).align_items = align;
+        edit_layout(&mut self.style.layout, LayoutEdit::Align(align), |layout| {
+            layout.align_items = align;
+        });
         self
     }
 
@@ -6668,44 +6691,76 @@ impl Stack {
     }
 
     pub fn width(mut self, width: nana_ui_core::LengthSpec) -> Self {
-        Arc::make_mut(&mut self.style.layout).width = Some(width);
+        edit_length(&mut self.style.layout, width, LayoutEdit::Width, |layout| {
+            layout.width = Some(width);
+        });
         self
     }
 
     pub fn height(mut self, height: nana_ui_core::LengthSpec) -> Self {
-        Arc::make_mut(&mut self.style.layout).height = Some(height);
+        edit_length(
+            &mut self.style.layout,
+            height,
+            LayoutEdit::Height,
+            |layout| {
+                layout.height = Some(height);
+            },
+        );
         self
     }
 
     pub fn min_width(mut self, min_width: nana_ui_core::LengthSpec) -> Self {
-        let layout = Arc::make_mut(&mut self.style.layout);
-        // Read as CSS reads `min-width: 0`, so both spellings state one intent.
-        layout.allow_shrink |= matches!(
+        edit_length(
+            &mut self.style.layout,
             min_width,
-            nana_ui_core::LengthSpec::Px(0.0) | nana_ui_core::LengthSpec::Percent(0.0)
+            LayoutEdit::MinWidth,
+            |layout| {
+                // Read as CSS reads `min-width: 0`, so both spellings state one intent.
+                layout.allow_shrink |= matches!(
+                    min_width,
+                    nana_ui_core::LengthSpec::Px(0.0) | nana_ui_core::LengthSpec::Percent(0.0)
+                );
+                layout.min_width = Some(min_width);
+            },
         );
-        layout.min_width = Some(min_width);
         self
     }
 
     pub fn min_height(mut self, min_height: nana_ui_core::LengthSpec) -> Self {
-        Arc::make_mut(&mut self.style.layout).min_height = Some(min_height);
+        edit_length(
+            &mut self.style.layout,
+            min_height,
+            LayoutEdit::MinHeight,
+            |layout| layout.min_height = Some(min_height),
+        );
         self
     }
 
     pub fn max_width(mut self, max_width: f32) -> Self {
-        Arc::make_mut(&mut self.style.layout).max_width =
-            Some(nana_ui_core::LengthSpec::Px(max_width.max(0.0)));
+        let max_width = max_width.max(0.0);
+        edit_layout(
+            &mut self.style.layout,
+            LayoutEdit::MaxWidth(max_width.to_bits()),
+            |layout| layout.max_width = Some(nana_ui_core::LengthSpec::Px(max_width)),
+        );
         self
     }
 
     pub fn grow(mut self, grow: f32) -> Self {
-        Arc::make_mut(&mut self.style.layout).flex_grow = Some(grow);
+        edit_layout(
+            &mut self.style.layout,
+            LayoutEdit::Grow(grow.to_bits()),
+            |layout| layout.flex_grow = Some(grow),
+        );
         self
     }
 
     pub fn shrink(mut self, shrink: f32) -> Self {
-        Arc::make_mut(&mut self.style.layout).flex_shrink = Some(shrink);
+        edit_layout(
+            &mut self.style.layout,
+            LayoutEdit::Shrink(shrink.to_bits()),
+            |layout| layout.flex_shrink = Some(shrink),
+        );
         self
     }
 
@@ -6816,7 +6871,9 @@ impl ComponentView for Stack {
         &mut self,
         share: &mut dyn FnMut(&mut std::sync::Arc<nana_ui_core::LayoutStyle>),
     ) {
+        let built = Arc::clone(&self.style.layout);
         share(&mut self.style.layout);
+        crate::layout_edits::adopt_shared(&built, &self.style.layout);
     }
 
     fn node_kind(&self) -> NodeKind {

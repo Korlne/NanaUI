@@ -64,6 +64,7 @@ mod inline_content;
 mod inline_flow;
 pub mod intrinsic_cache;
 mod key_layers;
+mod layout_edits;
 mod layout_engine;
 mod layout_frontier;
 mod layout_node;
