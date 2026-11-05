@@ -141,7 +141,10 @@ pub(crate) struct NodeRecord {
     pub layout_context_generation: u64,
     pub scroll_offset: ScrollOffset,
     pub interaction: InteractionState,
-    pub accessibility: AccessibilityState,
+    /// Shared: most nodes keep the default, one allocation for all of them
+    /// ([`shared_accessibility`]), which keeps the record in a smaller
+    /// allocation size class.
+    pub accessibility: Arc<AccessibilityState>,
     pub dirty: DirtyMask,
     /// Why the node is marked for render extraction, in the world's
     /// extraction epochs: the last epoch anything but a move marked it
@@ -155,6 +158,19 @@ pub(crate) struct NodeRecord {
     /// (`UiWorld::local_select_menu_surface`): if so, and nothing else
     /// marked it since the epoch began, its record is kept.
     pub render_room_epoch: u64,
+}
+
+static DEFAULT_ACCESSIBILITY: std::sync::LazyLock<Arc<AccessibilityState>> =
+    std::sync::LazyLock::new(|| Arc::new(AccessibilityState::default()));
+
+/// `state` as a record holds it: the one shared default when it is the
+/// default, its own allocation otherwise.
+pub(crate) fn shared_accessibility(state: &AccessibilityState) -> Arc<AccessibilityState> {
+    if *state == **DEFAULT_ACCESSIBILITY {
+        Arc::clone(&DEFAULT_ACCESSIBILITY)
+    } else {
+        Arc::new(state.clone())
+    }
 }
 
 impl NodeRecord {
@@ -187,7 +203,7 @@ impl NodeRecord {
             layout_context_generation: 0,
             scroll_offset: ScrollOffset::default(),
             interaction,
-            accessibility: AccessibilityState::default(),
+            accessibility: shared_accessibility(&AccessibilityState::default()),
             dirty: DirtyMask::all(),
             render_full_epoch: 0,
             render_moved_epoch: u64::MAX,

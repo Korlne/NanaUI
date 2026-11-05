@@ -4430,7 +4430,7 @@ impl UiWorld {
     }
 
     pub fn accessibility(&self, id: StableNodeId) -> Option<&AccessibilityState> {
-        self.nodes.get(id).map(|node| &node.accessibility)
+        self.nodes.get(id).map(|node| node.accessibility.as_ref())
     }
 
     /// The node whose text names `id` when it has no label of its own; see

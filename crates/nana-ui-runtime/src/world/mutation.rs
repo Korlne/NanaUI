@@ -2332,7 +2332,8 @@ impl UiWorld {
                     || previous.numeric_value != accessibility.numeric_value
                     || previous.numeric_minimum != accessibility.numeric_minimum
                     || previous.numeric_maximum != accessibility.numeric_maximum;
-                self.record_mut(*id).accessibility = accessibility.clone();
+                self.record_mut(*id).accessibility =
+                    crate::store::shared_accessibility(accessibility);
                 self.mark_inline_text_owners(*id);
                 if hidden_changed {
                     // `aria-hidden` changes the projected structure for the

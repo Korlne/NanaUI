@@ -108,7 +108,7 @@ impl UiWorld {
                 Arc::clone(&node.hierarchy.children),
                 Arc::clone(&node.kind),
                 if node.resolved.0.visible {
-                    node.accessibility.clone()
+                    node.accessibility.as_ref().clone()
                 } else {
                     AccessibilityState::default()
                 },
