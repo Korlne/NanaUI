@@ -477,8 +477,14 @@ impl RuntimeLayoutEngine {
             let covered: HashSet<StableNodeId> = islands.iter().map(|island| island.0).collect();
             AffectedIndex::new(world, &affected, &covered)
         };
+        let affected_children = if force_full {
+            AffectedChildren::default()
+        } else {
+            AffectedChildren::new(world, &affected)
+        };
         let scope = ScopeContext {
             affected: &affected,
+            affected_children: &affected_children,
             measure: frontier.measure_nodes(),
             metrics_changed: &metrics_changed,
             retained: &*retained,
@@ -2078,7 +2084,7 @@ impl ContainerPlan {
         scope: &ScopeContext<'_>,
         nodes: &LayoutInputMap<'_>,
     ) -> bool {
-        scope.affected.iter().all(|&child| {
+        scope.affected_children(container).iter().all(|&child| {
             if nodes.world.parent_id(child) != Some(container)
                 || edit.is_some_and(|edit| edit.arrived(nodes.world, container, child))
             {
@@ -3156,11 +3162,56 @@ fn collapse_omitted_boxes(
 
 struct ScopeContext<'a> {
     affected: &'a HashSet<StableNodeId>,
+    /// `affected` by parent: what a container's plan re-checks or patches.
+    affected_children: &'a AffectedChildren,
     measure: &'a HashSet<StableNodeId>,
     metrics_changed: &'a HashSet<StableNodeId>,
     retained: &'a DocumentLayoutCache,
     /// Which boxes lead to an affected node, built once per pass.
     reach: &'a AffectedIndex,
+}
+
+/// The affected nodes by parent, each list in id order. A container's plan
+/// re-checks and patches its own children only: asking every affected node
+/// of the pass whether it is one of them made each container that a pass
+/// reuses cost the whole closure, so a pass that reuses the plans down a
+/// deep chain cost the chain times the closure. In id order, the children a
+/// re-check measures before it stops, and the order a patch sums them in,
+/// do not follow the hash order of `affected`.
+#[derive(Default)]
+struct AffectedChildren(crate::NodeMap<Vec<StableNodeId>>);
+
+impl AffectedChildren {
+    fn new(world: &UiWorld, affected: &HashSet<StableNodeId>) -> Self {
+        let mut by_parent = crate::NodeMap::<Vec<StableNodeId>>::default();
+        for &id in affected {
+            if let Some(parent) = world.parent_id(id) {
+                by_parent.entry(parent).or_default().push(id);
+            }
+        }
+        for children in by_parent.values_mut() {
+            children.sort_unstable();
+        }
+        Self(by_parent)
+    }
+}
+
+impl ScopeContext<'_> {
+    /// The affected direct children of `container`, in id order.
+    fn affected_children(&self, container: StableNodeId) -> &[StableNodeId] {
+        let children = self
+            .affected_children
+            .0
+            .get(&container)
+            .map_or(&[][..], Vec::as_slice);
+        #[cfg(test)]
+        for _ in children {
+            crate::world::page_origins::steps::step(
+                crate::world::page_origins::steps::Walk::PlanChildren,
+            );
+        }
+        children
+    }
 }
 
 /// Every node an affected node is in, and per container the direct children

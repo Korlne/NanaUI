@@ -111,7 +111,7 @@ pub(crate) mod steps {
     use std::cell::Cell;
 
     /// How many walks there are.
-    pub(crate) const WALKS: usize = 6;
+    pub(crate) const WALKS: usize = 7;
 
     #[derive(Clone, Copy)]
     pub(crate) enum Walk {
@@ -127,6 +127,9 @@ pub(crate) mod steps {
         Islands,
         /// Accessibility's answers for a record and every one above it.
         Records,
+        /// An affected child a container's retained plan re-checks or
+        /// patches (`layout_engine::ScopeContext::affected_children`).
+        PlanChildren,
     }
 
     thread_local! {

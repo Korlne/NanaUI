@@ -87,6 +87,7 @@ fn page(scrolled: bool) -> (AppContext, Vec<StableNodeId>) {
 /// [`LEAVES`] leaves at the chain's bottom ([`steps::take_all`]), and the
 /// nodes the frame touched.
 struct Walked {
+    layout: [u64; steps::WALKS],
     hit_test: [u64; steps::WALKS],
     accessibility: [u64; steps::WALKS],
     extraction: [u64; steps::WALKS],
@@ -107,6 +108,7 @@ fn mount_leaves(scrolled: bool) -> Walked {
         leaves.push(id);
     }
     cx.commit_mutations(queue).unwrap();
+    steps::take_all();
     let work = accessible_frame(
         &mut cx,
         document(),
@@ -114,7 +116,7 @@ fn mount_leaves(scrolled: bool) -> Walked {
         &mut bundled_face_shaper(),
         false,
     );
-    steps::take_all();
+    let layout = steps::take_all();
     assert!(
         cx.compat_world_mut()
             .rebuild_hit_test_scoped(document(), &work.input_hit_test),
@@ -133,6 +135,7 @@ fn mount_leaves(scrolled: bool) -> Walked {
     assert_eq!(records.len(), extracted.len());
     let extraction = steps::take_all();
     Walked {
+        layout,
         hit_test,
         accessibility,
         extraction,
@@ -189,6 +192,17 @@ fn the_shifts_above_a_deep_chain_under_a_scroll_are_walked_once() {
     let shift = walked.hit_test[Walk::HitShift as usize];
     assert!(shift > 0, "the chain is under a shifted entry");
     assert_linear("the scroll shifts above", shift, walked.touched);
+}
+
+/// Every box of the chain resizes and keeps its plan: each container's plan
+/// re-checks or patches its own affected children, not every affected node
+/// of the pass.
+#[test]
+fn retained_plans_down_a_deep_chain_recheck_their_own_children() {
+    let walked = mount_leaves(false);
+    let children = walked.layout[Walk::PlanChildren as usize];
+    assert!(children > 0, "the chain's plans take the leaves");
+    assert_linear("the plans' affected children", children, walked.touched);
 }
 
 #[test]

@@ -7667,6 +7667,7 @@ mod issue397;
 mod issue398;
 mod line_box_memo;
 mod list_item_tooltip;
+mod mount_under_narrow_row;
 mod reflow_oracle;
 mod result_chain_memo;
 #[cfg(test)]

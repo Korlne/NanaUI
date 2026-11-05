@@ -1237,6 +1237,7 @@ fn measure_node_level(
             )?
             .map(|size| (size, true))
         } else if measure_plan_children_unchanged(
+            id,
             plan,
             viewport,
             child_font_px,
@@ -1964,6 +1965,7 @@ fn publish_atom_baseline(
 /// its OWN content grew, which is the case `content_growth_under_a_child_moves_
 /// its_siblings` exists to hold.
 fn measure_plan_children_unchanged(
+    id: StableNodeId,
     plan: &MeasurePlan,
     viewport: LayoutViewport,
     child_font_px: f32,
@@ -1971,7 +1973,9 @@ fn measure_plan_children_unchanged(
     cache: &mut PassIntrinsicCache,
     scope: &ScopeContext<'_>,
 ) -> Result<bool, UiWorldError> {
-    for affected in scope.affected.iter().copied() {
+    // The list is the plan's (the caller compared it): every entry is a child
+    // of `id`.
+    for affected in scope.affected_children(id).iter().copied() {
         let Some(entry) = plan.entry(affected) else {
             continue;
         };
@@ -2128,7 +2132,7 @@ fn sequential_measure_delta(
         .display
         .is_some_and(|display| display.is_flex_container() || display.is_grid_container());
     if !flex_or_grid
-        && scope.affected.iter().any(|&child| {
+        && scope.affected_children(id).iter().any(|&child| {
             nodes.world.parent_id(child) == Some(id)
                 && nodes.style_ref(child).is_some_and(|style| {
                     style.is_inline_level()
@@ -2162,7 +2166,9 @@ fn sequential_measure_delta(
     let edit = (!Arc::ptr_eq(&plan.children, children))
         .then(|| ChildListEdit::between(&plan.children, children));
     let mut patches: Vec<(StableNodeId, Size, Option<Arc<nana_ui_core::LayoutStyle>>)> = Vec::new();
-    for affected in scope.affected.iter().copied() {
+    // A child that left has no current parent here; with an edit it is the
+    // edit's, and without one the list, and so its parents, did not change.
+    for affected in scope.affected_children(id).iter().copied() {
         let Some(entry) = plan.entry(affected) else {
             continue;
         };
@@ -2512,7 +2518,7 @@ fn flex_line_measure_delta(
     }
     let old_sizes = sizes.clone();
     let mut patched = false;
-    for affected in scope.affected.iter().copied() {
+    for affected in scope.affected_children(id).iter().copied() {
         let Some(index) = flow.iter().position(|child| *child == affected) else {
             continue;
         };

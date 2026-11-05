@@ -3591,6 +3591,10 @@ pub(super) struct PlainText {
     /// Resolved to its unwrapped lines, not to its box's width, which only
     /// held the text it replaced.
     provisional: bool,
+    /// Through the host shaper, whose widest line cannot break
+    /// ([`UiWorld::host_widest_line_cannot_break`]). An engine's layout says
+    /// so itself.
+    host_unbroken: bool,
 }
 
 /// The same constraints without the box width: the line as long as it runs.
@@ -4055,6 +4059,7 @@ impl UiWorld {
                         natural,
                         layout,
                         provisional,
+                        host_unbroken,
                     } = self.resolve_plain_text(
                         id,
                         constraints,
@@ -4064,7 +4069,13 @@ impl UiWorld {
                     );
                     validate_text_metrics(id, metrics)?;
                     let resolved_before = self.text_resolved_before(id);
-                    resolved.push(PlainResolution::text(id, constraints, layout, provisional));
+                    resolved.push(PlainResolution::text(
+                        id,
+                        constraints,
+                        layout,
+                        provisional,
+                        host_unbroken,
+                    ));
                     if self.record(id).text_metrics != metrics
                         || self.text_natural_width(id) != natural
                     {
@@ -4391,6 +4402,7 @@ impl UiWorld {
                     natural,
                     layout: retained.then_some(layout),
                     provisional,
+                    host_unbroken: false,
                 }
             }
             None => {
@@ -4444,6 +4456,8 @@ impl UiWorld {
                     Some(natural) if hugged => (natural, None, true),
                     unwrapped => (metrics, unwrapped.map(|natural| natural.width), false),
                 };
+                let host_unbroken = !provisional
+                    && self.host_widest_line_cannot_break(id, style, constraints, metrics, shaper);
                 // No layout: one from an engine this host no longer offers is
                 // not what the host measures now.
                 PlainText {
@@ -4451,6 +4465,7 @@ impl UiWorld {
                     natural,
                     layout: None,
                     provisional,
+                    host_unbroken,
                 }
             }
         };
@@ -4570,13 +4585,15 @@ impl UiWorld {
                 .constraints
                 .filter(|constraints| constraints.wrap)
                 .map(|constraints| {
-                    if self.widest_line_cannot_break(
-                        resolution.id,
-                        &constraints,
-                        resolution.layout.as_deref(),
-                        unbreakable(previous),
-                        work,
-                    ) {
+                    if resolution.host_unbroken
+                        || self.widest_line_cannot_break(
+                            resolution.id,
+                            &constraints,
+                            resolution.layout.as_deref(),
+                            unbreakable(previous),
+                            work,
+                        )
+                    {
                         f32::NEG_INFINITY
                     } else {
                         constraints.max_width.unwrap_or(f32::INFINITY)
@@ -4644,7 +4661,8 @@ impl UiWorld {
     /// break when it last resolved (`unbroken_before`) is laid out that
     /// second time, so a label as wide as its line costs nothing more. Only
     /// an engine's layout says where its lines stuck out; a host shaper's
-    /// lines count as wrapped to their box.
+    /// metrics say it of the widest line
+    /// ([`Self::host_widest_line_cannot_break`]).
     fn widest_line_cannot_break(
         &mut self,
         id: StableNodeId,
@@ -4687,6 +4705,46 @@ impl UiWorld {
             work,
         );
         crate::text_node::text_metrics_of_layout(&narrower).width >= widest - 0.01
+    }
+
+    /// [`Self::widest_line_cannot_break`] for text the host shaper measured
+    /// at `constraints`, from what it measured (`metrics`): a host reports
+    /// no overflow, but a widest line wider than the box it wrapped to
+    /// stuck out of it. Text whose widest line could not break when it last
+    /// resolved is measured once more, half a pixel narrower than that
+    /// line, and still cannot break when it comes out as wide.
+    ///
+    /// Without this, text a host measured wider than its box asks layout
+    /// for the box's width before it is shaped there and for its own width
+    /// after (`text_inline_size` counts lines wrapped no wider than the
+    /// box), with the same metrics: no seed reaches layout, the frame keeps
+    /// the narrower box, and a later pass that measures the text again
+    /// widens it while one that reuses a retained measurement does not.
+    fn host_widest_line_cannot_break<S: TextShaper>(
+        &self,
+        id: StableNodeId,
+        style: &ComputedStyle,
+        constraints: crate::TextShapeConstraints,
+        metrics: TextMetrics,
+        shaper: &mut CountingShaper<'_, S>,
+    ) -> bool {
+        if style.writing_mode.is_vertical() || !constraints.wrap {
+            return false;
+        }
+        let Some(max_width) = constraints.max_width else {
+            return false;
+        };
+        if metrics.width > max_width + 0.5 {
+            return true;
+        }
+        if self.text_wrap_limit(id) != Some(f32::NEG_INFINITY) {
+            return false;
+        }
+        let inside = crate::TextShapeConstraints {
+            max_width: Some((metrics.width - 0.5).max(0.0)),
+            ..constraints
+        };
+        shaper.shape(id, &self.record(id).text, style, inside).width >= metrics.width - 0.01
     }
 
     /// Counts what a typography scale change cost this pass's text: the text
@@ -4866,6 +4924,8 @@ pub(super) struct PlainResolution {
     layout: Option<Arc<nana_text::TextLayout>>,
     /// Resolved without its box's width ([`PlainText::provisional`]).
     provisional: bool,
+    /// [`PlainText::host_unbroken`].
+    host_unbroken: bool,
 }
 
 impl PlainResolution {
@@ -4876,6 +4936,7 @@ impl PlainResolution {
         constraints: crate::TextShapeConstraints,
         layout: Option<Arc<nana_text::TextLayout>>,
         provisional: bool,
+        host_unbroken: bool,
     ) -> Self {
         Self {
             id,
@@ -4886,6 +4947,7 @@ impl PlainResolution {
             }),
             layout,
             provisional,
+            host_unbroken,
         }
     }
 
@@ -4895,6 +4957,7 @@ impl PlainResolution {
             constraints: None,
             layout: None,
             provisional: false,
+            host_unbroken: false,
         }
     }
 }
@@ -5131,6 +5194,7 @@ impl UiWorld {
                         natural,
                         layout,
                         provisional,
+                        host_unbroken,
                     } = self.resolve_plain_text(
                         id,
                         constraints,
@@ -5141,7 +5205,13 @@ impl UiWorld {
                     validate_text_metrics(id, metrics)?;
                     let resolved_before = self.text_resolved_before(id);
                     if stampable {
-                        resolved.push(PlainResolution::text(id, constraints, layout, provisional));
+                        resolved.push(PlainResolution::text(
+                            id,
+                            constraints,
+                            layout,
+                            provisional,
+                            host_unbroken,
+                        ));
                     }
                     shaped.push((id, metrics, natural, None, resolved_before));
                     continue;
