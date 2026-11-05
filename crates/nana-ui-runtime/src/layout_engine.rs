@@ -2552,6 +2552,114 @@ use crate::world::LayoutStyleRef as StyleRef;
 /// ([`UiWorld::layout_input_view`]), not a copy of it.
 type PassInput<'a> = crate::world::LayoutInputView<'a>;
 
+/// What a measurement asks of a node's layout style before it measures
+/// anything, decided once per style: a page holds thousands of boxes and a
+/// handful of distinct (interned) styles, and each of these reads a dozen
+/// scattered fields of a 2.6 KB style. A pass keeps them beside each node's
+/// input ([`LayoutInputMap::facts`]); every answer is the function it names,
+/// for a horizontal page where the function takes a writing context.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct StyleFacts(u16);
+
+impl StyleFacts {
+    /// `viewport_axes().width` / `.height`.
+    const VIEWPORT_WIDTH: u16 = 1 << 0;
+    const VIEWPORT_HEIGHT: u16 = 1 << 1;
+    /// [`measure::sizes_own_axes`] on a horizontal page.
+    const OWN_WIDTH: u16 = 1 << 2;
+    const OWN_HEIGHT: u16 = 1 << 3;
+    /// [`measure::block_containing_size_affects_leaf`] on a horizontal page.
+    const LEAF_READS_BLOCK: u16 = 1 << 4;
+    /// [`measure::plain_childless_content`].
+    const PLAIN_CHILDLESS: u16 = 1 << 5;
+    /// The two style questions a measurement's constraint class asks: a
+    /// usable aspect ratio, a full percent fill on either axis.
+    const ASPECT_RATIO: u16 = 1 << 6;
+    const FULL_PERCENT_FILL: u16 = 1 << 7;
+
+    pub(crate) fn of(style: &LayoutStyle) -> Self {
+        let horizontal = nana_ui_core::WritingContext::default();
+        let viewport = style.viewport_axes();
+        let (own_width, own_height) = measure::sizes_own_axes(style, horizontal);
+        let bit = |on: bool, flag: u16| if on { flag } else { 0 };
+        Self(
+            bit(viewport.width, Self::VIEWPORT_WIDTH)
+                | bit(viewport.height, Self::VIEWPORT_HEIGHT)
+                | bit(own_width, Self::OWN_WIDTH)
+                | bit(own_height, Self::OWN_HEIGHT)
+                | bit(
+                    measure::block_containing_size_affects_leaf(style, horizontal),
+                    Self::LEAF_READS_BLOCK,
+                )
+                | bit(
+                    measure::plain_childless_content(style),
+                    Self::PLAIN_CHILDLESS,
+                )
+                | bit(
+                    style
+                        .aspect_ratio
+                        .is_some_and(|ratio| ratio.is_finite() && ratio > 0.0),
+                    Self::ASPECT_RATIO,
+                )
+                | bit(
+                    style.width.is_some_and(LengthSpec::is_full_percent_fill)
+                        || style.height.is_some_and(LengthSpec::is_full_percent_fill),
+                    Self::FULL_PERCENT_FILL,
+                ),
+        )
+    }
+
+    fn has(self, flag: u16) -> bool {
+        self.0 & flag != 0
+    }
+
+    /// [`viewport_basis`].
+    fn viewport_basis(self, viewport: LayoutViewport) -> LayoutViewport {
+        LayoutViewport::new(
+            if self.has(Self::VIEWPORT_WIDTH) {
+                viewport.width
+            } else {
+                0.0
+            },
+            if self.has(Self::VIEWPORT_HEIGHT) {
+                viewport.height
+            } else {
+                0.0
+            },
+        )
+    }
+
+    /// [`measure::sizes_own_axes`].
+    fn sizes_own_axes(self, writing: nana_ui_core::WritingContext) -> (bool, bool) {
+        if writing.is_vertical() {
+            return (false, false);
+        }
+        (self.has(Self::OWN_WIDTH), self.has(Self::OWN_HEIGHT))
+    }
+
+    /// [`measure::block_containing_size_affects_leaf`].
+    fn block_containing_size_affects_leaf(self, writing: nana_ui_core::WritingContext) -> bool {
+        writing.is_vertical() || self.has(Self::LEAF_READS_BLOCK)
+    }
+
+    /// [`measure::plain_childless_content`].
+    fn plain_childless_content(self) -> bool {
+        self.has(Self::PLAIN_CHILDLESS)
+    }
+
+    /// The constraint class a measurement under `available` is keyed by.
+    fn constraint_class(self, available: Size) -> crate::ConstraintClass {
+        let extents = (available.width.max(0.0), available.height.max(0.0));
+        if self.has(Self::ASPECT_RATIO) {
+            crate::ConstraintClass::aspect_ratio(extents.0, extents.1)
+        } else if self.has(Self::FULL_PERCENT_FILL) {
+            crate::ConstraintClass::fill(extents.0, extents.1)
+        } else {
+            crate::ConstraintClass::percentage_cb(extents.0, extents.1)
+        }
+    }
+}
+
 /// The boxes a pass placed, by node: a dense table, as [`crate::store::DenseNodeMap`]
 /// lays one out. A full pass places every node of the document in roughly the
 /// order they were made, so this indexes a vector sized once for the
@@ -2581,6 +2689,10 @@ struct LayoutInputMap<'a> {
     /// this map.
     styles: RefCell<crate::store::DenseNodeMap<Option<Arc<nana_ui_core::LayoutStyle>>>>,
     materialized: usize,
+    /// [`StyleFacts`] of the styles this pass met, most recent first: a
+    /// handful of interned styles serve every box. Each entry holds its
+    /// style, so an address is never reused while it is here.
+    style_facts: RefCell<Vec<(Arc<nana_ui_core::LayoutStyle>, StyleFacts)>>,
     placements: crate::store::DenseNodeMap<(Point, Size, f32)>,
     used_padding: crate::store::DenseNodeMap<nana_ui_core::PaddingSpec>,
     far_start: crate::store::DenseNodeMap<[bool; 2]>,
@@ -2709,6 +2821,7 @@ impl<'a> LayoutInputMap<'a> {
             nodes: crate::store::DenseNodeMap::default(),
             styles: RefCell::default(),
             materialized: 0,
+            style_facts: RefCell::default(),
             placements: Default::default(),
             used_padding: Default::default(),
             far_start: Default::default(),
@@ -2743,7 +2856,9 @@ impl<'a> LayoutInputMap<'a> {
         });
         let mut containers = 0;
         for &id in ids {
-            let input = self.world.layout_input_view(id)?;
+            let input = self
+                .world
+                .layout_input_view(id, |style| Self::facts_in(&self.style_facts, style))?;
             containers += usize::from(!input.children.is_empty());
             nodes.insert(id, input);
         }
@@ -2765,15 +2880,46 @@ impl<'a> LayoutInputMap<'a> {
     fn get(&mut self, id: StableNodeId) -> Result<Option<&PassInput<'a>>, UiWorldError> {
         let world = self.world;
         let materialized = &mut self.materialized;
-        self.nodes
-            .get_or_try_insert(id, || match world.layout_input_view(id) {
+        let facts = &self.style_facts;
+        self.nodes.get_or_try_insert(id, || {
+            match world.layout_input_view(id, |style| Self::facts_in(facts, style)) {
                 Ok(input) => {
                     *materialized = materialized.saturating_add(1);
                     Ok(Some(input))
                 }
                 Err(UiWorldError::MissingNode(_)) => Ok(None),
                 Err(error) => Err(error),
-            })
+            }
+        })
+    }
+
+    /// [`StyleFacts`] of `style`, from the pass's memo of the styles it met.
+    fn facts_in(
+        memo: &RefCell<Vec<(Arc<nana_ui_core::LayoutStyle>, StyleFacts)>>,
+        style: &Arc<nana_ui_core::LayoutStyle>,
+    ) -> StyleFacts {
+        /// Distinct styles kept: a page's boxes share a few.
+        const KEPT: usize = 8;
+        let mut memo = memo.borrow_mut();
+        if let Some(index) = memo.iter().position(|(kept, _)| Arc::ptr_eq(kept, style)) {
+            let facts = memo[index].1;
+            #[cfg(any(test, feature = "layout-verify"))]
+            assert_eq!(
+                facts,
+                StyleFacts::of(style),
+                "the facts of a style went stale"
+            );
+            if index > 0 {
+                memo.swap(index, index - 1);
+            }
+            return facts;
+        }
+        let facts = StyleFacts::of(style);
+        if memo.len() == KEPT {
+            memo.pop();
+        }
+        memo.insert(0, (Arc::clone(style), facts));
+        facts
     }
 
     /// Style for classifying / measuring siblings without assembling `LayoutInput`.
@@ -3471,29 +3617,6 @@ impl MeasurementKey {
             constraint: constraint.normalized(),
             direction_sensitive,
         }
-    }
-}
-
-fn measurement_constraint_class(
-    style: &nana_ui_core::LayoutStyle,
-    available: Size,
-) -> crate::ConstraintClass {
-    let extents = (available.width.max(0.0), available.height.max(0.0));
-    if style
-        .aspect_ratio
-        .is_some_and(|ratio| ratio.is_finite() && ratio > 0.0)
-    {
-        crate::ConstraintClass::aspect_ratio(extents.0, extents.1)
-    } else if style
-        .width
-        .is_some_and(nana_ui_core::LengthSpec::is_full_percent_fill)
-        || style
-            .height
-            .is_some_and(nana_ui_core::LengthSpec::is_full_percent_fill)
-    {
-        crate::ConstraintClass::fill(extents.0, extents.1)
-    } else {
-        crate::ConstraintClass::percentage_cb(extents.0, extents.1)
     }
 }
 

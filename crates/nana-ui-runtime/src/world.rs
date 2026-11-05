@@ -4719,7 +4719,8 @@ impl UiWorld {
             .ok_or(UiWorldError::MissingNode(id))?
             .hierarchy
             .parent;
-        let view = self.layout_input_view(id)?;
+        let view =
+            self.layout_input_view(id, |style| crate::layout_engine::StyleFacts::of(style))?;
         Ok(LayoutInput {
             id,
             parent,
@@ -4740,6 +4741,7 @@ impl UiWorld {
     pub(crate) fn layout_input_view(
         &self,
         id: StableNodeId,
+        facts_of: impl FnOnce(&Arc<nana_ui_core::LayoutStyle>) -> crate::layout_engine::StyleFacts,
     ) -> Result<LayoutInputView<'_>, UiWorldError> {
         let plain_world = self.layout_length_tracks.is_empty()
             && self.overlay_host_nodes.is_empty()
@@ -4772,6 +4774,7 @@ impl UiWorld {
         };
         Ok(LayoutInputView {
             children: &record.hierarchy.children,
+            facts: facts_of(style.arc()),
             style,
             writing: record_writing(record),
             containing_writing: record_containing_writing(record),
@@ -7140,6 +7143,8 @@ fn record_containing_writing(record: &NodeRecord) -> nana_ui_core::WritingContex
 pub(crate) struct LayoutInputView<'a> {
     pub children: &'a Arc<Vec<StableNodeId>>,
     pub style: LayoutStyleRef<'a>,
+    /// What measurement asks of [`Self::style`], decided once per style.
+    pub facts: crate::layout_engine::StyleFacts,
     pub writing: nana_ui_core::WritingContext,
     pub containing_writing: nana_ui_core::WritingContext,
     pub text_metrics: Option<crate::TextMetrics>,

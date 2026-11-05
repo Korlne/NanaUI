@@ -64,7 +64,7 @@ fn resolved_size_specs(
 /// containing block's block size changes. Percent, fill, fit-content, and
 /// calc stay sensitive. Reporting `false` for one of those republishes a
 /// stale size from the first measurement.
-fn block_containing_size_affects_leaf(
+pub(super) fn block_containing_size_affects_leaf(
     style: &nana_ui_core::LayoutStyle,
     writing: nana_ui_core::WritingContext,
 ) -> bool {
@@ -84,7 +84,7 @@ fn block_containing_size_affects_leaf(
 /// own, reading no containing block: a definite width (height), limits that
 /// read none, and no box edge that does. Horizontal writing without an
 /// aspect ratio only; anything else says no.
-fn sizes_own_axes(
+pub(super) fn sizes_own_axes(
     style: &nana_ui_core::LayoutStyle,
     writing: nana_ui_core::WritingContext,
 ) -> (bool, bool) {
@@ -700,7 +700,7 @@ fn visual_beside_text(id: StableNodeId, world: &UiWorld) -> VisualContent {
 /// does not: the border box returned below never includes it. Logical edges
 /// stay on the general path because their physical padding depends on the
 /// writing context.
-fn plain_childless_content(style: &nana_ui_core::LayoutStyle) -> bool {
+pub(super) fn plain_childless_content(style: &nana_ui_core::LayoutStyle) -> bool {
     if style.omits_box()
         || style
             .display
@@ -910,9 +910,7 @@ fn measure_node_level(
     // twice. Only the key drops the axis; the measure below still uses
     // `available`.
     let mut keyed_available = available;
-    if node.children.is_empty()
-        && !block_containing_size_affects_leaf(node.style.as_ref(), node.writing)
-    {
+    if node.children.is_empty() && !node.facts.block_containing_size_affects_leaf(node.writing) {
         keyed_available.height = 0.0;
     }
     // A box whose size on an axis is its own -- a definite length, limits and
@@ -920,7 +918,7 @@ fn measure_node_level(
     // extent it is offered on that axis: what it hands its children comes
     // from that length. A resize that reaches its parent then finds its
     // measurement instead of walking its children again.
-    let (own_width, own_height) = sizes_own_axes(node.style.as_ref(), node.writing);
+    let (own_width, own_height) = node.facts.sizes_own_axes(node.writing);
     if own_width {
         keyed_available.width = 0.0;
     }
@@ -931,11 +929,11 @@ fn measure_node_level(
         id,
         keyed_available,
         parent_direction,
-        super::viewport_basis(node.style.as_ref(), viewport),
+        node.facts.viewport_basis(viewport),
         parent_font_px,
         node.writing,
         node.containing_writing,
-        measurement_constraint_class(node.style.as_ref(), keyed_available),
+        node.facts.constraint_class(keyed_available),
         direction_sensitive,
     );
     // Retained intrinsic facts are shared across formatting contexts. They
@@ -964,6 +962,7 @@ fn measure_node_level(
     }
     // Copy the node facts out before any further world lookup. `node` borrows
     // the input map, and the style closure below is that borrow's last use.
+    let style_facts = node.facts;
     let style_arc = forced.map_or_else(|| node.style.shared(), StyleRef::Owned);
     let child_ids: &Arc<Vec<StableNodeId>> = node.children;
     let text_metrics = node.text_metrics;
@@ -974,7 +973,11 @@ fn measure_node_level(
     // the result. A scoped pass still takes the general path, which records
     // no measure plan for such a leaf either (`plain_leaf` below).
     let plain_leaf = child_ids.is_empty()
-        && plain_childless_content(style_arc.as_ref())
+        && if unforced {
+            style_facts.plain_childless_content()
+        } else {
+            plain_childless_content(style_arc.as_ref())
+        }
         && nodes.world.standard_visual_ref(id).is_none()
         && nodes.world.replaced_natural_size(id).is_none();
     if unforced && scope.is_none() && plain_leaf {
