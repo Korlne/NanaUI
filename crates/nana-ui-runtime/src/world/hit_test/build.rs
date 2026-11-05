@@ -653,6 +653,17 @@ impl UiWorld {
         let mut index = HitIndex::from_entries(entries);
         index.viewport_roots = viewport_roots;
         self.hit_test_index.insert(document, index);
+        // Every entry of the document is built from current geometry.
+        if !self.non_scroll_hit_dirty.is_empty() {
+            let mut held = std::mem::take(&mut self.non_scroll_hit_dirty);
+            held.retain(|&id| {
+                self.nodes
+                    .get(id)
+                    .is_some_and(|record| record.document != document)
+                    || self.input_pending(id)
+            });
+            self.non_scroll_hit_dirty = held;
+        }
         #[cfg(debug_assertions)]
         self.audit_hit_eligibility("rebuild");
     }

@@ -199,8 +199,7 @@ impl UiWorld {
             }
         }
         let _replaced = self.replace_hit_entries_in_place(document, rebuilt);
-        let dirty = rest.as_slice();
-        let Some(roots) = self.minimal_hit_patch_roots(document, dirty) else {
+        let Some(roots) = self.minimal_hit_patch_roots(document, &rest) else {
             return false;
         };
         for root in roots {
@@ -208,6 +207,9 @@ impl UiWorld {
                 return false;
             }
         }
+        // Each entry of `dirty` and the pinned ones was built again, in
+        // place or under a patched root.
+        self.settle_non_scroll_hit_dirty(dirty.iter().chain(&rest).copied());
         // Once every patch is in: an entry replaced early sits over others
         // the patches after it build again.
         #[cfg(any(test, feature = "layout-verify"))]

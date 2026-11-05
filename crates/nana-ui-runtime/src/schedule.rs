@@ -65,6 +65,11 @@ impl DirtyMask {
         std::mem::take(&mut self.0)
     }
 
+    /// Whether any of `bits` is set.
+    pub(crate) const fn intersects(self, bits: u16) -> bool {
+        self.0 & bits != 0
+    }
+
     #[cfg(test)]
     pub(crate) const fn has(self, bits: u16) -> bool {
         self.0 & bits == bits

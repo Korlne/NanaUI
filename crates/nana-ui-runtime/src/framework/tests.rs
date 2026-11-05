@@ -9105,7 +9105,13 @@ fn scroll_view_with_forty_rows_dirties_forty_one_hit_targets() {
             .unwrap();
         context.append_child(scroll, row).unwrap();
     }
+    // The initial frame: laid out, with the retained hit tree a scroll
+    // patch requires.
+    context
+        .layout_document(document, crate::LayoutViewport::new(200.0, 100.0))
+        .unwrap();
     let _ = context.take_system_work();
+    context.rebuild_hit_test(document);
     assert!(
         context
             .scroll_to(scroll, ScrollOffset { x: 0.0, y: 120.0 })

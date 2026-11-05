@@ -66,14 +66,18 @@ impl UiWorld {
                 self.rebuild_hit_test(document);
                 break;
             }
+            self.settle_non_scroll_hit_dirty([id]);
         }
     }
 }
 
 impl UiWorld {
-    /// Whether every input-dirty node is a recorded scroller. Ordinary scroll
-    /// dirties only that container; descendant dirtiness means additional
-    /// input geometry changed (for example a frozen row's transform).
+    /// Whether every input-dirty node is a recorded scroller whose entry
+    /// nothing but its scroll changed. Ordinary scroll dirties only that
+    /// container; descendant dirtiness means additional input geometry
+    /// changed (for example a frozen row's transform), and a scroller in
+    /// `non_scroll_hit_dirty` had its own box, transform or membership
+    /// changed too, which a scroll shift does not carry.
     /// When true, the frame driver
     /// can patch the hit index in place instead of rebuilding the document.
     pub fn hit_test_work_is_scroll_only(
@@ -82,9 +86,34 @@ impl UiWorld {
         updates: &[(StableNodeId, [f32; 2])],
     ) -> bool {
         !updates.is_empty()
-            && input
-                .iter()
-                .all(|node| updates.iter().any(|(scroller, _)| *scroller == *node))
+            && input.iter().all(|node| {
+                updates.iter().any(|(scroller, _)| *scroller == *node)
+                    && !self.non_scroll_hit_dirty.contains(node)
+            })
+    }
+
+    /// Forget the non-scroll input changes of `ids`, whose entries were just
+    /// built again from current geometry. One marked again since its work
+    /// was taken keeps its record: that change is the next frame's.
+    pub(super) fn settle_non_scroll_hit_dirty(
+        &mut self,
+        ids: impl IntoIterator<Item = StableNodeId>,
+    ) {
+        if self.non_scroll_hit_dirty.is_empty() {
+            return;
+        }
+        for id in ids {
+            if !self.input_pending(id) {
+                self.non_scroll_hit_dirty.remove(&id);
+            }
+        }
+    }
+
+    /// Whether `id` carries an INPUT mark not yet taken as system work.
+    pub(super) fn input_pending(&self, id: StableNodeId) -> bool {
+        self.nodes
+            .get(id)
+            .is_some_and(|record| record.dirty.intersects(DirtyMask::INPUT))
     }
 }
 

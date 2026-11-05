@@ -39,3 +39,6 @@ mod moved_scroll_tests;
 
 #[cfg(test)]
 mod moved_turned_tests;
+
+#[cfg(test)]
+mod scroll_invalidation_tests;
