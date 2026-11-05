@@ -24,6 +24,12 @@ const NATIVE_LEADING_CLEARANCE: f32 = nana_ui_core::space::MD;
 /// Width of the native window-button placeholder: the macOS traffic-light
 /// cluster centered with equal margins.
 const NATIVE_WINDOW_CONTROLS_WIDTH: f32 = 78.0;
+/// A window-control capsule's inset around its buttons, sideways and up and
+/// down, inside its one-pixel hairline.
+const CONTROLS_CAPSULE_INSET_X: f32 = nana_ui_core::space::XXS;
+const CONTROLS_CAPSULE_INSET_Y: f32 = 1.0;
+/// A capsule's height: a window button, its inset and its hairline.
+const CONTROLS_CAPSULE_HEIGHT: f32 = WINDOW_CONTROL_WIDTH + 2.0 * (CONTROLS_CAPSULE_INSET_Y + 1.0);
 const TITLE_FONT_SIZE: f32 = nana_ui_core::type_scale::BODY;
 const TITLE_FONT_WEIGHT: u16 = nana_ui_core::type_scale::SEMIBOLD;
 const OVERLAY_Z_INDEX: i32 = 1;
@@ -97,6 +103,8 @@ pub struct AppTitleBar {
     pub style: NodeStyle,
     /// How far the slots stand in from the bar's outer edges.
     pub(crate) edge_inset: nana_ui_core::SpacingStep,
+    /// The window buttons sit in a capsule: see [`Self::controls_capsule`].
+    pub(crate) controls_capsule: bool,
 }
 
 impl AppTitleBar {
@@ -115,7 +123,20 @@ impl AppTitleBar {
             maximized: false,
             style: NodeStyle::default(),
             edge_inset: nana_ui_core::SpacingStep::Sm,
+            controls_capsule: false,
         }
+    }
+
+    /// Sets the window buttons on a capsule of their own: a `Surface` plate
+    /// with a `BorderSoft` hairline and round ends, standing in from the
+    /// window edge by the bar's edge inset, its buttons round. For a bar laid
+    /// over a scene, where bare buttons would sit on whatever is behind and
+    /// the application's own controls beside them are capsules too. The
+    /// native traffic lights get the same plate under them, the placeholder's
+    /// width. Off by default.
+    pub fn controls_capsule(mut self, capsule: bool) -> Self {
+        self.controls_capsule = capsule;
+        self
     }
 
     /// How far the leading slot's content stands in from the bar's left
@@ -305,10 +326,15 @@ impl AppTitleBar {
                         apply_fill_column(layout, JustifySpec::Start, false);
                         layout.overflow_x = OverflowSpec::Hidden;
                         // The native placeholder sits flush with the bar edge
-                        // and carries its own clearance.
+                        // and carries its own clearance; a capsule stands in
+                        // by the edge inset.
                         layout.padding_left = Some(LengthSpec::Px(
                             if self.leads_with_native_controls() && self.controls.is_some() {
-                                0.0
+                                if self.controls_capsule {
+                                    self.edge_px()
+                                } else {
+                                    0.0
+                                }
                             } else {
                                 self.edge_px() + self.chrome_padding_left()
                             },
@@ -340,9 +366,13 @@ impl AppTitleBar {
                         layout.theme.padding_left =
                             Some(crate::theme_intent::space(nana_ui_core::SpacingStep::Sm));
                         // Custom controls hug the window edge; native or
-                        // absent controls keep the bar's edge inset.
+                        // absent controls, and a capsule, keep the bar's edge
+                        // inset.
                         layout.padding_right = Some(LengthSpec::Px(
-                            if self.show_window_controls && !self.native_controls {
+                            if self.show_window_controls
+                                && !self.native_controls
+                                && !self.controls_capsule
+                            {
                                 0.0
                             } else {
                                 self.edge_px()
@@ -408,6 +438,7 @@ impl AppTitleBar {
         AppTitleBarControls::new(self.maximized)
             .native(self.native_controls)
             .over_media(self.is_over_media())
+            .capsule(self.controls_capsule)
             .project(controls, world, mutations);
     }
 }
@@ -569,6 +600,8 @@ pub struct AppTitleBarControls {
     pub native: bool,
     /// The custom buttons sit over media: see [`AppTitleBar::over_media`].
     pub over_media: bool,
+    /// The buttons sit on a capsule: see [`AppTitleBar::controls_capsule`].
+    pub capsule: bool,
     pub minimize: Option<StableNodeId>,
     pub maximize: Option<StableNodeId>,
     pub close: Option<StableNodeId>,
@@ -581,6 +614,7 @@ impl AppTitleBarControls {
             maximized,
             native: !WindowChrome::platform_default().uses_custom_controls(),
             over_media: false,
+            capsule: false,
             minimize: None,
             maximize: None,
             close: None,
@@ -595,6 +629,11 @@ impl AppTitleBarControls {
 
     pub fn over_media(mut self, over_media: bool) -> Self {
         self.over_media = over_media;
+        self
+    }
+
+    pub fn capsule(mut self, capsule: bool) -> Self {
+        self.capsule = capsule;
         self
     }
 
@@ -620,13 +659,25 @@ impl AppTitleBarControls {
 
     fn effective_style(&self) -> NodeStyle {
         let mut style = self.style.clone();
+        if self.capsule {
+            style.background = Some(SemanticColorRole::Surface);
+            style.border = Some(SemanticColorRole::BorderSoft);
+            style.radius = Some(nana_ui_core::RadiusTier::Full);
+        }
         let layout = Arc::make_mut(&mut style.layout);
+        if self.capsule {
+            layout.border_width = Some(1.0);
+        }
         if self.native {
             let width = NATIVE_WINDOW_CONTROLS_WIDTH;
             layout.width = Some(LengthSpec::Px(width));
             layout.min_width = Some(LengthSpec::Px(width));
             layout.max_width = Some(LengthSpec::Px(width));
-            layout.height = Some(LengthSpec::Fill);
+            layout.height = Some(if self.capsule {
+                LengthSpec::Px(CONTROLS_CAPSULE_HEIGHT)
+            } else {
+                LengthSpec::Fill
+            });
             layout.padding_left = Some(LengthSpec::Px(0.0));
             layout.padding_right = Some(LengthSpec::Px(0.0));
             layout.margin_right = Some(LengthSpec::Px(SLOT_PADDING + NATIVE_LEADING_CLEARANCE));
@@ -639,6 +690,18 @@ impl AppTitleBarControls {
         layout.align_items = AlignSpec::Center;
         layout.justify_content = JustifySpec::End;
         layout.gap = Some(layout.gap.unwrap_or(LengthSpec::Px(WINDOW_CONTROL_GAP)));
+        if self.capsule {
+            layout.padding_left = Some(LengthSpec::Px(CONTROLS_CAPSULE_INSET_X));
+            layout.padding_right = Some(LengthSpec::Px(CONTROLS_CAPSULE_INSET_X));
+            layout.padding_top = Some(LengthSpec::Px(CONTROLS_CAPSULE_INSET_Y));
+            layout.padding_bottom = Some(LengthSpec::Px(CONTROLS_CAPSULE_INSET_Y));
+            layout.margin_left = Some(LengthSpec::Px(nana_ui_core::space::XS));
+            layout.height = Some(LengthSpec::Px(CONTROLS_CAPSULE_HEIGHT));
+            layout.flex_grow = Some(0.0);
+            layout.flex_shrink = Some(0.0);
+            layout.hidden = false;
+            return style;
+        }
         layout.padding_left = Some(LengthSpec::Px(WINDOW_CONTROL_PADDING));
         layout.padding_right = Some(LengthSpec::Px(WINDOW_CONTROL_PADDING));
         layout.height = Some(LengthSpec::Fill);
@@ -724,7 +787,9 @@ impl ComponentView for AppTitleBarControls {
                 child,
                 action,
                 self.maximized,
-                self.over_media,
+                // On its plate a button reads like any other on a surface.
+                self.over_media && !self.capsule,
+                self.capsule,
                 world,
                 mutations,
             );
@@ -2204,6 +2269,7 @@ fn project_window_control(
     action: WindowChromeAction,
     maximized: bool,
     over_media: bool,
+    round: bool,
     world: &UiWorld,
     mutations: &mut MutationQueue,
 ) {
@@ -2230,11 +2296,18 @@ fn project_window_control(
         id,
         world,
         mutations,
-        &window_control_style(
-            action == WindowChromeAction::Close,
-            over_media,
-            world.theme().effects(),
-        ),
+        &{
+            let mut style = window_control_style(
+                action == WindowChromeAction::Close,
+                over_media,
+                world.theme().effects(),
+            );
+            // Round in a capsule, so a hover fill follows its ends.
+            if round {
+                style.radius = Some(nana_ui_core::RadiusTier::Full);
+            }
+            style
+        },
         InteractionState {
             pointer_events: true,
             focusable: true,
@@ -3086,6 +3159,91 @@ mod tests {
         let close = world.layout_box(buttons[2]).unwrap();
         assert_eq!(close.x + close.width, window_width - WINDOW_CONTROL_PADDING);
         assert!(close.y > container.y);
+    }
+
+    /// In a capsule the custom buttons sit on a `Surface` plate with a
+    /// hairline and round ends, centred in the bar and standing in from the
+    /// window edge by the bar's edge inset; the buttons go round too.
+    #[test]
+    fn capsule_window_controls_stand_in_on_a_plate() {
+        let window_width = 800.0;
+        let mut context = AppContext::new();
+        let bar = context
+            .create_component(
+                document(),
+                AppTitleBar::new("Nana")
+                    .native_controls(false)
+                    .show_window_controls(true)
+                    .over_media(true)
+                    .controls_capsule(true),
+            )
+            .unwrap();
+        context.assemble_app_title_bar(bar).unwrap();
+        context
+            .layout_document(document(), LayoutViewport::new(window_width, 400.0))
+            .unwrap();
+        let world = context.world();
+        let controls = find_title_bar_controls_child(&context, bar.stable_id()).unwrap();
+        let plate = world.layout_box(controls).unwrap();
+        assert_eq!(plate.height, CONTROLS_CAPSULE_HEIGHT);
+        assert_eq!(plate.y, (TITLE_BAR_HEIGHT - CONTROLS_CAPSULE_HEIGHT) / 2.0);
+        assert_eq!(
+            plate.x + plate.width,
+            window_width - nana_ui_core::space::SM,
+            "the capsule keeps the bar's edge inset"
+        );
+        let style = world.node_style(controls).unwrap();
+        assert_eq!(style.background, Some(SemanticColorRole::Surface));
+        assert_eq!(style.border, Some(SemanticColorRole::BorderSoft));
+        assert_eq!(style.radius, Some(nana_ui_core::RadiusTier::Full));
+        let buttons = world.node(controls).unwrap().children.clone();
+        assert_eq!(buttons.len(), 3);
+        for (index, button) in buttons.iter().enumerate() {
+            let bounds = world.layout_box(*button).unwrap();
+            assert_eq!(bounds.width, WINDOW_CONTROL_WIDTH);
+            assert_eq!(
+                bounds.x,
+                plate.x
+                    + 1.0
+                    + CONTROLS_CAPSULE_INSET_X
+                    + index as f32 * (WINDOW_CONTROL_WIDTH + WINDOW_CONTROL_GAP)
+            );
+            let style = world.node_style(*button).unwrap();
+            assert_eq!(style.radius, Some(nana_ui_core::RadiusTier::Full));
+            // On the plate the buttons drop the on-media foreground.
+            assert_ne!(style.foreground, Some(SemanticColorRole::OnMedia));
+        }
+    }
+
+    /// The native traffic lights get the same plate under them: the
+    /// placeholder is a capsule the placeholder's width, standing in from
+    /// the leading edge by the bar's edge inset.
+    #[test]
+    fn capsule_native_controls_are_a_plate_under_the_traffic_lights() {
+        let mut context = AppContext::new();
+        let bar = context
+            .create_component(
+                document(),
+                AppTitleBar::new("")
+                    .native_controls(true)
+                    .controls_capsule(true),
+            )
+            .unwrap();
+        context.assemble_app_title_bar(bar).unwrap();
+        context
+            .layout_document(document(), LayoutViewport::new(800.0, 400.0))
+            .unwrap();
+        let controls = context.read(bar, |bar| bar.controls).unwrap().unwrap();
+        let world = context.world();
+        assert!(world.node(controls).unwrap().children.is_empty());
+        let plate = world.canonical_layout_box(controls).unwrap();
+        assert_eq!(plate.x, nana_ui_core::space::SM);
+        assert_eq!(plate.width, NATIVE_WINDOW_CONTROLS_WIDTH);
+        assert_eq!(plate.height, CONTROLS_CAPSULE_HEIGHT);
+        assert_eq!(plate.y, (TITLE_BAR_HEIGHT - CONTROLS_CAPSULE_HEIGHT) / 2.0);
+        let style = world.node_style(controls).unwrap();
+        assert_eq!(style.background, Some(SemanticColorRole::Surface));
+        assert_eq!(style.radius, Some(nana_ui_core::RadiusTier::Full));
     }
 
     /// A wide centre column gives way before the trailing cluster and the

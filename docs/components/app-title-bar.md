@@ -46,6 +46,8 @@ widget(AppTitleBar::new("Nana").drag_enabled(true)).trailing(button("分享"))
 
 `.maximized` 交给窗口按钮的外观。
 
+`.controls_capsule(true)` 把窗口按钮放进胶囊：`Surface` 底、`BorderSoft` 细线、两端全圆，按钮也变圆；胶囊按条的边距离开窗口边，不再贴边。用在铺在画面上的透明条：光秃秃的按钮会落在背后随便什么东西上，而旁边应用自己的控件也是胶囊。原生红黄绿下面垫同样的胶囊，宽度是占位的宽度。默认关。
+
 窗口按钮若已经由宿主绑定，把壳的 `title_window_controls` 或这条的 `show_window_controls` 按你的按钮方案关掉，避免两套按钮。
 
 ## 外观
