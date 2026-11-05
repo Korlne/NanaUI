@@ -3,6 +3,16 @@
 
 use super::*;
 
+/// What [`HitIndex::inherited_shift_skipping`] remembers over one rebuild,
+/// while the index stays as it is.
+#[derive(Default)]
+pub(super) struct ShiftSkips {
+    /// Each entry passed: the first entry at or above it the walk stops at.
+    first: crate::NodeMap<Option<StableNodeId>>,
+    /// The entries one lookup passed, reused.
+    path: Vec<StableNodeId>,
+}
+
 impl HitIndex {
     /// The scroll the entries above `id` took since they were built: what
     /// a transform built against the live scroll has in it beyond theirs.
@@ -11,8 +21,15 @@ impl HitIndex {
     /// `id`'s transform holds nothing from above it.
     pub(super) fn inherited_shift(&self, id: StableNodeId) -> [f32; 2] {
         let mut shift = [0.0, 0.0];
+        if !self.shifted {
+            return shift;
+        }
         let mut cursor = self.entries.get(&id).and_then(|n| n.parent);
         while let Some(id) = cursor {
+            #[cfg(test)]
+            crate::world::page_origins::steps::step(
+                crate::world::page_origins::steps::Walk::HitShift,
+            );
             let Some(node) = self.entries.get(&id) else {
                 break;
             };
@@ -24,6 +41,90 @@ impl HitIndex {
             cursor = node.parent;
         }
         shift
+    }
+
+    /// [`Self::inherited_shift`], passing over the entries that hold no
+    /// scroll shift and hand their children no coordinates of their own:
+    /// adding their zeros leaves the sum as it is (it starts at +0 and an
+    /// addition gives -0 only from two of them), so only the entries the
+    /// walk adds something at or stops at are visited, in the same order.
+    /// `skips` remembers, for each entry passed, the first such entry at or
+    /// above it: a deep chain is walked once for all the children under it.
+    pub(super) fn inherited_shift_skipping(
+        &self,
+        id: StableNodeId,
+        skips: &mut ShiftSkips,
+    ) -> [f32; 2] {
+        let mut shift = [0.0, 0.0];
+        if !self.shifted {
+            return shift;
+        }
+        let mut cursor = self.entries.get(&id).and_then(|n| n.parent);
+        while let Some(at) = cursor {
+            let Some(node) = self
+                .notable_at_or_above(at, skips)
+                .and_then(|notable| self.entries.get(&notable))
+            else {
+                break;
+            };
+            shift[0] += node.shift[0];
+            shift[1] += node.shift[1];
+            if node.entry.local_children {
+                break;
+            }
+            cursor = node.parent;
+        }
+        #[cfg(any(test, feature = "layout-verify"))]
+        {
+            #[cfg(test)]
+            let walked = crate::world::page_origins::steps::uncounted(|| self.inherited_shift(id));
+            #[cfg(not(test))]
+            let walked = self.inherited_shift(id);
+            assert!(
+                shift[0].to_bits() == walked[0].to_bits()
+                    && shift[1].to_bits() == walked[1].to_bits(),
+                "{id:?}: the shift past the unshifted entries {shift:?} is the walked one \
+                 {walked:?}"
+            );
+        }
+        shift
+    }
+
+    /// The first entry from `id` up (`id` included) that holds a scroll
+    /// shift or hands its children its own coordinates; `None` where the
+    /// entries end first.
+    fn notable_at_or_above(
+        &self,
+        id: StableNodeId,
+        skips: &mut ShiftSkips,
+    ) -> Option<StableNodeId> {
+        let ShiftSkips { first, path } = skips;
+        path.clear();
+        let mut cursor = Some(id);
+        let found = loop {
+            let Some(at) = cursor else {
+                break None;
+            };
+            #[cfg(test)]
+            crate::world::page_origins::steps::step(
+                crate::world::page_origins::steps::Walk::HitShift,
+            );
+            if let Some(&known) = first.get(&at) {
+                break known;
+            }
+            let Some(node) = self.entries.get(&at) else {
+                break None;
+            };
+            if node.shift != [0.0, 0.0] || node.entry.local_children {
+                break Some(at);
+            }
+            path.push(at);
+            cursor = node.parent;
+        };
+        for &passed in path.iter() {
+            first.insert(passed, found);
+        }
+        found
     }
 
     /// How far the space the walk reaches `id` in is from the space `id`'s
@@ -141,6 +242,10 @@ impl HitIndex {
     /// The shift the index holds `parent`'s children at: what a transform
     /// built against the live scroll for one of them takes off.
     pub(super) fn child_shift(&self, parent: Option<StableNodeId>) -> [f32; 2] {
+        if !self.shifted {
+            // Every shift is +0 ([`Self::shifted`]), and so is their sum.
+            return [0.0, 0.0];
+        }
         parent.map_or([0.0, 0.0], |id| {
             let Some(node) = self.entries.get(&id) else {
                 return self.inherited_shift(id);
@@ -160,10 +265,15 @@ impl HitIndex {
     /// the space the index holds the parent's transform in (scroll shifts
     /// above it put back), with the shift the index holds the child at
     /// ([`Self::child_shift`]) for the caller to take off again.
+    ///
+    /// With `skips`, the walk up passes over the entries that hold no shift
+    /// ([`Self::inherited_shift_skipping`]): the same sum, the entries
+    /// between remembered once for every child seeded under them.
     pub(super) fn live_child_seed(
         &self,
         parent: StableNodeId,
         scroll: crate::ScrollOffset,
+        skips: Option<&mut ShiftSkips>,
     ) -> Option<([f32; 6], [f32; 2])> {
         let node = self.entries.get(&parent)?;
         if node.entry.local_children {
@@ -172,7 +282,10 @@ impl HitIndex {
         // `find_hit_transform` and `child_shift` from one walk up: the
         // shift above the parent, and the parent's own on top for its
         // children.
-        let above = self.inherited_shift(parent);
+        let above = match skips {
+            Some(skips) => self.inherited_shift_skipping(parent, skips),
+            None => self.inherited_shift(parent),
+        };
         let mut transform = node.entry.transform;
         transform[4] += above[0];
         transform[5] += above[1];

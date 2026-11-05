@@ -152,7 +152,7 @@ impl UiWorld {
         let Some((child_transform, _)) = self
             .hit_test_index
             .get(&document)
-            .and_then(|forest| forest.live_child_seed(parent, scroll))
+            .and_then(|forest| forest.live_child_seed(parent, scroll, None))
         else {
             // Parent is absent from the index. That is correct only when the
             // parent omits its layout subtree; otherwise the index is stale.
@@ -202,7 +202,7 @@ impl UiWorld {
         let Some((base, _)) = self
             .hit_test_index
             .get(&document)
-            .and_then(|forest| forest.live_child_seed(anchor, scroll))
+            .and_then(|forest| forest.live_child_seed(anchor, scroll, None))
         else {
             return (!self.node_has_hit_box(anchor)).then(Vec::new);
         };

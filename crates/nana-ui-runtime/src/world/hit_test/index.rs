@@ -33,6 +33,11 @@ pub(in crate::world) struct HitIndex {
     /// kept between queries so a pointer move allocates nothing once they
     /// have grown to the tree's depth.
     pub(super) visit_scratch: std::cell::RefCell<HitVisitScratch>,
+    /// Whether a scroll has shifted an entry since the index was built.
+    /// Until one has, every [`IndexedHit::shift`] is +0, and so is any sum
+    /// of them: the walks up for one ([`Self::inherited_shift`]) answer
+    /// without walking.
+    pub(super) shifted: bool,
 }
 
 /// See [`HitIndex::visit_scratch`].
@@ -300,6 +305,7 @@ impl HitIndex {
             escaped,
             pinned,
             visit_scratch: Default::default(),
+            shifted: false,
         }
     }
 
@@ -433,8 +439,41 @@ impl HitIndex {
     /// [`Self::refresh_bounds`] for many entries: the deepest first, so each
     /// entry and each ancestor is refreshed once, after everything under it.
     pub(super) fn refresh_bounds_of(&mut self, ids: &[StableNodeId]) {
-        let depth = |index: &Self, id: StableNodeId| {
-            std::iter::successors(Some(id), |id| index.entries.get(id)?.parent).count()
+        // Levels from the top. A deep walk remembers the depths it passes
+        // above its first few steps, so the entries of a deep chain or
+        // under one each walk a few steps, not the whole chain.
+        const DIRECT: usize = 32;
+        let mut depths = crate::NodeMap::<usize>::default();
+        let mut passed = Vec::new();
+        let mut depth = |index: &Self, id: StableNodeId| {
+            passed.clear();
+            let mut steps = 0;
+            let mut cursor = Some(id);
+            while let Some(at) = cursor {
+                #[cfg(test)]
+                crate::world::page_origins::steps::step(
+                    crate::world::page_origins::steps::Walk::HitDepth,
+                );
+                if steps >= DIRECT {
+                    if let Some(&known) = depths.get(&at) {
+                        steps += known;
+                        break;
+                    }
+                    passed.push((at, steps));
+                }
+                steps += 1;
+                cursor = index.entries.get(&at).and_then(|node| node.parent);
+            }
+            for &(at, below) in &passed {
+                depths.insert(at, steps - below);
+            }
+            #[cfg(any(test, feature = "layout-verify"))]
+            assert_eq!(
+                steps,
+                std::iter::successors(Some(id), |id| index.entries.get(id)?.parent).count(),
+                "{id:?}: a remembered depth is the walked one"
+            );
+            steps
         };
         let mut open: std::collections::BinaryHeap<(usize, StableNodeId)> = ids
             .iter()

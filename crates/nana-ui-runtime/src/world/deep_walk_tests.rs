@@ -84,6 +84,7 @@ fn page(scrolled: bool) -> (AppContext, Vec<StableNodeId>) {
 /// [`LEAVES`] leaves at the chain's bottom ([`steps::take_all`]), and the
 /// nodes the frame touched.
 struct Walked {
+    hit_test: [u64; steps::WALKS],
     accessibility: [u64; steps::WALKS],
     extraction: [u64; steps::WALKS],
     touched: u64,
@@ -116,6 +117,7 @@ fn mount_leaves(scrolled: bool) -> Walked {
             .rebuild_hit_test_scoped(document(), &work.input_hit_test),
         "the hit index takes the frame in place"
     );
+    let hit_test = steps::take_all();
     let delta = cx.world().project_accessibility_delta(&work);
     assert!(
         delta.updated.len() as u64 >= LEAVES,
@@ -128,6 +130,7 @@ fn mount_leaves(scrolled: bool) -> Walked {
     assert_eq!(records.len(), extracted.len());
     let extraction = steps::take_all();
     Walked {
+        hit_test,
         accessibility,
         extraction,
         touched: DEPTH + LEAVES,
@@ -161,4 +164,26 @@ fn page_origins_are_summed_once_down_a_deep_chain() {
         walked.extraction[origin],
         walked.touched,
     );
+}
+
+#[test]
+fn the_hit_index_walks_a_deep_chain_once() {
+    let walked = mount_leaves(false);
+    let [shift, depth, pointer] = [Walk::HitShift, Walk::HitDepth, Walk::PointerEvents]
+        .map(|walk| walked.hit_test[walk as usize]);
+    assert_eq!(shift, 0, "no scroll has shifted an entry");
+    assert!(depth > 0 && pointer > 0, "the entries are built again");
+    assert_linear("the depths of refreshed entries", depth, walked.touched);
+    assert_linear("the parents' pointer events", pointer, walked.touched);
+}
+
+/// Under a scrolled scroller the shifts above an entry are summed past the
+/// unshifted entries, the chain walked once for every entry rebuilt in
+/// place under it.
+#[test]
+fn the_shifts_above_a_deep_chain_under_a_scroll_are_walked_once() {
+    let walked = mount_leaves(true);
+    let shift = walked.hit_test[Walk::HitShift as usize];
+    assert!(shift > 0, "the chain is under a shifted entry");
+    assert_linear("the scroll shifts above", shift, walked.touched);
 }

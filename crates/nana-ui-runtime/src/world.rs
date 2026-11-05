@@ -1053,6 +1053,9 @@ pub struct UiWorld {
     geometry_read_page: Cell<bool>,
     /// Page origins a read-only pass remembers (`world/page_origins.rs`).
     page_origins: RefCell<page_origins::PageOrigins>,
+    /// While a scoped hit rebuild runs, which changes no style: the pointer
+    /// events deep nodes use, remembered ([`Self::used_pointer_events`]).
+    pointer_events_memo: RefCell<Option<NodeMap<PointerEventsSpec>>>,
     /// Set while a layout move marks its box: the INPUT it marks is the
     /// move's alone (no [`DirtyMask::INPUT_ELSEWHERE`]).
     marking_layout_move: bool,
@@ -1345,6 +1348,7 @@ impl UiWorld {
             geometry_frame: Cell::new(None),
             geometry_read_page: Cell::new(false),
             page_origins: RefCell::default(),
+            pointer_events_memo: RefCell::new(None),
             marking_layout_move: false,
             #[cfg(any(test, feature = "layout-verify"))]
             accessibility_shipped: Default::default(),
@@ -5605,14 +5609,64 @@ impl UiWorld {
     }
 
     fn used_pointer_events(&self, id: StableNodeId) -> PointerEventsSpec {
+        if self.record(id).hierarchy.depth > page_origins::DIRECT_DEPTH
+            && let Ok(mut memo) = self.pointer_events_memo.try_borrow_mut()
+            && let Some(memo) = memo.as_mut()
+        {
+            return self.used_pointer_events_remembered(id, memo);
+        }
+        self.walked_pointer_events(id)
+    }
+
+    /// [`Self::used_pointer_events`], every ancestor walked.
+    fn walked_pointer_events(&self, id: StableNodeId) -> PointerEventsSpec {
         let mut current = Some(id);
         while let Some(node) = current {
+            #[cfg(test)]
+            page_origins::steps::step(page_origins::steps::Walk::PointerEvents);
             if let Some(specified) = self.record(node).style.layout.pointer_events {
                 return specified;
             }
             current = self.parent_id(node);
         }
         PointerEventsSpec::Auto
+    }
+
+    /// [`Self::used_pointer_events`] through `memo`: the nodes a walk
+    /// passes take the answer it finds, so the nodes of a deep chain each
+    /// walk a step.
+    fn used_pointer_events_remembered(
+        &self,
+        id: StableNodeId,
+        memo: &mut NodeMap<PointerEventsSpec>,
+    ) -> PointerEventsSpec {
+        let mut passed = Vec::new();
+        let mut current = Some(id);
+        let used = loop {
+            let Some(node) = current else {
+                break PointerEventsSpec::Auto;
+            };
+            #[cfg(test)]
+            page_origins::steps::step(page_origins::steps::Walk::PointerEvents);
+            if let Some(&known) = memo.get(&node) {
+                break known;
+            }
+            if let Some(specified) = self.record(node).style.layout.pointer_events {
+                break specified;
+            }
+            passed.push(node);
+            current = self.parent_id(node);
+        };
+        for node in passed {
+            memo.insert(node, used);
+        }
+        #[cfg(test)]
+        let walked = page_origins::steps::uncounted(|| self.walked_pointer_events(id));
+        #[cfg(all(not(test), feature = "layout-verify"))]
+        let walked = self.walked_pointer_events(id);
+        #[cfg(any(test, feature = "layout-verify"))]
+        assert_eq!(used, walked, "{id:?}: remembered pointer events");
+        used
     }
 
     fn parent_used_pointer_events(&self, id: StableNodeId) -> PointerEventsSpec {

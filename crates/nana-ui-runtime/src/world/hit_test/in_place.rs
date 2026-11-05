@@ -2,6 +2,7 @@
 //! between that and a patch.
 
 use super::*;
+use crate::world::page_origins::DIRECT_DEPTH;
 
 impl UiWorld {
     /// `id`'s entry built again on its own, when it hands its children what
@@ -16,10 +17,14 @@ impl UiWorld {
     /// parent's live transform and scroll, brought back into the space the
     /// index holds it in by the scroll shifts above it -- so under a scroll
     /// that space is not the live one, and the transform is compared there.
+    ///
+    /// `skips` carries the unshifted entries above deep parents from one
+    /// entry to the next ([`HitIndex::inherited_shift_skipping`]).
     fn rebuilt_hit_entry_in_place(
         &self,
         document: DocumentId,
         id: StableNodeId,
+        skips: &mut ShiftSkips,
     ) -> Option<HitEntry> {
         let index = self.hit_test_index.get(&document)?;
         let hit = index.entries.get(&id)?;
@@ -49,7 +54,10 @@ impl UiWorld {
                 if index.entries.get(&parent)?.entry.persp != [0.0, 0.0] {
                     return None;
                 }
-                index.live_child_seed(parent, self.record(parent).scroll_offset)?
+                let record = self.record(parent);
+                // A shallow walk up costs less than remembering it.
+                let skips = (record.hierarchy.depth > DIRECT_DEPTH).then_some(&mut *skips);
+                index.live_child_seed(parent, record.scroll_offset, skips)?
             }
             None => (IDENTITY_AFFINE, [0.0, 0.0]),
         };
@@ -180,6 +188,19 @@ impl UiWorld {
         document: DocumentId,
         dirty: &[StableNodeId],
     ) -> bool {
+        // Styles stay as they are while the index is patched: the pointer
+        // events each deep node uses are remembered for the whole rebuild.
+        let previous = self.pointer_events_memo.replace(Some(NodeMap::default()));
+        let rebuilt = self.rebuild_hit_test_scoped_remembering(document, dirty);
+        self.pointer_events_memo.replace(previous);
+        rebuilt
+    }
+
+    fn rebuild_hit_test_scoped_remembering(
+        &mut self,
+        document: DocumentId,
+        dirty: &[StableNodeId],
+    ) -> bool {
         if dirty.is_empty() {
             return true;
         }
@@ -191,8 +212,9 @@ impl UiWorld {
         // being in their own boxes' coordinates, but for the pinned.
         let mut rest = self.pinned_hit_entries_under(document, dirty);
         let mut rebuilt = Vec::new();
+        let mut skips = ShiftSkips::default();
         for &id in dirty {
-            if let Some(entry) = self.rebuilt_hit_entry_in_place(document, id) {
+            if let Some(entry) = self.rebuilt_hit_entry_in_place(document, id, &mut skips) {
                 rebuilt.push((id, entry));
             } else {
                 rest.push(id);
@@ -212,9 +234,16 @@ impl UiWorld {
         self.settle_non_scroll_hit_dirty(dirty.iter().chain(&rest).copied());
         // Once every patch is in: an entry replaced early sits over others
         // the patches after it build again.
-        #[cfg(any(test, feature = "layout-verify"))]
+        // The checks walk every entry in full; the walks the rebuild took
+        // are what `deep_walk_tests` counts.
+        #[cfg(test)]
+        crate::world::page_origins::steps::uncounted(|| {
+            self.check_moved_hit_entries(document, &_replaced);
+            self.audit_hit_eligibility("scoped rebuild");
+        });
+        #[cfg(all(not(test), feature = "layout-verify"))]
         self.check_moved_hit_entries(document, &_replaced);
-        #[cfg(debug_assertions)]
+        #[cfg(all(not(test), debug_assertions))]
         self.audit_hit_eligibility("scoped rebuild");
         true
     }

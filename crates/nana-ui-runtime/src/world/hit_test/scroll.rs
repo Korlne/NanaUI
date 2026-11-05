@@ -59,6 +59,7 @@ impl UiWorld {
         node.shift[1] += b * delta[0] + d * delta[1];
         node.entry.scroll[0] -= delta[0];
         node.entry.scroll[1] -= delta[1];
+        index.shifted = true;
         index.refresh_bounds(scroller);
         // Ordinary descendants share one lazy scroll shift. Sticky branches
         // additionally change their local placement, so rebase just those

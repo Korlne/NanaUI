@@ -14,6 +14,8 @@ use super::*;
 
 /// Chains no deeper than this are walked directly: a lookup costs more than
 /// the steps it saves.
+/// The other walks up a deep chain that remember what they passed use it
+/// too.
 pub(crate) const DIRECT_DEPTH: u16 = 32;
 
 #[derive(Debug, Default)]
@@ -115,6 +117,12 @@ pub(crate) mod steps {
     pub(crate) enum Walk {
         /// A page origin summed ([`super::UiWorld::record_layout_origin`]).
         PageOrigin,
+        /// The hit index's scroll shift above an entry.
+        HitShift,
+        /// The hit index's depth of an entry whose bounds are refreshed.
+        HitDepth,
+        /// The pointer events a parent uses.
+        PointerEvents,
     }
 
     thread_local! {
