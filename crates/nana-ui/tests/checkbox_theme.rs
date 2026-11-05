@@ -258,3 +258,60 @@ fn switch_thumb_and_range_rail_paint_their_resolved_theme_geometry() {
     assert_eq!(track.height, 24.0);
     assert_eq!(cx.read(rail, |rail| rail.value).unwrap(), 51.0);
 }
+
+#[test]
+fn a_bare_switch_answers_hover_on_its_track_not_with_a_box_wash() {
+    let mut cx = AppContext::new();
+    let doc = DocumentId::new(933).unwrap();
+    let root = cx
+        .create_component(doc, Stack::column(8.0).width(LengthSpec::Px(500.0)))
+        .unwrap();
+    let bare = cx
+        .create_detached_component(doc, Switch::new("", false))
+        .unwrap();
+    cx.append_child(root, bare).unwrap();
+    let labelled = cx
+        .create_detached_component(doc, Switch::new("弹幕", false))
+        .unwrap();
+    cx.append_child(root, labelled).unwrap();
+    let mut shaper = NanaTextShaper::default();
+    settle(&mut cx, doc, &mut shaper);
+    let track = |cx: &AppContext, switch: StableNodeId| match cx.world().component_geometry(switch)
+    {
+        Some(ComponentGeometry::Switch {
+            control,
+            track_border,
+            ..
+        }) => (control, track_border),
+        _ => panic!("switch geometry"),
+    };
+    let mut input = HeadlessInput::bind(&mut cx, doc);
+    let mut hover = |cx: &mut AppContext, switch: StableNodeId, step: u64| {
+        let (control, _) = track(cx, switch);
+        input
+            .pointer(
+                cx,
+                PointerPhase::Move,
+                control.x + control.width / 2.0,
+                control.y + control.height / 2.0,
+            )
+            .unwrap();
+        cx.advance_animations(std::time::Duration::from_secs(step));
+        settle(cx, doc, &mut shaper);
+        cx.world().computed_style(switch).unwrap().background
+    };
+
+    let (_, resting) = track(&cx, bare.stable_id());
+    assert_eq!(
+        hover(&mut cx, bare.stable_id(), 1),
+        None,
+        "no box wash spreads past the pill"
+    );
+    let (_, hovered) = track(&cx, bare.stable_id());
+    assert_ne!(hovered, resting, "the track itself shows the hover");
+
+    assert!(
+        hover(&mut cx, labelled.stable_id(), 2).is_some(),
+        "a labelled switch keeps its row wash"
+    );
+}

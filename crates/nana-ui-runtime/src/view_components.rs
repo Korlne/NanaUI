@@ -5349,6 +5349,14 @@ impl ComponentView for Switch {
         if self.invalid {
             effective_style.border = Some(nana_ui_core::SemanticColorRole::Danger);
         }
+        // A bare switch is its track, and the track already answers hover and
+        // press (geometry tints its fill and border). The box wash a labelled
+        // switch spreads under its text would here be a rounded square past
+        // the pill's ends, wider than the control the pointer is on.
+        if bare {
+            effective_style.interaction.hovered.background = None;
+            effective_style.interaction.pressed.background = None;
+        }
         effective_style.interaction.disabled.foreground =
             Some(nana_ui_core::SemanticColorRole::Muted);
         project_common(
