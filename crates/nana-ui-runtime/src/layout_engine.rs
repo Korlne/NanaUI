@@ -3177,15 +3177,50 @@ pub(crate) struct AffectedIndex {
 impl AffectedIndex {
     /// From `affected`, leaving out the nodes inside `covered` (island roots,
     /// laid out on their own).
-    fn new<'a>(
+    pub(crate) fn new<'a>(
         world: &UiWorld,
         affected: impl IntoIterator<Item = &'a StableNodeId>,
         covered: &HashSet<StableNodeId>,
     ) -> Self {
         let mut index = Self::default();
+        // Nodes found inside an island. A node in `reach` is outside every
+        // island, and so is all above it: a walk up stops at either, so the
+        // nodes of a deep chain are not each walked to the root.
+        let mut inside = crate::NodeSet::default();
+        let mut passed = Vec::new();
         for &id in affected {
-            let inside_island = std::iter::successors(Some(id), |id| world.parent_id(*id))
-                .any(|node| covered.contains(&node));
+            let inside_island = !covered.is_empty() && {
+                passed.clear();
+                let mut cursor = Some(id);
+                let found = loop {
+                    let Some(node) = cursor else {
+                        break false;
+                    };
+                    #[cfg(test)]
+                    crate::world::page_origins::steps::step(
+                        crate::world::page_origins::steps::Walk::Islands,
+                    );
+                    if covered.contains(&node) || inside.contains(&node) {
+                        break true;
+                    }
+                    if index.reach.contains(&node) {
+                        break false;
+                    }
+                    passed.push(node);
+                    cursor = world.parent_id(node);
+                };
+                if found {
+                    inside.extend(passed.iter().copied());
+                }
+                #[cfg(any(test, feature = "layout-verify"))]
+                assert_eq!(
+                    found,
+                    std::iter::successors(Some(id), |id| world.parent_id(*id))
+                        .any(|node| covered.contains(&node)),
+                    "{id:?}: whether it is inside an island"
+                );
+                found
+            };
             if inside_island || !index.reach.insert(id) {
                 continue;
             }

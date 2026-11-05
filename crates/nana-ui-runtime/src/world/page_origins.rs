@@ -123,6 +123,8 @@ pub(crate) mod steps {
         HitDepth,
         /// The pointer events a parent uses.
         PointerEvents,
+        /// Layout's question whether an affected node is inside an island.
+        Islands,
     }
 
     thread_local! {

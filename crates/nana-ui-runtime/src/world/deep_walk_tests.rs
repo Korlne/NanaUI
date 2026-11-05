@@ -20,6 +20,9 @@ use crate::{AppContext, LayoutViewport, MutationQueue};
 const DEPTH: u64 = 400;
 /// Leaves mounted at the chain's bottom.
 const LEAVES: u64 = 64;
+/// The chain level [`islands_above_a_deep_chain_are_found_once`] lays out
+/// as an island.
+const ISLAND_LEVEL: usize = 10;
 /// Ids from here on are the leaves.
 const FIRST_LEAF: u64 = 10_000;
 
@@ -186,4 +189,37 @@ fn the_shifts_above_a_deep_chain_under_a_scroll_are_walked_once() {
     let shift = walked.hit_test[Walk::HitShift as usize];
     assert!(shift > 0, "the chain is under a shifted entry");
     assert_linear("the scroll shifts above", shift, walked.touched);
+}
+
+/// Which affected nodes are inside an island: each walk up stops where an
+/// earlier one found its answer, so the chain under an island is walked
+/// once, and the answers are the full walks'.
+#[test]
+fn islands_above_a_deep_chain_are_found_once() {
+    let (cx, chain) = page(false);
+    let world = cx.world();
+    let island = chain[ISLAND_LEVEL];
+    let covered: std::collections::HashSet<_> = [island].into_iter().collect();
+    // The page above the island, then the chain from the bottom up to the
+    // island: a walk from the bottom passes every node of the island.
+    let affected: Vec<_> = chain[..ISLAND_LEVEL]
+        .iter()
+        .chain(chain[ISLAND_LEVEL..].iter().rev())
+        .copied()
+        .collect();
+    steps::take_all();
+    let index = crate::layout_engine::AffectedIndex::new(world, &affected, &covered);
+    let walked = steps::take_all()[Walk::Islands as usize];
+    assert_linear("the islands above", walked, affected.len() as u64);
+    for (level, &id) in chain.iter().enumerate() {
+        assert_eq!(
+            index.reaches(id),
+            level < ISLAND_LEVEL,
+            "{id:?}: only what is outside the island leads to an affected node"
+        );
+    }
+    // No island: nothing walks.
+    let index = crate::layout_engine::AffectedIndex::new(world, &affected, &Default::default());
+    assert_eq!(steps::take_all()[Walk::Islands as usize], 0);
+    assert!(chain.iter().all(|&id| index.reaches(id)));
 }
