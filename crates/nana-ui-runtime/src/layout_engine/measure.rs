@@ -1369,7 +1369,7 @@ fn measure_node_level(
     if grid_measure || wrapping || grid_tracks.is_some_and(|tracks| !tracks.is_empty()) {
         sort_by_order(&mut flow_children, nodes);
     }
-    let mut child_sizes = Vec::with_capacity(flow_children.len());
+    let mut child_sizes = nodes.scratch.sizes(flow_children.len());
     #[cfg(feature = "benchmark")]
     let mut child_phase = (flow_children.len() > 64).then(super::plan_stats::PhaseClock::start);
     for child in &flow_children {
@@ -1891,6 +1891,8 @@ fn measure_node_level(
         // A container that lost its last child retires its plans.
         nodes.measure_plans.entry(id).or_default().clear();
     }
+    nodes.scratch.give_ids(flow_children);
+    nodes.scratch.give_sizes(child_sizes);
     if unforced {
         cache.insert(cache_key, size);
         publish_atom_baseline(

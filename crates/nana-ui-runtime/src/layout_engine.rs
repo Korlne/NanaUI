@@ -2667,6 +2667,99 @@ impl StyleFacts {
 /// ids far apart, which the map keeps in its overflow.
 type PassOutput = crate::store::DenseNodeMap<LayoutBox>;
 
+/// Working lists a pass's walks reuse instead of allocating one per
+/// container: each container's walk takes the lists it needs (its flow,
+/// its children's sizes, the children it descends into) and hands them back
+/// once it is done, so a pass over thousands of containers allocates about
+/// as many lists as its tree is deep. A list a walk keeps (a plan's
+/// entries) or drops on an early return simply leaves the pool.
+#[derive(Default)]
+struct PassScratch<'a> {
+    ids: Vec<Vec<StableNodeId>>,
+    sizes: Vec<Vec<Size>>,
+    descend: Vec<Vec<placement::Descend>>,
+    arranged: Vec<Vec<placement::ArrangedChild<'a>>>,
+    indices: Vec<Vec<usize>>,
+    line_slots: Vec<Vec<flow::LineBoxSlot>>,
+    lines: Vec<Vec<placement::ArrangedLine>>,
+}
+
+/// Lists a pool keeps: deeper than any walk nests on one stack.
+const SCRATCH_KEPT: usize = 128;
+
+fn take_scratch<T>(pool: &mut Vec<Vec<T>>) -> Vec<T> {
+    pool.pop().unwrap_or_default()
+}
+
+fn give_scratch<T>(pool: &mut Vec<Vec<T>>, mut list: Vec<T>) {
+    if list.capacity() > 0 && pool.len() < SCRATCH_KEPT {
+        list.clear();
+        pool.push(list);
+    }
+}
+
+impl<'a> PassScratch<'a> {
+    fn ids(&mut self) -> Vec<StableNodeId> {
+        take_scratch(&mut self.ids)
+    }
+
+    fn give_ids(&mut self, list: Vec<StableNodeId>) {
+        give_scratch(&mut self.ids, list);
+    }
+
+    fn sizes(&mut self, capacity: usize) -> Vec<Size> {
+        let mut list = take_scratch(&mut self.sizes);
+        list.reserve(capacity);
+        list
+    }
+
+    fn give_sizes(&mut self, list: Vec<Size>) {
+        give_scratch(&mut self.sizes, list);
+    }
+
+    fn descend(&mut self) -> Vec<placement::Descend> {
+        take_scratch(&mut self.descend)
+    }
+
+    fn give_descend(&mut self, list: Vec<placement::Descend>) {
+        give_scratch(&mut self.descend, list);
+    }
+
+    fn arranged(&mut self, capacity: usize) -> Vec<placement::ArrangedChild<'a>> {
+        let mut list = take_scratch(&mut self.arranged);
+        list.reserve(capacity);
+        list
+    }
+
+    fn give_arranged(&mut self, list: Vec<placement::ArrangedChild<'a>>) {
+        give_scratch(&mut self.arranged, list);
+    }
+
+    fn indices(&mut self) -> Vec<usize> {
+        take_scratch(&mut self.indices)
+    }
+
+    fn give_indices(&mut self, list: Vec<usize>) {
+        give_scratch(&mut self.indices, list);
+    }
+
+    fn lines(&mut self) -> Vec<placement::ArrangedLine> {
+        take_scratch(&mut self.lines)
+    }
+
+    fn give_lines(&mut self, list: Vec<placement::ArrangedLine>) {
+        give_scratch(&mut self.lines, list);
+    }
+
+    fn line_slots(&mut self) -> Vec<flow::LineBoxSlot> {
+        take_scratch(&mut self.line_slots)
+    }
+
+    fn give_line_slots(&mut self, list: Vec<flow::LineBoxSlot>) {
+        give_scratch(&mut self.line_slots, list);
+    }
+}
+
 /// On-demand `LayoutInput` cache. A miss loads exactly that id from `UiWorld`.
 struct LayoutInputMap<'a> {
     inline_objects: HashMap<StableNodeId, Arc<[nana_text::InlineObject]>>,
@@ -2693,6 +2786,7 @@ struct LayoutInputMap<'a> {
     /// handful of interned styles serve every box. Each entry holds its
     /// style, so an address is never reused while it is here.
     style_facts: RefCell<Vec<(Arc<nana_ui_core::LayoutStyle>, StyleFacts)>>,
+    scratch: PassScratch<'a>,
     placements: crate::store::DenseNodeMap<(Point, Size, f32)>,
     used_padding: crate::store::DenseNodeMap<nana_ui_core::PaddingSpec>,
     far_start: crate::store::DenseNodeMap<[bool; 2]>,
@@ -2822,6 +2916,7 @@ impl<'a> LayoutInputMap<'a> {
             styles: RefCell::default(),
             materialized: 0,
             style_facts: RefCell::default(),
+            scratch: PassScratch::default(),
             placements: Default::default(),
             used_padding: Default::default(),
             far_start: Default::default(),

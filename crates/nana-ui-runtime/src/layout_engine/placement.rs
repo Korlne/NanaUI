@@ -2107,9 +2107,10 @@ pub(super) struct Descend {
     pub(super) inherited: Option<InheritedGridTracks>,
 }
 
-/// Places each of `children` in order.
+/// Places each of `children` in order, and hands the emptied list back to
+/// the pass's scratch.
 fn place_descendants(
-    children: Vec<Descend>,
+    mut children: Vec<Descend>,
     viewport: LayoutViewport,
     child_font_px: f32,
     nodes: &mut LayoutInputMap<'_>,
@@ -2117,7 +2118,7 @@ fn place_descendants(
     output: &mut PassOutput,
     scope: Option<&ScopeContext<'_>>,
 ) -> Result<(), UiWorldError> {
-    for child in children {
+    for child in children.drain(..) {
         place_node_scoped(
             child.child,
             child.origin,
@@ -2132,6 +2133,7 @@ fn place_descendants(
             child.inherited.as_ref(),
         )?;
     }
+    nodes.scratch.give_descend(children);
     Ok(())
 }
 
@@ -2181,7 +2183,7 @@ fn lay_out_children(
     inherited_grid: Option<&InheritedGridTracks>,
 ) -> Result<ChildrenLayout, UiWorldError> {
     let style = style_arc.as_ref();
-    let mut descend = Vec::new();
+    let mut descend = nodes.scratch.descend();
     if had_plan {
         intrinsic.note_plan_miss();
     }
@@ -2271,7 +2273,7 @@ fn lay_out_children(
                     })
                 })
         });
-    let mut child_sizes = Vec::with_capacity(flow.len());
+    let mut child_sizes = nodes.scratch.sizes(flow.len());
     #[cfg(feature = "benchmark")]
     let mut child_phase = (flow.len() > 64).then(super::plan_stats::PhaseClock::start);
     for child in &flow {
@@ -2430,7 +2432,9 @@ fn lay_out_children(
         gap = arranged.gap;
         plan_sequential &= arranged.sequential_justify;
         let line_count = arranged.lines.len();
-        for item in arranged.children {
+        let mut items = arranged.children;
+        let lines = arranged.lines;
+        for item in items.drain(..) {
             let child = item.child;
             let child_style = item.style.as_ref();
             let child_fonts = fonts_of(child_style, child_font_px);
@@ -2450,7 +2454,7 @@ fn lay_out_children(
                 // redistributed.
                 let align = child_style.resolved_align_self(style.align_items);
                 plan_sequential &= line_count == 1
-                    && arranged.lines[item.line].auto_main == 0
+                    && lines[item.line].auto_main == 0
                     && main_extent(child_size, direction) == main_extent(child_intrinsic, direction)
                     // `used == intrinsic` proves no space was distributed
                     // THIS pass. A child that can grow may still start
@@ -2497,7 +2501,11 @@ fn lay_out_children(
                 });
             }
         }
+        nodes.scratch.give_arranged(items);
+        nodes.scratch.give_lines(lines);
     }
+    nodes.scratch.give_ids(flow);
+    nodes.scratch.give_sizes(child_sizes);
     Ok(ChildrenLayout {
         descend,
         positioned,
@@ -2593,8 +2601,8 @@ pub(super) fn arrange_flow<'a>(
 ) -> Result<ArrangedFlow<'a>, UiWorldError> {
     let float_left_bottom = packed_floats.left_bottom;
     let float_right_bottom = packed_floats.right_bottom;
-    let mut children: Vec<ArrangedChild<'a>> = Vec::with_capacity(flow.len());
-    let mut lines: Vec<ArrangedLine> = Vec::new();
+    let mut children = nodes.scratch.arranged(flow.len());
+    let mut lines = nodes.scratch.lines();
     let wrap = if ifc { FlexWrap::Wrap } else { style.flex_wrap };
     let wrapping = ifc
         || match direction {
@@ -2678,7 +2686,11 @@ pub(super) fn arrange_flow<'a>(
             .collect()
         }
     } else {
-        vec![line_slot((0..flow.len()).collect())]
+        let mut indices = nodes.scratch.indices();
+        indices.extend(0..flow.len());
+        let mut slots = nodes.scratch.line_slots();
+        slots.push(line_slot(indices));
+        slots
     };
     if matches!(wrap, FlexWrap::WrapReverse) {
         line_slots.reverse();
@@ -2697,12 +2709,10 @@ pub(super) fn arrange_flow<'a>(
     // Items measured again at the main size their line gave them.
     let mut hypothetical: HashMap<StableNodeId, (f32, Size)> = HashMap::new();
     for slot in &line_slots {
-        let line_flow: Vec<StableNodeId> = slot.indices.iter().map(|&index| flow[index]).collect();
-        let mut line_sizes: Vec<Size> = slot
-            .indices
-            .iter()
-            .map(|&index| child_sizes[index])
-            .collect();
+        let mut line_flow = nodes.scratch.ids();
+        line_flow.extend(slot.indices.iter().map(|&index| flow[index]));
+        let mut line_sizes = nodes.scratch.sizes(slot.indices.len());
+        line_sizes.extend(slot.indices.iter().map(|&index| child_sizes[index]));
         let mut line_content = content;
         set_main_extent(&mut line_content, direction, slot.main_available);
         let line_tracks = grid_tracks.map(|tracks| {
@@ -2996,7 +3006,8 @@ pub(super) fn arrange_flow<'a>(
         } else {
             0.0
         };
-        for (child, mut child_size) in line_flow.into_iter().zip(line_sizes) {
+        for (&child, &child_size) in line_flow.iter().zip(line_sizes.iter()) {
+            let mut child_size = child_size;
             let Some(child_style_arc) = nodes.style_shared(child) else {
                 continue;
             };
@@ -3142,6 +3153,8 @@ pub(super) fn arrange_flow<'a>(
                 + main_trail(margin)
                 + effective_gap;
         }
+        nodes.scratch.give_ids(line_flow);
+        nodes.scratch.give_sizes(line_sizes);
         lines.push(ArrangedLine {
             cross_start: line_start_cross,
             atom_baseline: line_atom_baseline,
@@ -3150,6 +3163,10 @@ pub(super) fn arrange_flow<'a>(
         });
         cross_cursor += line_cross + extra_cross_gap;
     }
+    for slot in line_slots.drain(..) {
+        nodes.scratch.give_indices(slot.indices);
+    }
+    nodes.scratch.give_line_slots(line_slots);
     Ok(ArrangedFlow {
         children,
         lines,

@@ -26,7 +26,7 @@ pub(super) fn collect_flow_children_reporting(
     nodes: &mut LayoutInputMap<'_>,
     parent_style: &LayoutStyle,
 ) -> Result<(Vec<StableNodeId>, bool), UiWorldError> {
-    let mut out = Vec::new();
+    let mut out = nodes.scratch.ids();
     let mut descendant_dependent = false;
     collect_flow_children_into(
         children,
