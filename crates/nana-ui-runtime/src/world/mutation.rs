@@ -270,34 +270,7 @@ impl<'a> ValidationPlan<'a> {
                 UiMutation::DespawnSubtree { root } => self.despawn_subtree(*root)?,
                 UiMutation::SetStyle { id, style } => {
                     self.require_exists(*id)?;
-                    let layout = style.layout.as_ref();
-                    if layout.opacity.is_some_and(|opacity| {
-                        !opacity.is_finite() || !(0.0..=1.0).contains(&opacity)
-                    }) || layout
-                        .font_size
-                        .is_some_and(|size| !size.is_finite() || size <= 0.0)
-                        || layout
-                            .letter_spacing
-                            .is_some_and(|spacing| !spacing.is_finite())
-                        || layout
-                            .font_weight
-                            .is_some_and(|weight| !(1..=1000).contains(&weight))
-                        || layout.color.is_some_and(|color| {
-                            color.into_iter().any(|channel| {
-                                !channel.is_finite() || !(0.0..=1.0).contains(&channel)
-                            })
-                        })
-                        || layout.background.is_some_and(|color| {
-                            color.into_iter().any(|channel| {
-                                !channel.is_finite() || !(0.0..=1.0).contains(&channel)
-                            })
-                        })
-                        || layout.border_color.is_some_and(|color| {
-                            color.into_iter().any(|channel| {
-                                !channel.is_finite() || !(0.0..=1.0).contains(&channel)
-                            })
-                        })
-                    {
+                    if !style_is_valid(style.layout.as_ref()) {
                         return Err(UiWorldError::InvalidStyle(*id));
                     }
                     self.styles.insert(*id, style.clone());
@@ -338,13 +311,7 @@ impl<'a> ValidationPlan<'a> {
                 UiMutation::WriteLayout { id, layout }
                 | UiMutation::PlaceLayout { id, layout, .. } => {
                     self.require_exists(*id)?;
-                    if !layout.x.is_finite()
-                        || !layout.y.is_finite()
-                        || !layout.width.is_finite()
-                        || !layout.height.is_finite()
-                        || layout.width < 0.0
-                        || layout.height < 0.0
-                    {
+                    if !layout_is_valid(layout) {
                         return Err(UiWorldError::InvalidLayout(*id));
                     }
                 }
@@ -3053,12 +3020,45 @@ impl UiWorld {
         &self,
         mutations: &[UiMutation],
     ) -> Result<bool, UiWorldError> {
-        if let [UiMutation::Create { id, .. }] = mutations {
+        if let [UiMutation::Create { id, .. }, rest @ ..] = mutations {
+            if !self.creates_plainly(*id, rest) {
+                return Ok(false);
+            }
             if self.contains(*id) {
                 return Err(UiWorldError::DuplicateNode(*id));
             }
             if self.is_retired(*id) {
                 return Err(UiWorldError::RetiredNode(*id));
+            }
+            for mutation in rest {
+                if let UiMutation::SetStyle { style, .. } = mutation
+                    && !style_is_valid(style.layout.as_ref())
+                {
+                    return Err(UiWorldError::InvalidStyle(*id));
+                }
+            }
+            return Ok(true);
+        }
+        // A layout pass's writeback: boxes of nodes that exist, no
+        // structure, so nothing staged for the plan to follow.
+        if mutations.iter().all(|mutation| {
+            matches!(
+                mutation,
+                UiMutation::WriteLayout { .. } | UiMutation::PlaceLayout { .. }
+            )
+        }) {
+            for mutation in mutations {
+                let (UiMutation::WriteLayout { id, layout }
+                | UiMutation::PlaceLayout { id, layout, .. }) = mutation
+                else {
+                    unreachable!("matched above");
+                };
+                if !self.contains(*id) {
+                    return Err(UiWorldError::MissingNode(*id));
+                }
+                if !layout_is_valid(layout) {
+                    return Err(UiWorldError::InvalidLayout(*id));
+                }
             }
             return Ok(true);
         }
@@ -4204,4 +4204,66 @@ impl UiWorld {
             self.set_document_text_selection(document, None);
         }
     }
+}
+
+impl UiWorld {
+    /// Whether a batch that creates `id` and then only writes `id`'s
+    /// style, interaction, accessibility or component type, parking it last
+    /// or not -- what creating a component is -- needs nothing of the
+    /// staged validation beyond the checks `validate_simple_mutation` makes
+    /// itself. A node that does not exist yet has no parent, children,
+    /// focus, pointer capture, animation or overlay reference for the plan
+    /// to follow, and no inline content to check (with none in the world).
+    fn creates_plainly(&self, id: StableNodeId, rest: &[UiMutation]) -> bool {
+        let writes = match rest {
+            [writes @ .., UiMutation::ParkSubtree { root }] if *root == id => writes,
+            writes => writes,
+        };
+        !self.nodes.has_inline_content()
+            && !self.overlay_dependents.contains_key(&id)
+            && writes.iter().all(|mutation| match mutation {
+                UiMutation::SetStyle { id: target, .. }
+                | UiMutation::SetInteraction { id: target, .. }
+                | UiMutation::SetAccessibility { id: target, .. }
+                | UiMutation::SetComponentType { id: target, .. } => *target == id,
+                _ => false,
+            })
+    }
+}
+
+/// Whether a style's paint and font values are in range: what a
+/// `SetStyle` is validated against.
+fn style_is_valid(layout: &nana_ui_core::LayoutStyle) -> bool {
+    let channel_ok = |channel: f32| channel.is_finite() && (0.0..=1.0).contains(&channel);
+    !(layout
+        .opacity
+        .is_some_and(|opacity| !opacity.is_finite() || !(0.0..=1.0).contains(&opacity))
+        || layout
+            .font_size
+            .is_some_and(|size| !size.is_finite() || size <= 0.0)
+        || layout
+            .letter_spacing
+            .is_some_and(|spacing| !spacing.is_finite())
+        || layout
+            .font_weight
+            .is_some_and(|weight| !(1..=1000).contains(&weight))
+        || layout
+            .color
+            .is_some_and(|color| !color.into_iter().all(channel_ok))
+        || layout
+            .background
+            .is_some_and(|color| !color.into_iter().all(channel_ok))
+        || layout
+            .border_color
+            .is_some_and(|color| !color.into_iter().all(channel_ok)))
+}
+
+/// Whether a written box is finite and of non-negative size.
+fn layout_is_valid(layout: &LayoutBox) -> bool {
+    layout.x.is_finite()
+        && layout.y.is_finite()
+        && layout.width.is_finite()
+        && layout.height.is_finite()
+        && layout.width >= 0.0
+        && layout.height >= 0.0
 }
