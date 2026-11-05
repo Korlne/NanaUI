@@ -614,9 +614,12 @@ impl<'a, V> IntoIterator for &'a DenseNodeMap<V> {
 const DENSE_LIMIT: u64 = 65_536;
 const DENSE_GAP: usize = 1024;
 
+/// Records are boxed: a slot is one pointer, so growing the table moves
+/// pointers rather than records, and the slots it grows past cost 8 bytes
+/// each instead of a whole record.
 #[derive(Default)]
 struct NodeTable {
-    dense: Vec<Option<NodeRecord>>,
+    dense: Vec<Option<Box<NodeRecord>>>,
     overflow: HashMap<StableNodeId, NodeRecord>,
     len: usize,
 }
@@ -652,7 +655,7 @@ impl NodeTable {
             }
             let replaced_overflow =
                 !self.overflow.is_empty() && self.overflow.remove(&id).is_some();
-            let replaced_dense = self.dense[index].replace(record).is_some();
+            let replaced_dense = self.dense[index].replace(Box::new(record)).is_some();
             if !replaced_overflow && !replaced_dense {
                 self.len += 1;
             }
@@ -668,7 +671,7 @@ impl NodeTable {
     fn remove(&mut self, id: StableNodeId) -> Option<NodeRecord> {
         let index = id.get() as usize;
         let record = if index < self.dense.len() {
-            self.dense[index].take()
+            self.dense[index].take().map(|record| *record)
         } else {
             None
         }
@@ -680,7 +683,7 @@ impl NodeTable {
     fn records(&self) -> impl Iterator<Item = &NodeRecord> + '_ {
         self.dense
             .iter()
-            .filter_map(Option::as_ref)
+            .filter_map(Option::as_deref)
             .chain(self.overflow.values())
     }
 
