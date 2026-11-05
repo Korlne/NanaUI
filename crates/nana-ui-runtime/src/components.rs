@@ -5123,19 +5123,20 @@ impl StandardVisual {
     /// Whether this visual's [`ComponentGeometry`] is derived on the page
     /// rather than in its node's own coordinates.
     ///
-    /// An open select menu fits the viewport and an open menu surface places
-    /// its items on the page: their geometry depends on where the node
-    /// stands. It is carried on the page ([`ExtractedNode::component_geometry`])
-    /// and its node is extracted again whenever it or a box above it moves.
-    /// Closed, neither reads more than its own box: the field is its label,
-    /// hint and handle, and a closed surface reaches none of its items.
+    /// An open menu surface places its items on the page: its geometry
+    /// depends on where the node stands. It is carried on the page
+    /// ([`ExtractedNode::component_geometry`]) and its node is extracted again
+    /// whenever it or a box above it moves. Closed, it reaches none of its
+    /// items.
     ///
     /// Every other visual's geometry -- a Markdown document's among them --
     /// is in its node's own coordinates, its border box at the origin, and a
-    /// node that only moved keeps it.
+    /// node that only moved keeps it. An open select is among them: its menu
+    /// is fitted to its room moved into the field's coordinates, and a field
+    /// that only moved keeps its record while the menu's surface lands on the
+    /// same box there (`UiWorld::local_select_menu_surface`).
     pub fn geometry_reads_page(&self) -> bool {
         match self {
-            Self::Select { opened, .. } => *opened,
             Self::MenuSurface { open, .. } => *open,
             _ => false,
         }

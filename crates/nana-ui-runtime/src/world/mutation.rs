@@ -3717,22 +3717,24 @@ impl UiWorld {
             }
         }
         // A component's geometry is in its own coordinates and moves with it,
-        // except for one that reads the page (an open select's menu, fitted
-        // to the viewport): that is extracted again under a moved box. The
-        // store keeps those few apart, so no other visual is looked at.
-        if self.nodes.has_page_geometry() {
+        // except for one that reads the page (an open menu surface, which
+        // places its items there): that is extracted again under a moved box.
+        // An open select's menu is fitted to its room in the field's own
+        // coordinates, which a move above it changes: extraction asks whether
+        // its surface still lands where the record has it. The store keeps
+        // those few apart, so no other visual is looked at.
+        if self.nodes.has_page_geometry() || self.nodes.has_open_select_menus() {
             // Whether a box is a moved root or under one, remembered for
             // every box an answer passed.
             let moved_roots: NodeSet = roots.iter().map(|&(root, _)| root).collect();
             let mut under: NodeMap<bool> = moved_roots.iter().map(|&root| (root, true)).collect();
             let mut chain = Vec::new();
-            let mut reread = Vec::new();
-            for id in self.nodes.page_geometry_nodes() {
+            let mut below_moves = |world: &Self, id: StableNodeId| {
                 // A moved root's own record is decided where it is extracted.
                 if moved_roots.contains(&id) {
-                    continue;
+                    return false;
                 }
-                let mut cursor = self.parent_id(id);
+                let mut cursor = world.parent_id(id);
                 let moved = loop {
                     let Some(at) = cursor else {
                         break false;
@@ -3741,17 +3743,29 @@ impl UiWorld {
                         break known;
                     }
                     chain.push(at);
-                    cursor = self.parent_id(at);
+                    cursor = world.parent_id(at);
                 };
                 for at in chain.drain(..) {
                     under.insert(at, moved);
                 }
-                if moved {
-                    reread.push(id);
-                }
-            }
+                moved
+            };
+            let reread: Vec<StableNodeId> = self
+                .nodes
+                .page_geometry_nodes()
+                .filter(|&id| below_moves(self, id))
+                .collect();
+            let menus: Vec<StableNodeId> = self
+                .nodes
+                .open_select_menus()
+                .filter(|&id| below_moves(self, id))
+                .collect();
             for id in reread {
                 self.mark(id, DirtyMask::RENDER);
+            }
+            for id in menus {
+                self.record_mut(id).render_room_epoch = epoch;
+                self.mark_keeping_render_reason(id, DirtyMask::RENDER);
             }
         }
         self.bump_last_counters(|counters| {

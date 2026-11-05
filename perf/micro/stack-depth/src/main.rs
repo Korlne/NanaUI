@@ -13,6 +13,10 @@
 //! CONTROLS=1 cargo run --release -- wide    # a page of labels and buttons instead of bare boxes
 //! CONTROLS=1 MIXED=1 cargo run --release -- edits 2000 height
 //!                                          # closed selects among the buttons
+//! CONTROLS=1 MIXED=1 OPEN_SELECT=1 cargo run --release -- edits 2000 height
+//!                                          # the edit in the second row, and an open select
+//!                                          # in the fourth: in view and moved by every edit
+//!                                          # (`OPEN_SELECT=closed`: the same page, the select closed)
 //! VISIBLE=1 cargo run --release -- edits    # cull the scene after each frame, as a painter does
 //! SCROLLED=1 cargo run --release -- edits 2000 height
 //!                                          # the rows in a scroller scrolled before the edits
@@ -148,6 +152,11 @@ fn nana_page(cx: &mut AppContext, document: DocumentId, rows: usize, cells: usiz
     // `MIXED=1` with it: every odd cell's button is a closed select, a
     // visual whose geometry once read the page.
     let mixed = controls && std::env::var_os("MIXED").is_some();
+    // `OPEN_SELECT=1` with it: the edit is in the second row, and the
+    // fourth row's second cell is an open select, in view and moved by
+    // every edit.
+    let open_select = mixed && std::env::var_os("OPEN_SELECT").is_some();
+    let target_row = if open_select { 1 } else { rows / 2 };
     for r in 0..rows {
         let row = cx
             .create_detached_component(document, Stack::row(4.0))
@@ -163,7 +172,7 @@ fn nana_page(cx: &mut AppContext, document: DocumentId, rows: usize, cells: usiz
                     .create_detached_component(document, Text::new("Label"))
                     .unwrap();
                 cx.append_child(cell, label).unwrap();
-                if (r, c) == (rows / 2, cells / 2) {
+                if (r, c) == (target_row, cells / 2) {
                     target = Some(label.stable_id());
                 }
                 if mixed && c % 2 == 1 {
@@ -172,6 +181,13 @@ fn nana_page(cx: &mut AppContext, document: DocumentId, rows: usize, cells: usiz
                         nana_ui_runtime::SelectOption::new("a", "Alpha"),
                         nana_ui_runtime::SelectOption::new("b", "Beta"),
                     ];
+                    if open_select
+                        && (r, c) == (3, 1)
+                        && std::env::var_os("OPEN_SELECT").is_some_and(|value| value != "closed")
+                    {
+                        select.opened = true;
+                        select.highlighted = Some(0);
+                    }
                     let select = cx.create_detached_component(document, select).unwrap();
                     cx.append_child(cell, select).unwrap();
                     continue;

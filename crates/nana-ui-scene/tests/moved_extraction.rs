@@ -836,3 +836,193 @@ fn rows_moved_in_a_scrolled_column_paint_like_a_cold_scene() {
         assert_scene_is_cold(&runtime, &format!("round {round}: scrolled and moved"));
     }
 }
+
+/// An open select below a row that grows by an uneven step, again and again,
+/// in a scroller that cuts the room its menu opens into. While its menu opens
+/// the same way, uncapped, its record is kept: the menu stands where it stood
+/// in the field's own coordinates. The field moves down until the menu no
+/// longer fits below and flips above, and back up until it flips down again;
+/// between the moves the scroller scrolls and the field's row is resized.
+/// After every frame the scene paints what a cold one does. The field is
+/// itself a moved box (a child of the column), and then a box under one (in
+/// a wrapper the column moves).
+#[test]
+fn an_open_select_moved_keeps_its_menu_until_it_flips() {
+    open_select_moved(false);
+    open_select_moved(true);
+}
+
+fn open_select_moved(wrapped: bool) {
+    use nana_ui_core::OverflowSpec;
+    use nana_ui_runtime::{ComponentGeometry, ScrollOffset, Select, SelectOption};
+    let document_id = DocumentId::new(1).unwrap();
+    let scroller = |height: f32| {
+        let mut style = column_style(0.0);
+        let layout = Arc::make_mut(&mut style.layout);
+        layout.height = Some(LengthSpec::Px(height));
+        layout.overflow_y = OverflowSpec::Auto;
+        style
+    };
+    let mut runtime = document();
+    let mut select = Select::new(Some("a"));
+    select.options = ["Alpha", "Beta", "Gamma"]
+        .iter()
+        .map(|label| SelectOption::new(label.to_lowercase(), *label))
+        .collect();
+    let select = runtime
+        .context_mut()
+        .create_detached_component(document_id, select)
+        .unwrap();
+    let mut queue = MutationQueue::new();
+    if wrapped {
+        let wrapper = id(720);
+        queue.create(
+            wrapper,
+            document_id,
+            NodeKind::Element { tag: "div".into() },
+        );
+        queue.set_style(
+            wrapper,
+            boxed(
+                LayoutStyle {
+                    width: px(300.0),
+                    padding_top: px(0.5),
+                    direction: Some(FlexDirection::Column),
+                    ..LayoutStyle::default()
+                },
+                None,
+            ),
+        );
+        queue.insert(id(COLUMN), wrapper, Some(row_id(6)));
+        queue.insert(wrapper, select.stable_id(), None);
+    } else {
+        queue.insert(id(COLUMN), select.stable_id(), Some(row_id(6)));
+    }
+    queue.set_style(id(COLUMN), scroller(400.0));
+    runtime.context_mut().commit_mutations(queue).unwrap();
+    flush(&mut runtime);
+    runtime.context_mut().toggle_select(select).unwrap();
+    flush(&mut runtime);
+    // The field's box and its menu's surface on the page.
+    let menu = |runtime: &RuntimeDocument| {
+        let world = runtime.context().world();
+        let field = world.layout_box(select.stable_id()).unwrap();
+        match world.component_geometry(select.stable_id()) {
+            Some(ComponentGeometry::Select {
+                menu: Some(menu), ..
+            }) => (field, menu.surface),
+            other => panic!("expected an open menu, got {other:?}"),
+        }
+    };
+    let (field, surface) = menu(&runtime);
+    assert!(surface.y > field.y, "the menu opens down first");
+    let natural = surface.height;
+    // A scroller that ends 6 px below the menu: four more steps and it
+    // no longer fits below; above, the rows leave it room.
+    let bottom = surface.y + surface.height + 6.0;
+    let mut queue = MutationQueue::new();
+    queue.set_style(id(COLUMN), scroller(bottom));
+    runtime.context_mut().commit_mutations(queue).unwrap();
+    flush(&mut runtime);
+    assert_scene_is_cold(&runtime, "first frame");
+    let commit = |runtime: &mut RuntimeDocument, queue: MutationQueue| {
+        runtime.context_mut().commit_mutations(queue).unwrap();
+        runtime
+            .flush(LayoutViewport::new(300.0, 800.0), &mut MeasureTextShaper)
+            .unwrap()
+            .scene
+            .stats
+    };
+    let grow = |queue: &mut MutationQueue, height: f32| {
+        let mut layout = (*row_style()).clone();
+        layout.height = Some(LengthSpec::Px(height));
+        queue.set_style(
+            row_id(0),
+            NodeStyle {
+                layout: Arc::new(layout),
+                ..NodeStyle::default()
+            },
+        );
+    };
+    let mut height = 20.0;
+    let mut scroll = 0.0;
+    let (mut kept, mut flips) = (0, 0);
+    let mut opened_down = true;
+    for round in 0..3 {
+        // Down past the flip, then back up past it.
+        for (leg, step) in [(0, 1.37), (1, -1.37)] {
+            for index in 0..7 {
+                height += step;
+                let frame = format!("wrapped {wrapped}, round {round}, leg {leg}, step {index}");
+                let mut queue = MutationQueue::new();
+                grow(&mut queue, height);
+                let stats = commit(&mut runtime, queue);
+                assert_scene_is_cold(&runtime, &frame);
+                let (field, surface) = menu(&runtime);
+                let down = surface.y > field.y;
+                // Fits one way or the other: never capped.
+                assert_eq!(surface.height, natural, "{frame}: capped");
+                if down == opened_down {
+                    assert_eq!(
+                        stats.rebuilt_primitives, 0,
+                        "{frame}: a move that keeps the menu's side rebuilt primitives ({stats:?})"
+                    );
+                    kept += 1;
+                } else {
+                    assert!(
+                        stats.rebuilt_primitives > 0,
+                        "{frame}: the menu flipped and nothing was built"
+                    );
+                    flips += 1;
+                }
+                opened_down = down;
+            }
+        }
+        // A scroll moves the room: the menu is fitted again.
+        scroll += 0.83;
+        let mut queue = MutationQueue::new();
+        queue.set_scroll_offset(id(COLUMN), ScrollOffset { x: 0.0, y: scroll });
+        commit(&mut runtime, queue);
+        assert_scene_is_cold(
+            &runtime,
+            &format!("wrapped {wrapped}, round {round}: scrolled"),
+        );
+        opened_down = {
+            let (field, surface) = menu(&runtime);
+            surface.y > field.y
+        };
+        // The field's row is resized with a move in the same frame.
+        let mut queue = MutationQueue::new();
+        queue.set_style(
+            row_id(5),
+            NodeStyle {
+                layout: Arc::new(LayoutStyle {
+                    width: px(290.0 - round as f32 * 3.1),
+                    ..(*row_style()).clone()
+                }),
+                ..NodeStyle::default()
+            },
+        );
+        height += 1.37;
+        grow(&mut queue, height);
+        commit(&mut runtime, queue);
+        assert_scene_is_cold(
+            &runtime,
+            &format!("wrapped {wrapped}, round {round}: resized and moved"),
+        );
+        height -= 1.37;
+        let mut queue = MutationQueue::new();
+        grow(&mut queue, height);
+        commit(&mut runtime, queue);
+        assert_scene_is_cold(
+            &runtime,
+            &format!("wrapped {wrapped}, round {round}: moved back"),
+        );
+        opened_down = {
+            let (field, surface) = menu(&runtime);
+            surface.y > field.y
+        };
+    }
+    assert!(flips >= 6, "the menu flipped {flips} times");
+    assert!(kept >= 24, "kept the menu {kept} times");
+}

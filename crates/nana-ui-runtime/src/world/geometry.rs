@@ -2267,6 +2267,17 @@ impl UiWorld {
                 ..
             } => own_frame(|| {
                 let parts = self.component_content_parts(id);
+                // In its own coordinates an open menu is fitted to its room
+                // moved into them; on the page, to the room itself, or to the
+                // window before the field has one.
+                let (menu_room, viewport) = if self.geometry_frame.get() == Some(id) {
+                    (self.local_select_menu_room(id, *opened, *menu_room), None)
+                } else {
+                    (
+                        *menu_room,
+                        opened.then(|| self.document_viewport_of(id)).flatten(),
+                    )
+                };
                 Some(crate::select::select_geometry(
                     bounds,
                     label,
@@ -2278,14 +2289,12 @@ impl UiWorld {
                     options,
                     *highlighted,
                     *menu_scroll,
-                    *menu_room,
+                    menu_room,
                     style,
                     &source,
                     self.style_model,
                     self.theme.recipes().scrollbar(),
-                    // Only an open menu is fitted to the viewport: a closed
-                    // field is derived in its own coordinates.
-                    opened.then(|| self.document_viewport_of(id)).flatten(),
+                    viewport,
                     *checkable,
                     &parts,
                     self.chrome_text_measure(id),
@@ -2639,6 +2648,81 @@ impl UiWorld {
             )),
             _ => None,
         }
+    }
+
+    /// An open menu's room in its field's own coordinates: the room the
+    /// field projected (or the window, before it has one) moved by the
+    /// field's page origin. `None` for a closed field, and for an open one
+    /// with neither.
+    ///
+    /// This reads where the field stands, as fitting a menu to what can be
+    /// seen must; what it decides is only where the menu's surface goes
+    /// ([`crate::select::select_menu_surface`]), and a field that only moved
+    /// keeps its record while that box is the same
+    /// ([`Self::local_select_menu_surface`]).
+    fn local_select_menu_room(
+        &self,
+        id: StableNodeId,
+        opened: bool,
+        room: Option<crate::SelectMenuRoom>,
+    ) -> Option<crate::SelectMenuRoom> {
+        if !opened {
+            return None;
+        }
+        let room = room.or_else(|| {
+            let document = self.node(id)?.document;
+            crate::select::window_room(self.document_viewports.get(&document).copied())
+        })?;
+        let previous = self.geometry_frame.replace(None);
+        let origin = self.layout_origin(id);
+        self.geometry_frame.set(previous);
+        let [x, y] = origin?;
+        Some(crate::SelectMenuRoom {
+            top: room.top - y,
+            bottom: room.bottom - y,
+            left: room.left - x,
+            right: room.right - x,
+        })
+    }
+
+    /// Where `id`'s open menu surface stands in the field's own coordinates
+    /// now, as [`Self::local_component_geometry`] would place it: the one
+    /// part of an open field's record that depends on where the field
+    /// stands. `None` for anything but an open Select, Dropdown or
+    /// SearchDropdown.
+    pub(crate) fn local_select_menu_surface(&self, id: StableNodeId) -> Option<LayoutBox> {
+        let Some(StandardVisual::Select {
+            opened: true,
+            size,
+            options,
+            menu_room,
+            checkable,
+            fit_options,
+            ..
+        }) = self.nodes.visual(id)
+        else {
+            return None;
+        };
+        let previous = self.geometry_frame.replace(Some(id));
+        let bounds = self.component_layout_box(id);
+        let room = self.local_select_menu_room(id, true, *menu_room);
+        let fitted = fit_options
+            .then(|| {
+                self.text_natural_width(id)
+                    .or_else(|| self.text_metrics(id).map(|metrics| metrics.width))
+            })
+            .flatten();
+        self.geometry_frame.set(previous);
+        Some(crate::select::select_menu_surface(
+            bounds?,
+            *size,
+            options,
+            self.style_model,
+            self.theme.recipes().scrollbar(),
+            room,
+            *checkable,
+            fitted,
+        ))
     }
 
     /// The open Select, Dropdown and SearchDropdown menus of `document`

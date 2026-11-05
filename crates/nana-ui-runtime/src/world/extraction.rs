@@ -727,16 +727,25 @@ impl UiWorld {
         for &id in ids {
             // A component's geometry (a button's label region, a field's
             // caret, a Markdown document) is in its own coordinates and moves
-            // with it. Only one that reads the page (an open select's menu,
-            // fitted to the viewport) is extracted again rather than kept.
+            // with it. Only one that reads the page (an open menu surface's
+            // items) is extracted again rather than kept, and an open select
+            // whose menu no longer lands where its record has it.
             if self.only_moved_since(id, epoch)
                 && let Some(held) = previous(id)
                 && !held
                     .standard_visual
                     .as_ref()
                     .is_some_and(StandardVisual::geometry_reads_page)
+                && self.keeps_select_menu(id, held)
             {
                 moved.extend(self.extract_move_memo(id, held, &mut memo));
+            } else if self.only_room_asked_since(id, epoch)
+                && let Some(held) = previous(id)
+                && self.keeps_select_menu(id, held)
+            {
+                // Moved with a box above it, and its menu is where it was in
+                // its own coordinates: the record it holds is what a cold
+                // extraction gives.
             } else {
                 extracted.extend(self.extract_node_memo(id, &mut memo));
             }
@@ -798,6 +807,37 @@ impl UiWorld {
                 );
             }
         }
+    }
+
+    /// Whether the only mark on `id` since `epoch` began is a move above it
+    /// asking whether its open menu still lands where its record has it
+    /// (`settle_layout_moves`).
+    fn only_room_asked_since(&self, id: StableNodeId, epoch: u64) -> bool {
+        self.nodes.get(id).is_some_and(|node| {
+            node.render_room_epoch == epoch
+                && node.render_full_epoch != epoch
+                && node.render_moved_epoch != epoch
+        })
+    }
+
+    /// Whether `held`, the record the renderer keeps of `id`, still has the
+    /// menu an open select field would be given now. Everything an open menu
+    /// reads of where its field stands goes through where its surface lands
+    /// in the field's coordinates ([`Self::local_select_menu_surface`]); the
+    /// rest of the record is the field's own. Any other record keeps.
+    fn keeps_select_menu(&self, id: StableNodeId, held: &ExtractedNode) -> bool {
+        let Some(StandardVisual::Select { opened: true, .. }) = held.standard_visual.as_ref()
+        else {
+            return true;
+        };
+        let Some(crate::ComponentGeometry::Select {
+            menu: Some(menu), ..
+        }) = held.component_geometry.as_deref()
+        else {
+            return false;
+        };
+        self.local_select_menu_surface(id)
+            .is_some_and(|surface| same_box(surface, menu.surface))
     }
 
     fn only_moved_since(&self, id: StableNodeId, epoch: u64) -> bool {
@@ -1090,4 +1130,13 @@ impl UiWorld {
             }
         }
     }
+}
+
+/// The same box to the bit: a menu's surface kept only when where it lands
+/// is exactly what a cold extraction gives.
+fn same_box(a: LayoutBox, b: LayoutBox) -> bool {
+    a.x.to_bits() == b.x.to_bits()
+        && a.y.to_bits() == b.y.to_bits()
+        && a.width.to_bits() == b.width.to_bits()
+        && a.height.to_bits() == b.height.to_bits()
 }

@@ -145,6 +145,11 @@ pub(crate) struct NodeRecord {
     /// reuse its last extracted record.
     pub render_full_epoch: u64,
     pub render_moved_epoch: u64,
+    /// The last epoch a move above an open select field marked it only to
+    /// ask whether its menu's surface still lands where its record has it
+    /// (`UiWorld::local_select_menu_surface`): if so, and nothing else
+    /// marked it since the epoch began, its record is kept.
+    pub render_room_epoch: u64,
 }
 
 /// Whether `visual` places accessible nodes from its geometry or makes its
@@ -241,6 +246,7 @@ impl NodeRecord {
             dirty: DirtyMask::all(),
             render_full_epoch: 0,
             render_moved_epoch: u64::MAX,
+            render_room_epoch: u64::MAX,
         }
     }
 }
@@ -964,6 +970,10 @@ impl NodeStore {
     /// ([`StandardVisual::geometry_reads_page`]), in no particular order.
     pub(crate) fn page_geometry_nodes(&self) -> impl Iterator<Item = StableNodeId> + '_ {
         self.page_geometry.iter().copied()
+    }
+
+    pub(crate) fn has_open_select_menus(&self) -> bool {
+        !self.open_select_menus.is_empty()
     }
 
     pub(crate) fn has_page_geometry(&self) -> bool {

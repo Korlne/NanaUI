@@ -683,44 +683,21 @@ fn select_menu_geometry(
     let natural_height =
         MENU_PAD * 2.0 + count * item_height + (count - 1.0).max(0.0) * MENU_ITEM_GAP;
     let is_light = palette.background.as_rgba_array()[0] > 0.5;
-    let (surface_y, height) = resolve_menu_vertical(field, natural_height, room);
     // Reserved for the whole menu when the menu *can* check, not when one
     // option currently is: deriving it from `any(checked)` shifted every label
     // 16px sideways the moment the first option became checked.
     let check_reserve = if checkable { MENU_CHECK_RESERVE } else { 0.0 };
-    // A row with a picture fronts its label with it; a menu that fits its
-    // options holds that lane beside the widest label.
-    let image_lane = image_size(size) + IMAGE_GAP;
-    let image_reserve = if options.iter().any(|option| option.image.is_some()) {
-        image_lane
-    } else {
-        0.0
-    };
-    // A menu that fits its options holds the widest row, though its field
-    // was given less, and the lane a scrolling menu's bar takes from its rows.
-    let fitted_width = fitted_options.map(|widest| {
-        let bar = metrics.scrollbar;
-        let lane = if natural_height > height
-            && scrollbars.visibility != nana_ui_core::ScrollbarVisibility::Hidden
-        {
-            (MENU_BORDER + bar.track_inset + bar.thickness - MENU_PAD).max(0.0)
-        } else {
-            0.0
-        };
-        widest
-            + MENU_PAD * 2.0
-            + size.padding_x_in(metrics) * 2.0
-            + check_reserve
-            + image_reserve
-            + lane
-    });
-    let (surface_x, width) = resolve_menu_horizontal(field, fitted_width, room);
-    let surface = LayoutBox {
-        x: surface_x,
-        y: surface_y,
-        width,
-        height,
-    };
+    let surface = select_menu_surface(
+        field,
+        size,
+        options,
+        model,
+        scrollbars,
+        room,
+        checkable,
+        fitted_options,
+    );
+    let height = surface.height;
     // A surface capped short of its rows scrolls them inside its border and
     // cuts them there, the way CSS clips a scroll container's content at its
     // padding box; drawing them on past it painted over whatever was below.
@@ -841,6 +818,64 @@ fn select_menu_geometry(
         background: palette.surface.as_rgba_array(),
         border: palette.border_soft.as_rgba_array(),
         options,
+    }
+}
+
+/// Where an open menu's surface stands and how big it is, in its field's
+/// space: below the field, or above it when only that side has room, capped
+/// to its room. Everything else the menu places follows from this box and
+/// the field's own state, so a field whose box only moved keeps the menu it
+/// had while this box is the same ([`crate::UiWorld::local_select_menu_surface`]).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn select_menu_surface(
+    field: LayoutBox,
+    size: ControlSize,
+    options: &[SelectOptionData],
+    model: nana_ui_core::StyleModelRef,
+    scrollbars: &nana_ui_core::ScrollbarRecipe,
+    room: Option<crate::SelectMenuRoom>,
+    checkable: bool,
+    fitted_options: Option<f32>,
+) -> LayoutBox {
+    let metrics = model.metrics;
+    let item_height = size.height_in(metrics);
+    let count = options.len().max(1) as f32;
+    let natural_height =
+        MENU_PAD * 2.0 + count * item_height + (count - 1.0).max(0.0) * MENU_ITEM_GAP;
+    let (surface_y, height) = resolve_menu_vertical(field, natural_height, room);
+    let check_reserve = if checkable { MENU_CHECK_RESERVE } else { 0.0 };
+    // A row with a picture fronts its label with it; a menu that fits its
+    // options holds that lane beside the widest label.
+    let image_lane = image_size(size) + IMAGE_GAP;
+    let image_reserve = if options.iter().any(|option| option.image.is_some()) {
+        image_lane
+    } else {
+        0.0
+    };
+    // A menu that fits its options holds the widest row, though its field
+    // was given less, and the lane a scrolling menu's bar takes from its rows.
+    let fitted_width = fitted_options.map(|widest| {
+        let bar = metrics.scrollbar;
+        let lane = if natural_height > height
+            && scrollbars.visibility != nana_ui_core::ScrollbarVisibility::Hidden
+        {
+            (MENU_BORDER + bar.track_inset + bar.thickness - MENU_PAD).max(0.0)
+        } else {
+            0.0
+        };
+        widest
+            + MENU_PAD * 2.0
+            + size.padding_x_in(metrics) * 2.0
+            + check_reserve
+            + image_reserve
+            + lane
+    });
+    let (surface_x, width) = resolve_menu_horizontal(field, fitted_width, room);
+    LayoutBox {
+        x: surface_x,
+        y: surface_y,
+        width,
+        height,
     }
 }
 
@@ -1147,7 +1182,9 @@ pub(crate) fn menu_room(
 
 /// The room a menu opened before its field projected with a layout has: the
 /// window, where the field's own layout box meets it.
-fn window_room(viewport: Option<crate::LayoutViewport>) -> Option<crate::SelectMenuRoom> {
+pub(crate) fn window_room(
+    viewport: Option<crate::LayoutViewport>,
+) -> Option<crate::SelectMenuRoom> {
     viewport.map(|viewport| crate::SelectMenuRoom {
         top: 0.0,
         bottom: viewport.height,

@@ -159,6 +159,12 @@ fn primitive(doc: &RuntimeDocument, select: Entity<Select>, slot: u64) -> Option
         .cloned()
 }
 
+/// A select's record is in its own coordinates, its menu among it: where
+/// `bounds` stands on the page.
+fn placed(doc: &RuntimeDocument, select: Entity<Select>, bounds: SceneRect) -> SceneRect {
+    doc.scene().place_rect(select.stable_id(), bounds)
+}
+
 fn rect(bounds: nana_ui_runtime::LayoutBox) -> SceneRect {
     SceneRect {
         x: bounds.x,
@@ -175,7 +181,7 @@ fn an_open_menu_keeps_the_whole_arrow_and_paints_its_surface_in_a_slot_of_its_ow
     flush(&mut doc);
     let menu = open_menu(&doc, select);
     let surface = primitive(&doc, select, MENU_SURFACE).expect("the menu's surface");
-    assert_eq!(surface.bounds, rect(menu.surface));
+    assert_eq!(placed(&doc, select, surface.bounds), rect(menu.surface));
     // The arrow's four strokes, 8, 6, 4 and 2 px wide, all still there.
     let strokes = (3..=6)
         .map(|slot| {
@@ -221,14 +227,14 @@ fn an_overflowing_menu_paints_only_the_rows_it_shows_inside_its_border() {
             if let Some(label) = label {
                 shown += 1;
                 let cut = label.clips.last().expect("cut at the menu's border");
-                assert_eq!(cut.bounds, viewport);
+                assert_eq!(placed(doc, select, cut.bounds), viewport);
                 assert!(cut.corner_radius > 0.0);
             }
         }
         assert!(shown > 0 && shown < menu.options.len());
         let bar = menu.scrollbar.expect("a bar beside the rows");
         let thumb = primitive(doc, select, row_slot(MENU_SCROLLBAR, 1)).expect("the thumb");
-        assert_eq!(thumb.bounds, rect(bar.thumb));
+        assert_eq!(placed(doc, select, thumb.bounds), rect(bar.thumb));
         menu.scroll
     };
     assert_eq!(check(&doc), 0.0);
