@@ -87,12 +87,13 @@ pub(crate) fn interned_default_style() -> Arc<ComputedStyle> {
     Arc::clone(&INTERNED_DEFAULT_STYLE)
 }
 
+#[repr(align(64))]
 pub(crate) struct NodeRecord {
     pub document: DocumentId,
     pub kind: Arc<NodeKind>,
     pub hierarchy: Hierarchy,
     pub mount: MountState,
-    pub style: NodeStyle,
+    pub style: Arc<NodeStyle>,
     /// [`Self::style`]'s layout with the node's design intent already applied
     /// (radius tier → `border_radius`), resolved against the installed
     /// `ThemeMetrics`.
@@ -179,16 +180,22 @@ pub(crate) fn shared_accessibility(state: &AccessibilityState) -> Arc<Accessibil
 impl NodeRecord {
     #[cfg(test)]
     pub fn new(document: DocumentId, kind: &NodeKind, interaction: InteractionState) -> Self {
-        Self::with_kind(document, intern_kind(kind), interaction)
+        Self::with_kind(
+            document,
+            intern_kind(kind),
+            Arc::new(NodeStyle::default()),
+            interaction,
+        )
     }
 
-    /// [`Self::new`] with the kind already shared ([`NodeStore::intern_kind`]).
+    /// [`Self::new`] with the kind already shared ([`NodeStore::intern_kind`])
+    /// and the default style a store shares ([`NodeStore::default_style`]).
     pub(crate) fn with_kind(
         document: DocumentId,
         kind: Arc<NodeKind>,
+        style: Arc<NodeStyle>,
         interaction: InteractionState,
     ) -> Self {
-        let style = NodeStyle::default();
         let space = crate::node_space::NodeSpace::of(
             &style.layout,
             crate::LayoutFrame::Parent,
@@ -729,6 +736,8 @@ pub(crate) struct NodeStore {
     nodes: NodeTable,
     /// One shared kind per element tag ([`Self::intern_kind`]).
     kinds: HashMap<String, Arc<NodeKind>>,
+    /// The style every new node starts with, one for all of them.
+    default_style: Arc<NodeStyle>,
     visuals: HashMap<StableNodeId, StandardVisual>,
     /// Nodes whose space ([`NodeRecord::space`]) pins accessibility
     /// ([`crate::node_space::NodeSpace::pins_accessibility`]): their
@@ -828,6 +837,11 @@ impl NodeStore {
     /// `kind` as a record holds it: every element of one tag shares an
     /// `Arc`, so a page of a few tags holds a few kinds, not one per node.
     /// Past [`KINDS`] distinct tags, a new tag gets its own.
+    /// The style a new node starts with, shared ([`NodeRecord::style`]).
+    pub(crate) fn default_style(&self) -> Arc<NodeStyle> {
+        Arc::clone(&self.default_style)
+    }
+
     pub(crate) fn intern_kind(&mut self, kind: &NodeKind) -> Arc<NodeKind> {
         let NodeKind::Element { tag } = kind else {
             return intern_kind(kind);

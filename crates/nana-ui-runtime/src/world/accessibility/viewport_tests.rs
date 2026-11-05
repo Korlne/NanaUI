@@ -85,7 +85,7 @@ fn hidden_accessibility_containers_keep_visible_descendants_connected() {
             nana_ui_core::VisibilitySpec::Visible,
             nana_ui_core::VisibilitySpec::Hidden,
         ] {
-            let mut style = world.record(node(2)).style.clone();
+            let mut style = world.record(node(2)).style.as_ref().clone();
             Arc::make_mut(&mut style.layout).paint.visibility = Some(visibility);
             let mut queue = MutationQueue::new();
             queue.set_style(node(2), style);
@@ -105,7 +105,7 @@ fn hidden_accessibility_containers_keep_visible_descendants_connected() {
             nana_ui_core::VisibilitySpec::Hidden,
             nana_ui_core::VisibilitySpec::Visible,
         ] {
-            let mut style = world.record(node(3)).style.clone();
+            let mut style = world.record(node(3)).style.as_ref().clone();
             Arc::make_mut(&mut style.layout).paint.visibility = Some(visibility);
             let mut queue = MutationQueue::new();
             queue.set_style(node(3), style);

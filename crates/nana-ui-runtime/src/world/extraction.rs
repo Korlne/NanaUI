@@ -209,7 +209,7 @@ impl UiWorld {
                 .or(source_style.painter.as_ref())
         };
         let custom_paint = painter.map(|painter| self.custom_paint(id, painter, layout));
-        let mut source_style = source_style;
+        let mut source_style = NodeStyle::clone(&source_style);
         // The node's design intent is already resolved into `resolved_layout`,
         // on write. Resolving it here instead meant an `Arc::make_mut` copy of
         // a 4.8 KB `LayoutStyle` per control per frame.

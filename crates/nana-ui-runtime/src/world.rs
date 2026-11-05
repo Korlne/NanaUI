@@ -1150,6 +1150,8 @@ pub struct UiWorld {
     pending_layout_copies: Cell<usize>,
     /// Recently written layouts, shared by nodes whose layouts are equal.
     layouts: style::LayoutInterner,
+    /// Recently written node styles, shared by records whose styles are equal.
+    node_styles: style::NodeStyleInterner,
     /// Recent pairs of resolved layouts a restyle compared, and what it found.
     layout_pairs: style_pairs::LayoutPairMemo,
     /// Live Confirm modal frames. Extract, a11y, and hit-test skip ancestor
@@ -1390,6 +1392,7 @@ impl UiWorld {
             pending_theme_reads: Cell::new(0),
             pending_layout_copies: Cell::new(0),
             layouts: style::LayoutInterner::default(),
+            node_styles: style::NodeStyleInterner::default(),
             layout_pairs: style_pairs::LayoutPairMemo::default(),
             confirm_modals: 0,
             clip_visuals: 0,

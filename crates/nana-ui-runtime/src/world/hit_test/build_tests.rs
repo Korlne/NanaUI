@@ -331,7 +331,7 @@ fn scoped_hidden_ancestor_updates_match_full_rebuild() {
             let dirty = node(if update_parent { 2 } else { 3 });
             let mut update = MutationQueue::new();
             if update_parent {
-                let mut style = world.record(dirty).style.clone();
+                let mut style = world.record(dirty).style.as_ref().clone();
                 Arc::make_mut(&mut style.layout).transform = Some(nana_ui_core::PaintTransform {
                     e: 100.0,
                     ..Default::default()
@@ -381,7 +381,7 @@ fn scoped_hidden_ancestor_updates_match_full_rebuild() {
                 nana_ui_core::VisibilitySpec::Hidden,
                 nana_ui_core::VisibilitySpec::Visible,
             ] {
-                let mut style = world.record(node(2)).style.clone();
+                let mut style = world.record(node(2)).style.as_ref().clone();
                 Arc::make_mut(&mut style.layout).paint.visibility = Some(visibility);
                 let mut update = MutationQueue::new();
                 update.set_style(node(2), style);

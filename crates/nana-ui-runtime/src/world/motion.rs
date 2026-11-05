@@ -697,7 +697,8 @@ impl UiWorld {
             return false;
         }
         let length = LengthSpec::Px(shown_length(sample.property, px));
-        let layout = Arc::make_mut(&mut self.record_mut(sample.target).style.layout);
+        let layout =
+            Arc::make_mut(&mut Arc::make_mut(&mut self.record_mut(sample.target).style).layout);
         let changed = match sample.property {
             crate::AnimatableProperty::Width => {
                 let changed = layout.width != Some(length);

@@ -596,6 +596,7 @@ impl UiWorld {
         } else {
             self.intent_nodes.remove(&id);
         }
+        let style = self.node_styles.share(style);
         let record = self.record_mut(id);
         record.style = style;
         let previous = std::mem::replace(&mut record.resolved_layout, resolved);
@@ -1309,6 +1310,38 @@ impl UiWorld {
 #[cfg(test)]
 #[path = "style_sharing_tests.rs"]
 mod sharing_tests;
+
+/// How many recent node styles a world keeps to share.
+const RECENT_STYLES: usize = 8;
+
+/// Node styles written recently, so nodes whose styles are equal hold one
+/// `Arc` instead of a copy each in their record. Only a style with the very
+/// same layout `Arc` is compared further (layouts are interned already), so a
+/// write that matches none costs a pointer compare per entry.
+#[derive(Default)]
+pub(crate) struct NodeStyleInterner {
+    recent: [Option<Arc<NodeStyle>>; RECENT_STYLES],
+    next: usize,
+}
+
+impl NodeStyleInterner {
+    /// `style` as a record holds it: an equal recent one, or a new `Arc`
+    /// remembered.
+    pub(crate) fn share(&mut self, style: NodeStyle) -> Arc<NodeStyle> {
+        if let Some(kept) = self
+            .recent
+            .iter()
+            .flatten()
+            .find(|kept| Arc::ptr_eq(&kept.layout, &style.layout) && ***kept == style)
+        {
+            return Arc::clone(kept);
+        }
+        let style = Arc::new(style);
+        self.recent[self.next] = Some(Arc::clone(&style));
+        self.next = (self.next + 1) % RECENT_STYLES;
+        style
+    }
+}
 
 /// How many recent layouts a world keeps to share. Siblings built alike
 /// (list rows, toolbars) repeat within a few writes.

@@ -1381,8 +1381,12 @@ impl UiWorld {
         match mutation {
             UiMutation::Create { id, document, kind } => {
                 let kind_arc = self.nodes.intern_kind(kind);
-                let mut record =
-                    NodeRecord::with_kind(*document, kind_arc, initial_interaction(kind));
+                let mut record = NodeRecord::with_kind(
+                    *document,
+                    kind_arc,
+                    self.nodes.default_style(),
+                    initial_interaction(kind),
+                );
                 record.render_full_epoch = self.render_epoch.get();
                 self.nodes.insert(*id, record);
                 self.record_topology_invalidation(*id);
@@ -3949,11 +3953,11 @@ impl UiWorld {
         self.track_scroll_style(id, &previous_effective, &next_presentation.layout);
         let previous = NodeStyle {
             layout: Arc::clone(&previous_resolved),
-            ..previous_presentation
+            ..NodeStyle::clone(&previous_presentation)
         };
         let style = &NodeStyle {
             layout: Arc::clone(&resolved),
-            ..next_presentation
+            ..NodeStyle::clone(&next_presentation)
         };
         // Compared once; three classifications below read it.
         let presentation_eq = super::node_presentation_eq(&previous, style);

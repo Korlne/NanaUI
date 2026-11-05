@@ -114,7 +114,7 @@ impl UiWorld {
         // Reading `node.layout` directly here would create a second geometry
         // authority for component projections.
         let bounds = self.component_layout_box(id)?;
-        let mut source = self.nodes.get(id)?.style.clone();
+        let mut source = NodeStyle::clone(&self.nodes.get(id)?.style);
         source.layout = Arc::clone(&self.record(id).resolved_layout);
         let padding = self.used_layout_padding(id);
         let border = source.layout.resolved_border_width();
