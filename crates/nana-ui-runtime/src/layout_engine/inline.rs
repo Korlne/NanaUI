@@ -13,7 +13,7 @@ pub(super) fn place_native_inline(
     font: f32,
     nodes: &mut LayoutInputMap<'_>,
     cache: &mut PassIntrinsicCache,
-    output: &mut HashMap<StableNodeId, LayoutBox>,
+    output: &mut PassOutput,
     scope: Option<&ScopeContext<'_>>,
 ) -> Result<(), UiWorldError> {
     cache.execution_stats.inline_reflows += 1;
@@ -408,7 +408,7 @@ fn derive_baselines(
     let Some(node) = nodes.get(id)? else {
         return Ok(BaselineMetrics::default());
     };
-    let (child_ids, writing) = (Arc::clone(&node.children), node.writing);
+    let (child_ids, writing) = (node.children, node.writing);
     // A subgrid's tracks are its parent's.
     if writing.is_vertical()
         || style.omits_box()
@@ -430,11 +430,11 @@ fn derive_baselines(
         used.height - padding.top - padding.bottom - border.top - border.bottom,
     );
     // Floats leave a block's flow, as placement takes them out of it.
-    let (mut flow, _) = collect_flow_children_reporting(&child_ids, nodes, &style)?;
+    let (mut flow, _) = collect_flow_children_reporting(child_ids, nodes, &style)?;
     let floated = if flex || grid {
         Vec::new()
     } else {
-        collect_floated_children(&child_ids, nodes)?
+        collect_floated_children(child_ids, nodes)?
     };
     if !floated.is_empty() {
         flow.retain(|id| !floated.contains(id));

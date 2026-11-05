@@ -45,8 +45,7 @@ use nana_ui_core::{
 
 use crate::layout_frontier::{LayoutFrontier, LayoutFrontierSeed, LayoutFrontierStats};
 use crate::{
-    DocumentId, LayoutBox, LayoutInput, MutationQueue, NodeKind, NodeStyle, StableNodeId, UiWorld,
-    UiWorldError,
+    DocumentId, LayoutBox, MutationQueue, NodeKind, NodeStyle, StableNodeId, UiWorld, UiWorldError,
 };
 
 /// Logical viewport supplied by the platform host to the retained layout system.
@@ -132,7 +131,7 @@ impl RuntimeLayoutEngine {
         let mut nodes = LayoutInputMap::new(world);
         nodes.prefetch(&order)?;
         let roots = world.document_roots(document);
-        let mut output = HashMap::with_capacity(nodes.len());
+        let mut output = PassOutput::with_highest_of(&order);
         let mut intrinsic = PassIntrinsicCache::with_capacity(nodes.len());
         let available = Size::new(viewport.width, viewport.height);
         for root in roots {
@@ -321,9 +320,13 @@ impl RuntimeLayoutEngine {
         let mut nodes = LayoutInputMap::new(world);
         #[cfg(feature = "benchmark")]
         let mut phase = plan_stats::PhaseClock::start();
+        let full_order = if force_full {
+            world.document_order(document)
+        } else {
+            Vec::new()
+        };
         if force_full {
-            let order = world.document_order(document);
-            nodes.prefetch(&order)?;
+            nodes.prefetch(&full_order)?;
         }
         #[cfg(feature = "benchmark")]
         phase.lap(0);
@@ -418,7 +421,13 @@ impl RuntimeLayoutEngine {
         for id in frontier.measure_nodes() {
             retained.intrinsics.remove(id);
         }
-        let mut output = HashMap::with_capacity(nodes.len());
+        // A full pass places every node: size its table for the document
+        // once. A scoped pass places a few, wherever they are.
+        let mut output = if force_full {
+            PassOutput::with_highest_of(&full_order)
+        } else {
+            PassOutput::default()
+        };
         let mut intrinsic = PassIntrinsicCache::with_capacity(nodes.len());
         // A full pass a caller asked for leaves its plans to nobody (the
         // retained cache was just cleared, or the map is thrown away). The
@@ -2530,67 +2539,20 @@ impl MeasurePlan {
 }
 
 /// A node's layout style as [`LayoutInputMap::style`] hands it out: borrowed
-/// from the pass's input, or an owned handle when it came from the memo of
-/// styles the pass never materialized.
-#[derive(Debug)]
-enum StyleRef<'a> {
-    Borrowed(&'a Arc<nana_ui_core::LayoutStyle>),
-    Owned(Arc<nana_ui_core::LayoutStyle>),
-}
+/// from the world or the pass's input, or an owned handle when it came from
+/// the memo of styles the pass never materialized.
+use crate::world::LayoutStyleRef as StyleRef;
 
-impl StyleRef<'_> {
-    /// An owned handle, for a caller that keeps the style past the map.
-    fn to_arc(&self) -> Arc<nana_ui_core::LayoutStyle> {
-        match self {
-            Self::Borrowed(style) => Arc::clone(style),
-            Self::Owned(style) => Arc::clone(style),
-        }
-    }
-}
+/// What a pass reads of a node: a view of its record
+/// ([`UiWorld::layout_input_view`]), not a copy of it.
+type PassInput<'a> = crate::world::LayoutInputView<'a>;
 
-impl std::ops::Deref for StyleRef<'_> {
-    type Target = nana_ui_core::LayoutStyle;
-
-    fn deref(&self) -> &Self::Target {
-        match self {
-            Self::Borrowed(style) => style,
-            Self::Owned(style) => style,
-        }
-    }
-}
-
-impl AsRef<nana_ui_core::LayoutStyle> for StyleRef<'_> {
-    fn as_ref(&self) -> &nana_ui_core::LayoutStyle {
-        self
-    }
-}
-
-/// What a pass reads of a node: [`LayoutInput`] with its rare modal part on
-/// the heap. Every pass walks these once per node, so they are kept to
-/// about one cache line (264 B inline before) rather than carrying a modal
-/// frame's text metrics for every box.
-#[derive(Debug, Clone, PartialEq)]
-struct PassInput {
-    children: Arc<Vec<StableNodeId>>,
-    style: Arc<nana_ui_core::LayoutStyle>,
-    writing: nana_ui_core::WritingContext,
-    containing_writing: nana_ui_core::WritingContext,
-    text_metrics: Option<crate::TextMetrics>,
-    modal: Option<Box<crate::ModalLayoutInput>>,
-}
-
-impl From<LayoutInput> for PassInput {
-    fn from(input: LayoutInput) -> Self {
-        Self {
-            children: input.children,
-            style: input.style,
-            writing: input.writing,
-            containing_writing: input.containing_writing,
-            text_metrics: input.text_metrics,
-            modal: input.modal.map(Box::new),
-        }
-    }
-}
+/// The boxes a pass placed, by node: a dense table, as [`crate::store::DenseNodeMap`]
+/// lays one out. A full pass places every node of the document in roughly the
+/// order they were made, so this indexes a vector sized once for the
+/// document and hands the boxes back in id order; a scoped pass touches a few
+/// ids far apart, which the map keeps in its overflow.
+type PassOutput = crate::store::DenseNodeMap<LayoutBox>;
 
 /// On-demand `LayoutInput` cache. A miss loads exactly that id from `UiWorld`.
 struct LayoutInputMap<'a> {
@@ -2599,7 +2561,7 @@ struct LayoutInputMap<'a> {
     /// back in flow that had another one: what its box is measured from.
     frames: crate::NodeMap<crate::LayoutFrame>,
     world: &'a UiWorld,
-    nodes: crate::store::DenseNodeMap<PassInput>,
+    nodes: crate::store::DenseNodeMap<PassInput<'a>>,
     /// Effective styles for nodes this pass never materialized into `nodes`.
     ///
     /// A scoped pass prefetches nothing, so an unchanged sibling is reached
@@ -2767,7 +2729,8 @@ impl<'a> LayoutInputMap<'a> {
         if !ids.is_empty() {
             self.world.record_hot_path_allocation(
                 1,
-                ids.len().saturating_mul(std::mem::size_of::<PassInput>()),
+                ids.len()
+                    .saturating_mul(std::mem::size_of::<PassInput<'_>>()),
             );
         }
         let mut nodes = ids.iter().max().map_or_else(Default::default, |&highest| {
@@ -2775,7 +2738,7 @@ impl<'a> LayoutInputMap<'a> {
         });
         let mut containers = 0;
         for &id in ids {
-            let input = PassInput::from(self.world.layout_input(id)?);
+            let input = self.world.layout_input_view(id)?;
             containers += usize::from(!input.children.is_empty());
             nodes.insert(id, input);
         }
@@ -2791,14 +2754,14 @@ impl<'a> LayoutInputMap<'a> {
         Ok(())
     }
 
-    fn get(&mut self, id: StableNodeId) -> Result<Option<&PassInput>, UiWorldError> {
+    fn get(&mut self, id: StableNodeId) -> Result<Option<&PassInput<'a>>, UiWorldError> {
         let world = self.world;
         let materialized = &mut self.materialized;
         self.nodes
-            .get_or_try_insert(id, || match world.layout_input(id) {
+            .get_or_try_insert(id, || match world.layout_input_view(id) {
                 Ok(input) => {
                     *materialized = materialized.saturating_add(1);
-                    Ok(Some(PassInput::from(input)))
+                    Ok(Some(input))
                 }
                 Err(UiWorldError::MissingNode(_)) => Ok(None),
                 Err(error) => Err(error),
@@ -2812,7 +2775,7 @@ impl<'a> LayoutInputMap<'a> {
     /// and drop each time cost more than the question.
     fn style_ref(&self, id: StableNodeId) -> Option<StyleRef<'_>> {
         if let Some(node) = self.nodes.get(&id) {
-            return Some(StyleRef::Borrowed(&node.style));
+            return Some(node.style.reborrow());
         }
         if let Some(cached) = self.styles.borrow().get(&id) {
             return cached.clone().map(StyleRef::Owned);
@@ -2826,6 +2789,17 @@ impl<'a> LayoutInputMap<'a> {
     /// while it uses the map again.
     fn style(&self, id: StableNodeId) -> Option<Arc<nana_ui_core::LayoutStyle>> {
         self.style_ref(id).map(|style| style.to_arc())
+    }
+
+    /// [`Self::style`] without taking a reference where the pass's input
+    /// borrows the world's: an ordinary box of a full pass hands its style
+    /// out as that borrow, anything else as an owned handle.
+    fn style_shared(&self, id: StableNodeId) -> Option<StyleRef<'a>> {
+        if let Some(node) = self.nodes.get(&id) {
+            return Some(node.style.shared());
+        }
+        self.style_ref(id)
+            .map(|style| StyleRef::Owned(style.to_arc()))
     }
 
     /// Whether `id` holds an in-flow line box: [`UiWorld::holds_line_box_in`]
@@ -3171,7 +3145,7 @@ fn collapse_omitted_boxes(
     affected: &HashSet<StableNodeId>,
     nodes: &mut LayoutInputMap<'_>,
     retained: &mut DocumentLayoutCache,
-    output: &mut HashMap<StableNodeId, LayoutBox>,
+    output: &mut PassOutput,
 ) {
     for &id in affected {
         // A container may write the omitted box itself, as a zero box, and
@@ -3187,14 +3161,14 @@ fn collapse_omitted_boxes(
             // No box, and so no frame other than a cold layout's.
             if retained.frames.contains_key(&node) {
                 nodes.frames.insert(node, crate::LayoutFrame::Parent);
-                output.entry(node).or_insert(LayoutBox::default());
+                output.entry(node).or_default();
             }
             if retained
                 .boxes
                 .get(&node)
                 .is_some_and(|kept| *kept != LayoutBox::default())
             {
-                output.entry(node).or_insert(LayoutBox::default());
+                output.entry(node).or_default();
             }
             if let Some(record) = nodes.world.node(node) {
                 stack.extend(record.children.iter().copied());

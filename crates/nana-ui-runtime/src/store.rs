@@ -416,6 +416,13 @@ impl<V> DenseNodeMap<V> {
         map
     }
 
+    /// Room for every id of `ids` without growing.
+    pub(crate) fn with_highest_of(ids: &[StableNodeId]) -> Self {
+        ids.iter()
+            .max()
+            .map_or_else(Self::default, |&highest| Self::with_highest(highest))
+    }
+
     pub(crate) fn len(&self) -> usize {
         self.len
     }

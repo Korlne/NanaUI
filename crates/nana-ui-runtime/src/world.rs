@@ -4713,28 +4713,45 @@ impl UiWorld {
 
     /// Project a single layout input without allocating a batch container.
     pub(crate) fn layout_input(&self, id: StableNodeId) -> Result<LayoutInput, UiWorldError> {
+        let parent = self
+            .nodes
+            .get(id)
+            .ok_or(UiWorldError::MissingNode(id))?
+            .hierarchy
+            .parent;
+        let view = self.layout_input_view(id)?;
+        Ok(LayoutInput {
+            id,
+            parent,
+            children: Arc::clone(view.children),
+            style: view.style.to_arc(),
+            writing: view.writing,
+            containing_writing: view.containing_writing,
+            text_metrics: view.text_metrics,
+            modal: view.modal.map(|modal| *modal),
+        })
+    }
+
+    /// [`Self::layout_input`] as a view of the record: the child list and,
+    /// for an ordinary mounted box in a world without overlays, motion or
+    /// length tracks, the layout style are borrowed from the record rather
+    /// than cloned, so a pass that reads every node does not take and drop
+    /// two references per node.
+    pub(crate) fn layout_input_view(
+        &self,
+        id: StableNodeId,
+    ) -> Result<LayoutInputView<'_>, UiWorldError> {
         let plain_world = self.layout_length_tracks.is_empty()
             && self.overlay_host_nodes.is_empty()
             && self.z_index_nodes == 0
             && self.detached_mounted.is_empty()
             && !self.nodes.has_visuals();
-        let (writing, containing_writing, parent, children, text_metrics, resolved_layout, mounted) = {
-            let record = self.nodes.get(id).ok_or(UiWorldError::MissingNode(id))?;
-            let has_text =
-                matches!(record.kind.as_ref(), NodeKind::Text) || !record.text.value.is_empty();
-            (
-                record_writing(record),
-                record_containing_writing(record),
-                record.hierarchy.parent,
-                Arc::clone(&record.hierarchy.children),
-                has_text.then_some(record.text_metrics),
-                Arc::clone(&record.resolved_layout),
-                record.mount,
-            )
-        };
+        let record = self.nodes.get(id).ok_or(UiWorldError::MissingNode(id))?;
+        let has_text =
+            matches!(record.kind.as_ref(), NodeKind::Text) || !record.text.value.is_empty();
         // Header block space is already represented by Card's title band.
         // Its text still contributes preferred inline width, not body height.
-        let text_metrics = text_metrics.map(|mut metrics| {
+        let text_metrics = has_text.then_some(record.text_metrics).map(|mut metrics| {
             if matches!(
                 self.standard_visual_ref(id),
                 Some(StandardVisual::Card { .. })
@@ -4743,22 +4760,21 @@ impl UiWorld {
             }
             metrics
         });
+        let resolved_layout = &record.resolved_layout;
         let style = if plain_world
-            && mounted == MountState::Mounted
+            && record.mount == MountState::Mounted
             && !resolved_layout.omits_box()
             && !resolved_layout.has_logical_box_edges()
         {
-            resolved_layout
+            LayoutStyleRef::Borrowed(resolved_layout)
         } else {
-            self.hit_motion_layout(id)
+            LayoutStyleRef::Owned(self.hit_motion_layout(id))
         };
-        Ok(LayoutInput {
-            id,
-            parent,
-            children,
+        Ok(LayoutInputView {
+            children: &record.hierarchy.children,
             style,
-            writing,
-            containing_writing,
+            writing: record_writing(record),
+            containing_writing: record_containing_writing(record),
             text_metrics,
             modal: self
                 .nodes
@@ -4770,13 +4786,13 @@ impl UiWorld {
                         return None;
                     };
                     let presentation = self.nodes.modal_text(id).copied().unwrap_or_default();
-                    Some(crate::ModalLayoutInput {
+                    Some(Box::new(crate::ModalLayoutInput {
                         kind: *kind,
                         slots: slots.clone(),
                         title: presentation.title,
                         description: presentation.description,
                         body_text: presentation.body,
-                    })
+                    }))
                 }),
         })
     }
@@ -7114,6 +7130,73 @@ fn record_containing_writing(record: &NodeRecord) -> nana_ui_core::WritingContex
         )
     } else {
         record_writing(record)
+    }
+}
+
+/// What a layout pass reads of a node ([`UiWorld::layout_input_view`]):
+/// [`LayoutInput`] borrowing the record's child list and, where it can, its
+/// layout style, with the rare modal part on the heap.
+#[derive(Debug)]
+pub(crate) struct LayoutInputView<'a> {
+    pub children: &'a Arc<Vec<StableNodeId>>,
+    pub style: LayoutStyleRef<'a>,
+    pub writing: nana_ui_core::WritingContext,
+    pub containing_writing: nana_ui_core::WritingContext,
+    pub text_metrics: Option<crate::TextMetrics>,
+    pub modal: Option<Box<crate::ModalLayoutInput>>,
+}
+
+/// A node's layout style as a pass holds it: borrowed from the world, or an
+/// owned handle where the pass derived it (motion, overlays, a hidden box).
+#[derive(Debug)]
+pub(crate) enum LayoutStyleRef<'a> {
+    Borrowed(&'a Arc<nana_ui_core::LayoutStyle>),
+    Owned(Arc<nana_ui_core::LayoutStyle>),
+}
+
+impl LayoutStyleRef<'_> {
+    /// An owned handle, for a caller that keeps the style past the borrow.
+    pub(crate) fn to_arc(&self) -> Arc<nana_ui_core::LayoutStyle> {
+        Arc::clone(self.arc())
+    }
+
+    /// The handle, wherever it lives.
+    pub(crate) fn arc(&self) -> &Arc<nana_ui_core::LayoutStyle> {
+        match self {
+            Self::Borrowed(style) => style,
+            Self::Owned(style) => style,
+        }
+    }
+
+    /// The same style for as long as the world is borrowed: a copy of the
+    /// borrow, or another handle to the owned one.
+    pub(crate) fn shared<'b>(&self) -> LayoutStyleRef<'b>
+    where
+        Self: 'b,
+    {
+        match self {
+            Self::Borrowed(style) => LayoutStyleRef::Borrowed(style),
+            Self::Owned(style) => LayoutStyleRef::Owned(Arc::clone(style)),
+        }
+    }
+
+    /// A borrow of this style for as long as `self` is borrowed.
+    pub(crate) fn reborrow(&self) -> LayoutStyleRef<'_> {
+        LayoutStyleRef::Borrowed(self.arc())
+    }
+}
+
+impl std::ops::Deref for LayoutStyleRef<'_> {
+    type Target = nana_ui_core::LayoutStyle;
+
+    fn deref(&self) -> &Self::Target {
+        self.arc()
+    }
+}
+
+impl AsRef<nana_ui_core::LayoutStyle> for LayoutStyleRef<'_> {
+    fn as_ref(&self) -> &nana_ui_core::LayoutStyle {
+        self
     }
 }
 

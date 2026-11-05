@@ -12,7 +12,7 @@ pub(super) fn place_node(
     parent_font_px: f32,
     nodes: &mut LayoutInputMap<'_>,
     intrinsic: &mut PassIntrinsicCache,
-    output: &mut HashMap<StableNodeId, LayoutBox>,
+    output: &mut PassOutput,
 ) -> Result<(), UiWorldError> {
     place_node_scoped(
         id,
@@ -73,7 +73,7 @@ fn place_unvisited_reaching(
     viewport: LayoutViewport,
     nodes: &mut LayoutInputMap<'_>,
     intrinsic: &mut PassIntrinsicCache,
-    output: &mut HashMap<StableNodeId, LayoutBox>,
+    output: &mut PassOutput,
     scope: &ScopeContext<'_>,
 ) -> Result<(), UiWorldError> {
     for index in children_reaching_affected(container, plan, scope) {
@@ -281,7 +281,7 @@ fn replay_sequential_suffix(
     viewport: LayoutViewport,
     nodes: &mut LayoutInputMap<'_>,
     intrinsic: &mut PassIntrinsicCache,
-    output: &mut HashMap<StableNodeId, LayoutBox>,
+    output: &mut PassOutput,
     scope: &ScopeContext<'_>,
 ) -> Result<bool, UiWorldError> {
     let _ = id;
@@ -337,7 +337,7 @@ fn replay_sequential_run(
     viewport: LayoutViewport,
     nodes: &mut LayoutInputMap<'_>,
     intrinsic: &mut PassIntrinsicCache,
-    output: &mut HashMap<StableNodeId, LayoutBox>,
+    output: &mut PassOutput,
     scope: &ScopeContext<'_>,
 ) -> Result<Option<Vec<PlannedChild>>, UiWorldError> {
     let direction = plan.main_direction;
@@ -544,7 +544,7 @@ fn shift_reversed_prefix(
     viewport: LayoutViewport,
     nodes: &mut LayoutInputMap<'_>,
     intrinsic: &mut PassIntrinsicCache,
-    output: &mut HashMap<StableNodeId, LayoutBox>,
+    output: &mut PassOutput,
     scope: &ScopeContext<'_>,
 ) -> Result<Vec<(usize, Point)>, UiWorldError> {
     let direction = plan.main_direction;
@@ -633,7 +633,7 @@ fn replay_child_list_edit(
     viewport: LayoutViewport,
     nodes: &mut LayoutInputMap<'_>,
     intrinsic: &mut PassIntrinsicCache,
-    output: &mut HashMap<StableNodeId, LayoutBox>,
+    output: &mut PassOutput,
     scope: &ScopeContext<'_>,
 ) -> Result<Option<ContainerPlan>, UiWorldError> {
     // A line that solves its overflow shares out what it takes from its
@@ -823,7 +823,7 @@ fn replay_wrapped_flex_line(
     viewport: LayoutViewport,
     nodes: &mut LayoutInputMap<'_>,
     intrinsic: &mut PassIntrinsicCache,
-    output: &mut HashMap<StableNodeId, LayoutBox>,
+    output: &mut PassOutput,
     scope: &ScopeContext<'_>,
 ) -> Result<bool, UiWorldError> {
     let style = plan.style.as_ref();
@@ -1014,7 +1014,7 @@ fn replay_grid(
     viewport: LayoutViewport,
     nodes: &mut LayoutInputMap<'_>,
     intrinsic: &mut PassIntrinsicCache,
-    output: &mut HashMap<StableNodeId, LayoutBox>,
+    output: &mut PassOutput,
     scope: &ScopeContext<'_>,
 ) -> Result<bool, UiWorldError> {
     let Some(old_grid) = plan.grid.clone() else {
@@ -1189,7 +1189,7 @@ pub(super) fn place_node_scoped(
     parent_font_px: f32,
     nodes: &mut LayoutInputMap<'_>,
     intrinsic: &mut PassIntrinsicCache,
-    output: &mut HashMap<StableNodeId, LayoutBox>,
+    output: &mut PassOutput,
     scope: Option<&ScopeContext<'_>>,
     inherited_grid: Option<&InheritedGridTracks>,
 ) -> Result<(), UiWorldError> {
@@ -1237,7 +1237,7 @@ fn place_subtree(
     parent_font_px: f32,
     nodes: &mut LayoutInputMap<'_>,
     intrinsic: &mut PassIntrinsicCache,
-    output: &mut HashMap<StableNodeId, LayoutBox>,
+    output: &mut PassOutput,
     scope: Option<&ScopeContext<'_>>,
     inherited_grid: Option<&InheritedGridTracks>,
 ) -> Result<(), UiWorldError> {
@@ -1270,7 +1270,7 @@ fn place_level(
     parent_font_px: f32,
     nodes: &mut LayoutInputMap<'_>,
     intrinsic: &mut PassIntrinsicCache,
-    output: &mut HashMap<StableNodeId, LayoutBox>,
+    output: &mut PassOutput,
     scope: Option<&ScopeContext<'_>>,
     inherited_grid: Option<&InheritedGridTracks>,
 ) -> Result<(), UiWorldError> {
@@ -1342,7 +1342,7 @@ fn place_boundaries(
     viewport: LayoutViewport,
     nodes: &mut LayoutInputMap<'_>,
     intrinsic: &mut PassIntrinsicCache,
-    output: &mut HashMap<StableNodeId, LayoutBox>,
+    output: &mut PassOutput,
     scope: Option<&ScopeContext<'_>>,
 ) -> Result<(), UiWorldError> {
     while let Some(boundary) = intrinsic.boundaries.pop_front() {
@@ -1371,24 +1371,24 @@ fn place_boundaries(
 }
 
 /// A level's head once it has written its node's box: what the body needs.
-struct PlacedHead {
-    facts: NodeFacts,
+struct PlacedHead<'a> {
+    facts: NodeFacts<'a>,
 }
 
 /// The first half of a level: write `id`'s own box. `None` when that is all
 /// there is to do (no node, or one that generates no box).
 #[allow(clippy::too_many_arguments)]
-fn place_node_head(
+fn place_node_head<'a>(
     id: StableNodeId,
     origin: Point,
     size: Size,
     containing: Size,
     parent_font_px: f32,
-    nodes: &mut LayoutInputMap<'_>,
+    nodes: &mut LayoutInputMap<'a>,
     intrinsic: &mut PassIntrinsicCache,
-    output: &mut HashMap<StableNodeId, LayoutBox>,
+    output: &mut PassOutput,
     scope: Option<&ScopeContext<'_>>,
-) -> Result<Option<PlacedHead>, UiWorldError> {
+) -> Result<Option<PlacedHead<'a>>, UiWorldError> {
     let Some(node) = nodes.get(id)? else {
         output.insert(
             id,
@@ -1402,13 +1402,13 @@ fn place_node_head(
         return Ok(None);
     };
     let facts = NodeFacts {
-        style: node.style.clone(),
-        children: node.children.clone(),
+        style: node.style.shared(),
+        children: node.children,
         writing: node.writing,
         containing_writing: node.containing_writing,
         modal: node.modal.clone(),
     };
-    let style_arc = Arc::clone(&facts.style);
+    let style_arc = facts.style.shared();
     // Explicit boundaries and native atomic entries need a saved placement for independent reflow.
     // Ordinary nodes must not allocate another per-node cache on full layout.
     if style_arc.layout_isolation || nodes.world.inline_parent(id).is_some() {
@@ -1467,9 +1467,9 @@ fn place_node_head(
 }
 
 /// What a level reads off its node, read once for both of its halves.
-struct NodeFacts {
-    style: Arc<LayoutStyle>,
-    children: Arc<Vec<StableNodeId>>,
+struct NodeFacts<'a> {
+    style: StyleRef<'a>,
+    children: &'a Arc<Vec<StableNodeId>>,
     /// The writing mode and direction this node lays out in, inherited from
     /// its ancestors when it declares none of its own, and its parent's.
     writing: nana_ui_core::WritingContext,
@@ -1480,16 +1480,16 @@ struct NodeFacts {
 /// Everything a level does once its own box is written: lay out and place
 /// its children. A boundary resumes here, without `facts`.
 #[allow(clippy::too_many_arguments)]
-fn place_node_body(
+fn place_node_body<'a>(
     id: StableNodeId,
-    facts: Option<NodeFacts>,
+    facts: Option<NodeFacts<'a>>,
     size: Size,
     containing: Size,
     viewport: LayoutViewport,
     parent_font_px: f32,
-    nodes: &mut LayoutInputMap<'_>,
+    nodes: &mut LayoutInputMap<'a>,
     intrinsic: &mut PassIntrinsicCache,
-    output: &mut HashMap<StableNodeId, LayoutBox>,
+    output: &mut PassOutput,
     scope: Option<&ScopeContext<'_>>,
     inherited_grid: Option<&InheritedGridTracks>,
 ) -> Result<(), UiWorldError> {
@@ -1500,8 +1500,8 @@ fn place_node_body(
                 return Ok(());
             };
             NodeFacts {
-                style: node.style.clone(),
-                children: node.children.clone(),
+                style: node.style.shared(),
+                children: node.children,
                 writing: node.writing,
                 containing_writing: node.containing_writing,
                 modal: node.modal.clone(),
@@ -1537,7 +1537,7 @@ fn place_node_body(
     nodes.used_padding.insert(id, padding);
 
     if let Some(modal) = modal.as_ref() {
-        let context = establish_context(id, style, &child_ids, nodes);
+        let context = establish_context(id, style, child_ids, nodes);
         debug_assert_eq!(context.kind, crate::FormattingContextKind::Overlay);
         nodes.contexts.insert(id, context.kind);
         place_modal_children(
@@ -1586,7 +1586,7 @@ fn place_node_body(
         nodes.measure_plans.insert(id, MeasurePlanSlots::default());
         return place_native_inline(
             id,
-            &child_ids,
+            child_ids,
             content_origin,
             content,
             viewport,
@@ -1606,8 +1606,8 @@ fn place_node_body(
         viewport,
         parent_font_px,
         child_font_px,
-        &style_arc,
-        &child_ids,
+        style_arc.arc(),
+        child_ids,
         writing,
         content_origin,
         content,
@@ -1631,8 +1631,8 @@ fn place_node_body(
         viewport,
         parent_font_px,
         child_font_px,
-        &style_arc,
-        &child_ids,
+        style_arc.arc(),
+        child_ids,
         writing,
         content_origin,
         content,
@@ -1662,8 +1662,8 @@ fn place_node_body(
         mut child_phase,
     } = lay_out_children(
         id,
-        &style_arc,
-        &child_ids,
+        style_arc.arc(),
+        child_ids,
         content_origin,
         content,
         writing,
@@ -1714,8 +1714,8 @@ fn place_node_body(
                 containing,
                 parent_font_px,
                 viewport,
-                style: Arc::clone(&style_arc),
-                children: Arc::clone(&child_ids),
+                style: style_arc.to_arc(),
+                children: Arc::clone(child_ids),
                 content,
                 child_font_px,
                 child_available: content,
@@ -1830,7 +1830,7 @@ fn place_edited_child_list(
     inherited_grid: Option<&InheritedGridTracks>,
     nodes: &mut LayoutInputMap<'_>,
     intrinsic: &mut PassIntrinsicCache,
-    output: &mut HashMap<StableNodeId, LayoutBox>,
+    output: &mut PassOutput,
     scope: Option<&ScopeContext<'_>>,
 ) -> Result<bool, UiWorldError> {
     // A new child list on a sequential container: the children before the
@@ -1928,7 +1928,7 @@ fn place_from_plan(
     inherited_grid: Option<&InheritedGridTracks>,
     nodes: &mut LayoutInputMap<'_>,
     intrinsic: &mut PassIntrinsicCache,
-    output: &mut HashMap<StableNodeId, LayoutBox>,
+    output: &mut PassOutput,
     scope: Option<&ScopeContext<'_>>,
 ) -> Result<bool, UiWorldError> {
     if let Some(scope) = scope
@@ -2114,7 +2114,7 @@ fn place_descendants(
     child_font_px: f32,
     nodes: &mut LayoutInputMap<'_>,
     intrinsic: &mut PassIntrinsicCache,
-    output: &mut HashMap<StableNodeId, LayoutBox>,
+    output: &mut PassOutput,
     scope: Option<&ScopeContext<'_>>,
 ) -> Result<(), UiWorldError> {
     for child in children {
@@ -2176,7 +2176,7 @@ fn lay_out_children(
     had_plan: bool,
     nodes: &mut LayoutInputMap<'_>,
     intrinsic: &mut PassIntrinsicCache,
-    output: &mut HashMap<StableNodeId, LayoutBox>,
+    output: &mut PassOutput,
     scope: Option<&ScopeContext<'_>>,
     inherited_grid: Option<&InheritedGridTracks>,
 ) -> Result<ChildrenLayout, UiWorldError> {
@@ -2468,7 +2468,7 @@ fn lay_out_children(
                         && nodes.world.block_extent_reaches(child));
                 entries.push(PlannedChild {
                     child,
-                    style: Arc::clone(&item.style),
+                    style: item.style.to_arc(),
                     intrinsic: child_intrinsic,
                     at_main: item.at_main,
                     origin: child_origin,
@@ -2517,9 +2517,9 @@ fn lay_out_children(
 }
 
 /// An in-flow child of a box's flow where its lines put it.
-pub(super) struct ArrangedChild {
+pub(super) struct ArrangedChild<'a> {
     pub(super) child: StableNodeId,
-    pub(super) style: Arc<LayoutStyle>,
+    pub(super) style: StyleRef<'a>,
     /// Its border box's origin from the content box's, on the page.
     pub(super) offset: Point,
     pub(super) size: Size,
@@ -2551,8 +2551,8 @@ pub(super) struct ArrangedLine {
 
 /// A box's in-flow children where its lines put them: the one arrangement
 /// placement places them by and baseline derivation reads (#394).
-pub(super) struct ArrangedFlow {
-    pub(super) children: Vec<ArrangedChild>,
+pub(super) struct ArrangedFlow<'a> {
+    pub(super) children: Vec<ArrangedChild<'a>>,
     pub(super) lines: Vec<ArrangedLine>,
     /// The gap a solved single line settled on.
     pub(super) gap: f32,
@@ -2569,7 +2569,7 @@ pub(super) struct ArrangedFlow {
 /// lets a solved line keep its assignment, as placement does; a reader
 /// passes `false`.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn arrange_flow(
+pub(super) fn arrange_flow<'a>(
     id: StableNodeId,
     style: &LayoutStyle,
     writing: nana_ui_core::WritingContext,
@@ -2586,14 +2586,14 @@ pub(super) fn arrange_flow(
     packed_floats: &PackedFloats,
     viewport: LayoutViewport,
     child_font_px: f32,
-    nodes: &mut LayoutInputMap<'_>,
+    nodes: &mut LayoutInputMap<'a>,
     intrinsic: &mut PassIntrinsicCache,
     scope: Option<&ScopeContext<'_>>,
     commit: bool,
-) -> Result<ArrangedFlow, UiWorldError> {
+) -> Result<ArrangedFlow<'a>, UiWorldError> {
     let float_left_bottom = packed_floats.left_bottom;
     let float_right_bottom = packed_floats.right_bottom;
-    let mut children: Vec<ArrangedChild> = Vec::with_capacity(flow.len());
+    let mut children: Vec<ArrangedChild<'a>> = Vec::with_capacity(flow.len());
     let mut lines: Vec<ArrangedLine> = Vec::new();
     let wrap = if ifc { FlexWrap::Wrap } else { style.flex_wrap };
     let wrapping = ifc
@@ -2997,7 +2997,7 @@ pub(super) fn arrange_flow(
             0.0
         };
         for (child, mut child_size) in line_flow.into_iter().zip(line_sizes) {
-            let Some(child_style_arc) = nodes.style(child) else {
+            let Some(child_style_arc) = nodes.style_shared(child) else {
                 continue;
             };
             let child_style = child_style_arc.as_ref();
@@ -3129,7 +3129,7 @@ pub(super) fn arrange_flow(
             };
             children.push(ArrangedChild {
                 child,
-                style: Arc::clone(&child_style_arc),
+                style: child_style_arc,
                 offset: child_offset,
                 size: child_size,
                 cursor_before: cursor,
@@ -3231,7 +3231,7 @@ fn reads_main_extent(style: &LayoutStyle, direction: FlexDirection) -> bool {
 fn retire_omitted_children(
     children: &[StableNodeId],
     nodes: &mut LayoutInputMap<'_>,
-    output: &mut HashMap<StableNodeId, LayoutBox>,
+    output: &mut PassOutput,
     scope: &ScopeContext<'_>,
 ) {
     for &child in children {
@@ -3272,7 +3272,7 @@ pub(super) fn place_positioned_child(
     writing: nana_ui_core::WritingContext,
     nodes: &mut LayoutInputMap<'_>,
     intrinsic: &mut PassIntrinsicCache,
-    output: &mut HashMap<StableNodeId, LayoutBox>,
+    output: &mut PassOutput,
     scope: Option<&ScopeContext<'_>>,
 ) -> Result<Option<PlannedOverlay>, UiWorldError> {
     let Some(child_style_arc) = nodes.style(child) else {
@@ -3515,7 +3515,7 @@ fn absolute_containing_block(
 fn padding_box(
     block: StableNodeId,
     nodes: &LayoutInputMap<'_>,
-    output: &HashMap<StableNodeId, LayoutBox>,
+    output: &PassOutput,
     scope: Option<&ScopeContext<'_>>,
 ) -> Option<(Point, Size)> {
     let border_box = pass_box(block, output, scope)?;
@@ -3536,7 +3536,7 @@ fn padding_box(
 /// pass did not place it, measured from its frame's origin.
 pub(super) fn pass_box(
     id: StableNodeId,
-    output: &HashMap<StableNodeId, LayoutBox>,
+    output: &PassOutput,
     scope: Option<&ScopeContext<'_>>,
 ) -> Option<LayoutBox> {
     output
@@ -3569,7 +3569,7 @@ pub(super) fn content_origin_in(
     container: StableNodeId,
     content_origin: Point,
     nodes: &LayoutInputMap<'_>,
-    output: &HashMap<StableNodeId, LayoutBox>,
+    output: &PassOutput,
     scope: Option<&ScopeContext<'_>>,
 ) -> Point {
     let origin = origin_in(ancestor, container, nodes, output, scope);
@@ -3584,7 +3584,7 @@ pub(super) fn origin_in(
     ancestor: Option<StableNodeId>,
     id: StableNodeId,
     nodes: &LayoutInputMap<'_>,
-    output: &HashMap<StableNodeId, LayoutBox>,
+    output: &PassOutput,
     scope: Option<&ScopeContext<'_>>,
 ) -> Point {
     let world = nodes.world;
@@ -3718,7 +3718,7 @@ fn overlay_depends_on_block(
     content: Size,
     viewport: LayoutViewport,
     nodes: &LayoutInputMap<'_>,
-    output: &HashMap<StableNodeId, LayoutBox>,
+    output: &PassOutput,
     scope: &ScopeContext<'_>,
 ) -> bool {
     if entry.fixed {
@@ -3747,7 +3747,7 @@ pub(super) fn place_remote_overlays(
     viewport: LayoutViewport,
     nodes: &mut LayoutInputMap<'_>,
     intrinsic: &mut PassIntrinsicCache,
-    output: &mut HashMap<StableNodeId, LayoutBox>,
+    output: &mut PassOutput,
     scope: &ScopeContext<'_>,
 ) -> Result<(), UiWorldError> {
     let mut containers: Vec<StableNodeId> = scope
@@ -3856,7 +3856,7 @@ fn remote_block_moved(
     plan: &ContainerPlan,
     viewport: LayoutViewport,
     nodes: &LayoutInputMap<'_>,
-    output: &HashMap<StableNodeId, LayoutBox>,
+    output: &PassOutput,
     scope: Option<&ScopeContext<'_>>,
 ) -> bool {
     if absolute_containing_block(entry.child, nodes) != entry.block {
@@ -3910,7 +3910,7 @@ fn finish_positioned_overlay(
     writing: nana_ui_core::WritingContext,
     nodes: &mut LayoutInputMap<'_>,
     intrinsic: &mut PassIntrinsicCache,
-    output: &mut HashMap<StableNodeId, LayoutBox>,
+    output: &mut PassOutput,
     scope: &ScopeContext<'_>,
 ) -> Result<(), UiWorldError> {
     let stale = plan.overlay.iter().any(|entry| {
@@ -4062,7 +4062,7 @@ fn place_triggered_menu_items(
     parent_font_px: f32,
     nodes: &mut LayoutInputMap<'_>,
     intrinsic: &mut PassIntrinsicCache,
-    output: &mut HashMap<StableNodeId, LayoutBox>,
+    output: &mut PassOutput,
     scope: Option<&ScopeContext<'_>>,
 ) -> Result<(), UiWorldError> {
     let inner_width = (overlay.width - overlay.padding * 2.0).max(0.0);

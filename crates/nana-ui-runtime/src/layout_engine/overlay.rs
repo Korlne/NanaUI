@@ -13,7 +13,7 @@ pub(super) fn place_modal_children(
     parent_font_px: f32,
     nodes: &mut LayoutInputMap<'_>,
     intrinsic: &mut PassIntrinsicCache,
-    output: &mut HashMap<StableNodeId, LayoutBox>,
+    output: &mut PassOutput,
     scope: Option<&ScopeContext<'_>>,
 ) -> Result<(), UiWorldError> {
     let world = nodes.world;
@@ -264,10 +264,10 @@ pub(super) fn place_modal_slot(
     parent_font_px: f32,
     nodes: &mut LayoutInputMap<'_>,
     intrinsic: &mut PassIntrinsicCache,
-    output: &mut HashMap<StableNodeId, LayoutBox>,
+    output: &mut PassOutput,
     scope: Option<&ScopeContext<'_>>,
 ) -> Result<(), UiWorldError> {
-    let Some(child_style) = nodes.get(id)?.map(|node| node.style.clone()) else {
+    let Some(child_style) = nodes.get(id)?.map(|node| node.style.to_arc()) else {
         return Ok(());
     };
     if subtree_unchanged(

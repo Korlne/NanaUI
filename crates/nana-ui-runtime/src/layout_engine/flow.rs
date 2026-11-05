@@ -102,8 +102,8 @@ pub(super) fn inline_contains_block(
     let Some(node) = nodes.get(id)? else {
         return Ok(false);
     };
-    let children = (*node.children).clone();
-    for grandchild in children {
+    let children: &Arc<Vec<StableNodeId>> = node.children;
+    for &grandchild in children.iter() {
         let Some(style) = nodes.style_ref(grandchild) else {
             continue;
         };

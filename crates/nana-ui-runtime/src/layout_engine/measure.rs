@@ -964,8 +964,8 @@ fn measure_node_level(
     }
     // Copy the node facts out before any further world lookup. `node` borrows
     // the input map, and the style closure below is that borrow's last use.
-    let style_arc = forced.unwrap_or_else(|| Arc::clone(&node.style));
-    let child_ids = Arc::clone(&node.children);
+    let style_arc = forced.map_or_else(|| node.style.shared(), StyleRef::Owned);
+    let child_ids: &Arc<Vec<StableNodeId>> = node.children;
     let text_metrics = node.text_metrics;
     let (writing, containing_writing) = (node.writing, node.containing_writing);
     // A full pass measures every childless text row through the container
@@ -1214,7 +1214,7 @@ fn measure_node_level(
             parent_direction,
             viewport,
             parent_font_px,
-            &style_arc,
+            style_arc.arc(),
             text_metrics,
             text_natural_width,
             text_wrap_limit,
@@ -1233,13 +1233,13 @@ fn measure_node_level(
     {
         // The size the plan answers with, and whether it patched what it
         // recorded to get there.
-        let reused = if !Arc::ptr_eq(&plan.children, &child_ids) {
+        let reused = if !Arc::ptr_eq(&plan.children, child_ids) {
             // A new child list. A sequential sum takes the edit; anything
             // else measures its children again.
             sequential_measure_delta(
                 id,
                 plan,
-                &child_ids,
+                child_ids,
                 viewport,
                 child_font_px,
                 nodes,
@@ -1260,7 +1260,7 @@ fn measure_node_level(
         } else if let Some(size) = sequential_measure_delta(
             id,
             plan,
-            &child_ids,
+            child_ids,
             viewport,
             child_font_px,
             nodes,
@@ -1332,7 +1332,7 @@ fn measure_node_level(
         }
         (Vec::new(), false)
     } else {
-        collect_flow_children_reporting(&child_ids, nodes, style)?
+        collect_flow_children_reporting(child_ids, nodes, style)?
     };
     let context = if native_inline {
         EstablishedContext {
@@ -1846,9 +1846,9 @@ fn measure_node_level(
                 parent_direction,
                 viewport,
                 parent_font_px,
-                style: Arc::clone(&style_arc),
+                style: style_arc.to_arc(),
                 writing,
-                children: Arc::clone(&child_ids),
+                children: Arc::clone(child_ids),
                 own: PlanOwnContent {
                     text_metrics,
                     text_natural_width,
