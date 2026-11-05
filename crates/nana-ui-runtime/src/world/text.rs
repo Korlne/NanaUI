@@ -3611,11 +3611,14 @@ fn unbounded(constraints: crate::TextShapeConstraints) -> crate::TextShapeConstr
 /// handled where the style is set. Paint, transform and
 /// opacity live on the same `LayoutStyle` and are deliberately not compared;
 /// fonts are classified when the computed style resolves.
-pub(super) fn same_text_constraint_inputs(previous: &NodeStyle, next: &NodeStyle) -> bool {
-    if Arc::ptr_eq(&previous.layout, &next.layout) {
+pub(super) fn same_text_constraint_layouts(
+    previous: &Arc<nana_ui_core::LayoutStyle>,
+    next: &Arc<nana_ui_core::LayoutStyle>,
+) -> bool {
+    if Arc::ptr_eq(previous, next) {
         return true;
     }
-    let (a, b) = (previous.layout.as_ref(), next.layout.as_ref());
+    let (a, b) = (previous.as_ref(), next.as_ref());
     let definite = |length: Option<nana_ui_core::LengthSpec>| {
         length.is_some_and(nana_ui_core::LengthSpec::is_definite_declared)
     };

@@ -26,6 +26,7 @@ pub(crate) mod inline_content;
 mod scroll_bounds;
 mod sticky;
 mod style;
+mod style_pairs;
 mod text;
 use hit_test::*;
 pub(crate) use text::TextDisplayView;
@@ -1149,6 +1150,8 @@ pub struct UiWorld {
     pending_layout_copies: Cell<usize>,
     /// Recently written layouts, shared by nodes whose layouts are equal.
     layouts: style::LayoutInterner,
+    /// Recent pairs of resolved layouts a restyle compared, and what it found.
+    layout_pairs: style_pairs::LayoutPairMemo,
     /// Live Confirm modal frames. Extract, a11y, and hit-test skip ancestor
     /// confirm walks when this is zero.
     confirm_modals: usize,
@@ -1387,6 +1390,7 @@ impl UiWorld {
             pending_theme_reads: Cell::new(0),
             pending_layout_copies: Cell::new(0),
             layouts: style::LayoutInterner::default(),
+            layout_pairs: style_pairs::LayoutPairMemo::default(),
             confirm_modals: 0,
             clip_visuals: 0,
             z_index_nodes: 0,
@@ -7353,14 +7357,14 @@ fn node_presentation_eq(left: &NodeStyle, right: &NodeStyle) -> bool {
         && left.painter == right.painter
 }
 
-/// Equal but for transforms and the cursor, given what changed in layout.
+/// Equal but for transforms and the cursor, given whether the presentations
+/// are equal (`node_presentation_eq`) and what changed in layout.
 fn style_excluding_transform_and_cursor_eq(
-    left: &NodeStyle,
-    right: &NodeStyle,
+    presentation_eq: bool,
     changed: nana_ui_core::LayoutStyleChange,
 ) -> bool {
     use nana_ui_core::LayoutStyleChange as Change;
-    node_presentation_eq(left, right)
+    presentation_eq
         && changed
             .difference(Change::TRANSFORM.union(Change::CURSOR))
             .is_empty()
@@ -7370,14 +7374,14 @@ fn style_excluding_transform_and_cursor_eq(
 /// field paint also reads off the style (border widths and styles, how text
 /// breaks, aligns and ends) is not one, since changing it alone may leave
 /// every box in place and still change the pixels. Transforms and the
-/// cursor ride along without counting.
+/// cursor ride along without counting. `presentation_eq` is
+/// `node_presentation_eq` of the two styles.
 fn style_change_is_layout_geometry_only(
-    previous: &NodeStyle,
-    next: &NodeStyle,
+    presentation_eq: bool,
     changed: nana_ui_core::LayoutStyleChange,
 ) -> bool {
     use nana_ui_core::LayoutStyleChange as Change;
-    if !node_presentation_eq(previous, next) {
+    if !presentation_eq {
         return false;
     }
     changed.intersects(Change::LAYOUT)

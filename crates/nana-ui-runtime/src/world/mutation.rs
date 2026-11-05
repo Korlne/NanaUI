@@ -3923,7 +3923,8 @@ impl UiWorld {
     /// classified, marked and seeded exactly as the same change written as a
     /// style.
     pub(super) fn restyle(&mut self, id: StableNodeId, authored: Option<&NodeStyle>) {
-        let previous_authored = self.authored_style(id).clone();
+        // Only the authored layouts are compared below.
+        let previous_authored = Arc::clone(&self.authored_style(id).layout);
         let previous_effective = Arc::clone(&self.record(id).style.layout);
         let previous_presentation = self.record(id).style.clone();
         let previous_resolved = Arc::clone(&self.record(id).resolved_layout);
@@ -3931,15 +3932,16 @@ impl UiWorld {
             id,
             authored
                 .cloned()
-                .unwrap_or_else(|| previous_authored.clone()),
+                .unwrap_or_else(|| self.authored_style(id).clone()),
         );
-        let next_authored = self.authored_style(id).clone();
+        let next_authored = Arc::clone(&self.authored_style(id).layout);
         let next_presentation = self.record(id).style.clone();
         let resolved = Arc::clone(&self.record(id).resolved_layout);
-        if previous_resolved.position != resolved.position
-            || previous_resolved.overflow_x != resolved.overflow_x
-            || previous_resolved.overflow_y != resolved.overflow_y
-        {
+        // Every comparison of the two resolved layouts below, in one pass,
+        // remembered for the pair: nodes built alike restyle from the
+        // shared default to one interned layout.
+        let facts = self.layout_pairs.facts(&previous_resolved, &resolved);
+        if facts.sticky_inputs {
             self.rebind_sticky_subtree(id);
         }
         self.track_scroll_style(id, &previous_effective, &next_presentation.layout);
@@ -3951,46 +3953,18 @@ impl UiWorld {
             layout: Arc::clone(&resolved),
             ..next_presentation
         };
-        let inherited_text_changed = previous.layout.font_size != style.layout.font_size
-            || previous.layout.font_weight != style.layout.font_weight
-            || previous.layout.font_italic != style.layout.font_italic
-            || previous.layout.font_family != style.layout.font_family
-            || previous.layout.line_height != style.layout.line_height
-            || previous.layout.letter_spacing != style.layout.letter_spacing
-            || previous.layout.font_features != style.layout.font_features
-            || previous.layout.font_variation_settings
-                != style.layout.font_variation_settings
-            || previous.layout.font_kerning != style.layout.font_kerning
-            || previous.layout.word_break != style.layout.word_break
-            || previous.layout.line_break != style.layout.line_break
-            || previous.layout.text_typography != style.layout.text_typography
-            || previous.layout.text_emphasis_style != style.layout.text_emphasis_style
-            || previous.layout.text_emphasis_position != style.layout.text_emphasis_position
-            // Writing mode and direction inherit into layout, not just
-            // text: a descendant container lays out along them too, and
-            // the INPUT bit re-projects the accessibility nodes that
-            // report which way their text reads.
-            || previous.layout.dir != style.layout.dir
-            || previous.layout.writing_mode != style.layout.writing_mode
-            || previous.layout.text_orientation != style.layout.text_orientation;
-        let inherited_paint_changed = previous.foreground != style.foreground
-            || previous.layout.color != style.layout.color
-            || previous.layout.text_emphasis_color != style.layout.text_emphasis_color
-            || previous.layout.selection_background != style.layout.selection_background
-            || previous.layout.selection_color != style.layout.selection_color
-            || previous.layout.paint_colors.color != style.layout.paint_colors.color
-            || previous.layout.paint_colors.selection_background
-                != style.layout.paint_colors.selection_background
-            || previous.layout.paint_colors.selection_color
-                != style.layout.paint_colors.selection_color;
-        let inherited_opacity_changed = previous.layout.opacity != style.layout.opacity;
-        let paint_visibility_changed =
-            previous.layout.paint.visibility != style.layout.paint.visibility;
-        let pointer_events_changed = previous.layout.pointer_events != style.layout.pointer_events;
-        let cursor_changed = previous.layout.cursor != style.layout.cursor;
-        let user_select_changed = previous.layout.user_select != style.layout.user_select;
-        let omits_box_changed = previous.layout.omits_box() != style.layout.omits_box();
-        if !super::text::same_text_constraint_inputs(&previous, style) {
+        // Compared once; three classifications below read it.
+        let presentation_eq = super::node_presentation_eq(&previous, style);
+        let inherited_text_changed = facts.inherited_text;
+        let inherited_paint_changed =
+            previous.foreground != style.foreground || facts.inherited_paint;
+        let inherited_opacity_changed = facts.opacity;
+        let paint_visibility_changed = facts.paint_visibility;
+        let pointer_events_changed = facts.pointer_events;
+        let cursor_changed = facts.cursor;
+        let user_select_changed = facts.user_select;
+        let omits_box_changed = facts.omits_box;
+        if !facts.same_text_constraints {
             self.nodes
                 .invalidate_text(id, crate::text_node::TextDirty::CONSTRAINT);
         }
@@ -4013,23 +3987,19 @@ impl UiWorld {
         // alone (a control's padding step, its radius tier) moves it
         // and nothing authored; a write that moves neither is
         // equivalent, however it was spelled.
-        let changed = if Arc::ptr_eq(&previous_resolved, &resolved) {
-            nana_ui_core::LayoutStyleChange::NONE
-        } else {
-            previous_resolved.changed_fields(resolved.as_ref())
-        };
+        let changed = facts.changed;
         let transform_changed = changed.intersects(nana_ui_core::LayoutStyleChange::TRANSFORM);
         if changed.intersects(nana_ui_core::LayoutStyleChange::CONTAINER) {
             self.find_query_containers_again(id);
         }
         let stacking_changed = changed.intersects(nana_ui_core::LayoutStyleChange::STACKING);
         let style_layout_invalidation = self.classify_layout_change(id, changed);
-        if previous_resolved.paint.content_image != resolved.paint.content_image {
+        if facts.content_image {
             self.reindex_replaced(id);
         }
         // A write's own counts; a variant counts as a responsive result.
         if authored.is_some() {
-            if changed.is_empty() && super::node_presentation_eq(&previous, style) {
+            if changed.is_empty() && presentation_eq {
                 self.counters
                     .pending_layout_invalidations_counted
                     .layout_equivalent_mutations_skipped += 1;
@@ -4040,7 +4010,7 @@ impl UiWorld {
             if !style_layout_invalidation.is_empty() {
                 self.counters.pending_drain_counts.style_to_layout_seeds += 1;
             }
-            self.release_rewritten_holds(id, &previous_authored.layout, &next_authored.layout);
+            self.release_rewritten_holds(id, &previous_authored, &next_authored);
         }
         self.sync_node_presence(id);
 
@@ -4084,9 +4054,9 @@ impl UiWorld {
             }
         }
 
-        if !style_excluding_transform_and_cursor_eq(&previous, style, changed) {
+        if !style_excluding_transform_and_cursor_eq(presentation_eq, changed) {
             self.mark(id, DirtyMask::STYLE);
-            if !style_change_is_layout_geometry_only(&previous, style, changed) {
+            if !style_change_is_layout_geometry_only(presentation_eq, changed) {
                 self.mark(id, DirtyMask::RENDER);
             }
         }
@@ -4172,10 +4142,7 @@ impl UiWorld {
             // the boxes placed from the viewport under it
             // (`SystemWork::transform_kept`); any other projects the
             // subtree from `SystemWork::transform`.
-            if !stacking_changed
-                && crate::node_space::NodeSpace::of_style(&previous_resolved)
-                    .keeps_space(crate::node_space::NodeSpace::of_style(&resolved))
-            {
+            if !stacking_changed && facts.keeps_space {
                 self.mark_transform_kept(id);
             } else {
                 self.mark(

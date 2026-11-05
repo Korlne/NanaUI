@@ -569,9 +569,10 @@ impl UiWorld {
     /// (Issue #265) -- and its resolved layout. Every path that writes
     /// `record.style` goes through here so they cannot drift.
     pub(crate) fn write_node_style(&mut self, id: StableNodeId, mut style: NodeStyle) {
-        let current = &self.authored_style(id).layout;
-        if !Arc::ptr_eq(current, &style.layout) && **current == *style.layout {
-            style.layout = Arc::clone(current);
+        let current = Arc::clone(&self.authored_style(id).layout);
+        if !Arc::ptr_eq(&current, &style.layout) && self.layout_pairs.equal(&current, &style.layout)
+        {
+            style.layout = current;
         } else {
             self.layouts.intern(&mut style.layout);
         }
