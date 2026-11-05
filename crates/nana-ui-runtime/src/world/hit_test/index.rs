@@ -597,6 +597,7 @@ impl HitIndex {
     }
 }
 
+#[cfg(test)]
 pub(in crate::world) fn find_hit_transform(index: &HitIndex, id: StableNodeId) -> Option<[f32; 6]> {
     let mut transform = index.entries.get(&id)?.entry.transform;
     let shift = index.inherited_shift(id);

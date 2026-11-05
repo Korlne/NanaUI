@@ -49,22 +49,22 @@ impl UiWorld {
                 height: ud * page.height,
             }
         };
-        let origins = (entries.len() > 1)
-            .then(|| {
-                entries
-                    .iter()
-                    .enumerate()
-                    .map(|(index, entry)| match (turned, index) {
-                        (Some(_), 0) => (entry.id, 0.0, 0.0),
-                        (Some(_), _) => {
-                            let placed = in_owner(pages[index - 1]);
-                            (entry.id, placed.x, placed.y)
-                        }
-                        (None, _) => (entry.id, entry.bounds.x, entry.bounds.y),
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
+        let origins = if entries.len() > 1 {
+            entries
+                .iter()
+                .enumerate()
+                .map(|(index, entry)| match (turned, index) {
+                    (Some(_), 0) => (entry.id, 0.0, 0.0),
+                    (Some(_), _) => {
+                        let placed = in_owner(pages[index - 1]);
+                        (entry.id, placed.x, placed.y)
+                    }
+                    (None, _) => (entry.id, entry.bounds.x, entry.bounds.y),
+                })
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
         for (index, entry) in entries.iter_mut().enumerate() {
             let Some(parent) = entry.parent else {
                 // A root stands in the viewport, framed or not.

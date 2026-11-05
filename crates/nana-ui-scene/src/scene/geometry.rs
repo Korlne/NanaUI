@@ -93,7 +93,6 @@ impl ClipRegion {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn scene_rect(bounds: LayoutBox) -> SceneRect {
     SceneRect {
         x: bounds.x,

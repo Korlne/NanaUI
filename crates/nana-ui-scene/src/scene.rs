@@ -145,7 +145,7 @@ pub struct UiScene {
     /// their node's origin ([`UiScene::draw_primitive`]), each stamped with
     /// what it was put together from. Emptied by every delta that changes
     /// the scene.
-    placed_clips: std::sync::Mutex<HashMap<PrimitiveId, (PlacedClipStamp, Arc<[ClipRegion]>)>>,
+    placed_clips: std::sync::Mutex<PlacedClipCache>,
     /// Dest groups per node, stamped with the scene instance they were read
     /// at. See [`UiScene::opacity_groups`].
     opacity_group_cache: std::sync::Mutex<OpacityGroupCache>,
@@ -481,6 +481,10 @@ impl UiScene {
         true
     }
 }
+
+/// Each drawn primitive's clip chain, stamped with what it was put together
+/// from.
+type PlacedClipCache = HashMap<PrimitiveId, (PlacedClipStamp, Arc<[ClipRegion]>)>;
 
 /// Dest groups per node, stamped with scene and presentation projection.
 type OpacityGroupCache = NodeMap<(DrawStamp, Arc<[OpacityGroup]>)>;

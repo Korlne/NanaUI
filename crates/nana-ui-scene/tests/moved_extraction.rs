@@ -987,10 +987,6 @@ fn open_select_moved(wrapped: bool) {
             &runtime,
             &format!("wrapped {wrapped}, round {round}: scrolled"),
         );
-        opened_down = {
-            let (field, surface) = menu(&runtime);
-            surface.y > field.y
-        };
         // The field's row is resized with a move in the same frame.
         let mut queue = MutationQueue::new();
         queue.set_style(

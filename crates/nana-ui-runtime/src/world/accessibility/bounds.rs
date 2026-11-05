@@ -10,6 +10,7 @@ impl UiWorld {
     /// known stands where that transform for its children puts its layout
     /// box: it has one when those corners are finite, which is answered
     /// without computing and keeping its own transform and box.
+    #[cfg(any(test, feature = "layout-verify"))]
     pub(super) fn has_accessibility_bounds(
         &self,
         id: StableNodeId,
