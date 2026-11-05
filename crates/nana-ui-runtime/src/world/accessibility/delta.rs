@@ -137,13 +137,7 @@ impl UiWorld {
                     // page, unless its box is turned or projected in the
                     // viewport, so its accessible box is the box around
                     // turned corners, whose origin the new size moves.
-                    if !std::iter::successors(Some(node), |record| {
-                        record
-                            .hierarchy
-                            .parent
-                            .and_then(|parent| self.nodes.get(parent))
-                    })
-                    .all(|record| record.space.hands_offsets())
+                    if !self.records_hand_offsets(id, node, &mut memo)
                         || self
                             .accessible_space(id, &mut memo)
                             .is_none_or(|space| space.unit.is_none())
@@ -287,13 +281,10 @@ impl UiWorld {
         // positive factor: the root's box is upright wherever its space
         // comes from. Read off the records, without the memo, for the
         // thousand rows a reflow moves.
-        let upright_chain = std::iter::successors(self.nodes.get(root), |record| {
-            record
-                .hierarchy
-                .parent
-                .and_then(|parent| self.nodes.get(parent))
-        })
-        .all(|record| record.space.hands_offsets() && record.space.upright());
+        let upright_chain = self
+            .nodes
+            .get(root)
+            .is_none_or(|record| self.records_upright(root, record, memo));
         #[cfg(any(test, feature = "layout-verify"))]
         if upright_chain {
             assert!(
@@ -306,6 +297,101 @@ impl UiWorld {
             || self
                 .accessible_space(root, memo)
                 .is_some_and(|space| space.unit.is_some())
+    }
+
+    /// Whether `record`, `id`'s, and every record above it hand their
+    /// children offsets ([`NodeSpace::hands_offsets`]).
+    fn records_hand_offsets(
+        &self,
+        id: StableNodeId,
+        record: &NodeRecord,
+        memo: &mut ProjectionMemo,
+    ) -> bool {
+        let ProjectionMemo {
+            records_offsets,
+            chain,
+            ..
+        } = memo;
+        self.records_all(id, record, records_offsets, chain, |record| {
+            record.space.hands_offsets()
+        })
+    }
+
+    /// Whether `record`, `id`'s, and every record above it hand their
+    /// children offsets and stand upright ([`NodeSpace::upright`]).
+    fn records_upright(
+        &self,
+        id: StableNodeId,
+        record: &NodeRecord,
+        memo: &mut ProjectionMemo,
+    ) -> bool {
+        let ProjectionMemo {
+            records_upright,
+            chain,
+            ..
+        } = memo;
+        self.records_all(id, record, records_upright, chain, |record| {
+            record.space.hands_offsets() && record.space.upright()
+        })
+    }
+
+    /// Whether `holds` holds for `record`, `id`'s, and every record above
+    /// it. A deep node remembers its answer in `known` for those below it,
+    /// so the nodes of a deep chain each walk a step; a shallow one walks.
+    fn records_all(
+        &self,
+        id: StableNodeId,
+        record: &NodeRecord,
+        known: &mut hashbrown::HashMap<StableNodeId, bool>,
+        passed: &mut Vec<StableNodeId>,
+        holds: impl Fn(&NodeRecord) -> bool,
+    ) -> bool {
+        let walked = || {
+            std::iter::successors(Some(record), |record| {
+                record
+                    .hierarchy
+                    .parent
+                    .and_then(|parent| self.nodes.get(parent))
+            })
+            .all(|record| {
+                #[cfg(test)]
+                super::page_origins::steps::step(super::page_origins::steps::Walk::Records);
+                holds(record)
+            })
+        };
+        if record.hierarchy.depth <= super::page_origins::DIRECT_DEPTH {
+            return walked();
+        }
+        passed.clear();
+        let mut cursor = Some((id, record));
+        let all = loop {
+            let Some((at, record)) = cursor else {
+                break true;
+            };
+            #[cfg(test)]
+            super::page_origins::steps::step(super::page_origins::steps::Walk::Records);
+            if let Some(&answer) = known.get(&at) {
+                break answer;
+            }
+            passed.push(at);
+            if !holds(record) {
+                break false;
+            }
+            cursor = record
+                .hierarchy
+                .parent
+                .and_then(|parent| Some((parent, self.nodes.get(parent)?)));
+        };
+        for at in passed.drain(..) {
+            known.insert(at, all);
+        }
+        #[cfg(test)]
+        let full = super::page_origins::steps::uncounted(walked);
+        #[cfg(all(not(test), feature = "layout-verify"))]
+        let full = walked();
+        #[cfg(any(test, feature = "layout-verify"))]
+        assert_eq!(all, full, "{id:?}: a remembered answer for its chain");
+        all
     }
 
     /// Whether `id`'s space is what [`NodeSpace::keeps_space`] took it to be

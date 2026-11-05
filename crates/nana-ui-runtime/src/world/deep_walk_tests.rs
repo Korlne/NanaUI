@@ -191,6 +191,14 @@ fn the_shifts_above_a_deep_chain_under_a_scroll_are_walked_once() {
     assert_linear("the scroll shifts above", shift, walked.touched);
 }
 
+#[test]
+fn accessibility_answers_for_a_deep_chain_once() {
+    let walked = mount_leaves(false);
+    let records = walked.accessibility[Walk::Records as usize];
+    assert!(records > 0, "the resized chain asks of its records");
+    assert_linear("the chain's records", records, walked.touched);
+}
+
 /// Which affected nodes are inside an island: each walk up stops where an
 /// earlier one found its answer, so the chain under an island is walked
 /// once, and the answers are the full walks'.

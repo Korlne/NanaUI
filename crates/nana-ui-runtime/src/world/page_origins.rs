@@ -13,9 +13,9 @@
 use super::*;
 
 /// Chains no deeper than this are walked directly: a lookup costs more than
-/// the steps it saves.
-/// The other walks up a deep chain that remember what they passed use it
-/// too.
+/// the steps it saves. The other walks up a deep chain that remember what
+/// they passed (the hit index's shifts and pointer events, accessibility's
+/// chain answers) use it too.
 pub(crate) const DIRECT_DEPTH: u16 = 32;
 
 #[derive(Debug, Default)]
@@ -110,7 +110,7 @@ impl UiWorld {
 pub(crate) mod steps {
     use std::cell::Cell;
 
-    /// Room for every walk.
+    /// How many walks there are.
     pub(crate) const WALKS: usize = 6;
 
     #[derive(Clone, Copy)]
@@ -125,6 +125,8 @@ pub(crate) mod steps {
         PointerEvents,
         /// Layout's question whether an affected node is inside an island.
         Islands,
+        /// Accessibility's answers for a record and every one above it.
+        Records,
     }
 
     thread_local! {

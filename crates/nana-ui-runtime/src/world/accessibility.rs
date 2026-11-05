@@ -37,6 +37,12 @@ struct ProjectionMemo {
     spaces: hashbrown::HashMap<StableNodeId, AccessibleSpace>,
     chain: Vec<StableNodeId>,
     space_chain: Vec<StableNodeId>,
+    /// Deep nodes whose record and every one above hand their children
+    /// offsets, motion and clips aside ([`UiWorld::records_hand_offsets`]).
+    records_offsets: hashbrown::HashMap<StableNodeId, bool>,
+    /// Deep nodes whose record and every one above hand their children
+    /// offsets and stand upright ([`UiWorld::records_upright`]).
+    records_upright: hashbrown::HashMap<StableNodeId, bool>,
 }
 
 impl ProjectionMemo {

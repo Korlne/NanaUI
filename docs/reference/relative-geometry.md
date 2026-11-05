@@ -44,6 +44,8 @@ abs(child) = abs(frame) + local(child)
 
 `RuntimeLayoutEngine::layout_document` / `layout_document_with_frontier` 仍返回页面坐标；框架写回用 crate 内的 `layout_document_with_frontier_local`。`MutationQueue::write_layout` 收文档坐标，提交结束时按深度从上往下换成本地值，所以与写入顺序无关；没写的子节点随父节点平移。
 
+「不缓存」是跨帧的：提取与无障碍投影在一次只读遍里记住深节点走过的参照系之和（`PageOriginScope`，`world/page_origins.rs`；深度不超过 32 的照旧直走），下面的盒子接着它往下加——和就是从上往下逐级加到那个参照系的累加值，所以结果是同一个位。遍历结束就丢掉，期间世界被借着、写不了盒子。
+
 运行时内部不走 `layout_result` 的页面缓存：`canonical_layout_box`、`component_content_box`、部件查询、裁剪链都读本地结果再加原点，缓存只在外部调用时才填，不会让每个节点多一份结果（`node_memory` 的预算守着这一点）。
 
 ## 2. 节点空间分类 `NodeSpace`
