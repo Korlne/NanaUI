@@ -1448,7 +1448,7 @@ fn measure_node_level(
         // Subgrid tracks belong to the parent. Re-solving them from this
         // container's template would invent a different grid.
         if !style.is_subgrid_columns() && !style.is_subgrid_rows() {
-            recorded_grid = Some(GridTrackPlan::from_layout(&grid));
+            recorded_grid = Some(Box::new(GridTrackPlan::from_layout(&grid)));
         }
         // Columns run along the inline axis, rows along the block one.
         let (width, height) = writing.physical_size(
@@ -1731,8 +1731,14 @@ fn measure_node_level(
     // away entirely, and `force_full` has just cleared the retained cache, so
     // in both cases the plans would be built for nobody.
     // A plain leaf has no children for a plan to replay: its memo answers
-    // the same query, and the first frame's shortcut records none.
-    if unforced && cache.records_measure_plans && !plain_leaf {
+    // the same query, and the first frame's shortcut records none. Nor has
+    // any other childless box with no text, visual or natural size of its
+    // own: what it measures is its own style, which the memo keys on too.
+    let bare_leaf = child_ids.is_empty()
+        && text_metrics.is_none()
+        && nodes.world.standard_visual_ref(id).is_none()
+        && natural.is_none();
+    if unforced && cache.records_measure_plans && !plain_leaf && !bare_leaf {
         // `auto` and `shrink` resolve to no length (`resolve_axis`): the
         // main size is the children's sum either way, which a `Stack` hugging
         // its content (its default `Shrink`) is.
@@ -1861,7 +1867,7 @@ fn measure_node_level(
             None => slots.clear(),
         }
     } else if unforced
-        && plain_leaf
+        && (plain_leaf || bare_leaf)
         && scope.is_some_and(|scope| scope.retained.measure_plans.contains_key(&id))
     {
         // A container that lost its last child retires its plans.
@@ -2768,7 +2774,7 @@ fn grid_measure_delta(
     };
     let mut updated = plan.clone();
     updated.size = size;
-    updated.grid = Some(GridTrackPlan::from_layout(&solved));
+    updated.grid = Some(Box::new(GridTrackPlan::from_layout(&solved)));
     for entry in &mut updated.entries {
         if entry.intrinsic.is_some() && !flow.contains(&entry.child) {
             entry.intrinsic = None;

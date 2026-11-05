@@ -1157,7 +1157,7 @@ fn replay_grid(
     updated.size = size;
     updated.content = content;
     updated.content_origin = content_origin;
-    updated.grid = Some(GridTrackPlan::from_layout(&solved));
+    updated.grid = Some(Box::new(GridTrackPlan::from_layout(&solved)));
     updated.by_child = {
         let mut by_child: Vec<(StableNodeId, u32)> = recorded
             .iter()
@@ -2150,7 +2150,7 @@ struct ChildrenLayout {
     direction: FlexDirection,
     main_reversed: bool,
     cross_reversed: bool,
-    recorded_grid: Option<GridTrackPlan>,
+    recorded_grid: Option<Box<GridTrackPlan>>,
     #[cfg(feature = "benchmark")]
     child_phase: Option<super::plan_stats::PhaseClock>,
 }
@@ -2384,7 +2384,7 @@ fn lay_out_children(
         )?;
         grid.fill_layer_cell(style, writing, content);
         if grid_recordable {
-            recorded_grid = Some(GridTrackPlan::from_layout(&grid));
+            recorded_grid = Some(Box::new(GridTrackPlan::from_layout(&grid)));
         }
         // Grid placement is not a sequential cursor. Keep the recorded entries
         // so a later pass can re-solve tracks without measuring every cell.

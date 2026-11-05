@@ -180,6 +180,49 @@ struct ResultScratch {
     /// out, for the placement to place.
     own_fragments: Vec<crate::LayoutFragment>,
     own_parts: Vec<crate::LayoutPart>,
+    /// The slices this publish built last, shared by the results equal to
+    /// them: a result is in its own coordinates, so boxes alike in size
+    /// and in where their children sit (the cells of a row, the rows of a
+    /// list) hold equal parts, placements and fragments.
+    shared_parts: RecentSlices<crate::LayoutPart>,
+    shared_placements: RecentSlices<crate::LayoutChildPlacement>,
+    shared_fragments: RecentSlices<crate::LayoutFragment>,
+}
+
+/// The last few slices handed out, so an equal one is shared instead of
+/// allocated again. A slice is never written once shared, so sharing it
+/// is invisible to its readers.
+struct RecentSlices<T> {
+    recent: [Option<Arc<[T]>>; RECENT_SLICES],
+    next: usize,
+}
+
+const RECENT_SLICES: usize = 4;
+
+impl<T> Default for RecentSlices<T> {
+    fn default() -> Self {
+        Self {
+            recent: std::array::from_fn(|_| None),
+            next: 0,
+        }
+    }
+}
+
+impl<T: Clone + PartialEq> RecentSlices<T> {
+    /// `items` as a shared slice: an empty one allocates nothing, and one
+    /// equal to a recent slice is that slice.
+    fn share(&mut self, items: &[T]) -> Arc<[T]> {
+        if items.is_empty() {
+            return Arc::default();
+        }
+        if let Some(kept) = self.recent.iter().flatten().find(|kept| ***kept == *items) {
+            return Arc::clone(kept);
+        }
+        let made: Arc<[T]> = Arc::from(items);
+        self.recent[self.next] = Some(Arc::clone(&made));
+        self.next = (self.next + 1) % RECENT_SLICES;
+        made
+    }
 }
 
 impl ResultScratch {
@@ -2338,6 +2381,9 @@ impl UiWorld {
             fragments,
             own_fragments,
             own_parts,
+            shared_parts,
+            shared_placements,
+            shared_fragments,
             ..
         } = scratch;
         parts.clear();
@@ -2411,8 +2457,8 @@ impl UiWorld {
                 }
             }
             fragments.extend(own_fragments.iter().cloned());
-            result.child_placements = shared_slice(placements);
-            result.fragments = shared_slice(fragments);
+            result.child_placements = shared_placements.share(placements);
+            result.fragments = shared_fragments.share(fragments);
         }
         let content = content_part_index(own_parts.as_slice());
         parts.extend(own_parts[..content].iter().copied());
@@ -2421,7 +2467,7 @@ impl UiWorld {
             result.content_box,
         ));
         parts.extend(own_parts[content..].iter().copied());
-        result.parts = shared_slice(parts);
+        result.parts = shared_parts.share(parts);
         // Only scroll containers need the retained descendant index. Avoid
         // materializing that index for ordinary nodes while still publishing
         // the full scroll extent where a consumer can actually use it.

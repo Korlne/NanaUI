@@ -1881,7 +1881,7 @@ struct ContainerPlan {
     by_child: Vec<(StableNodeId, u32)>,
     /// Occupied tracks, contributions, and the resolved track sizes. `None`
     /// on every flex and block plan.
-    grid: Option<GridTrackPlan>,
+    grid: Option<Box<GridTrackPlan>>,
     /// No in-flow child reads this container's content box on either axis,
     /// so a change of this container's own size refreshes positioned children
     /// only.
@@ -2376,7 +2376,7 @@ struct MeasurePlan {
     /// container's own size rules. A sequential patch keeps it.
     default_cross: f32,
     /// Present when this measurement is a grid track solution.
-    grid: Option<GridTrackPlan>,
+    grid: Option<Box<GridTrackPlan>>,
     /// A child of the container changed in a pass that measured it under
     /// another constraint only: this plan still holds that child as it was,
     /// and re-checking the children a later pass reaches would not find it.
