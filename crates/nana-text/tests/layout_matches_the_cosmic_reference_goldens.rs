@@ -7,14 +7,22 @@
 //! [`compare_golden`] — the one structural diff, the same goldens, the same
 //! tolerances, and the caret and hit-test probes each case carries.
 //!
-//! Two classes of delta are allowed, both documented Phase 0 gaps rather than
-//! layout behaviour:
+//! These classes of delta are allowed, documented gaps rather than layout
+//! behaviour:
 //!
 //! - **`script`**: the reference does not export a per-run script and records
 //!   `Zzzz`. The native shaper fills it in (#91).
 //! - **`run_count`**: the two engines cut runs at different places — the native
 //!   shaper at every script and style boundary, cosmic at every face, level and
 //!   size change. The glyphs are the same; only the grouping differs.
+//! - **ascent, descent and baseline** of CJK faces that state an ideographic
+//!   em box in `BASE` (the corpus's Noto Sans KR): nana-text moves their
+//!   ascent and descent so the line centres on that box, keeping the sum
+//!   (`face::read_metrics`); cosmic reports the raw `hhea`. The cell pass
+//!   holds both invariants of that move per line instead — the same
+//!   `ascent + descent`, and the same `baseline − (ascent − descent) / 2`,
+//!   the point the line centres on — so any other change to the three still
+//!   fails.
 //! - **`overflow`**: only its `ELLIPSIZED` bit, and only where the case asked
 //!   for an ellipsis. cosmic cannot draw one, so the reference sets the bit for
 //!   a truncation it did not mark; this run supplies no shaped ellipsis either,
@@ -52,7 +60,15 @@ use support::corpus::{case_source, hermetic_fonts, with_chain};
 /// Deltas that say the two engines describe the same layout differently, not
 /// that they laid it out differently. See the module comment.
 fn is_a_documented_gap(delta: &LayoutDelta) -> bool {
-    matches!(delta.field, "script" | "run_count" | "overflow")
+    matches!(
+        delta.field,
+        "script"
+            | "run_count"
+            | "overflow"
+            | "metrics.ascent_px"
+            | "metrics.descent_px"
+            | "metrics.baseline_y_px"
+    )
 }
 
 /// The overflow flags, compared bit by bit with the one documented exception.
@@ -124,7 +140,7 @@ fn lay_out(case: &CorpusCase) -> TextLayout {
     TextLayout::clone(&layout)
 }
 
-/// The structural diff, minus the two documented gaps.
+/// The structural diff, minus the documented gaps.
 fn structural_report(case: &CorpusCase, actual: &TextLayout) -> ParityReport {
     let golden = load_golden(&case.id).expect("golden loads");
     let hit_tests = case
@@ -174,11 +190,23 @@ fn cell_report(case: &CorpusCase, actual: &TextLayout) -> Vec<String> {
                 want.break_cause, got.break_cause
             ));
         }
+        // Recentring on an ideographic em box moves these three; it keeps
+        // the line's extent and the point the line centres on.
         near(
             &mut deltas,
-            &format!("line {index} baseline_y_px"),
-            want.metrics.baseline_y_px,
-            got.metrics.baseline_y_px,
+            &format!("line {index} ascent_px + descent_px"),
+            want.metrics.ascent_px + want.metrics.descent_px,
+            got.metrics.ascent_px + got.metrics.descent_px,
+            tol.line_height_px,
+        );
+        let centre = |line: &LineBox| {
+            line.metrics.baseline_y_px - (line.metrics.ascent_px - line.metrics.descent_px) * 0.5
+        };
+        near(
+            &mut deltas,
+            &format!("line {index} centre_y_px"),
+            centre(want),
+            centre(got),
             tol.baseline_px,
         );
         near(
@@ -193,20 +221,6 @@ fn cell_report(case: &CorpusCase, actual: &TextLayout) -> Vec<String> {
             &format!("line {index} height_px"),
             want.metrics.height_px,
             got.metrics.height_px,
-            tol.line_height_px,
-        );
-        near(
-            &mut deltas,
-            &format!("line {index} ascent_px"),
-            want.metrics.ascent_px,
-            got.metrics.ascent_px,
-            tol.line_height_px,
-        );
-        near(
-            &mut deltas,
-            &format!("line {index} descent_px"),
-            want.metrics.descent_px,
-            got.metrics.descent_px,
             tol.line_height_px,
         );
         near(
@@ -280,9 +294,9 @@ fn every_passing_corpus_case_lays_out_as_the_reference_did() {
 }
 
 /// The gap filter must not be able to hide a real difference: strip it and the
-/// only fields left are the three the module comment names.
+/// only fields left are the ones the module comment names.
 #[test]
-fn the_only_unfiltered_deltas_are_the_three_documented_gaps() {
+fn the_only_unfiltered_deltas_are_the_documented_gaps() {
     let mut fields: Vec<&'static str> = Vec::new();
     for case in load_cases()
         .expect("corpus loads")
@@ -299,5 +313,15 @@ fn the_only_unfiltered_deltas_are_the_three_documented_gaps() {
         }
     }
     fields.sort_unstable();
-    assert_eq!(fields, vec!["overflow", "run_count", "script"]);
+    assert_eq!(
+        fields,
+        vec![
+            "metrics.ascent_px",
+            "metrics.baseline_y_px",
+            "metrics.descent_px",
+            "overflow",
+            "run_count",
+            "script"
+        ]
+    );
 }

@@ -128,15 +128,98 @@ pub fn read_metrics(
         ),
         |decoration| (decoration.offset, decoration.thickness),
     );
+    let (ascent_px, descent_px) = centred_on_ideographic_em_box(
+        &font,
+        size_px,
+        metrics.units_per_em,
+        metrics.ascent,
+        metrics.descent.abs(),
+    );
     Some(RunMetrics {
-        ascent_px: metrics.ascent,
-        descent_px: metrics.descent.abs(),
+        ascent_px,
+        descent_px,
         line_gap_px: metrics.leading,
         underline_offset_px,
         underline_thickness_px,
         strikeout_offset_px,
         strikeout_thickness_px,
     })
+}
+
+/// A CJK face's ascent and descent, moved so their midpoint is the middle of
+/// the ideographic em box the face declares; any other face's, unchanged.
+///
+/// CJK faces set `hhea` generously and lopsidedly (Source Han / Noto CJK:
+/// 1.16 above, 0.288 below) while their ideographs fill an em box at
+/// 0.88 / −0.12. Half-leading splits the line around the `hhea` midpoint, so
+/// a single line in a box of any height sits about 0.06 em low. The face's
+/// `BASE` table states the em box (`ideo`, and `idtp` or one em above it);
+/// centring on it is what the central baseline means for these faces. The
+/// sum, and with it a `normal` line height, is unchanged, so a paragraph's
+/// line pitch is too. Only faces that map a Han, kana or Hangul character
+/// count: a Latin face may carry an `ideo` baseline for alignment against
+/// CJK, but its own letters are not drawn on that em box.
+fn centred_on_ideographic_em_box(
+    font: &FontRef<'_>,
+    size_px: f32,
+    units_per_em: u16,
+    ascent: f32,
+    descent: f32,
+) -> (f32, f32) {
+    let Some((top, bottom)) = ideographic_em_box(font, units_per_em) else {
+        return (ascent, descent);
+    };
+    let scale = size_px / f32::from(units_per_em.max(1));
+    let shift = ((ascent - descent) - (top + bottom) * scale) * 0.5;
+    if !shift.is_finite() {
+        return (ascent, descent);
+    }
+    (ascent - shift, descent + shift)
+}
+
+/// The ideographic em box from the face's horizontal `BASE` axis, in font
+/// units with y up: its top and bottom edges. `None` unless the face draws
+/// CJK and states an `ideo` baseline.
+fn ideographic_em_box(font: &FontRef<'_>, units_per_em: u16) -> Option<(f32, f32)> {
+    use skrifa::raw::TableProvider;
+    let charmap = font.charmap();
+    if !['\u{4E00}', '\u{3042}', '\u{30A2}', '\u{AC00}']
+        .into_iter()
+        .any(|ch| charmap.map(ch).is_some())
+    {
+        return None;
+    }
+    let axis = font.base().ok()?.horiz_axis()?.ok()?;
+    let tags = axis.base_tag_list()?.ok()?;
+    let tags = tags.baseline_tags();
+    let index = |tag: &[u8; 4]| tags.iter().position(|t| t.get() == Tag::new(tag));
+    let ideo = index(b"ideo")?;
+    let idtp = index(b"idtp");
+    let list = axis.base_script_list().ok()?;
+    let records = list.base_script_records();
+    // The em box is one per face in practice; prefer the Han record, then any
+    // CJK one, then the default.
+    let record = [b"hani", b"kana", b"hang", b"DFLT"]
+        .into_iter()
+        .find_map(|script| {
+            records
+                .iter()
+                .find(|record| record.base_script_tag() == Tag::new(script))
+        })
+        .or_else(|| records.first())?;
+    let values = record
+        .base_script(list.offset_data())
+        .ok()?
+        .base_values()?
+        .ok()?;
+    let coords = values.base_coords();
+    let coord =
+        |index: usize| -> Option<f32> { Some(f32::from(coords.get(index).ok()?.coordinate())) };
+    let bottom = coord(ideo)?;
+    let top = idtp
+        .and_then(coord)
+        .unwrap_or(bottom + f32::from(units_per_em));
+    (top > bottom).then_some((top, bottom))
 }
 
 /// The left and right edges of glyph `glyph_id`'s ink at `size_px`, from

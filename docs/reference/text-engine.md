@@ -606,6 +606,16 @@ baseline     = top + half_leading + strut.ascent
 的机械实现。`Search` 与 `Search عربي` 的 baseline 完全一致。更高的 fallback face 只抬高
 上报的 ascent 与行盒。不移动基线。
 
+**字体度量里的 ascent / descent。** 一般就是 skrifa 读出的 `hhea`（或按 `USE_TYPO_METRICS`
+取 OS/2 typo）。例外是 CJK 字体：能映射汉字、假名或谚文、且 `BASE` 横轴写了 `ideo` 基线的
+face（思源黑体 / Noto CJK 一类），`face::read_metrics` 把 ascent 与 descent 平移到二者中点落在
+表意字框（`ideo` 到 `idtp`，没写 `idtp` 就是 `ideo` 加一个 em）的中点上，和不变。Noto Sans SC
+的 `hhea` 是上 1.16、下 0.288，表意字框是 0.88 / −0.12，按 `hhea` 分半行距时，一行中文在任何
+高度的盒子里都偏低约 0.06 em（胶囊里上 10 下 6 px，scale 2）。平移后行内居中落在字框中心，
+也就是这类字体的中央基线；和不变，所以 `normal` 行高与多行行距不变。同一张 face 里的拉丁字母
+一起上移（它们本来就画在这张字框里），没有表意字框的字体不动。参照引擎报原始 `hhea`，语料
+对账把这三项列为已记录的差异，并逐行核对和与行中心不变。
+
 不给 strut 时（`LayoutRequest` 默认）。基线落在该行最高 run 上。也就是参照引擎的规则。
 语料对账就跑在这一模式下。见下。空行没有 run。行高取基础样式。
 
