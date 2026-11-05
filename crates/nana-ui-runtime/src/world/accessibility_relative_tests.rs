@@ -364,13 +364,7 @@ fn pinned_boxes_under_moved_rows_match_a_full_projection() {
 fn a_box_placed_from_another_frame_is_noted_as_a_pin() {
     let mut page = page(2, false, false);
     let leaf = page.rows[1][2];
-    let pinned = |context: &AppContext| {
-        context
-            .world()
-            .nodes
-            .accessibility_pins()
-            .any(|id| id == leaf)
-    };
+    let pinned = |context: &AppContext| context.world().nodes.space_pins().any(|id| id == leaf);
     assert!(!pinned(&page.context), "an in-flow box pins nothing");
     let local = page.context.world().local_layout_box(leaf).unwrap();
     for (frame, expected) in [
@@ -797,7 +791,7 @@ fn a_closed_select_moves_with_its_row_and_an_open_one_projects_again() {
         page.context
             .world()
             .nodes
-            .accessibility_pins()
+            .space_pins()
             .any(|id| id == field)
     };
     let mut height = 20.0;

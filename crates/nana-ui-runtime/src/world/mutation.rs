@@ -3236,6 +3236,8 @@ impl UiWorld {
         }
         #[cfg(debug_assertions)]
         self.audit_hit_eligibility("commit");
+        #[cfg(any(test, feature = "layout-verify"))]
+        self.nodes.check_node_spaces();
         Ok(report)
     }
 
@@ -3305,7 +3307,6 @@ impl UiWorld {
         let previous = self.record(id).scroll_offset;
         if previous != offset {
             self.record_mut(id).scroll_offset = offset;
-            self.nodes.note_accessibility_pin(id);
             // Hit-index patch + Scene extract of this scroller only.
             // Descendants keep LayoutBox; paint uses scroll_offset.
             self.scroll_hit_updates
@@ -3328,7 +3329,6 @@ impl UiWorld {
             return false;
         }
         self.record_mut(id).scroll_offset = clamped;
-        self.nodes.note_accessibility_pin(id);
         self.scroll_hit_updates
             .push((id, [current.x - clamped.x, current.y - clamped.y]));
         self.mark_scroll_compatible(id, DirtyMask::INPUT | DirtyMask::RENDER);
@@ -3610,7 +3610,7 @@ impl UiWorld {
             record.layout_frame = frame;
             record.local_layout.x = x - frame_x;
             record.local_layout.y = y - frame_y;
-            self.nodes.note_accessibility_pin(id);
+            self.nodes.note_node_space(id);
             self.defer_scroll_content(id);
         }
     }
@@ -3638,7 +3638,7 @@ impl UiWorld {
         record.local_layout = layout;
         record.layout_frame = frame;
         if reframed {
-            self.nodes.note_accessibility_pin(id);
+            self.nodes.note_node_space(id);
         }
         if omission_changed && self.inline_parent(id).is_some() {
             self.mark_subtree(
@@ -3722,8 +3722,9 @@ impl UiWorld {
         // An open select's menu is fitted to its room in the field's own
         // coordinates, which a move above it changes: extraction asks whether
         // its surface still lands where the record has it. The store keeps
-        // those few apart, so no other visual is looked at.
-        if self.nodes.has_page_geometry() || self.nodes.has_open_select_menus() {
+        // those few apart (`NodeSpace::page_bound`), so no other visual is
+        // looked at.
+        if self.nodes.has_page_bound() {
             // Whether a box is a moved root or under one, remembered for
             // every box an answer passed.
             let moved_roots: NodeSet = roots.iter().map(|&(root, _)| root).collect();
@@ -3750,16 +3751,19 @@ impl UiWorld {
                 }
                 moved
             };
-            let reread: Vec<StableNodeId> = self
-                .nodes
-                .page_geometry_nodes()
-                .filter(|&id| below_moves(self, id))
-                .collect();
-            let menus: Vec<StableNodeId> = self
-                .nodes
-                .open_select_menus()
-                .filter(|&id| below_moves(self, id))
-                .collect();
+            let (mut reread, mut menus) = (Vec::new(), Vec::new());
+            for id in self.nodes.page_bound() {
+                if !below_moves(self, id) {
+                    continue;
+                }
+                let space = self.record(id).space;
+                if space.contains(crate::node_space::NodeSpace::READS_PAGE) {
+                    reread.push(id);
+                }
+                if space.contains(crate::node_space::NodeSpace::MENU_ROOM) {
+                    menus.push(id);
+                }
+            }
             for id in reread {
                 self.mark(id, DirtyMask::RENDER);
             }
@@ -4150,7 +4154,8 @@ impl UiWorld {
             // (`SystemWork::transform_kept`); any other projects the
             // subtree from `SystemWork::transform`.
             if !stacking_changed
-                && super::accessibility::keeps_accessible_space(&previous_resolved, &resolved)
+                && crate::node_space::NodeSpace::of_style(&previous_resolved)
+                    .keeps_space(crate::node_space::NodeSpace::of_style(&resolved))
             {
                 self.mark_transform_kept(id);
             } else {

@@ -127,6 +127,11 @@ pub(crate) struct NodeRecord {
     /// a subtree that moves keeps every box under its root.
     pub local_layout: LayoutBox,
     pub layout_frame: crate::LayoutFrame,
+    /// How this node stands to the coordinate spaces around it, from
+    /// [`Self::resolved_layout`], [`Self::layout_frame`], its kind and its
+    /// visual ([`crate::node_space::NodeSpace::of`]). Kept up to date by
+    /// [`NodeStore::note_node_space`] wherever one of those is written.
+    pub space: crate::node_space::NodeSpace,
     pub layout_padding: Option<nana_ui_core::PaddingSpec>,
     /// Page axes the last layout placed the children from the far end.
     pub layout_far_start: Option<[bool; 2]>,
@@ -152,73 +157,7 @@ pub(crate) struct NodeRecord {
     pub render_room_epoch: u64,
 }
 
-/// Whether `visual` places accessible nodes from its geometry or makes its
-/// own accessible box something other than its layout box: an open select's
-/// list box and options, a tree's rows, a menu surface's items, a modal
-/// frame's surface. A closed select projects only its field, which is
-/// placed as any box is.
-pub(crate) fn projects_virtual_accessibility(visual: Option<&StandardVisual>) -> bool {
-    matches!(
-        visual,
-        Some(
-            StandardVisual::Select { opened: true, .. }
-                | StandardVisual::TreeView { .. }
-                | StandardVisual::MenuSurface { .. }
-                | StandardVisual::ModalFrame { .. }
-        )
-    )
-}
-
 impl NodeRecord {
-    /// Whether the accessible boxes under this box can be placed by their
-    /// offsets in its space ([`Self::placed_by_accessibility_offset`]): no
-    /// 3D context. Any 2D transform will do: a translation and a positive
-    /// scale multiply the offsets under it by factors that do not depend on
-    /// where any box stands, and a rotation, a skew or a flip is handed to
-    /// the platform as the box's own transform
-    /// ([`crate::AccessibilityNode::transform`]), its children placed by
-    /// their offsets inside it. Scrolling, sticky offsets and `absolute` /
-    /// `fixed` placement only translate, and what they translate by is not
-    /// part of an offset. Under a 3D context the bounds are the box around
-    /// projected corners, which no offset gives.
-    pub(crate) fn hands_accessibility_offsets(&self) -> bool {
-        let style = self.resolved_layout.as_ref();
-        style.transform_3d.is_none() && style.css_perspective.is_none() && !style.preserve_3d
-    }
-
-    /// Whether this box's accessible bounds are its local layout offset from
-    /// its parent and its own 2D transform, through the scroll and the scale
-    /// above it, when its parent's space is placed so
-    /// ([`Self::hands_accessibility_offsets`]): measured from its parent, and
-    /// placed nowhere else by its own style (no 3D context of its own, not
-    /// `fixed` or `sticky`).
-    pub(crate) fn placed_by_accessibility_offset(&self) -> bool {
-        let style = self.resolved_layout.as_ref();
-        self.layout_frame == crate::LayoutFrame::Parent
-            && style.transform_3d.is_none()
-            && style.css_perspective.is_none()
-            && !style.preserve_3d
-            && !matches!(
-                style.position,
-                nana_ui_core::PositionSpec::Fixed | nana_ui_core::PositionSpec::Sticky
-            )
-    }
-
-    /// Whether this box, or what it holds, may not keep its accessible
-    /// bounds when a box above it moves: not placed by its offset
-    /// ([`Self::placed_by_accessibility_offset`]), cutting what it holds,
-    /// not handing its children offsets
-    /// ([`Self::hands_accessibility_offsets`]), or a visual whose accessible
-    /// nodes come from its geometry ([`projects_virtual_accessibility`]).
-    /// Every other box keeps its bounds and transform when its parent
-    /// moves, to the bit, and so does all it holds.
-    pub(crate) fn pins_accessibility(&self, visual: Option<&StandardVisual>) -> bool {
-        !self.placed_by_accessibility_offset()
-            || self.resolved_layout.clips_overflow()
-            || !self.hands_accessibility_offsets()
-            || projects_virtual_accessibility(visual)
-    }
-
     pub fn new(document: DocumentId, kind: &NodeKind, interaction: InteractionState) -> Self {
         Self {
             document,
@@ -236,6 +175,12 @@ impl NodeRecord {
             text_metrics: TextMetrics::default(),
             local_layout: LayoutBox::default(),
             layout_frame: crate::LayoutFrame::Parent,
+            space: crate::node_space::NodeSpace::of(
+                &NodeStyle::default().layout,
+                crate::LayoutFrame::Parent,
+                kind,
+                None,
+            ),
             layout_padding: None,
             layout_far_start: None,
             layout_context: None,
@@ -752,20 +697,17 @@ impl NodeTable {
 pub(crate) struct NodeStore {
     nodes: NodeTable,
     visuals: HashMap<StableNodeId, StandardVisual>,
-    /// Nodes whose visual is an open Select, Dropdown or SearchDropdown
-    /// menu: the few a layout pass gives a new room (see
-    /// [`crate::SelectMenuRoom`]).
-    open_select_menus: hashbrown::HashSet<StableNodeId>,
-    /// Nodes whose visual's geometry reads the page
-    /// ([`StandardVisual::geometry_reads_page`]): the few a move above them
-    /// extracts again.
-    page_geometry: hashbrown::HashSet<StableNodeId>,
-    /// Nodes whose accessible bounds, or those of the boxes under them, may
-    /// not keep their offset from their parent's when a box above them moves
-    /// ([`NodeRecord::pins_accessibility`]). A superset: an entry is noted
-    /// whenever what decides it is written, and dropped when a later write
-    /// clears it or the node goes, so a reader checks it again.
-    accessibility_pins: hashbrown::HashSet<StableNodeId>,
+    /// Nodes whose space ([`NodeRecord::space`]) pins accessibility
+    /// ([`crate::node_space::NodeSpace::pins_accessibility`]): their
+    /// accessible bounds, or those of the boxes under them, may not keep
+    /// their offset from their parent's when a box above them moves.
+    space_pins: hashbrown::HashSet<StableNodeId>,
+    /// Nodes whose space is page-bound
+    /// ([`crate::node_space::NodeSpace::page_bound`]): an open select,
+    /// whose menu a layout pass gives a new room ([`crate::SelectMenuRoom`]),
+    /// or a visual whose geometry reads the page. The few a move above them
+    /// looks at again for extraction.
+    page_bound: hashbrown::HashSet<StableNodeId>,
     custom_render: HashMap<StableNodeId, CustomRenderNode>,
     event_listeners: HashMap<StableNodeId, EventListeners>,
     component_types: HashMap<StableNodeId, ComponentTypeId>,
@@ -887,36 +829,113 @@ impl NodeStore {
         self.text_nodes
             .insert(id, crate::text_node::TextNodeState::default());
         self.nodes.insert(id, record);
-        self.note_accessibility_pin(id);
+        self.note_node_space(id);
     }
 
-    /// Bring `id`'s entry in [`Self::accessibility_pins`] up to date with its
-    /// record and visual. Called wherever a field that decides it is written.
-    pub(crate) fn note_accessibility_pin(&mut self, id: StableNodeId) {
-        let pinned = self
-            .nodes
-            .get(id)
-            .is_some_and(|record| record.pins_accessibility(self.visuals.get(&id)));
-        if pinned {
-            self.accessibility_pins.insert(id);
+    /// Bring `id`'s space ([`NodeRecord::space`]) up to date with its
+    /// record and visual, and the indexes of it ([`Self::space_pins`],
+    /// [`Self::page_bound`]). Called wherever a field that decides it is
+    /// written: style resolution, the layout frame, the visual, an insert.
+    pub(crate) fn note_node_space(&mut self, id: StableNodeId) {
+        let visual = self.visuals.get(&id);
+        let Some(record) = self.nodes.get_mut(id) else {
+            return;
+        };
+        let space = crate::node_space::NodeSpace::of(
+            &record.resolved_layout,
+            record.layout_frame,
+            &record.kind,
+            visual,
+        );
+        record.space = space;
+        if space.pins_accessibility() {
+            self.space_pins.insert(id);
         } else {
-            self.accessibility_pins.remove(&id);
+            self.space_pins.remove(&id);
+        }
+        if space.page_bound() {
+            self.page_bound.insert(id);
+        } else {
+            self.page_bound.remove(&id);
         }
     }
 
-    /// Every node [`NodeRecord::pins_accessibility`] holds for, and maybe
-    /// some it no longer does, in no particular order.
-    pub(crate) fn accessibility_pins(&self) -> impl ExactSizeIterator<Item = StableNodeId> + '_ {
-        self.accessibility_pins.iter().copied()
+    /// Every node whose space pins accessibility
+    /// ([`crate::node_space::NodeSpace::pins_accessibility`]), in no
+    /// particular order.
+    pub(crate) fn space_pins(&self) -> impl ExactSizeIterator<Item = StableNodeId> + '_ {
+        self.space_pins.iter().copied()
+    }
+
+    /// Every node whose space is page-bound
+    /// ([`crate::node_space::NodeSpace::page_bound`]), in no particular
+    /// order.
+    pub(crate) fn page_bound(&self) -> impl Iterator<Item = StableNodeId> + '_ {
+        self.page_bound.iter().copied()
+    }
+
+    /// Whether any node is page-bound ([`Self::page_bound`]).
+    pub(crate) fn has_page_bound(&self) -> bool {
+        !self.page_bound.is_empty()
+    }
+
+    /// Nodes whose visual is an open Select, Dropdown or SearchDropdown
+    /// menu ([`crate::node_space::NodeSpace::MENU_ROOM`]), in no particular
+    /// order.
+    pub(crate) fn open_select_menus(&self) -> impl Iterator<Item = StableNodeId> + '_ {
+        self.page_bound().filter(|&id| {
+            self.nodes.get(id).is_some_and(|record| {
+                record
+                    .space
+                    .contains(crate::node_space::NodeSpace::MENU_ROOM)
+            })
+        })
+    }
+
+    /// The space of every node is what its record and visual give, and the
+    /// indexes hold exactly the nodes they should. Small worlds only.
+    #[cfg(any(test, feature = "layout-verify"))]
+    pub(crate) fn check_node_spaces(&self) {
+        if self.len() > 4096 {
+            return;
+        }
+        let (mut pins, mut bound) = (0, 0);
+        for id in self.keys() {
+            let record = self.nodes.get(id).expect("a key has a record");
+            let space = crate::node_space::NodeSpace::of(
+                &record.resolved_layout,
+                record.layout_frame,
+                &record.kind,
+                self.visuals.get(&id),
+            );
+            assert_eq!(record.space, space, "{id:?}: its space is stale");
+            assert_eq!(
+                space.pins_accessibility(),
+                self.space_pins.contains(&id),
+                "{id:?}: the pins disagree with its space {space:?}"
+            );
+            assert_eq!(
+                space.page_bound(),
+                self.page_bound.contains(&id),
+                "{id:?}: the page-bound nodes disagree with its space {space:?}"
+            );
+            pins += usize::from(space.pins_accessibility());
+            bound += usize::from(space.page_bound());
+        }
+        assert_eq!(pins, self.space_pins.len(), "pins of nodes that are gone");
+        assert_eq!(
+            bound,
+            self.page_bound.len(),
+            "page-bound nodes that are gone"
+        );
     }
 
     /// Drop the dense record and every sparse entry. The only despawn path.
     pub fn remove(&mut self, id: StableNodeId) -> Option<NodeRecord> {
         let record = self.nodes.remove(id)?;
         self.visuals.remove(&id);
-        self.open_select_menus.remove(&id);
-        self.page_geometry.remove(&id);
-        self.accessibility_pins.remove(&id);
+        self.space_pins.remove(&id);
+        self.page_bound.remove(&id);
         self.custom_render.remove(&id);
         self.event_listeners.remove(&id);
         self.component_types.remove(&id);
@@ -960,26 +979,6 @@ impl NodeStore {
         !self.visuals.is_empty()
     }
 
-    /// Nodes whose visual is an open Select, Dropdown or SearchDropdown
-    /// menu, in no particular order.
-    pub(crate) fn open_select_menus(&self) -> impl Iterator<Item = StableNodeId> + '_ {
-        self.open_select_menus.iter().copied()
-    }
-
-    /// Nodes whose visual's geometry reads the page
-    /// ([`StandardVisual::geometry_reads_page`]), in no particular order.
-    pub(crate) fn page_geometry_nodes(&self) -> impl Iterator<Item = StableNodeId> + '_ {
-        self.page_geometry.iter().copied()
-    }
-
-    pub(crate) fn has_open_select_menus(&self) -> bool {
-        !self.open_select_menus.is_empty()
-    }
-
-    pub(crate) fn has_page_geometry(&self) -> bool {
-        !self.page_geometry.is_empty()
-    }
-
     pub(crate) fn has_text_inputs(&self) -> bool {
         !self.editors.is_empty()
     }
@@ -995,19 +994,6 @@ impl NodeStore {
     pub fn set_visual(&mut self, id: StableNodeId, value: Option<StandardVisual>) {
         let before = crate::world::text_visual_key(self.visuals.get(&id));
         let after = crate::world::text_visual_key(value.as_ref());
-        if matches!(value, Some(StandardVisual::Select { opened: true, .. })) {
-            self.open_select_menus.insert(id);
-        } else {
-            self.open_select_menus.remove(&id);
-        }
-        if value
-            .as_ref()
-            .is_some_and(StandardVisual::geometry_reads_page)
-        {
-            self.page_geometry.insert(id);
-        } else {
-            self.page_geometry.remove(&id);
-        }
         if let Some(value) = value {
             self.visuals.insert(id, value);
         } else {
@@ -1016,7 +1002,7 @@ impl NodeStore {
         if before != after {
             self.invalidate_text(id, crate::text_node::TextDirty::CONSTRAINT);
         }
-        self.note_accessibility_pin(id);
+        self.note_node_space(id);
     }
     sparse!(
         custom_render,

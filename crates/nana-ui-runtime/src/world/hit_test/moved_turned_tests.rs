@@ -707,3 +707,61 @@ fn boxes_moved_under_a_turned_ancestor_build_only_their_own_entries() {
         }
     }
 }
+
+/// A `transform_3d` that turns only in the page's plane (`rotateZ`) has an
+/// affine homography: with no 3D context above or on it, its hit entry hands
+/// its children its own layout coordinates as a 2D turn does
+/// (`NodeSpace::hit_frames_itself`), and what it holds is built in those.
+/// It is still not built again in place itself (`NodeSpace::depth`), so a
+/// row that resizes it patches its branch, as it did. Accessibility takes
+/// the same box as 3D and pins it; the two are kept apart on purpose.
+#[test]
+fn boxes_moved_under_a_planar_3d_turn_answer_as_a_fresh_index() {
+    let shape = Shape {
+        transforms: vec![turn("rotated", 0.3)],
+        outer: false,
+        scroller_turn: None,
+        preserve_3d: false,
+    };
+    let planar = |angle: f32| {
+        styled(LayoutStyle {
+            transform: None,
+            transform_3d: Some(nana_ui_core::PaintMat4::rotate_z(angle)),
+            ..wrapper_style(0, turn("rotated", 0.0), false)
+        })
+    };
+    let mut retained = page(&shape);
+    let mut cold = page(&shape);
+    for page in [&mut retained, &mut cold] {
+        commit(page, |queue, page| {
+            queue.set_style(page.wrappers[0].0, planar(0.3))
+        });
+    }
+    frame(&mut retained, false);
+    frame(&mut cold, true);
+    same(&retained, &cold, "turned in 3D");
+    let index = &retained.context.world().hit_test_index[&document()];
+    assert!(
+        index.entries[&retained.wrappers[0].0].entry.local_children,
+        "a planar 3D turn hands its children its own coordinates"
+    );
+    let mut height = 20.0;
+    for step in 0..6 {
+        height += 1.37;
+        for page in [&mut retained, &mut cold] {
+            commit(page, |queue, page| grow(queue, page.plain[0], height));
+        }
+        frame(&mut retained, false);
+        frame(&mut cold, true);
+        same(&retained, &cold, format!("moved {step}"));
+    }
+    // Turned on its plane by another angle.
+    for page in [&mut retained, &mut cold] {
+        commit(page, |queue, page| {
+            queue.set_style(page.wrappers[0].0, planar(-0.45))
+        });
+    }
+    frame(&mut retained, false);
+    frame(&mut cold, true);
+    same(&retained, &cold, "turned again");
+}

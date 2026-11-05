@@ -153,6 +153,7 @@ pub use snippet::{
     SnippetExpansion, SnippetPlaceholder, SnippetTransform, expand_text_snippet,
     expand_text_snippet_with_variables,
 };
+mod node_space;
 mod store;
 mod tabs;
 mod terminal;

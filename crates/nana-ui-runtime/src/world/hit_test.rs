@@ -2226,6 +2226,7 @@ impl UiWorld {
                 children,
                 interaction,
                 painted,
+                (space, resolved_at),
             ) = {
                 let record = self.record(id);
                 let computed = record.resolved.0.as_ref();
@@ -2254,6 +2255,7 @@ impl UiWorld {
                     Arc::clone(&record.hierarchy.children),
                     record.interaction,
                     record.style.painter.is_some() || !self.painter_overrides.is_empty(),
+                    (record.space, Arc::as_ptr(&record.resolved_layout)),
                 )
             };
             // Every entry is in its own box's coordinates, which stand an
@@ -2345,6 +2347,14 @@ impl UiWorld {
                 self.hit_motion_layout(id)
             };
             let node_style = motion_layout.as_ref();
+            // The space of the style the entry is built from: the node's own
+            // where that is its resolved style, else that of the effective
+            // style a motion overlay or an overlay branch made of it.
+            let space = if std::ptr::eq(node_style, resolved_at) {
+                space
+            } else {
+                crate::node_space::NodeSpace::of_style(node_style)
+            };
             // This is a projection root, not a Runtime reparent. Fixed layout
             // is viewport-relative; ancestors still control lifecycle and
             // inherited pointer-events, but cannot clip or scroll this branch.
@@ -2412,7 +2422,7 @@ impl UiWorld {
                 ..rect
             };
             let mut reads_page =
-                offset_pinned || escaped || node_style.position == PositionSpec::Sticky;
+                offset_pinned || escaped || space.contains(crate::node_space::NodeSpace::STICKY);
             let local = if parent_blocks_3d && node_style.transform_3d.is_some() {
                 (IDENTITY_AFFINE, [0.0, 0.0])
             } else {
@@ -2422,15 +2432,19 @@ impl UiWorld {
             };
             let local = self.with_sticky_translation(id, local);
             let (transform, persp) = then_hit(parent_hit, local);
-            let child_blocks_3d = parent_blocks_3d || node_style.fails_closed_3d_context();
+            let child_blocks_3d = parent_blocks_3d || space.opens_3d_context();
             // A box that scales, rotates, skews or flips in 2D hands its
             // children its own layout coordinates: nothing of its transform
             // or of what is above it reaches their entries. Under a
             // perspective or in a 3D context they keep the composed one.
-            let local_children = local.0[..4] != [1.0, 0.0, 0.0, 1.0]
-                && local.1 == [0.0, 0.0]
-                && persp == [0.0, 0.0]
-                && !child_blocks_3d;
+            let frames_itself = space.hit_frames_itself(&local);
+            #[cfg(any(test, feature = "layout-verify"))]
+            assert_eq!(
+                frames_itself,
+                local.0[..4] != [1.0, 0.0, 0.0, 1.0] && local.1 == [0.0, 0.0],
+                "{id:?}: its space {space:?} frames itself unlike its transform {local:?}"
+            );
+            let local_children = frames_itself && persp == [0.0, 0.0] && !child_blocks_3d;
             let child_transform = if local_children {
                 (scroll_seed([scroll.x, scroll.y]), [0.0, 0.0])
             } else {
@@ -2946,8 +2960,7 @@ impl UiWorld {
         };
         // A 3D context changes what the children are built from without
         // showing in this entry; the seed does not carry one either.
-        let style = &self.record(id).resolved_layout;
-        if style.transform_3d.is_some() || style.fails_closed_3d_context() {
+        if self.record(id).space.depth() {
             return None;
         }
         let (mut built, deferred) =
