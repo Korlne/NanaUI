@@ -428,7 +428,11 @@ impl RuntimeLayoutEngine {
         } else {
             PassOutput::default()
         };
-        let mut intrinsic = PassIntrinsicCache::with_capacity(nodes.len());
+        // A full pass measures most containers' children twice (against the
+        // offered and the used content box), so its used sizes and facts
+        // outnumber its nodes: room for two each, or the tables double and
+        // copy themselves near the end of the pass.
+        let mut intrinsic = PassIntrinsicCache::with_capacity(nodes.len().saturating_mul(2));
         let highest = full_order.iter().max().copied();
         if let Some(highest) = highest {
             intrinsic.reserve_through(highest);
@@ -611,6 +615,12 @@ impl RuntimeLayoutEngine {
             }
         }
         retained.placements.absorb(&mut nodes.placements);
+        // A first layout's plans all go to an empty table: size it once.
+        if retained.container_plans.is_empty() {
+            retained
+                .container_plans
+                .reserve(nodes.container_plans.len());
+        }
         for (id, plan) in nodes.container_plans.drain() {
             match plan {
                 Some(mut plan) => {
@@ -640,11 +650,31 @@ impl RuntimeLayoutEngine {
         let plan_key = |id: StableNodeId, available: Size| {
             (id, available.width.to_bits(), available.height.to_bits())
         };
-        let mut consulted: hashbrown::HashSet<(StableNodeId, u32, u32)> =
+        // Only the walk over the affected children below reads which plans
+        // this pass consulted; a pass with none affected (a full one) keeps
+        // no record of them.
+        let tracks_consulted = !affected.is_empty();
+        let mut consulted: hashbrown::HashSet<(StableNodeId, u32, u32)> = if tracks_consulted {
             std::mem::take(&mut intrinsic.consulted_plans)
                 .into_iter()
                 .map(|(id, available)| plan_key(id, available))
-                .collect();
+                .collect()
+        } else {
+            hashbrown::HashSet::new()
+        };
+        if retained.measure_plans.is_empty() && !tracks_consulted {
+            // Nothing retained to merge into (a first layout): each holder
+            // goes over as it is, its plans in the slots the pass put them
+            // in, which is where inserting them one by one, oldest first,
+            // into an empty holder puts them.
+            nodes.measure_plans.retain(|_, plans| {
+                for plan in plans.slots.iter_mut().flatten() {
+                    bound_measure_plan(plan);
+                }
+                !plans.is_empty()
+            });
+            retained.measure_plans.absorb(&mut nodes.measure_plans);
+        }
         for (id, plans) in nodes.measure_plans.drain() {
             if plans.is_empty() {
                 retained.measure_plans.remove(&id);
@@ -657,8 +687,10 @@ impl RuntimeLayoutEngine {
             // would alternate instead of holding both. The slot array evicts
             // any older constraint for this same container.
             let slots = retained.measure_plans.entry(id).or_default();
-            for mut plan in plans.into_plans().collect::<Vec<_>>().into_iter().rev() {
-                consulted.insert(plan_key(id, plan.available));
+            for mut plan in plans.into_plans().rev() {
+                if tracks_consulted {
+                    consulted.insert(plan_key(id, plan.available));
+                }
                 bound_measure_plan(&mut plan);
                 slots.insert(plan);
             }
@@ -1379,6 +1411,23 @@ impl DocumentLayoutCache {
         metrics: Vec<(crate::IntrinsicCacheKey, crate::IntrinsicMetrics)>,
         max_entries: usize,
     ) {
+        if self.intrinsic_metrics.len() == 0 {
+            // Nothing held (a first layout): every content is new, and its
+            // facts take the first generation, as the general path below
+            // gives a content it finds no variant of.
+            for (key, mut incoming) in metrics {
+                incoming.generation = 1;
+                self.intrinsic_metrics.insert(key, incoming);
+            }
+            self.intrinsic_counters.generation_bumps = self
+                .intrinsic_counters
+                .generation_bumps
+                .saturating_add(self.intrinsic_metrics.by_content.len());
+            let evicted = self.intrinsic_metrics.evict_to(max_entries);
+            self.intrinsic_counters.evictions =
+                self.intrinsic_counters.evictions.saturating_add(evicted);
+            return;
+        }
         // A changed content drops every variant it held; the facts this pass
         // produced for it carry the next generation. Dropping one content
         // leaves every other content's comparison as it was.
@@ -2476,7 +2525,7 @@ impl MeasurePlanSlots {
     }
 
     /// The plans this holder carries, most recent first.
-    fn into_plans(self) -> impl Iterator<Item = Box<MeasurePlan>> {
+    fn into_plans(self) -> impl DoubleEndedIterator<Item = Box<MeasurePlan>> {
         self.slots.into_iter().flatten()
     }
 }

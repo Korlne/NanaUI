@@ -2124,7 +2124,13 @@ impl UiWorld {
             // record no counts and mark nothing.
             return;
         }
-        *self.anchor_memo.get_mut() = Some(crate::NodeMap::default());
+        // A first publish builds every result, and each settles its pair in
+        // the memo. A later one rebuilds few of the nodes it covers.
+        let mut memo = crate::NodeMap::default();
+        if self.layout_results.is_empty() {
+            memo.reserve(ids.len());
+        }
+        *self.anchor_memo.get_mut() = Some(memo);
         self.publish_layout_results_anchored(ids, source);
         *self.anchor_memo.get_mut() = None;
     }
@@ -2230,6 +2236,10 @@ impl UiWorld {
             return;
         }
         let changed = published.len();
+        // A first publish fills an empty table: size it once.
+        if self.layout_results.is_empty() {
+            self.layout_results.reserve(changed);
+        }
         self.note_layout_result_publish(reused, changed, 1, children_visited);
         self.layout_generation = self.layout_generation.wrapping_add(1);
         let generation = self.layout_generation;
