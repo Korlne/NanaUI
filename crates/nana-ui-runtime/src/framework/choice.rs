@@ -383,7 +383,7 @@ impl AppContext {
     ) -> Result<bool, FrameworkError> {
         let Some(crate::ComponentGeometry::CommandPalette {
             surface,
-            input,
+            input_box,
             rows,
             ..
         }) = self.world.component_geometry(entity.id)
@@ -392,12 +392,7 @@ impl AppContext {
         };
         self.update_component(entity, |palette, cx| {
             if let Some(event) = crate::command_palette::activate_command_palette_at(
-                palette,
-                surface,
-                input.bounds,
-                &rows,
-                x,
-                y,
+                palette, surface, input_box, &rows, x, y,
             ) {
                 cx.emit(event);
                 true

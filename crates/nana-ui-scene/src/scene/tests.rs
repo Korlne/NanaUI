@@ -5599,6 +5599,12 @@ fn command_palette_title_and_query_sort_above_surface_quads() {
             height: 240.0,
         },
         title: text("命令", 96.0, 22.0, 16.0, Some(600)),
+        input_box: LayoutBox {
+            x: 12.0,
+            y: 132.0,
+            width: 384.0,
+            height: 32.0,
+        },
         input: text("工作区", 132.0, 32.0, 13.0, None),
         empty: Some(text("没有可用操作", 176.0, 40.0, 12.0, None)),
         rows: Vec::new(),

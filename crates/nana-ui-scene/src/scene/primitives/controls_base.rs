@@ -1015,6 +1015,7 @@ pub(super) fn build(context: &GeometryPaintContext<'_>, emit: &mut impl FnMut(Sc
             scrim,
             surface,
             title,
+            input_box,
             input,
             empty,
             rows,
@@ -1082,7 +1083,7 @@ pub(super) fn build(context: &GeometryPaintContext<'_>, emit: &mut impl FnMut(Sc
                     document_order: node_order,
                 },
                 12,
-                scene_rect(input.bounds),
+                scene_rect(*input_box),
                 VisualQuadStyle {
                     background: Some(*input_background),
                     border_color: Some(*input_border),

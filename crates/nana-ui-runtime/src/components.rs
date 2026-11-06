@@ -1915,6 +1915,10 @@ pub enum ComponentGeometry {
         scrim: LayoutBox,
         surface: LayoutBox,
         title: ComponentTextRegion,
+        /// The search field's frame: its background, border and hit area.
+        input_box: LayoutBox,
+        /// The query (or placeholder) text, inset inside `input_box` by the
+        /// field's horizontal control padding.
         input: ComponentTextRegion,
         empty: Option<ComponentTextRegion>,
         rows: Vec<crate::command_palette::PaletteRowGeometry>,

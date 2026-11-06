@@ -330,12 +330,20 @@ pub(crate) fn command_palette_geometry(
         font_weight: Some(nana_ui_core::type_scale::SEMIBOLD),
     };
     y += ControlSize::Small.height_in(metrics);
+    let input_box = LayoutBox {
+        x: surface.x + MODAL_PAD_X,
+        y,
+        width: (surface.width - MODAL_PAD_X * 2.0).max(0.0),
+        height: input_height,
+    };
+    // The text sits inside the field as a TextInput's does, not on its
+    // border: inset by the same control padding.
+    let input_pad = ControlSize::Medium.padding_x_in(metrics);
     let input = ComponentTextRegion {
         bounds: LayoutBox {
-            x: surface.x + MODAL_PAD_X,
-            y,
-            width: (surface.width - MODAL_PAD_X * 2.0).max(0.0),
-            height: input_height,
+            x: input_box.x + input_pad,
+            width: (input_box.width - input_pad * 2.0).max(0.0),
+            ..input_box
         },
         content: if query.is_empty() {
             Arc::clone(placeholder).into()
@@ -433,6 +441,7 @@ pub(crate) fn command_palette_geometry(
         scrim: bounds,
         surface,
         title: title_region,
+        input_box,
         input,
         empty: empty_label,
         rows,
@@ -631,5 +640,40 @@ mod tests {
         // The label region ends before the shortcut region begins.
         assert!(row.label.bounds.width > 0.0);
         assert!(row.label.bounds.x + row.label.bounds.width <= shortcut.bounds.x);
+    }
+
+    #[test]
+    fn query_text_is_inset_inside_the_search_field() {
+        let geometry = command_palette_geometry(
+            LayoutBox {
+                x: 0.0,
+                y: 0.0,
+                width: 720.0,
+                height: 480.0,
+            },
+            &Arc::from("命令"),
+            &Arc::from("工作区"),
+            &Arc::from("搜索命令"),
+            None,
+            &[],
+            &nana_ui_core::SemanticPalette::dark(),
+            nana_ui_core::UI_METRICS,
+            crate::text_width::ChromeTextMeasure::ESTIMATE,
+        );
+        let crate::ComponentGeometry::CommandPalette {
+            input_box, input, ..
+        } = geometry
+        else {
+            panic!("command palette geometry");
+        };
+        let pad = ControlSize::Medium.padding_x_in(nana_ui_core::UI_METRICS);
+        assert!(pad > 0.0);
+        assert_eq!(input.bounds.x, input_box.x + pad);
+        assert_eq!(
+            input.bounds.x + input.bounds.width,
+            input_box.x + input_box.width - pad
+        );
+        assert_eq!(input.bounds.y, input_box.y);
+        assert_eq!(input.bounds.height, input_box.height);
     }
 }
