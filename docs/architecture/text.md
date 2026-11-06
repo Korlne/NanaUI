@@ -1,18 +1,18 @@
 # 文本测量、整形与绘制
 
-NanaUI 的文本测量、OpenType 整形与保留文本布局由单一权威 `nana-text` 负责；字形栅格化、图集打包与 GPU 绘制由 `nana-ui` 的 `NanaRenderer::text`（`scene_paint/text/`）完成。测量与绘制共享同一个进程级引擎实例（`text_engine.rs`），`RuntimeDocument::flush` 调用的 `NanaTextShaper` 正是它的测量入口。
+NanaUI 的文本测量、OpenType 整形与保留文本布局由单一权威 `nana-text` 负责；字形栅格化、图集打包与 GPU 绘制由 `nana-ui` 的 `SceneWgpuPainter::text`（`scene_paint/text/`）完成。测量与绘制共享同一个进程级引擎实例（`text_engine.rs`），`RuntimeDocument::flush` 调用的 `NanaTextShaper` 正是它的测量入口。
 
 ```text
 UiWorld 中的文本节点
     │  NanaTextShaper（flush 阶段）
     ▼
-nana-text           字体匹配 → OpenType 整形（ShapedText）→ 行排版（TextLayout）
+nana-text               字体匹配 → OpenType 整形（ShapedText）→ 行排版（TextLayout）
     │  TextLayoutId 世代句柄留在节点上
     ▼
-UiScene             ScenePrimitiveKind::Text（直接携带保留的 TextLayout）
+UiScene                 ScenePrimitiveKind::Text（直接携带保留的 TextLayout）
     │
     ▼
-NanaRenderer::text  字形栅格化、多页图集（Atlas）上传，按文档顺序画入当前帧
+SceneWgpuPainter::text  字形栅格化、多页图集（Atlas）上传，按文档顺序画入当前帧
 ```
 
 关于缓存键、中日文标点挤压与评测语料的完整细节，请查阅维护者文档 [文本引擎](../reference/text-engine.md) 与 [架构学习：文本引擎](/learn/text-engine)。
@@ -56,7 +56,7 @@ Runtime 节点（`TextNodeState`）只保存逻辑文本、修订号与 `TextLay
 
 ## 绘制阶段：直接消费保留布局
 
-`NanaRenderer::text` 直接使用 Runtime 留在节点上的 `TextLayout` 句柄进行绘制，不再从场景描述里重新排版一遍（仅无句柄的内建提示或对齐盒被改写的特殊装饰节点才由画笔兜底排版）。
+`SceneWgpuPainter::text` 直接使用 Runtime 留在节点上的 `TextLayout` 句柄进行绘制，不再从场景描述里重新排版一遍（仅无句柄的内建提示或对齐盒被改写的特殊装饰节点才由画笔兜底排版）。
 
 字形栅格缓存的键不包含颜色、不透明度与场景变换，因此同一个字在不同颜色下共享同一张图集位图；当布局、亚像素相位与字体代际均未变化时，画笔直接复用已生成的字形实例缓冲。若发生 GPU 设备丢失重建，旧图集随旧 painter 释放，新设备首帧会自动将用到的字形重新栅格化上传，而段落布局本身仍直接复用 Runtime 保留的 `TextLayout`。
 

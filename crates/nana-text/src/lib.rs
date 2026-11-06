@@ -17,7 +17,7 @@
 //! Phase 4 (#95) the UiWorld's retained text nodes can resolve through it and
 //! keep their layouts behind [`TextLayoutStore`] handles. Since #99 this crate
 //! is the only product text authority: Rust and CSS-styled text is
-//! measured by it, and `nana-ui`'s `NanaRenderer::text` draws the layouts the
+//! measured by it, and `nana-ui`'s `SceneWgpuPainter::text` draws the layouts the
 //! Runtime retained.
 //!
 //! # Boundaries

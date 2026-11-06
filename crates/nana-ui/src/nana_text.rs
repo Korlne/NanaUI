@@ -2,7 +2,7 @@
 //!
 //! Since #99 there is exactly one measurement authority in the process, the
 //! `nana-text` engine of [`crate::text_engine`], and it is the same one
-//! `NanaRenderer::text` resolves its glyphs from. Measuring with one engine and
+//! `SceneWgpuPainter::text` resolves its glyphs from. Measuring with one engine and
 //! drawing with another is the split this Epic exists to remove, so this module
 //! holds no shaping of its own — it registers faces and forwards.
 

@@ -1,4 +1,4 @@
-//! `NanaRenderer::text`: the renderer's own glyph subsystem.
+//! `SceneWgpuPainter::text`: the renderer's own glyph subsystem.
 //!
 //! ```text
 //! shaped paragraph

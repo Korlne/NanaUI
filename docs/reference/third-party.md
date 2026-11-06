@@ -33,7 +33,7 @@ NanaUI 自身代码采用 **MIT 或 Apache-2.0** 双许可发布（详见仓库�
 
 ### 1. `cryoglyph`（旧 GPU 文本渲染器）
 
-已从产品与 `Cargo.lock` 中完全移除。`NanaRenderer::text`（位于 `crates/nana-ui/src/scene_paint/text/`）独立实现了全部字形 IR、栅格化边界、栅格缓存、代际引用计数多页 GPU 图集（`atlas.rs`）、上传队列与 WGSL 文本管线（`text_atlas.wgsl`）。本仓库**未从 `cryoglyph` 复制任何源码**（两者共享的 `0.04045 / 12.92 / 1.055 / 2.4` 系数属于 IEC 61966-2-1 标准 sRGB EOTF 公式）。
+已从产品与 `Cargo.lock` 中完全移除。`SceneWgpuPainter::text`（位于 `crates/nana-ui/src/scene_paint/text/`）独立实现了全部字形 IR、栅格化边界、栅格缓存、代际引用计数多页 GPU 图集（`atlas.rs`）、上传队列与 WGSL 文本管线（`text_atlas.wgsl`）。本仓库**未从 `cryoglyph` 复制任何源码**（两者共享的 `0.04045 / 12.92 / 1.055 / 2.4` 系数属于 IEC 61966-2-1 标准 sRGB EOTF 公式）。
 
 ### 2. `cosmic-text`（旧整形与布局引擎）
 

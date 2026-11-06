@@ -13,7 +13,7 @@ title: 文本引擎：nana-text
 - **阶段一：字体层（#90）**：负责字体注册、世代管理、字体面匹配、可变字体轴坐标解析与基于 `cmap` 覆盖率的缺字回退。
 - **阶段二：OpenType 整形（#91）**：负责字素簇/脚本/双向文本（BiDi）分段、HarfRust 整形与有界整形缓存（`ShapeCache`）。
 - **阶段三：段落行布局（#92）**：负责单行标签快路径、基于 UAX #14 断行机会的贪心折行、逐行 BiDi 视觉重排、行盒度量、对齐、省略号截断与有界布局缓存（`LayoutCache`）。`NativeTextEngine` 将这三段统一收在 `TextEngine::layout` 一个入口后面。
-- **阶段四至八：保留句柄与唯一产品权威（#95 / #99）**：`UiWorld` 的文本节点通过 `TextLayoutStore` 世代句柄保留排版结果，Rust L3 与 `.vue` 共用同一台进程级引擎测量，并由 `nana-ui` 的 `NanaRenderer::text` 直接绘制保留的 `TextLayout`。
+- **阶段四至八：保留句柄与唯一产品权威（#95 / #99）**：`UiWorld` 的文本节点通过 `TextLayoutStore` 世代句柄保留排版结果，Rust L3 与 `.vue` 共用同一台进程级引擎测量，并由 `nana-ui` 的 `SceneWgpuPainter::text` 直接绘制保留的 `TextLayout`。
 - **底层算法封装与词汇借用**：`cosmic-text` 与 `cryoglyph` 已从依赖图中彻底移除（由 `scripts/check-engine-boundary.py` 守门）；底层标准库（`fontdb`、`skrifa`、`harfrust`、`unicode-bidi`、`unicode-linebreak`）严格封闭在各自的私有子模块内，绝不泄漏到公开签名中；12 个排版枚举（如 `FontVariationSetting`、`LineBreakSpec`、`WritingModeSpec` 等，`lib.rs:30-37`）直接从 `nana-ui-core` 白名单导入，不重复定义。
 - **光标与编辑是 IR 上的纯推导**：光标定位、命中测试与选区矩形是已完成 `TextLayout` 上的纯函数推导（`crates/nana-text/src/edit.rs`），不污染引擎缓存状态。
 
@@ -31,7 +31,7 @@ title: 文本引擎：nana-text
 | `unicode-bidi 0.3.18` | Unicode 双向文本算法（UBA），仅限 `shaping/bidi.rs` |
 | `unicode-linebreak 0.1.5` | UAX #14 断行机会表，仅限 `layout/breaks.rs` |
 | `nana-ui-runtime` | 最大消费方：经 `SharedTextEngine` 测量，经 `TextLayoutStore` 保留句柄 |
-| `nana-ui` | `NanaRenderer::text` 直接绘制 Runtime 保留的 `TextLayout` |
+| `nana-ui` | `SceneWgpuPainter::text` 直接绘制 Runtime 保留的 `TextLayout` |
 
 ## 关键类型与数据
 
@@ -100,7 +100,7 @@ title: 文本引擎：nana-text
 
 ## 协作与数据流
 
-`UiWorld` 通过 `paint_text_engine: Option<nana_text::SharedTextEngine>`（`crates/nana-ui-runtime/src/world.rs:677`）持有进程级共享引擎，并在 `NodeStore` 中将 `text_nodes: HashMap<StableNodeId, TextNodeState>` 单独建表（`store.rs:436-444`），使大范围布局能快速跳过无文本变更的节点。在 `resolve_plain_text`（`world/text.rs:4197-4251`）中，若截断后的布局带有 `OverflowFlags::ELLIPSIZED` 且父盒需要自然宽度，Runtime 会再用无界约束查询一次自然布局以获取未折行前的真实最大宽度。最终保留在节点上的 `TextLayoutId` 随 `ExtractedNode` 交给 `UiScene`，由 `NanaRenderer::text` 直接读取字形运行并栅格化上屏。
+`UiWorld` 通过 `paint_text_engine: Option<nana_text::SharedTextEngine>`（`crates/nana-ui-runtime/src/world.rs:677`）持有进程级共享引擎，并在 `NodeStore` 中将 `text_nodes: HashMap<StableNodeId, TextNodeState>` 单独建表（`store.rs:436-444`），使大范围布局能快速跳过无文本变更的节点。在 `resolve_plain_text`（`world/text.rs:4197-4251`）中，若截断后的布局带有 `OverflowFlags::ELLIPSIZED` 且父盒需要自然宽度，Runtime 会再用无界约束查询一次自然布局以获取未折行前的真实最大宽度。最终保留在节点上的 `TextLayoutId` 随 `ExtractedNode` 交给 `UiScene`，由 `SceneWgpuPainter::text` 直接读取字形运行并栅格化上屏。
 
 ## 代码地图
 

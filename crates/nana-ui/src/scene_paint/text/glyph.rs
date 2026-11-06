@@ -1,4 +1,4 @@
-//! Renderer-facing glyph IR: what `NanaRenderer::text` draws.
+//! Renderer-facing glyph IR: what `SceneWgpuPainter::text` draws.
 //!
 //! Nothing here names a shaping backend. A resolver turns a
 //! `nana_text::TextLayout` into [`NanaGlyphRun`]s over a flat [`PlacedGlyph`]

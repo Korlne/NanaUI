@@ -2,7 +2,7 @@
 
 这篇给改 NanaUI 文本的人。你写应用的话。不需要看这篇。
 
-产品文本的**测量和绘制都已经是 NanaUI 自己的**。`nana-text` 排版。`NanaRenderer::text` 画。`cosmic-text` 和 `cryoglyph` 都不在 release 依赖里了。这是 #99。
+产品文本的**测量和绘制都已经是 NanaUI 自己的**。`nana-text` 排版。`SceneWgpuPainter::text` 画。`cosmic-text` 和 `cryoglyph` 都不在 release 依赖里了。这是 #99。
 
 Epic #88 要把文本能力从 `cosmic-text` 和 `cryoglyph` 的 fork 上迁走。
 
@@ -18,7 +18,7 @@ Epic #88 要把文本能力从 `cosmic-text` 和 `cryoglyph` 的 fork 上迁走�
 
 #96 是 Phase 5。这是 Editable 路径。它有可编辑存储、caret、selection、hit-test、IME composition。以及按段落失效的编辑器几何。见「Editable 路径」一节。
 
-#97 是 Phase 6。这是 `NanaRenderer::text`。renderer 自有 glyph IR、栅格化边界、raster cache、GPU atlas、上传队列和 text pipeline。cryoglyph 由此退出产品路径。见「NanaRenderer::text」一节。
+#97 是 Phase 6。这是 `SceneWgpuPainter::text`。renderer 自有 glyph IR、栅格化边界、raster cache、GPU atlas、上传队列和 text pipeline。cryoglyph 由此退出产品路径。见「SceneWgpuPainter::text」一节。
 
 #99 是 Phase 8。这是全路径 cutover。Runtime 的 `NanaTextShaper` 和画笔都改问同一个进程级 `nana-text` 引擎。Canvas2D 同样换掉。`Cargo.lock` 里再无 cosmic-text。连 dev 边也没有。见「cutover 之后的产品路径」一节。
 
@@ -64,7 +64,7 @@ corpus/golden/TX-*.layout.json  签入的基线(Phase 0 由 cosmic 参照引擎�
 | 系统字体目录扫描、name / OS/2 元数据读取 | **成熟 crate**（fontdb，仅 `font/discovery.rs`） | 不用它的 query 和 fallback |
 | 轴、命名实例、彩色表、cmap 读取 | **成熟 crate**（skrifa，仅 `font/face.rs`） | 与 Phase 2 的 harfrust 0.12 同一条 read-fonts 线 |
 | 字形落位（`TextLayout::glyph_placements`）、栅格键、CPU 字形栅格化（`raster` 特性） | **nana-text**（`layout/placement.rs`、`raster` 模块） | 画字的人都要走同一遍笔位置与取整，栅格要用排版时那份字体实例；见「字形落位与 CPU 栅格」一节 |
-| glyph IR、raster cache、atlas 策略与生命周期、上传、text pipeline | **NanaRenderer::text**（`nana-ui` 的 `scene_paint/text/`） | #97：renderer 侧的合同，见下节；不属于 `nana-text`，因为它是 device 状态 |
+| glyph IR、raster cache、atlas 策略与生命周期、上传、text pipeline | **SceneWgpuPainter::text**（`nana-ui` 的 `scene_paint/text/`） | #97：renderer 侧的合同，见下节；不属于 `nana-text`，因为它是 device 状态 |
 | 字形轮廓栅格化 | **成熟 crate**（swash，只在 `nana-text` 的 `raster/outline.rs` 后面） | #97 非目标明确写了不重写 TrueType 栅格器 |
 | 矩形打包 | **成熟 crate**（etagere，只在 `scene_paint/text/atlas.rs` 后面） | 同上；Nana 拥有的是 atlas 策略，不是打包算法 |
 
@@ -895,7 +895,7 @@ vertical_writing_fallbacks                  竖排请求被横排兜底的次数
   而不是它的拷贝。
 
 Runtime 通过 `NanaTextEngineShaper` 持有它（见「UiWorld 保留文本节点」）。从 #99 起产品宿主
-`NanaTextShaper` **就是**它的壳。绘制走 `NanaRenderer::text`。两边问同一个引擎。
+`NanaTextShaper` **就是**它的壳。绘制走 `SceneWgpuPainter::text`。两边问同一个引擎。
 
 ### 与 cosmic golden 对账
 
@@ -1597,7 +1597,7 @@ nana-text 塑形 / 排版      span 有自己的字号与行高，行盒按它�
 ExtractedNode.rich_text → Text { spans（填充色）, rich: SceneRichPaint（其余绘制层）}
     │
     ▼
-NanaRenderer::text         阴影 → 填充下描边 → 下划线 → 填充 → 填充上描边 → 删除线
+SceneWgpuPainter::text     阴影 → 填充下描边 → 下划线 → 填充 → 填充上描边 → 删除线
 ```
 
 ### 三层样式
@@ -1823,7 +1823,7 @@ cutover 之后仍有几条路径不经过 `nana-text` 量字。或者量了但�
 
 这里没有 GPU：上传、atlas 和合成都归调用方。renderer 在它上面实现自己的 `GlyphRasterizer` 边界、raster cache 与 atlas；Windows 上 DirectWrite 接管轮廓字形，其余仍交给 `OutlineRasterizer`。
 
-## NanaRenderer::text（Phase 6，#97）
+## SceneWgpuPainter::text（Phase 6，#97）
 
 绘制这一半从 cryoglyph 换成了 NanaUI 自己的子系统。目录是
 `crates/nana-ui/src/scene_paint/text/`：
@@ -1982,9 +1982,9 @@ R8Unorm。覆盖率只作用在 alpha 上。旋转文字的边缘因此不再被
 | | batch p50 | batch p95 |
 | --- | --- | --- |
 | cryoglyph（拉丁） | 0.272 ms | 0.288 ms |
-| NanaRenderer::text（拉丁） | 0.316 ms | 0.344 ms |
+| SceneWgpuPainter::text（拉丁） | 0.316 ms | 0.344 ms |
 | cryoglyph（每行 24 个不重复汉字） | 0.293 ms | 0.338 ms |
-| NanaRenderer::text（同上） | 0.314 ms | 0.348 ms |
+| SceneWgpuPainter::text（同上） | 0.314 ms | 0.348 ms |
 
 差的那 0.02–0.04 ms 是**多出来的那一遍**：cryoglyph 边遍历边写顶点。这里先记下句柄。
 等这一帧所有落位都定了再回读矩形建 instance。这正是代际句柄的用处。中途搬动或淘汰

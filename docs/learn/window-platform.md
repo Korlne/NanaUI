@@ -14,7 +14,7 @@ title: 窗口与平台
 
 ## 依赖与邻居
 
-在依赖层级上：`core(L1) → window(L2) → platform(L3) → runtime(L5) → scene(L6) → nana-ui(L7)`。注意 `nana-window` 与 `nana-ui-platform` 均位于 `nana-ui-runtime` 之下，`nana-ui-runtime` 甚至不依赖 `nana-window`——普通控件在编译期就无法触及原生窗口 API，只有第 7 层的宿主适配器 `nana-ui` 同时连接两者：
+在依赖关系上：`nana-ui-core`、`nana-ui-input` → `nana-ui-platform` → `nana-window` → `nana-ui`。`nana-window` 依赖 `nana-ui-platform`，只用到它的 `path::normalize_path`（文件对话框与「在访达 / 资源管理器中显示」把路径交给系统前先规范化）。`nana-ui-runtime` 与 `nana-ui-scene` 两者都不依赖——Runtime 只依赖 `nana-ui-input` 的规范输入合同，普通控件在编译期就无法触及窗口合同或原生窗口 API，只有宿主适配器 `nana-ui` 同时连接两边：
 
 | 邻居 Crate | 协作关系 |
 | --- | --- |

@@ -86,7 +86,7 @@ title: 端到端数据流
 ⑦ 布局测量    nana-ui-runtime     RuntimeLayoutEngine 在布局阶段向文本引擎查询固有尺寸，
                                    并将生成的 TextLayoutId 世代句柄留在节点上（TextLayoutStore）
 ⑧ 栅格化上屏  nana-ui-scene → ui  保留句柄随 ExtractedNode 进入 UiScene；
-                                   NanaRenderer::text 直接绘制保留布局，将字形栅格化进多页 GPU 图集上屏
+                                   SceneWgpuPainter::text 直接绘制保留布局，将字形栅格化进多页 GPU 图集上屏
 ```
 
 关键要点：

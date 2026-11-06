@@ -1,6 +1,6 @@
 //! The renderer's own rasterizer boundary.
 //!
-//! [`GlyphRasterizer`] is the abstraction `NanaRenderer::text` owns; what sits
+//! [`GlyphRasterizer`] is the abstraction `SceneWgpuPainter::text` owns; what sits
 //! under it is an implementation detail it may replace. The implementation is
 //! [`nana_text::raster::OutlineRasterizer`], which scales outlines off the
 //! faces `nana-text`'s font layer issued, so there is exactly one font
@@ -36,7 +36,7 @@ pub(super) struct GlyphRasterRequest {
     pub key: GlyphRasterKey,
 }
 
-/// What `NanaRenderer::text` requires of a glyph raster backend.
+/// What `SceneWgpuPainter::text` requires of a glyph raster backend.
 pub(super) trait GlyphRasterizer {
     /// Rasterize one glyph, or `None` when the backend cannot produce it at
     /// all (an unknown face, a mode it does not implement). A glyph that is
