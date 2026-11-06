@@ -1,6 +1,6 @@
 # Dialog
 
-标题加正文和底栏的浮层。只要确认和取消时，用 [ConfirmDialog](confirm-dialog.md)。
+标题加正文和底栏的浮层。只要确认和取消时，用 [ConfirmDialog](https://github.com/sena-nana/NanaUI/blob/main/docs/components/confirm-dialog.md)。
 
 ::: info
 控件表里没有 `<Dialog>` 标签。两种写法都调用 `widget(Dialog::new(title))`，再用 `.title_icon`、`.title_content`、`.body`、`.footer`、`.close_action` 放进已经建好的视图。
@@ -51,7 +51,7 @@ widget(Dialog::new("重命名"))
 
 :::
 
-插槽在对话框之前就建好。对话框自己的装配会把它们放进标题下面、底栏和关闭位。打开、关闭、逃出键和焦点归还走浮层的约定，见 [控件](../reference/components.md) 的浮层一节。
+插槽在对话框之前就建好。对话框自己的装配会把它们放进标题下面、底栏和关闭位。打开、关闭、逃出键和焦点归还走浮层的约定，见 [控件](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/components.md) 的浮层一节。
 
 ## 尺寸
 
@@ -73,7 +73,7 @@ let export = Dialog::new("导出资源库").size(DialogSize::capped(560.0, 92.0)
 
 ## 口气与标题图标
 
-`.danger(true)` 让对话框用危险口气说话：标题取主题 status 配方里危险的那个语义色（内置主题是 `Danger`），压过节点自己的文字色。正文、说明不变。[ConfirmDialog](confirm-dialog.md) 的 `danger` 是同一个口气，除了确认按钮走危险色，标题也一样变色。用标题图标和确认按钮表达危险的设计，在配方里写 `danger_title: false`，标题保持正文色，确认按钮照旧走危险色。
+`.danger(true)` 让对话框用危险口气说话：标题取主题 status 配方里危险的那个语义色（内置主题是 `Danger`），压过节点自己的文字色。正文、说明不变。[ConfirmDialog](https://github.com/sena-nana/NanaUI/blob/main/docs/components/confirm-dialog.md) 的 `danger` 是同一个口气，除了确认按钮走危险色，标题也一样变色。用标题图标和确认按钮表达危险的设计，在配方里写 `danger_title: false`，标题保持正文色，确认按钮照旧走危险色。
 
 `.title_icon(视图)` 在标题前放一个图标。标题行照 CSS 的 `display: flex; align-items: center` 排：`[图标] 标题 [关闭位]`，三者各占一格、在行里竖直居中，标题从图标后面开始，折行宽度让出图标和关闭位。行高取标题块和图标里高的那个；关闭位不撑高这一行，所以确认框忙碌时藏起关闭位，正文也不会跳。
 
@@ -196,7 +196,7 @@ let theme = ThemeDefinition::NANA_DARK.with_dialog(DialogRecipe {
 
 卡片的位置、分段、动效归主题的配方，外形归主题的卡片（`Surface` 底、`Overlay` 阴影、配方圆角）。应用有自己的卡片外形时——比如标题行站在一个高出卡身的标签页上、斜坡下到卡身、背后衬一块强调色底板——用 `.surface_painter(painter)` 自己画卡面。`Dialog` 和 `ConfirmDialog` 都有。
 
-painter 就是挂在节点上的那种 [`Painter`](../reference/components.md)，只是坐标原点在卡片左上角，尺寸是卡片的尺寸。它画在遮罩之上、卡片的标题、正文、分隔线和插槽之下，跟卡片一起淡入、移动。`cx.modal_sections()` 给出卡片各段在卡面坐标里的位置（`ModalSurfaceSections`）：
+painter 就是挂在节点上的那种 [`Painter`](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/components.md)，只是坐标原点在卡片左上角，尺寸是卡片的尺寸。它画在遮罩之上、卡片的标题、正文、分隔线和插槽之下，跟卡片一起淡入、移动。`cx.modal_sections()` 给出卡片各段在卡面坐标里的位置（`ModalSurfaceSections`）：
 
 | 字段 | 是什么 |
 | --- | --- |
@@ -395,4 +395,4 @@ widget(Dialog::new("重命名").close_policy(DialogClosePolicy::requests_only())
 
 ## 参见
 
-[总览](index.md) · [ConfirmDialog](confirm-dialog.md) · [控件](../reference/components.md)
+[总览](https://github.com/sena-nana/NanaUI/blob/main/docs/components/index.md) · [ConfirmDialog](https://github.com/sena-nana/NanaUI/blob/main/docs/components/confirm-dialog.md) · [控件](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/components.md)

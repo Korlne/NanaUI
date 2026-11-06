@@ -1,6 +1,6 @@
 # Dropdown
 
-单值或多值选择。它和 [Select](select.md) 共用字段表面和菜单。边输入边查，用 [SearchDropdown](search-dropdown.md)。
+单值或多值选择。它和 [Select](https://github.com/sena-nana/NanaUI/blob/main/docs/components/select.md) 共用字段表面和菜单。边输入边查，用 [SearchDropdown](https://github.com/sena-nana/NanaUI/blob/main/docs/components/search-dropdown.md)。
 
 控件表里没有 `<Dropdown>`。两种写法都调用 `widget`。
 
@@ -29,7 +29,7 @@ widget(Dropdown::single(value))
 
 :::
 
-选项用 `DropdownOption::new(value, label)`，还可以接 `.hint` 和 `.disabled`。`hint` 在菜单里画在这一行的末尾，比标签小一号、用次要色，和 [Select](select.md) 的选项提示一样。
+选项用 `DropdownOption::new(value, label)`，还可以接 `.hint` 和 `.disabled`。`hint` 在菜单里画在这一行的末尾，比标签小一号、用次要色，和 [Select](https://github.com/sena-nana/NanaUI/blob/main/docs/components/select.md) 的选项提示一样。
 
 ## 选中之后
 
@@ -39,7 +39,7 @@ widget(Dropdown::single(value))
 
 ## 读屏
 
-打开的菜单和 [Select 的读屏](select.md#读屏) 一样，是字段下的列表框。多选时列表框可多选（`aria-multiselectable`），勾上的每一项都是「已选」；读屏激活一项就是勾上或取消它，菜单不收起，和按下这一行一样。
+打开的菜单和 [Select 的读屏](https://github.com/sena-nana/NanaUI/blob/main/docs/components/select.md#读屏) 一样，是字段下的列表框。多选时列表框可多选（`aria-multiselectable`），勾上的每一项都是「已选」；读屏激活一项就是勾上或取消它，菜单不收起，和按下这一行一样。
 
 ## 属性
 
@@ -54,7 +54,7 @@ widget(Dropdown::single(value))
 | `invalid` | 字段 | 校验态 |
 | `opened` | 字段 | 菜单是否打开 |
 | `highlighted` | 字段 | 当前高亮项 |
-| `menu_scroll` | 字段 | 菜单的滚动位置。菜单的展开、滚动和滚动条见 [Select 的菜单](select.md#菜单) |
+| `menu_scroll` | 字段 | 菜单的滚动位置。菜单的展开、滚动和滚动条见 [Select 的菜单](https://github.com/sena-nana/NanaUI/blob/main/docs/components/select.md#菜单) |
 | `bare_trigger` | 字段 | 静止时去掉填充和描边，用作工具条上的选择器；悬停和展开仍有底色，校验态仍描红边 |
 
 ## 事件
@@ -71,4 +71,4 @@ widget(Dropdown::single(value))
 
 ## 参见
 
-[总览](index.md) · [Select](select.md) · [控件](../reference/components.md)
+[总览](https://github.com/sena-nana/NanaUI/blob/main/docs/components/index.md) · [Select](https://github.com/sena-nana/NanaUI/blob/main/docs/components/select.md) · [控件](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/components.md)

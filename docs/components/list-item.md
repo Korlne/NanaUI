@@ -56,7 +56,7 @@ list_item("Hiyori").detail("房主").read_only(true)
 
 不在列表里的行（Dock 的入口、一排胶囊）用 `role` 说明自己是什么，外观不变：`ListItemRole::Button` 报成按钮（画成选中时仍报选中）；`ListItemRole::ToggleButton` 报成切换按钮，`selected` 报成"按下"而不是"选中"，例如打开着的任务卡片的入口。按下的切换按钮照样画成选中。
 
-点了会弹出一列项的行（Dock 里能升起一列胶囊的入口）再写 `has_popup(true)`：读屏报成菜单按钮。焦点在这一行时，ArrowUp / ArrowDown、`ContextMenu` 键和 Shift+F10 都发 `keyboard: true` 的 `SecondaryPress`（ArrowDown 的 `focus` 是 `Some(RovingEdge::Start)`，ArrowUp 是 `Some(RovingEdge::End)`，菜单键是 `None`），你在处理函数里打开那一列，再用 `AppContext::focus_roving_edge` 把焦点移进去。那一列用 `.roving_focus(RovingFocusGroup::vertical())` 让方向键在项之间走，越过两端时收到 `RovingFocusEdge`。见 [控件](../reference/components.md) 的菜单按钮和方向键焦点组。
+点了会弹出一列项的行（Dock 里能升起一列胶囊的入口）再写 `has_popup(true)`：读屏报成菜单按钮。焦点在这一行时，ArrowUp / ArrowDown、`ContextMenu` 键和 Shift+F10 都发 `keyboard: true` 的 `SecondaryPress`（ArrowDown 的 `focus` 是 `Some(RovingEdge::Start)`，ArrowUp 是 `Some(RovingEdge::End)`，菜单键是 `None`），你在处理函数里打开那一列，再用 `AppContext::focus_roving_edge` 把焦点移进去。那一列用 `.roving_focus(RovingFocusGroup::vertical())` 让方向键在项之间走，越过两端时收到 `RovingFocusEdge`。见 [控件](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/components.md) 的菜单按钮和方向键焦点组。
 
 ## 行内工具
 
@@ -76,7 +76,7 @@ widget(ListItem::new("模型").tools_rest(RowToolsRest::Reserve))
 
 ## 跟着数据
 
-要跟着数据变的一整列，用 `each`，见 [视图写法](../guide/essentials/view.md)。个数写死的几行放进 `column().children((…))`。行高、间距、`auto_height`、`trailing_align`、`pill_bleed` 和 `tools_rest` 在组件 `ListItem` 上，不在字段表里。
+要跟着数据变的一整列，用 `each`，见 [视图写法](https://github.com/sena-nana/NanaUI/blob/main/docs/guide/essentials/view.md)。个数写死的几行放进 `column().children((…))`。行高、间距、`auto_height`、`trailing_align`、`pill_bleed` 和 `tools_rest` 在组件 `ListItem` 上，不在字段表里。
 
 槽是这一行自己的子节点。根上写了 `key` 的，可以用装配路径再找到。没写 key 的按位置命名。
 
@@ -130,8 +130,8 @@ widget(ListItem::new("模型").tools_rest(RowToolsRest::Reserve))
 
 ## 三种状态
 
-能点会做事的行用默认；只展示信息、从来不能点的行用 `.read_only(true)`（不响应悬停和点击，文字照常颜色）；本来能做、现在不能的行用 `.disabled(true)`（变灰，并说明原因）。只读不要写成禁用。见 [版式与组合](../guide/composition.md#列表行)。
+能点会做事的行用默认；只展示信息、从来不能点的行用 `.read_only(true)`（不响应悬停和点击，文字照常颜色）；本来能做、现在不能的行用 `.disabled(true)`（变灰，并说明原因）。只读不要写成禁用。见 [版式与组合](https://github.com/sena-nana/NanaUI/blob/main/docs/guide/composition.md#列表行)。
 
 ## 参见
 
-[总览](index.md) · [控件](../reference/components.md)
+[总览](https://github.com/sena-nana/NanaUI/blob/main/docs/components/index.md) · [控件](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/components.md)

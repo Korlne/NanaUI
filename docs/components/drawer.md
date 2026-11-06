@@ -59,11 +59,11 @@ widget(
 
 关闭先停掉交互并恢复焦点，退出动画期间节点还在。
 
-也可以声明：`.open(..)` 写 `true` 打开、`false` 关上；`.model(信号)` 还把宿主做的开合写回信号。见 [Dialog](dialog.md#声明式开合)。
+也可以声明：`.open(..)` 写 `true` 打开、`false` 关上；`.model(信号)` 还把宿主做的开合写回信号。见 [Dialog](https://github.com/sena-nana/NanaUI/blob/main/docs/components/dialog.md#声明式开合)。
 
 ## 遮罩
 
-抽屉身后的遮罩和对话框是同一份：主题的 `EffectTokens::modal_scrim` 和 `modal_scrim_blur`，见 [Dialog](dialog.md#遮罩)。
+抽屉身后的遮罩和对话框是同一份：主题的 `EffectTokens::modal_scrim` 和 `modal_scrim_blur`，见 [Dialog](https://github.com/sena-nana/NanaUI/blob/main/docs/components/dialog.md#遮罩)。
 
 ## 按下
 
@@ -77,7 +77,7 @@ widget(
 
 `.description` 写在标题下面。
 
-`.close_policy` 接收 `nana_ui::DialogClosePolicy`。Escape、点外面和关闭位每次都先在抽屉自己身上发 `DialogCloseRequested`，策略不允许的手势只发请求、不关。`DialogClosePolicy::requests_only()` 把开合全交给应用，见 [Dialog](dialog.md#由应用决定开合)。
+`.close_policy` 接收 `nana_ui::DialogClosePolicy`。Escape、点外面和关闭位每次都先在抽屉自己身上发 `DialogCloseRequested`，策略不允许的手势只发请求、不关。`DialogClosePolicy::requests_only()` 把开合全交给应用，见 [Dialog](https://github.com/sena-nana/NanaUI/blob/main/docs/components/dialog.md#由应用决定开合)。
 
 `.initial_focus` 决定打开后焦点落在表面、第一个动作，还是你指定的节点。
 
@@ -103,11 +103,11 @@ widget(
 | 插槽 | 说明 |
 | --- | --- |
 | `.title_icon` | 标题前的图标，和标题、关闭位在表头里竖直居中 |
-| `.title_content` | 代替标题文字站在表头里的视图，排法见 [Dialog](dialog.md#标题内容)。标题仍是无障碍名 |
+| `.title_content` | 代替标题文字站在表头里的视图，排法见 [Dialog](https://github.com/sena-nana/NanaUI/blob/main/docs/components/dialog.md#标题内容)。标题仍是无障碍名 |
 | `.body` | 视图槽。例子里是 `<template #body>` |
 | `.footer` | 视图槽 |
 | `.close_action` | 视图槽 |
 
 ## 参见
 
-[总览](index.md) · [控件](../reference/components.md)
+[总览](https://github.com/sena-nana/NanaUI/blob/main/docs/components/index.md) · [控件](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/components.md)

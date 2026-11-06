@@ -1,6 +1,6 @@
 # TextInput
 
-一行文本。初始值走 `value`，不是构造参数。多行用 [TextArea](text-area.md)。
+一行文本。初始值走 `value`，不是构造参数。多行用 [TextArea](https://github.com/sena-nana/NanaUI/blob/main/docs/components/text-area.md)。
 
 模板里的标签是 `<TextInput>`。
 
@@ -73,4 +73,4 @@ Rust 组件用 `TextInput::new("").character_counter(40)`；视图用
 
 ## 参见
 
-[总览](index.md) · [控件](../reference/components.md)
+[总览](https://github.com/sena-nana/NanaUI/blob/main/docs/components/index.md) · [控件](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/components.md)

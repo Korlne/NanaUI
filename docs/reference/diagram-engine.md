@@ -119,4 +119,4 @@ cargo run --release -p nana-ui-diagram --features benchmark --bin nana-diagram-b
 
 ## 参见
 
-- [Markdown、图片查看器与富内容绘制](markdown-rendering.md) · [NativeMarkdown 组件](../components/native-markdown.md)
+- [Markdown、图片查看器与富内容绘制](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/markdown-rendering.md) · [NativeMarkdown 组件](https://github.com/sena-nana/NanaUI/blob/main/docs/components/native-markdown.md)

@@ -2,9 +2,9 @@
 
 本文面向参与 NanaUI 框架开发与维护的贡献者，固定工作区内各 crate 的职责边界与对象所有权，防止演进过程中长出第二棵树、第二套渲染器或第二个 GPU 设备。
 
-- 如果你正在使用 NanaUI 开发桌面应用，请先阅读 [框架如何运行](how-it-works.md) 与 [快速开始](../guide/quick-start.md)。
+- 如果你正在使用 NanaUI 开发桌面应用，请先阅读 [框架如何运行](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/how-it-works.md) 与 [快速开始](https://github.com/sena-nana/NanaUI/blob/main/docs/guide/quick-start.md)。
 - 如果你想按模块与源码行号深入学习各子系统的内部实现，请阅读 [架构学习](/learn/) 板块。
-- 工作区、窗口、实时画面与内置控件的消费侧合同分别见 [工作区](workspace.md)、[窗口](window.md)、[实时画面](gpu.md) 与 [控件](components.md)。
+- 工作区、窗口、实时画面与内置控件的消费侧合同分别见 [工作区](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/workspace.md)、[窗口](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/window.md)、[实时画面](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/gpu.md) 与 [控件](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/components.md)。
 
 ## Crate 边界与依赖方向
 
@@ -45,11 +45,11 @@ nana-ui                  宿主适配器：run_runtime、控件再导出、Scene
 
 ### 无窗口输出与边界守护脚本
 
-操作系统窗口并非输出 API 的唯一语义根：Window 与无窗口 `PresentationDriver` 共用真实的 presentation 编排。普通 Window-only 直接画进 Surface；`RenderTargetPlanner` 在消费者或显示需求变化时缓存兼容分组，兼容 Window/外部消费方共享一次 canonical 渲染，仅最终 transfer 独立计数；像素密度、文本 AA、HDR 等不兼容需求明确分组。`ExternalSurface` 为无窗口、嵌套与无头消费方保留有界 GPU 槽位和真实提交租约：静态生产端跳过渲染和提交，消费方只采样已完成版本。整个路径仍只有一份 `UiWorld → UiScene` 和同设备 `SceneWgpuPainter`，产品不提供 CPU 回读 fallback（详见 [窗口外输出](output.md)）。
+操作系统窗口并非输出 API 的唯一语义根：Window 与无窗口 `PresentationDriver` 共用真实的 presentation 编排。普通 Window-only 直接画进 Surface；`RenderTargetPlanner` 在消费者或显示需求变化时缓存兼容分组，兼容 Window/外部消费方共享一次 canonical 渲染，仅最终 transfer 独立计数；像素密度、文本 AA、HDR 等不兼容需求明确分组。`ExternalSurface` 为无窗口、嵌套与无头消费方保留有界 GPU 槽位和真实提交租约：静态生产端跳过渲染和提交，消费方只采样已完成版本。整个路径仍只有一份 `UiWorld → UiScene` 和同设备 `SceneWgpuPainter`，产品不提供 CPU 回读 fallback（详见 [窗口外输出](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/output.md)）。
 
 `scripts/check-engine-boundary.py` 在 CI 中静态守卫以下边界：
 
-1. **后端中立与 `wgpu` 签名隔离**：保持 `nana-ui-runtime` 与 `nana-ui-scene` 对图形后端中立；`nana-gpu`、`nana-frame-exchange`、`nana-ui`、`nana-ui-devtools` 的公开签名只有在 `wgpu-interop` feature 下才允许出现 `wgpu::*`；`nana_gpu::__framework` 仅供这些框架 crate 自身源码内部使用（详见 [实时画面](gpu.md#gpu-合同与-wgpu-逃生口)）。
+1. **后端中立与 `wgpu` 签名隔离**：保持 `nana-ui-runtime` 与 `nana-ui-scene` 对图形后端中立；`nana-gpu`、`nana-frame-exchange`、`nana-ui`、`nana-ui-devtools` 的公开签名只有在 `wgpu-interop` feature 下才允许出现 `wgpu::*`；`nana_gpu::__framework` 仅供这些框架 crate 自身源码内部使用（详见 [实时画面](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/gpu.md#gpu-合同与-wgpu-逃生口)）。
 2. **排版词汇白名单**：`nana-text` 仅从 `nana-ui-core` 导入白名单内的排版与动态布局代价词汇（变体轴、字距、断行、对齐、方向、书写模式、行高、中日文标点挤压与 `dynamic_layout`）。
 3. **单一文本引擎**：`nana-ui-runtime` 的保留文本节点修订号、分级脏图及 `TextLayout` 句柄均以 `nana-text` 为唯一权威；`cosmic-text`、`cryoglyph` 与 `glyphon`（含改名 fork）已从 `Cargo.lock` 彻底移除，严禁任何工作区成员引入通向它们的非 dev 依赖边。
 
@@ -87,7 +87,7 @@ nana_ui::runtime → UiWorld → ExtractedNode → UiScene → SceneWgpuPainter
 | `font-variation-settings`（`FontAxis(tag)`，每轴一条轨道） | `Layout` | 轨道存于 `PresentationStore`，样式解析时叠入计算样式的 `font_variations` 并向下继承（显式声明该轴的子树不受影响）；按 `SHAPE_STYLE` 脏图触发重新整形、排版与栅格化（采样值未变则零工作） | 每次有效采样均为真实字形实例，严禁替换成几何缩放（[#85](https://github.com/sena-nana/NanaUI/issues/85)）。字体缺失的轴照常计时但不生效，通过 `inspect_motion` 的 `ineffective_reason` 与 `nana.css` 警告上报，不映射为 `wght` |
 | `display` | `Discrete` | 离散跳变（snap） | 不做插值 |
 
-合成器稳态性能门禁（无查询时 `UiWorld`、布局、样式、抽取与 CPU 采样计数均为 0）定义在 [`perf/README.md`](../../perf/README.md) 的 `compositor-steady`。开发期诊断通过 `AnimatableProperty::diagnostic_hint()` 与 `UiWorld::inspect_motion()` 获取，提示文案不写进产品 UI。
+合成器稳态性能门禁（无查询时 `UiWorld`、布局、样式、抽取与 CPU 采样计数均为 0）定义在 [`perf/README.md`](https://github.com/sena-nana/NanaUI/blob/main/perf/README.md) 的 `compositor-steady`。开发期诊断通过 `AnimatableProperty::diagnostic_hint()` 与 `UiWorld::inspect_motion()` 获取，提示文案不写进产品 UI。
 
 ## 全局对象所有权表
 
@@ -121,4 +121,4 @@ Rust 声明式视图（`nana_ui::runtime` 构建器与 `view!`）和 `.vue` 方�
 
 `nana-ui` 的默认 feature 仅有 `wgpu-backends`（且只在同时启用 `gpu` 时选择平台图形后端），不会创建第二套宿主或 GPU 所有者。需要打开桌面窗口时必须显式启用 `hosted`；需要自选图形后端时设置 `default-features = false`。
 
-控件族 feature（`calendar`、`charts`、`controls`、`graph-canvas`、`image-viewer`、`rich-text`）同步控制 `nana-ui-runtime` 与 `nana-ui-scene` 的条件编译，并决定 `ComponentSupport::compiled`。未启用的控件族及其专属依赖不参与编译，`nana_ui::runtime` 仅导出当前构建实际编入的控件（完整对照表见 [应用 API](application-api.md)）。`component-gallery` 是独立的示例 crate，其分类导航与演示状态不属于 `nana-ui` 的公共 API。
+控件族 feature（`calendar`、`charts`、`controls`、`graph-canvas`、`image-viewer`、`rich-text`）同步控制 `nana-ui-runtime` 与 `nana-ui-scene` 的条件编译，并决定 `ComponentSupport::compiled`。未启用的控件族及其专属依赖不参与编译，`nana_ui::runtime` 仅导出当前构建实际编入的控件（完整对照表见 [应用 API](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/application-api.md)）。`component-gallery` 是独立的示例 crate，其分类导航与演示状态不属于 `nana-ui` 的公共 API。

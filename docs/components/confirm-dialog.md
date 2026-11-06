@@ -38,17 +38,17 @@ widget(
 
 ## 按钮文案
 
-`.confirm_label` 和 `.cancel_label` 换成你的话。不设时用框架文案表里的 `dialog.confirm` / `dialog.cancel`，见[框架文案](../reference/framework-strings.md)。
+`.confirm_label` 和 `.cancel_label` 换成你的话。不设时用框架文案表里的 `dialog.confirm` / `dialog.cancel`，见[框架文案](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/framework-strings.md)。
 
 ## 危险
 
-`danger` 为真时（字段，或 `.danger(true)`），确认按钮走危险色，标题也用危险口气：取主题 status 配方里危险的那个语义色。和 [Dialog](dialog.md#口气与标题图标) 的 `.danger` 是同一个口气。
+`danger` 为真时（字段，或 `.danger(true)`），确认按钮走危险色，标题也用危险口气：取主题 status 配方里危险的那个语义色。和 [Dialog](https://github.com/sena-nana/NanaUI/blob/main/docs/components/dialog.md#口气与标题图标) 的 `.danger` 是同一个口气。
 
 ## 尺寸与关闭
 
-`.size` 用 `nana_ui::DialogSize`：`Compact`、`Default`、`Medium`、`Wide`、`Workspace`，或者 `Width(长度)` / `capped(px, vw)` 给一个自己的宽度，见 [Dialog](dialog.md#尺寸)。卡片距顶和最高高度归主题的 `DialogRecipe`。
+`.size` 用 `nana_ui::DialogSize`：`Compact`、`Default`、`Medium`、`Wide`、`Workspace`，或者 `Width(长度)` / `capped(px, vw)` 给一个自己的宽度，见 [Dialog](https://github.com/sena-nana/NanaUI/blob/main/docs/components/dialog.md#尺寸)。卡片距顶和最高高度归主题的 `DialogRecipe`。
 
-`.close_policy` 决定 Escape 和点外面能不能关。这两种手势和关闭位每次都先在确认框自己身上发 `DialogCloseRequested`；`DialogClosePolicy::requests_only()` 让框架一种都不关，由应用决定，见 [Dialog](dialog.md#由应用决定开合)。
+`.close_policy` 决定 Escape 和点外面能不能关。这两种手势和关闭位每次都先在确认框自己身上发 `DialogCloseRequested`；`DialogClosePolicy::requests_only()` 让框架一种都不关，由应用决定，见 [Dialog](https://github.com/sena-nana/NanaUI/blob/main/docs/components/dialog.md#由应用决定开合)。
 
 `.initial_focus` 用 `ModalInitialFocus`，默认落在第一个动作上。
 
@@ -68,7 +68,7 @@ widget(
 
 关上用 `dismiss_overlay(host)`。
 
-也可以声明：`.open(..)` 写 `true` 就在装配建好按钮后打开，写 `false` 关上；`.model(信号)` 还把宿主做的开合写回信号。见 [Dialog](dialog.md#声明式开合)。
+也可以声明：`.open(..)` 写 `true` 就在装配建好按钮后打开，写 `false` 关上；`.model(信号)` 还把宿主做的开合写回信号。见 [Dialog](https://github.com/sena-nana/NanaUI/blob/main/docs/components/dialog.md#声明式开合)。
 
 ## 忙碌与正文
 
@@ -107,7 +107,7 @@ widget(
 
 | 插槽 | 说明 |
 | --- | --- |
-| `.title_icon` | 标题前的图标，排法见 [Dialog](dialog.md#口气与标题图标) |
+| `.title_icon` | 标题前的图标，排法见 [Dialog](https://github.com/sena-nana/NanaUI/blob/main/docs/components/dialog.md#口气与标题图标) |
 | `.body` | 正文不止一句话时放你的内容，装配不会拿默认正文换掉它 |
 | `.footer` | 动作行左端的内容，比如「不再询问」开关。高一个按钮，宽到最左边的按钮前留出 `action_gap` 为止；不加高卡片，也不挪按钮。Tab 顺序在按钮之前，打开时焦点仍落在第一个动作上 |
 | `.close_action` | 视图上的槽 |
@@ -117,4 +117,4 @@ widget(
 
 ## 参见
 
-[总览](index.md) · [控件](../reference/components.md)
+[总览](https://github.com/sena-nana/NanaUI/blob/main/docs/components/index.md) · [控件](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/components.md)

@@ -76,7 +76,7 @@ cx.update_component(label, |text, _| {
 
 不要在这个闭包里写 `*text = Text::new("已开始")`。那会连交互状态一起盖掉。整份换上用 `set_component(label, Text::new("已开始"))`，由控件自己的 `reconcile` 决定什么留下。
 
-视图已经在用信号绑定的字段，优先改信号。句柄是给挂载之后仍要按实体操作的代码：程序保存的标签、传送目标、焦点。点击里整页再挂载一次，见 [创建应用](application.md) 里的那条合同。
+视图已经在用信号绑定的字段，优先改信号。句柄是给挂载之后仍要按实体操作的代码：程序保存的标签、传送目标、焦点。点击里整页再挂载一次，见 [创建应用](https://github.com/sena-nana/NanaUI/blob/main/docs/guide/essentials/application.md) 里的那条合同。
 
 ## 接下来
 

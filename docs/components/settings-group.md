@@ -75,4 +75,4 @@ settings_group(Some("连接".into()), vec![
 
 ## 参见
 
-[版式与组合](../guide/composition.md) · [SettingsRow](settings-row.md) · [Card](card.md) · [Divider](divider.md)
+[版式与组合](https://github.com/sena-nana/NanaUI/blob/main/docs/guide/composition.md) · [SettingsRow](https://github.com/sena-nana/NanaUI/blob/main/docs/components/settings-row.md) · [Card](https://github.com/sena-nana/NanaUI/blob/main/docs/components/card.md) · [Divider](https://github.com/sena-nana/NanaUI/blob/main/docs/components/divider.md)

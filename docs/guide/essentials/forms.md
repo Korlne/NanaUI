@@ -89,7 +89,7 @@ select()
 
 模板里同样是 `options={options}` 加 `v-model={picked}`。`placeholder` 可以是字符串，它会变成 `Option<Arc<str>>`。
 
-`.model` 是在原有监听之外再加一个。你再写 `on_input`，两个都会跑，后者不会换掉前者。只想读变更、不写回信号时，不要用 `v-model`，用 [事件](events.md) 里的 `on_input` 或 `on_change`。
+`.model` 是在原有监听之外再加一个。你再写 `on_input`，两个都会跑，后者不会换掉前者。只想读变更、不写回信号时，不要用 `v-model`，用 [事件](https://github.com/sena-nana/NanaUI/blob/main/docs/guide/essentials/events.md) 里的 `on_input` 或 `on_change`。
 
 ::: warning
 构造时写 `.value(title.get())` 只放进当时的字符串。之后信号变了，输入框不跟着变；用户输入了，信号也不更新。双向绑定用 `.model(title)`。

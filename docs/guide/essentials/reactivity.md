@@ -61,9 +61,9 @@ fn counter() -> impl IntoView {
 
 ## 嵌套状态
 
-`Signal<App>` 里任何一处变了，读过它的地方都要重跑。嵌套状态用 `store`，每条路径分开追踪。写法在 [Store](../scaling/store.md)。
+`Signal<App>` 里任何一处变了，读过它的地方都要重跑。嵌套状态用 `store`，每条路径分开追踪。写法在 [Store](https://github.com/sena-nana/NanaUI/blob/main/docs/guide/scaling/store.md)。
 
-把一个值传给下层视图，用 [依赖提供](../components/provide.md)。从信号派生用 [计算值](computed.md)。依赖变化时做一件事，用 [侦听](watch.md)。
+把一个值传给下层视图，用 [依赖提供](https://github.com/sena-nana/NanaUI/blob/main/docs/guide/components/provide.md)。从信号派生用 [计算值](https://github.com/sena-nana/NanaUI/blob/main/docs/guide/essentials/computed.md)。依赖变化时做一件事，用 [侦听](https://github.com/sena-nana/NanaUI/blob/main/docs/guide/essentials/watch.md)。
 
 ## 接下来
 

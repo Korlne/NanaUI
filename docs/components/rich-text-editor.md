@@ -1,6 +1,6 @@
 # RichTextEditor
 
-`RichTextEditor` 就地编辑一份 `RichText`：所见即所得。它和 [RichTextView](rich-text-view.md) 是同一种文本节点，走同一条 `SetRichText` 路径、同一份保留排版。同一份文档、同样宽度，两者断出的行完全一样。不是两份排版碰巧一致，而是本来就是同一份。
+`RichTextEditor` 就地编辑一份 `RichText`：所见即所得。它和 [RichTextView](https://github.com/sena-nana/NanaUI/blob/main/docs/components/rich-text-view.md) 是同一种文本节点，走同一条 `SetRichText` 路径、同一份保留排版。同一份文档、同样宽度，两者断出的行完全一样。不是两份排版碰巧一致，而是本来就是同一份。
 
 文档归应用：每次改动发出 `RichTextEditorEvent::Changed(value)`，应用存下这个值，下次重建时原样交回。交回相等的值什么都不提交。控件只持有应用不该管的编辑状态：选区、输入法的预编辑、下一个字用的样式、撤销历史。
 
@@ -101,7 +101,7 @@ widget(RichTextEditor::new(RichText::new("")))
 | `read_only` | `bool` | 可以选择、复制，不能改 |
 | `disabled` | `bool` | 不能聚焦 |
 | `typing_style_policy` | `RichTypingStylePolicy` | 打字是否继承相邻文字的样式，默认 `Inherit` |
-| `font_size` / `font_family` / `line_height` / `width` | | 同 [RichTextView](rich-text-view.md) |
+| `font_size` / `font_family` / `line_height` / `width` | | 同 [RichTextView](https://github.com/sena-nana/NanaUI/blob/main/docs/components/rich-text-view.md) |
 
 ## 事件
 
@@ -115,4 +115,4 @@ widget(RichTextEditor::new(RichText::new("")))
 
 ## 参见
 
-[RichTextView](rich-text-view.md) · [总览](index.md) · [文本引擎](../reference/text-engine.md#富文本编辑器)
+[RichTextView](https://github.com/sena-nana/NanaUI/blob/main/docs/components/rich-text-view.md) · [总览](https://github.com/sena-nana/NanaUI/blob/main/docs/components/index.md) · [文本引擎](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/text-engine.md#富文本编辑器)

@@ -68,7 +68,7 @@ widget(MediaTransportBar::new().mini().show_play(false).icons(icons))
 
 `.placement` 是 `MediaTransportPlacement::Overlay` 或 `Inline`。
 
-Overlay 沿包含块底边绝对定位，只有铬接命中；Inline 参与父级排版，`max_width` 不用。Overlay 的条挂在最近的定位祖先上，所以画面区域那个父级要写 `position: relative`（见[布局的定位](../reference/layout.md#能用的)）。
+Overlay 沿包含块底边绝对定位，只有铬接命中；Inline 参与父级排版，`max_width` 不用。Overlay 的条挂在最近的定位祖先上，所以画面区域那个父级要写 `position: relative`（见[布局的定位](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/layout.md#能用的)）。
 
 ## 显隐
 
@@ -126,7 +126,7 @@ view! {
 }
 ```
 
-条放在画面的同一个父节点下，指针在整扇窗口上都算「在画面上」。标题栏用 [`over_media(true)`](app-title-bar.md#叠在媒体上)，浅色主题下按钮和标题在画面上也看得清。窗口的宽高比交给 [`content_aspect_ratio`](../reference/window.md#内容宽高比)。
+条放在画面的同一个父节点下，指针在整扇窗口上都算「在画面上」。标题栏用 [`over_media(true)`](https://github.com/sena-nana/NanaUI/blob/main/docs/components/app-title-bar.md#叠在媒体上)，浅色主题下按钮和标题在画面上也看得清。窗口的宽高比交给 [`content_aspect_ratio`](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/window.md#内容宽高比)。
 
 ## 时间读数
 
@@ -186,4 +186,4 @@ view! {
 
 ## 参见
 
-[总览](index.md) · [控件](../reference/components.md) · [工作区](../reference/workspace.md)
+[总览](https://github.com/sena-nana/NanaUI/blob/main/docs/components/index.md) · [控件](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/components.md) · [工作区](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/workspace.md)

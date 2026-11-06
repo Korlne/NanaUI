@@ -48,7 +48,7 @@ widget(NativeMarkdown::from_source("# 说明\n\n一段正文。"))
 
 ## 图和公式
 
-mermaid 围栏和公式围栏由控件自己画：公式用 RaTeX，图用原生图表引擎（见 [原生图表引擎](../reference/diagram-engine.md)），颜色跟随主题。
+mermaid 围栏和公式围栏由控件自己画：公式用 RaTeX，图用原生图表引擎（见 [原生图表引擎](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/diagram-engine.md)），颜色跟随主题。
 
 两种围栏还各给出一个 presenter 槽，带着源码。`MERMAID_PRESENTER` 是 `"mermaid"`，`MATH_PRESENTER` 是 `"math"`。宿主要换成自己的呈现，可以按这个身份接管；图表的槽还带无障碍名称与描述。
 
@@ -90,4 +90,4 @@ mermaid 围栏和公式围栏由控件自己画：公式用 RaTeX，图用原生
 
 ## 参见
 
-[总览](index.md) · [控件](../reference/components.md)
+[总览](https://github.com/sena-nana/NanaUI/blob/main/docs/components/index.md) · [控件](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/components.md)

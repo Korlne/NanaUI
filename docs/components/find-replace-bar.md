@@ -48,7 +48,7 @@ widget(
 - **折叠与展开**：默认折叠（只显示切换按钮）；点击切换按钮或设 `.expanded(true)` 展开查询行与替换行，并发出 `FindReplaceEvent::Expanded(bool)`。
 - **只读模式（`read_only`）**：保持查询输入和「上一个 / 下一个」导航可用，同时禁用替换输入框以及「替换 / 全部替换」按钮。
 - **整体禁用（`disabled`）**：禁用全部输入框和按钮，激活不再发出事件。
-- **默认文案**：占位符、按钮文字和无障碍名称默认读取 `FrameworkStrings` 的 `find.*` 条目（见 [框架文案](../reference/framework-strings.md)），也可通过 `.query_placeholder(...)`、`.replacement_placeholder(...)`、`.label(...)` 单独覆盖。
+- **默认文案**：占位符、按钮文字和无障碍名称默认读取 `FrameworkStrings` 的 `find.*` 条目（见 [框架文案](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/framework-strings.md)），也可通过 `.query_placeholder(...)`、`.replacement_placeholder(...)`、`.label(...)` 单独覆盖。
 
 ## 属性
 
@@ -89,4 +89,4 @@ widget(
 
 ## 参见
 
-[TextInput](text-input.md) · [SearchDropdown](search-dropdown.md) · [总览](index.md) · [控件](../reference/components.md)
+[TextInput](https://github.com/sena-nana/NanaUI/blob/main/docs/components/text-input.md) · [SearchDropdown](https://github.com/sena-nana/NanaUI/blob/main/docs/components/search-dropdown.md) · [总览](https://github.com/sena-nana/NanaUI/blob/main/docs/components/index.md) · [控件](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/components.md)

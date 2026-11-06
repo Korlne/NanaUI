@@ -50,7 +50,7 @@ widget(
 
 `.hint`、`.icon`、`.image`、`.disabled` 和 `.danger` 写在条目上。
 
-`.image(slot)` 在图标的位置放一张圆图，画的是宿主纹理槽 `slot`，规则同 [ActionMenu](action-menu.md#条目) 的 `.leading_image`：图优先于图标，边长是行高，空槽画占位圆，图只作装饰。
+`.image(slot)` 在图标的位置放一张圆图，画的是宿主纹理槽 `slot`，规则同 [ActionMenu](https://github.com/sena-nana/NanaUI/blob/main/docs/components/action-menu.md#条目) 的 `.leading_image`：图优先于图标，边长是行高，空槽画占位圆，图只作装饰。
 
 斜杠分开的值（`parent/child`）是一层树。
 
@@ -131,4 +131,4 @@ widget(
 
 ## 参见
 
-[总览](index.md) · [控件](../reference/components.md)
+[总览](https://github.com/sena-nana/NanaUI/blob/main/docs/components/index.md) · [控件](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/components.md)

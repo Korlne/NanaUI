@@ -1,6 +1,6 @@
 # Row
 
-`row()` 是横向排列的 `Stack`。模板里的标签是 `<Row>`。纵向用 `column()`，见 [Column](column.md)。
+`row()` 是横向排列的 `Stack`。模板里的标签是 `<Row>`。纵向用 `column()`，见 [Column](https://github.com/sena-nana/NanaUI/blob/main/docs/components/column.md)。
 
 ## 基本用法
 
@@ -36,7 +36,7 @@ row().gap(12).children((
 
 子节点有两种放法。个数写死时用 `.children((a, b))`。建树时要写 `if`、`for` 或 `let` 时，用 `.with(|c| c.add(…))`。`.with` 在建树时跑一次。块里的 `if` 决定的是这一次挂载的结构。之后数据变了，不会重跑这个块。
 
-要跟着数据变的列表用 `each`，见 [视图写法](../guide/essentials/view.md)。
+要跟着数据变的列表用 `each`，见 [视图写法](https://github.com/sena-nana/NanaUI/blob/main/docs/guide/essentials/view.md)。
 
 ## 和列的差别
 
@@ -71,4 +71,4 @@ row().gap(12).children((
 
 ## 参见
 
-[总览](index.md) · [控件](../reference/components.md)
+[总览](https://github.com/sena-nana/NanaUI/blob/main/docs/components/index.md) · [控件](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/components.md)

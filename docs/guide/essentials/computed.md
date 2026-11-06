@@ -51,7 +51,7 @@ fn summary() -> impl IntoView {
 在构造视图时直接 `label.get()`，写进节点的是当时的字符串，之后不再跟着变。把 `label` 本身传给 `text`，或者传闭包。
 :::
 
-要在依赖变化时做一件事，而不是派生一个值，用 [侦听](watch.md) 里的 `watch_effect`。
+要在依赖变化时做一件事，而不是派生一个值，用 [侦听](https://github.com/sena-nana/NanaUI/blob/main/docs/guide/essentials/watch.md) 里的 `watch_effect`。
 
 ## 和绑定的关系
 

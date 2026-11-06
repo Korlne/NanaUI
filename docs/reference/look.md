@@ -48,7 +48,7 @@ CSS 的单层 `box-shadow`（支持 outset 与 inset）与 `text-shadow`（仅 o
 - **系统高对比度**：当操作系统开启高对比度模式时，原生宿主调用 `AppContext::set_high_contrast(true)`。此时已安装的深色主题自动改用 `SemanticPalette::high_contrast()`（黑底、白字、黄强调、青高亮），浅色主题改用 `SemanticPalette::high_contrast_light()`（白底、黑字、深蓝强调）；`muted` 与 `faint` 保持与正文可区分的灰度，避免禁用态文字看起来像可用状态。高对比度是渲染期的策略覆盖（policy overlay），不改写已安装主题本身——关闭高对比度即可原样恢复，期间新安装的主题也会自动套用高对比度覆盖。高对比度主题要加粗键盘焦点环时，用 `ThemeDefinition::with_metrics(ThemeMetrics { focus_ring: FocusRingMetrics { width: 3.0, offset: 2.0 }, ..UI_METRICS })`：环只画不排，换主题不重排。
 - **公共导出面**：`nana_ui::theme` 导出了构成主题定义的全部 token 与配方类型，包括 `ThemeMetrics`、`SwitchMetrics`、`TreeMetrics`、`KeycapMetrics`、`TypographyTokens`、`MotionTokens`、`EffectTokens`、`SpacingTokens`、`BorderTokens`、`OpacityTokens`、`SurfaceTokens`、`AccentRamp`、`ComponentThemeRegistry`、各类 recipe draft（如 `ButtonVariantDraft`）、组件配方（如 `DialogRecipe`、`ToastRecipe` 及其 `ToastIndicator` / `ToastGlyphs` / `ToastProgressRecipe` / `ToastMotion`、`ShapeRecipe` 及其 `ShapeRole`、`ChromeRadii`），以及 `ThemeId`、`ThemeSchemaVersion`、`ThemeGeneration`。节点级命名尺寸使用的 `RadiusTier`、`ControlHeight`、`ControlPadding`、`SurfacePadding`、`SquareSize` 与 `SemanticColorMix` 同样从这里导入，应用无需直接依赖 `nana-ui-core`。
 
-> 如果你要修改框架自身的主题架构或审计组件硬编码，请先阅读维护者文档 [主题审计记录](theme.md)。
+> 如果你要修改框架自身的主题架构或审计组件硬编码，请先阅读维护者文档 [主题审计记录](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/theme.md)。
 
 ## 字体、语言与排版特性
 

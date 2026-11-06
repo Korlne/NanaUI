@@ -1,6 +1,6 @@
 # 应用 API
 
-这篇给你查入口。你第一次写应用，先看 [快速开始](../guide/quick-start.md) 和 [框架如何运行](how-it-works.md)。签名以 rustdoc 为准。这篇不复制每一份类型。
+这篇给你查入口。你第一次写应用，先看 [快速开始](https://github.com/sena-nana/NanaUI/blob/main/docs/guide/quick-start.md) 和 [框架如何运行](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/how-it-works.md)。签名以 rustdoc 为准。这篇不复制每一份类型。
 
 ## 你该依赖什么
 
@@ -13,7 +13,7 @@
 
 ### 输入：一条路由
 
-长期 conformance 矩阵与可重复命令见 [Issue 243 输入 conformance](input-conformance.md)。
+长期 conformance 矩阵与可重复命令见 [Issue 243 输入 conformance](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/input-conformance.md)。
 
 所有输入只有一种形态：`CanonicalInputEvent`（`nana-ui-input`。经 `nana-ui-platform` 和
 `nana-ui` 再导出）。原生窗口、devtools、Android 和测试都在自己的边界把原生事件降级成
@@ -135,9 +135,9 @@ Cargo 不会因你写了 `CalendarHeatmap` 就自动打开 `calendar`。
 
 ## 应用身份、路径与诊断
 
-进程级设置走 `NanaApplication::builder(ApplicationIdentity)`：解析并发布 `ApplicationPaths`（`NanaApplication::paths()` 随处可取）。可选 `.diagnostics(DiagnosticsConfig::default())` 打开结构化诊断。然后 `.run::<P>(WindowDescriptor)`。`run_runtime` 仍可直接用。只是不设路径、不开诊断。业务不要自己拼 `./runtime/...` 或平台目录。从 `ApplicationPaths` 取逻辑位置（`runtime_resources`、`data`、`config`、`cache`、`logs`、`crash` 等）。`app_data_dir` 保留。在桌面平台的安装布局下与 `ApplicationPaths::data` 相同（便携版的 data 在 `<root>/data`）。详见 [诊断与应用路径](diagnostics.md)。
+进程级设置走 `NanaApplication::builder(ApplicationIdentity)`：解析并发布 `ApplicationPaths`（`NanaApplication::paths()` 随处可取）。可选 `.diagnostics(DiagnosticsConfig::default())` 打开结构化诊断。然后 `.run::<P>(WindowDescriptor)`。`run_runtime` 仍可直接用。只是不设路径、不开诊断。业务不要自己拼 `./runtime/...` 或平台目录。从 `ApplicationPaths` 取逻辑位置（`runtime_resources`、`data`、`config`、`cache`、`logs`、`crash` 等）。`app_data_dir` 保留。在桌面平台的安装布局下与 `ApplicationPaths::data` 相同（便携版的 data 在 `<root>/data`）。详见 [诊断与应用路径](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/diagnostics.md)。
 
-打包后的应用用 `nana_ui_platform::application_identity!` 声明身份：它会在二进制里留下身份标记。packager 与 validator 都拿它比对。开启 `packaged-resources` feature 后。调用 `.resource_packs(ResourcePackOptions)` 会读取 package manifest。并把 `.nrpack` 资源包挂载到 `nana://res/<逻辑路径>`。样式、`@font-face`、`url()` 都能直接引用。安装版和便携版里。没有显式 base 的相对 `url()` 以 `runtime_resources` 为基准。不再以 CWD 为基准。详见 [打包与分发](packaging.md)。
+打包后的应用用 `nana_ui_platform::application_identity!` 声明身份：它会在二进制里留下身份标记。packager 与 validator 都拿它比对。开启 `packaged-resources` feature 后。调用 `.resource_packs(ResourcePackOptions)` 会读取 package manifest。并把 `.nrpack` 资源包挂载到 `nana://res/<逻辑路径>`。样式、`@font-face`、`url()` 都能直接引用。安装版和便携版里。没有显式 base 的相对 `url()` 以 `runtime_resources` 为基准。不再以 CWD 为基准。详见 [打包与分发](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/packaging.md)。
 
 ## RuntimeProgram
 
@@ -146,7 +146,7 @@ Cargo 不会因你写了 `CalendarHeatmap` 就自动打开 `calendar`。
 `crates/nana-ui/examples/application-counter.rs`。
 下列低层合同用于自行管理窗口/文档的嵌入式宿主。
 
-只从 Rust 类型创建控件（`mount` / 声明式视图 / `.vue`）的应用。可以设 `const BUILTINS: BuiltinComponents = BuiltinComponents::Typed;`：内置控件只注册标识。程序没创建过的控件不会被链接进来。按标签构造控件的宿主保持默认的 `Full`。详见 [声明式视图](reactive-view.md#控件级摇树builtincomponentstyped)。
+只从 Rust 类型创建控件（`mount` / 声明式视图 / `.vue`）的应用。可以设 `const BUILTINS: BuiltinComponents = BuiltinComponents::Typed;`：内置控件只注册标识。程序没创建过的控件不会被链接进来。按标签构造控件的宿主保持默认的 `Full`。详见 [声明式视图](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/reactive-view.md#控件级摇树builtincomponentstyped)。
 
 `ApplicationWindow::demand` 与低层 `RuntimeProgram::frame_demand` 使用同一
 `FrameDemand`：默认 `OnDemand`。单次截止时间 `At(Instant)`。持续刷新
@@ -166,7 +166,7 @@ device/surface 丢失后宿主调用 `RuntimeDocument::set_surface_generation`�
 
 | 方法 | 职责 |
 | --- | --- |
-| `initialize` | 建程序实例；可返回要在第一帧 `update` 的消息。被调用的时刻就是启动的 `UiReady`，只建第一屏，重活交给任务，见 [两阶段启动](startup.md) |
+| `initialize` | 建程序实例；可返回要在第一帧 `update` 的消息。被调用的时刻就是启动的 `UiReady`，只建第一屏，重活交给任务，见 [两阶段启动](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/startup.md) |
 | `startup_takeover` | 可选；`initialize` 建的文档是否立即接管 Early Splash（默认 `Immediate`），`Deferred` 则等 `context.startup().take_over(ticket)` |
 | `startup_changed` | 可选；启动阶段变化（请求、撤回、交接完成） |
 | `with_document` / `with_document_mut` | 按 `WindowId` 在访问闭包中交出 `RuntimeDocument` |
@@ -181,7 +181,7 @@ device/surface 丢失后宿主调用 `RuntimeDocument::set_surface_generation`�
 | `bind_window` | present 之后填内容 |
 | `rebuild_gpu` | 设备丢失后重绑资源 |
 | `window_event` | 窗口生命周期。系统关闭与标题栏关闭按钮都只发 `CloseRequested`，宿主不自行关窗；返回 `WindowCommand::Close(id)` 或 `exit()` 才关闭。默认实现立即关闭，需要先保存的程序可稍后再返回 |
-| 通过 `WindowHandle::set_menu_bar` 设置菜单 | 原生菜单栏；选中项用 `take_menu_activations()` 每帧 drain，见 [窗口](window.md#菜单栏) |
+| 通过 `WindowHandle::set_menu_bar` 设置菜单 | 原生菜单栏；选中项用 `take_menu_activations()` 每帧 drain，见 [窗口](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/window.md#菜单栏) |
 | `input_event` | Runtime 派发之后的原始输入，唯一的输入钩子。参数 `RoutedInput` 同时带 `event`、`pointer_hit`（仅指针与滚轮）和 `disposition`；已消费事件仍派发，应用快捷键应检查 `disposition.prevent_default` |
 | `next_wakeup` / `wake` | 与重绘无关的定时工作 |
 | `host_failure` | 宿主已从该错误恢复；默认忽略 |
@@ -222,7 +222,7 @@ device/surface 丢失后宿主调用 `RuntimeDocument::set_surface_generation`�
 | `next_wakeup(&self)` / `wake(&mut self, now, windows, cx)` | `next_wakeup` / `wake` |
 | `close_requested(&mut self, id, windows, cx)` | `window_event` 的 `CloseRequested`。默认回 `WindowCommand::Close(id)`；回答里不带它，窗口就留着（先确认、收到托盘），决定后再从 `update` 关 |
 
-富文本：`nana_ui::runtime::rich` 是值的词汇（`RichText`、`RichSpanStyle`、`RichTextStroke`、`RichTextShadow`、Style Model 的 `PaintColor`）。`RichTextView` 组件或 `MutationQueue::set_rich_text(id, rich)` 把它挂到文本节点上，按改到的层定价：塑形层重新排版，绘制层只重绘，`effect` 不碰文本。见 [RichTextView](../components/rich-text-view.md) 与 [文本引擎](text-engine.md#富文本-span)。编辑用 [RichTextEditor](../components/rich-text-editor.md)：工具栏调 `AppContext::rich_edit(entity, RichEditCommand)`，文档经 `RichTextEditorEvent::Changed` 交回应用。逐字特效和打字机揭示用 `AppContext::set_rich_presentation(node, effects, reveal)`，只是呈现，不做文本工作，只在播放期间请求帧。
+富文本：`nana_ui::runtime::rich` 是值的词汇（`RichText`、`RichSpanStyle`、`RichTextStroke`、`RichTextShadow`、Style Model 的 `PaintColor`）。`RichTextView` 组件或 `MutationQueue::set_rich_text(id, rich)` 把它挂到文本节点上，按改到的层定价：塑形层重新排版，绘制层只重绘，`effect` 不碰文本。见 [RichTextView](https://github.com/sena-nana/NanaUI/blob/main/docs/components/rich-text-view.md) 与 [文本引擎](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/text-engine.md#富文本-span)。编辑用 [RichTextEditor](https://github.com/sena-nana/NanaUI/blob/main/docs/components/rich-text-editor.md)：工具栏调 `AppContext::rich_edit(entity, RichEditCommand)`，文档经 `RichTextEditorEvent::Changed` 交回应用。逐字特效和打字机揭示用 `AppContext::set_rich_presentation(node, effects, reveal)`，只是呈现，不做文本工作，只在播放期间请求帧。
 
 `AppContext::animation_now()` 是文档的动画时钟：合成器上一次采样动画用的时间。应用自己排的呈现（打字机揭示、逐字特效的起点）读它，和合成器用同一个时钟，不用会漂移的墙钟。
 
@@ -246,7 +246,7 @@ update_component(entity, |view, _| { … }) // 改单个字段
 set_component(entity, Button::new(…))     // 整体换 props，保留交互态
 ```
 
-挂载视图是初次整页（一次 commit）。之后靠绑定定点更新。`mount` 是 keyed 子树协调。不是第二套渲染器。点击 handler 不要重新挂载一遍。细则见 [L3：用 Rust 建界面](l3-authoring.md)。
+挂载视图是初次整页（一次 commit）。之后靠绑定定点更新。`mount` 是 keyed 子树协调。不是第二套渲染器。点击 handler 不要重新挂载一遍。细则见 [L3：用 Rust 建界面](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/l3-authoring.md)。
 
 从应用状态整体重建一个组件时用 `set_component`。不要在 `update_component` 里写
 `*view = 新的()`：后者连运行时拥有的交互态一起覆盖。表现为刷新一下菜单就收起、
@@ -475,10 +475,10 @@ cx.set_image_sampling(ImageSampling::Mipmap); // Painter 里之后的 cx.image
 没写宽高的 `<img>`（`content_image`）按图片解码出的尺寸布局。只写了一边的，另一边按宽高比换算。
 尺寸到达前盒子没有面积，图片照样加载。内建宿主每帧 present 之后把新尺寸交给这个窗口的文档，
 下一帧重新布局。自接事件循环的宿主用 `SceneWgpuPainter::take_image_natural_sizes` 和
-`commit_image_natural_sizes` 做同一件事（见 [布局 · 替换内容](layout.md)）。
+`commit_image_natural_sizes` 做同一件事（见 [布局 · 替换内容](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/layout.md)）。
 
 HostTexture 的像素归宿主：默认仍只采样第 0 层。宿主按 `painted_extent` 准备尺寸（见
-[实时画面](gpu.md#按实际绘制像素准备内容)）。宿主自己上传了 mip 链时。在 `GpuTextureView` /
+[实时画面](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/gpu.md#按实际绘制像素准备内容)）。宿主自己上传了 mip 链时。在 `GpuTextureView` /
 `Thumbnail` / `Avatar` 上用 `.sampling(ImageSampling::Mipmap)`（`CustomRenderNode::with_sampling`）切到三线性采样。
 
 消息有两个入口。按类型选：`dispatch_program` **按 Rust 类型只保留最后一条**。适合「后一条取代前一条」的状态消息（resize、主题变了、请求重绘）。`dispatch_program_all` 按派发顺序全部送达。业务消息通常是一个 `enum`。那就是**同一个类型**。用 `dispatch_program` 会让同一帧内的两次点击塌成一次、悄悄丢掉第一次。这种情况用 `dispatch_program_all`。两者都在下一帧进入 `update`。
@@ -572,7 +572,7 @@ macOS `WKWebView`。Windows/Linux 明确不可用。`nana-ui` 没有独立的
 
 需要把网页当画面素材（直播挂件、叠加层）时用无头 `WebSurface`：
 `RuntimeProgram::web_surface_requests` 声明页面，帧交给应用自己的 sink。它不在
-UI 树里，也不是 WebView 产品壳。合同见 [GPU 参考](gpu.md#无头网页画面websurface)。
+UI 树里，也不是 WebView 产品壳。合同见 [GPU 参考](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/gpu.md#无头网页画面websurface)。
 
 
 ### 多文档布局缓存
@@ -671,7 +671,7 @@ hosted 宿主在布局收敛后暂存无障碍变化。在成功呈现后、应�
 
 ## 窗口服务
 
-`RuntimeProgramContext::windows()` 提供线程安全的 `WindowService`。`window()` 提供当前窗口的 `WindowHandle`。窗口描述统一为 `WindowDescriptor`。只放一幅画面的窗口用 `content_aspect_ratio` 锁定客户区宽高比，框架负责拖边、最小尺寸与换比例，见 [内容宽高比](window.md#内容宽高比)。`ApplicationState::build` 在每扇窗口发布前执行。构建失败不显示窗口。窗口事件可在 `ApplicationState::window_event` 中观察。详见 [窗口](window.md#多窗口) 的完成语义、embedded 接口和迁移说明。
+`RuntimeProgramContext::windows()` 提供线程安全的 `WindowService`。`window()` 提供当前窗口的 `WindowHandle`。窗口描述统一为 `WindowDescriptor`。只放一幅画面的窗口用 `content_aspect_ratio` 锁定客户区宽高比，框架负责拖边、最小尺寸与换比例，见 [内容宽高比](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/window.md#内容宽高比)。`ApplicationState::build` 在每扇窗口发布前执行。构建失败不显示窗口。窗口事件可在 `ApplicationState::window_event` 中观察。详见 [窗口](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/window.md#多窗口) 的完成语义、embedded 接口和迁移说明。
 
 ### 按种类认领窗口（`WindowRegistry`）
 

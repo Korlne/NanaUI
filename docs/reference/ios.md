@@ -1,6 +1,6 @@
 # iOS 实验宿主
 
-iOS 宿主（`platform/ios`）是一条**实验性**宿主路径，和 [Android](android.md) 一样不是产品交付目标。它和 Android 共用 [移动宿主](mobile-host.md)那一层。
+iOS 宿主（`platform/ios`）是一条**实验性**宿主路径，和 [Android](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/android.md) 一样不是产品交付目标。它和 Android 共用 [移动宿主](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/mobile-host.md)那一层。
 
 ## 结构
 
@@ -105,4 +105,4 @@ xcrun simctl launch --console-pty booted dev.nana.probe
 | 体积 | 记录 IPA 增量 | Release 归档 |
 | 手感 | 中文输入法组字、长按选区、放大镜、编辑菜单都可用；滑动和回弹与 SwiftUI 版并排对比 | 真人操作 |
 
-网格的触摸拖动滚动走 runtime 的触摸滚动，iOS 宿主选 `ScrollPhysics::Ios`：每毫秒按 0.998 减速，拖过边缘有橡皮筋效果，松手后回弹。合同见 [runtime-scene.md](runtime-scene.md#触摸滚动与-scrollphysics)。手感上要和 SwiftUI 版并排比的是：甩动多远停下、回弹的力度，以及从按下到开始滚动的 8 逻辑像素 slop。
+网格的触摸拖动滚动走 runtime 的触摸滚动，iOS 宿主选 `ScrollPhysics::Ios`：每毫秒按 0.998 减速，拖过边缘有橡皮筋效果，松手后回弹。合同见 [runtime-scene.md](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/runtime-scene.md#触摸滚动与-scrollphysics)。手感上要和 SwiftUI 版并排比的是：甩动多远停下、回弹的力度，以及从按下到开始滚动的 8 逻辑像素 slop。

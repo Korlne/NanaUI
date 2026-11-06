@@ -1,6 +1,6 @@
 # Runtime 与 Scene 渲染抽取合同
 
-本文面向修改 `nana-ui-runtime`（保留树）或 `nana-ui-scene`（绘制图抽取与合成）的框架维护者。应用层心智模型请见 [框架如何运行](how-it-works.md)，宿主入口签名请见 [应用 API](application-api.md)。
+本文面向修改 `nana-ui-runtime`（保留树）或 `nana-ui-scene`（绘制图抽取与合成）的框架维护者。应用层心智模型请见 [框架如何运行](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/how-it-works.md)，宿主入口签名请见 [应用 API](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/application-api.md)。
 
 产品主线严格保持单向：`UiWorld` → `ExtractedNode` → `UiScene` → `SceneWgpuPainter`。`nana-ui-runtime` 与 `nana-ui-scene` 均**不依赖 WGPU**；`nana-ui-scene` 不持有任何应用业务状态、窗口句柄或 GPU 设备对象。
 

@@ -27,7 +27,7 @@ when(editing, || text_input().model(draft))
 
 `<KeepAlive>` 包住一条 `v-if` / `v-else-if` / `v-else` 链。除了 `class`，它没有属性。藏起来的分支移进容器里一个隐藏的 `Stack`：不参与布局、绘制和命中，焦点会移走。容器销毁时，留下的分支一起销毁。
 
-和 `<Transition>` 套在一起时，保活的分支切走不播离场，切回来时播进场。见 [Transition](transition.md)。
+和 `<Transition>` 套在一起时，保活的分支切走不播离场，切回来时播进场。见 [Transition](https://github.com/sena-nana/NanaUI/blob/main/docs/guide/built-ins/transition.md)。
 
 ## 按 key 留住几页
 

@@ -55,7 +55,7 @@ widget(RichTextView::new(line).font_size(20.0))
 
 `size` 比节点字号大的那段，按节点自己的行高比例撑高它所在的行。节点用绝对行高时，比例是行高除以节点字号。
 
-`stretch(percent)` 是 CSS `font-stretch`，正常宽度的百分比（50–200）。字族里有 condensed / expanded 的静态字面时选它；字面有 `wdth` 轴时把轴设到这个值。怎么选由 `nana-text` 决定，规则见[文本引擎](../reference/text-engine.md#匹配)。
+`stretch(percent)` 是 CSS `font-stretch`，正常宽度的百分比（50–200）。字族里有 condensed / expanded 的静态字面时选它；字面有 `wdth` 轴时把轴设到这个值。怎么选由 `nana-text` 决定，规则见[文本引擎](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/text-engine.md#匹配)。
 
 `background_color(color)` 在这段字后面填色，和 CSS 给行内元素设 `background-color` 一样：跨行时每行填它在那一行的那一截。矩形来自排版本身（和选区同一种算法），所以双向文本、竖排、注音都对得上。背景在文档选区、编辑器选区和字形下面。只改背景色是绘制层变化，不重新塑形、不重新排版。
 
@@ -285,7 +285,7 @@ widget(RichTextView::new(RichText::new("欢迎来到直播间")))
 - 入场：`GlyphIntro::fade` / `pop` / `rise`。
 - 竖排（`vertical-rl` / `vertical-lr`）里，`wave`、`jump` 和 `rise` 自动改走列的横截方向：“上”是右边，`rise` 从左边进来。方向取自节点的 `writing-mode`，不用另外设置。
 - 贴纸跟着自己所在的字素揭示、跟着它的特效动。
-- 代价：播放期间宿主默认以 120Hz 呈现这扇窗口；程序用 `RuntimeProgram::max_frame_rate` 封顶（见 [应用 API](../reference/application-api.md#runtimeprogram)）。只有逐字呈现在动、其他东西都没变时，绘制器从第二帧起把第一处文字之前画好的内容（背景、面板等）留作快照，之后每帧拷回快照、只重画文字，不再画几何。帧里有别的合成动画、图表过渡，或第一处文字前有 HostTexture / GPU 节点时照常整帧重画。逐字呈现停止后快照即释放。
+- 代价：播放期间宿主默认以 120Hz 呈现这扇窗口；程序用 `RuntimeProgram::max_frame_rate` 封顶（见 [应用 API](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/application-api.md#runtimeprogram)）。只有逐字呈现在动、其他东西都没变时，绘制器从第二帧起把第一处文字之前画好的内容（背景、面板等）留作快照，之后每帧拷回快照、只重画文字，不再画几何。帧里有别的合成动画、图表过渡，或第一处文字前有 HostTexture / GPU 节点时照常整帧重画。逐字呈现停止后快照即释放。
 
 ## 属性
 
@@ -297,7 +297,7 @@ widget(RichTextView::new(RichText::new("欢迎来到直播间")))
 | `font_family` | `String` | 节点字体族，CSS `font-family` 语法 |
 | `line_height` | `f32` | 行高，是每个 run 自己字号的倍数 |
 | `color` | `SemanticColorRole` | 没上色的文字的语义前景 |
-| `width` / `max_width` / `nowrap` | | 同 [Text](text.md) |
+| `width` / `max_width` / `nowrap` | | 同 [Text](https://github.com/sena-nana/NanaUI/blob/main/docs/components/text.md) |
 
 ## 事件
 
@@ -305,7 +305,7 @@ widget(RichTextView::new(RichText::new("欢迎来到直播间")))
 
 ## 参见
 
-[Text](text.md) · [总览](index.md) · [文本引擎](../reference/text-engine.md#富文本-span)
+[Text](https://github.com/sena-nana/NanaUI/blob/main/docs/components/text.md) · [总览](https://github.com/sena-nana/NanaUI/blob/main/docs/components/index.md) · [文本引擎](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/text-engine.md#富文本-span)
 
 
 ### 组合效果

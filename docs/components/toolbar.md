@@ -33,7 +33,7 @@ widget(Toolbar::new().label("主工具栏")).children((button("保存"), button(
 
 保存、运行这类动作是你放进去的按钮。条不解释按钮的含义，只把它们放在同一条可访问的工具栏里。
 
-要像原生工具栏那样用 ArrowLeft / ArrowRight 在按钮之间走，给条加上 `.roving_focus(RovingFocusGroup::horizontal())`。Home / End 去第一枚、最后一枚，按钮仍都在 Tab 顺序里。见 [控件](../reference/components.md) 的方向键焦点组。
+要像原生工具栏那样用 ArrowLeft / ArrowRight 在按钮之间走，给条加上 `.roving_focus(RovingFocusGroup::horizontal())`。Home / End 去第一枚、最后一枚，按钮仍都在 Tab 顺序里。见 [控件](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/components.md) 的方向键焦点组。
 
 ## 表面和排列
 
@@ -62,4 +62,4 @@ widget(Toolbar::new().label("主工具栏")).children((button("保存"), button(
 
 ## 参见
 
-[总览](index.md) · [控件](../reference/components.md) · [工作区](../reference/workspace.md)
+[总览](https://github.com/sena-nana/NanaUI/blob/main/docs/components/index.md) · [控件](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/components.md) · [工作区](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/workspace.md)

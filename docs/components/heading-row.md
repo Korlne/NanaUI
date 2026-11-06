@@ -58,4 +58,4 @@ heading_row(
 
 ## 参见
 
-[版式与组合](../guide/composition.md) · [ScrollView](scroll-view.md) · [IconButton](icon-button.md) · [总览](index.md)
+[版式与组合](https://github.com/sena-nana/NanaUI/blob/main/docs/guide/composition.md) · [ScrollView](https://github.com/sena-nana/NanaUI/blob/main/docs/components/scroll-view.md) · [IconButton](https://github.com/sena-nana/NanaUI/blob/main/docs/components/icon-button.md) · [总览](https://github.com/sena-nana/NanaUI/blob/main/docs/components/index.md)

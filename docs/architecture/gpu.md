@@ -2,7 +2,7 @@
 
 在 NanaUI 中，实时画面（着色器输出、预览视口、视频流、离屏渲染纹理）是界面树上的一等节点：它占据布局尺寸、受父级圆角和滚动区域裁切、参与指针命中测试，并且严格按**文档顺序（document order）**与周围的按钮、卡片、浮层合成——既不是窗口上抠出的“洞”，也不是最后盖在界面顶上的 HUD 层。
 
-宿主进程只持有一份 `GpuContext`（WGPU 是唯一正式图形后端），每一帧的 `FrameContext` 也归宿主所有；`SceneWgpuPainter` 直接往宿主的帧里录制绘制命令，不创建第二套 `Device` / `Queue`，也不把画面读回 CPU。完整技术合同见 [实时画面参考](../reference/gpu.md)。
+宿主进程只持有一份 `GpuContext`（WGPU 是唯一正式图形后端），每一帧的 `FrameContext` 也归宿主所有；`SceneWgpuPainter` 直接往宿主的帧里录制绘制命令，不创建第二套 `Device` / `Queue`，也不把画面读回 CPU。完整技术合同见 [实时画面参考](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/gpu.md)。
 
 ::: warning
 切勿在应用或插件里额外调用 `request_device`。多窗口、自定义渲染器（`wgpu-interop`）以及跨线程帧交换（`FrameExchange`）全部复用宿主这一份 `GpuContext`。

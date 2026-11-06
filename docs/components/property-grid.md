@@ -66,4 +66,4 @@ widget(PropertyGrid::new([
 
 ## 参见
 
-[ScrubField](scrub-field.md) · [DynamicForm](dynamic-form.md) · [总览](index.md)
+[ScrubField](https://github.com/sena-nana/NanaUI/blob/main/docs/components/scrub-field.md) · [DynamicForm](https://github.com/sena-nana/NanaUI/blob/main/docs/components/dynamic-form.md) · [总览](https://github.com/sena-nana/NanaUI/blob/main/docs/components/index.md)

@@ -2,7 +2,7 @@
 
 `suspense` 在内容第一次准备好之前显示回退。内容会立刻建好，只是先藏起来。里面创建的每一个 `resource` 都完成了第一次加载，回退才撤掉。之后的重新加载留着旧内容，不再切回去。
 
-加载本身见 [异步](../components/async.md)。`profile` 在内容构建时创建 `resource`。
+加载本身见 [异步](https://github.com/sena-nana/NanaUI/blob/main/docs/guide/components/async.md)。`profile` 在内容构建时创建 `resource`。
 
 :::api
 
@@ -64,7 +64,7 @@ when(move || user.loading(), || text("正在刷新…")).otherwise(|| text(name)
 
 乐观更新用 `user.set(新值)`。已经发出的 fetch 完成后仍会覆盖它。这和回退无关：内容本来就在显示。
 
-没有宿主轮询时，第一次加载不会完成，回退会一直留着。窗口宿主会调用 `set_task_wake` 并 `poll_tasks()`。测试和嵌入要自己轮询。见 [异步](../components/async.md)。
+没有宿主轮询时，第一次加载不会完成，回退会一直留着。窗口宿主会调用 `set_task_wake` 并 `poll_tasks()`。测试和嵌入要自己轮询。见 [异步](https://github.com/sena-nana/NanaUI/blob/main/docs/guide/components/async.md)。
 
 ## 接下来
 

@@ -48,7 +48,7 @@ number_input().label("数量").placeholder("0").model(count)
 
 ## 对齐
 
-数字默认靠起始边。样式的 `text-align`（`layout.text_align`）决定比框短的数字放在哪：`End` 靠末端（从左往右书写时是右边），`Center` 居中，`Left` / `Right` 按物理方向。光标、选区和点击都在同一处，不必另外换算。比框长的数字不受影响，照旧从起始边显示、聚焦时跟着光标滚动，和 CSS 一样。[TextInput](text-input.md) 单行时同样。
+数字默认靠起始边。样式的 `text-align`（`layout.text_align`）决定比框短的数字放在哪：`End` 靠末端（从左往右书写时是右边），`Center` 居中，`Left` / `Right` 按物理方向。光标、选区和点击都在同一处，不必另外换算。比框长的数字不受影响，照旧从起始边显示、聚焦时跟着光标滚动，和 CSS 一样。[TextInput](https://github.com/sena-nana/NanaUI/blob/main/docs/components/text-input.md) 单行时同样。
 
 ## 只读
 
@@ -88,4 +88,4 @@ number_input().label("数量").placeholder("0").model(count)
 
 ## 参见
 
-[总览](index.md) · [控件](../reference/components.md)
+[总览](https://github.com/sena-nana/NanaUI/blob/main/docs/components/index.md) · [控件](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/components.md)

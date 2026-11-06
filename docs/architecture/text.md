@@ -15,7 +15,7 @@ UiScene                 ScenePrimitiveKind::Text（直接携带保留的 TextLay
 SceneWgpuPainter::text  字形栅格化、多页图集（Atlas）上传，按文档顺序画入当前帧
 ```
 
-关于缓存键、中日文标点挤压与评测语料的完整细节，请查阅维护者文档 [文本引擎](../reference/text-engine.md) 与 [架构学习：文本引擎](/learn/text-engine)。
+关于缓存键、中日文标点挤压与评测语料的完整细节，请查阅维护者文档 [文本引擎](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/text-engine.md) 与 [架构学习：文本引擎](/learn/text-engine)。
 
 ## 引擎职责与三段式流水线
 

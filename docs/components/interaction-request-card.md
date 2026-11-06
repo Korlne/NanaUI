@@ -73,4 +73,4 @@ cx.assemble_interaction_request_card(card)?;
 
 ## 参见
 
-[Card](card.md) · [FormField](form-field.md) · [DynamicForm](dynamic-form.md) · [总览](index.md)
+[Card](https://github.com/sena-nana/NanaUI/blob/main/docs/components/card.md) · [FormField](https://github.com/sena-nana/NanaUI/blob/main/docs/components/form-field.md) · [DynamicForm](https://github.com/sena-nana/NanaUI/blob/main/docs/components/dynamic-form.md) · [总览](https://github.com/sena-nana/NanaUI/blob/main/docs/components/index.md)

@@ -71,7 +71,7 @@ CSS 写作 `display: layers`，这是 NanaUI 的扩展值，对齐用 `justify-i
 
 `.painter` 可以自绘这个容器的外观。要在内建绘制上加装饰，在 `paint` 里调用 `cx.draw_default()`。
 
-容器的渐变 `mask-image`（`layout.paint.mask`）也作用在自绘内容上，和作用在背景上一样。一条阴影加一个 mask 就能画出只朝一侧的光晕；伸出容器的那部分取盒边上的 mask 值。子节点不受影响。细节见 [布局](../reference/layout.md) 的绘制一节。
+容器的渐变 `mask-image`（`layout.paint.mask`）也作用在自绘内容上，和作用在背景上一样。一条阴影加一个 mask 就能画出只朝一侧的光晕；伸出容器的那部分取盒边上的 mask 值。子节点不受影响。细节见 [布局](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/layout.md) 的绘制一节。
 
 ## 命中
 
@@ -118,4 +118,4 @@ CSS 写作 `display: layers`，这是 NanaUI 的扩展值，对齐用 `justify-i
 
 ## 参见
 
-[总览](index.md) · [控件](../reference/components.md)
+[总览](https://github.com/sena-nana/NanaUI/blob/main/docs/components/index.md) · [控件](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/components.md)

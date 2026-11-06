@@ -2,7 +2,7 @@
 
 本文规定 NanaUI 的宿主 GPU 上下文（`GpuContext` / `FrameContext` / `GpuTexture`）、实时纹理挂载（`HostTexture` / `GpuTextureView`）、同 pass 直写（`GpuView`）、跨线程最新帧交换（`FrameExchange`）以及按图离屏生产（`SceneResourceProducer`）的完整技术合同。
 
-关于无窗口的保留输出、目标规划与多消费方（如 Spout / 录屏器）路径，请参见 [窗口外输出（ExternalSurface）](output.md)；本文所述的 `GpuContext`、`FrameContext` 与 `GpuTexture` 同样是该输出边界的唯一设备、提交与资源所有者。
+关于无窗口的保留输出、目标规划与多消费方（如 Spout / 录屏器）路径，请参见 [窗口外输出（ExternalSurface）](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/output.md)；本文所述的 `GpuContext`、`FrameContext` 与 `GpuTexture` 同样是该输出边界的唯一设备、提交与资源所有者。
 
 ## 后端选择、GPU 策略与 HDR 呈现
 
@@ -10,7 +10,7 @@
 
 Issue #186 的评估结论为 **NO-GO**：WGPU 仍是 NanaUI 的唯一正式图形后端，正式路径保持 `Logical GPU ABI -> WgpuBackend -> wgpu`（详见 [Issue #186 交付记录](https://github.com/sena-nana/NanaUI/tree/docs-archive/archive/docs-notes/consumer-upgrade-2026-09-25-issue186.md)）。
 
-框架 crate 不会越俎代庖地替应用锁死图形后端：workspace 的 `wgpu` 默认只开启 `std`、`parking_lot` 与 `wgsl`；`nana-ui` 的默认特性 `wgpu-backends` 在启用 `gpu` 时会打开当前平台的全部标准后端（Windows 为 DX12 / Vulkan / GLES，Apple 为 Metal，Linux 为 Vulkan / GLES）。如果需要缩减体积、只发行特定图形后端，请在依赖中设置 `default-features = false`，并在应用自己的 `wgpu` 依赖上按平台显式列出所需后端——`hosted_context` 只会在实际编入的后端中选择适配器。DX12 下着色器编译器（`dxcompiler.dll` vs FXC）的选择规则见 [两阶段启动 · DX12 着色器编译器](startup.md#dx12-着色器编译器)。
+框架 crate 不会越俎代庖地替应用锁死图形后端：workspace 的 `wgpu` 默认只开启 `std`、`parking_lot` 与 `wgsl`；`nana-ui` 的默认特性 `wgpu-backends` 在启用 `gpu` 时会打开当前平台的全部标准后端（Windows 为 DX12 / Vulkan / GLES，Apple 为 Metal，Linux 为 Vulkan / GLES）。如果需要缩减体积、只发行特定图形后端，请在依赖中设置 `default-features = false`，并在应用自己的 `wgpu` 依赖上按平台显式列出所需后端——`hosted_context` 只会在实际编入的后端中选择适配器。DX12 下着色器编译器（`dxcompiler.dll` vs FXC）的选择规则见 [两阶段启动 · DX12 着色器编译器](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/startup.md#dx12-着色器编译器)。
 
 ### 适配器选择
 
@@ -142,7 +142,7 @@ fn rebuild_gpu(&mut self, context: &RuntimeProgramContext<Self::Message>) {}
 
 独立创建 WGPU 设备、且没有既有 device-lost callback 的外部生产端，使用 `GpuContext::from_wgpu_with_loss_tracking` 明确把 callback 交给同一 `GpuContext`；所有 clone 的 `is_lost()` / `lost_report()` 共享状态。原 `from_wgpu` 继续保留宿主 callback，不会自动替宿主观察丢失；已有宿主仍自行转发给 embedded runtime。OpenVR / Electron 参考生产端采用前者，避免声明检查 `is_lost()` 却从未安装通知。`controlled_device_loss` 集成测试实际调用 `device.destroy()`，验证 callback 所有权、粘性丢失与替换代际拒绝；这不代表硬件 driver reset 或外部 compositor 的恢复已实测。
 
-在 Windows + DX12 设备上启用 `native-export` feature（对应能力位 `GpuCapability::NativeTextureExport`）后，`NativeExportPool` 可在宿主同一份设备上创建 3 张共享的 `BGRA8` 纹理与一把共享围栏并导出为 NT 句柄，供外部 D3D11 / Spout 消费方零 CPU 回读地跨 API 采样。完整围栏时序（`2k + 1` 就绪、`2k + 2` 释放）与消费方合同请见 [窗口外输出 · DX12 共享纹理](output.md#dx12-共享纹理native-export)。
+在 Windows + DX12 设备上启用 `native-export` feature（对应能力位 `GpuCapability::NativeTextureExport`）后，`NativeExportPool` 可在宿主同一份设备上创建 3 张共享的 `BGRA8` 纹理与一把共享围栏并导出为 NT 句柄，供外部 D3D11 / Spout 消费方零 CPU 回读地跨 API 采样。完整围栏时序（`2k + 1` 就绪、`2k + 2` 释放）与消费方合同请见 [窗口外输出 · DX12 共享纹理](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/output.md#dx12-共享纹理native-export)。
 
 ## 跨线程最新帧交换（`FrameExchange` 与 `FrameBinding`）
 
@@ -223,7 +223,7 @@ let mut binding = FrameBinding::new(
 
 静态或显式修订的渲染器可返回 `Some(revision)`，并在像素发生变化时递增。为保持已有消费者行为，`content_version` 默认沿用 `preparation_version`；动态渲染器需要显式区分二者。安装了动态渲染器但当前场景未引用它，不会使静态输出持续绘制。
 
-通用文字与形状片元材质见 [通用材质](materials.md)。
+通用文字与形状片元材质见 [通用材质](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/materials.md)。
 
 ### 逐帧应用载荷
 

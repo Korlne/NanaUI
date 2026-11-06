@@ -97,4 +97,4 @@ widget(
 
 ## 参见
 
-[NumberInput](number-input.md) · [RangeField](range-field.md) · [总览](index.md)
+[NumberInput](https://github.com/sena-nana/NanaUI/blob/main/docs/components/number-input.md) · [RangeField](https://github.com/sena-nana/NanaUI/blob/main/docs/components/range-field.md) · [总览](https://github.com/sena-nana/NanaUI/blob/main/docs/components/index.md)

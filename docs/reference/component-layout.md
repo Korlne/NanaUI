@@ -14,7 +14,7 @@ Button、Chip 和 ActionMenuItem 的旧 API 保持不变。组件内容声明为
 
 标签被清空的控件（Button、Chip、Checkbox 以及任何自带文字的盒子）交出原文字的度量，和冷布局时没有文字的同一控件相同。此前没有文字的盒子不再进文字工作，旧度量留着，清空标签的 Button 仍保持原来的宽度。
 
-已继续接入 [InlineContent](inline-content.md)：Text/Button/Chip/ActionMenuItem 接受 canonical 内容，普通 retained child 通过 nana-text object placement 混排，typed fragments 携带 source range；高级控件文字复用 Runtime retained layout，atomic Text 子项独立绘制。`StandardVisual` 的兼容 label/icon 字段仍在；ListItem 的 fallback label/note/detail 已继续迁移为 Foundation 的 TextContent/Note/Detail 部件，复用 Flex 分配与 RTL placement；leading/content/trailing 仍为普通 retained slots，读取已有 child placements。SidebarRow 与 FileTab 复用这一路径；纯 label 不额外测量 note/detail。其余组件和完整 chrome/content 拆分继续按下表迁移。
+已继续接入 [InlineContent](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/inline-content.md)：Text/Button/Chip/ActionMenuItem 接受 canonical 内容，普通 retained child 通过 nana-text object placement 混排，typed fragments 携带 source range；高级控件文字复用 Runtime retained layout，atomic Text 子项独立绘制。`StandardVisual` 的兼容 label/icon 字段仍在；ListItem 的 fallback label/note/detail 已继续迁移为 Foundation 的 TextContent/Note/Detail 部件，复用 Flex 分配与 RTL placement；leading/content/trailing 仍为普通 retained slots，读取已有 child placements。SidebarRow 与 FileTab 复用这一路径；纯 label 不额外测量 note/detail。其余组件和完整 chrome/content 拆分继续按下表迁移。
 
 ## mini-layout 审计
 
@@ -70,4 +70,4 @@ Card 标题复用 Runtime 的 retained paragraph，具有独立的单行字形�
 
 CPU p95 和 allocator/RSS 的历史比例需要固定机器上的前后报告。实体数和 parts 数量门禁只证明结构成本，不替代 #188 的 CPU ≤5% / memory ≤8% 比例验收。
 
-参见 [布局结果](layout-result.md)、[布局](layout.md)、[组件](components.md)。
+参见 [布局结果](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/layout-result.md)、[布局](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/layout.md)、[组件](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/components.md)。

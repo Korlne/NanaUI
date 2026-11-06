@@ -52,7 +52,7 @@ widget(AppShell::new()).body(column())
 
 内容换了，接不接指针跟着重新判断：子节点增删（`when`、`dynamic`、`each` 直接作为槽位内容时换了分支或行，`keep_alive` 收起的分支也算移走），或者某个子节点显示、隐藏了，AppShell 都会重新投影这一层，不用重新装配。只看直接子节点：`when` 套在一层 `column()` 里时，外面那层 `column` 一直是内容，要把 `when` 直接交给 `.overlay(..)`。
 
-浮层里的对话框走 `activate_overlay`，或者在对话框上声明 `.open(..)` / `.model(信号)`（见 [Dialog](dialog.md#声明式开合)）。
+浮层里的对话框走 `activate_overlay`，或者在对话框上声明 `.open(..)` / `.model(信号)`（见 [Dialog](https://github.com/sena-nana/NanaUI/blob/main/docs/components/dialog.md#声明式开合)）。
 
 壳只负责把这一层叠在正文上。
 
@@ -86,4 +86,4 @@ widget(AppShell::new()).body(column())
 
 ## 参见
 
-[总览](index.md) · [控件](../reference/components.md) · [工作区](../reference/workspace.md)
+[总览](https://github.com/sena-nana/NanaUI/blob/main/docs/components/index.md) · [控件](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/components.md) · [工作区](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/workspace.md)

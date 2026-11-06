@@ -1,6 +1,6 @@
 # Button
 
-按下后发出 `Activate`。可见标签默认也是可访问名称。同一屏上有多枚可见文字相同的按钮时，用 `accessible_name` 写出各自的动作。要的是一枚图标时，用 [IconButton](icon-button.md)。
+按下后发出 `Activate`。可见标签默认也是可访问名称。同一屏上有多枚可见文字相同的按钮时，用 `accessible_name` 写出各自的动作。要的是一枚图标时，用 [IconButton](https://github.com/sena-nana/NanaUI/blob/main/docs/components/icon-button.md)。
 
 模板里的标签是 `<Button>`。子文本和 `label` 都会写成这一个字段。
 
@@ -44,7 +44,7 @@ button("保存").disabled(pending).on_activate(save)
 | `accessible_name` | `String` | 可访问名称。空字符串沿用 `label`。可见文字保持 `label`，所以一行里的「设置」可以读成「设置 独立捕获窗口」 |
 | `disabled` | `bool` | 常量、信号或闭包 |
 | `loading` | `bool` | 常量、信号或闭包 |
-| `has_popup` | `bool` | 弹出菜单的按钮（`aria-haspopup="menu"`）：读屏报成菜单按钮；焦点在它上面时，ArrowUp / ArrowDown 和 `ContextMenu` 键一样发 `keyboard: true` 的 `SecondaryPress`，由你打开菜单。见 [控件](../reference/components.md) 的菜单按钮 |
+| `has_popup` | `bool` | 弹出菜单的按钮（`aria-haspopup="menu"`）：读屏报成菜单按钮；焦点在它上面时，ArrowUp / ArrowDown 和 `ContextMenu` 键一样发 `keyboard: true` 的 `SecondaryPress`，由你打开菜单。见 [控件](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/components.md) 的菜单按钮 |
 | `Button::content_align` | `TextHorizontalAlignment` | 在组件上。图标和文字这一组放在内容区的起点、中间（默认）或终点；列表行一样的按钮用 `Start` |
 
 ## 事件
@@ -62,4 +62,4 @@ Rust 里用 `.children(...)` 放进按钮的子节点（键帽、色块这类自
 
 ## 参见
 
-[总览](index.md) · [控件](../reference/components.md)
+[总览](https://github.com/sena-nana/NanaUI/blob/main/docs/components/index.md) · [控件](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/components.md)

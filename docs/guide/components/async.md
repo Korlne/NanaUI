@@ -35,7 +35,7 @@ suspense(|| text("加载中…"), move || profile(id))
 
 :::
 
-`<Profile id={id} />` 调用 `profile(id)`（`#[component]` 让模板按名字传参，见 [组合视图](../essentials/view-functions.md)）。内容立刻建好，先藏起来，直到里面创建的 `resource` 第一次完成。之后的重新加载不再切回「加载中…」。模板的 `fallback` 和 `.vue` 里的 `<template #fallback>` 见 [Suspense](../built-ins/suspense.md)。
+`<Profile id={id} />` 调用 `profile(id)`（`#[component]` 让模板按名字传参，见 [组合视图](https://github.com/sena-nana/NanaUI/blob/main/docs/guide/essentials/view-functions.md)）。内容立刻建好，先藏起来，直到里面创建的 `resource` 第一次完成。之后的重新加载不再切回「加载中…」。模板的 `fallback` 和 `.vue` 里的 `<template #fallback>` 见 [Suspense](https://github.com/sena-nana/NanaUI/blob/main/docs/guide/built-ins/suspense.md)。
 
 ## `resource` 记住最近一次结果
 

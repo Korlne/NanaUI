@@ -2,7 +2,7 @@
 
 `DynamicForm` 用稳定的字段描述（`DynamicFormField`）组装设置页、扩展配置和请求表单。每个字段的 `id` 是应用拥有的稳定键（非空且不含 `/`）：同一个键更新时保留底层控件、输入焦点和编辑撤销历史；增删邻近字段不会重建未变字段。
 
-控件表里没有 `<DynamicForm>` 模板标签，两种写法都用 `widget(DynamicForm::new(...))` 挂载。要做专业工具检查器那种密集的两列属性面板（可拖拽公共标签列宽、支持混合值），请用 [PropertyGrid](property-grid.md)。
+控件表里没有 `<DynamicForm>` 模板标签，两种写法都用 `widget(DynamicForm::new(...))` 挂载。要做专业工具检查器那种密集的两列属性面板（可拖拽公共标签列宽、支持混合值），请用 [PropertyGrid](https://github.com/sena-nana/NanaUI/blob/main/docs/components/property-grid.md)。
 
 ## 基本用法
 
@@ -110,4 +110,4 @@ widget(DynamicForm::new([
 
 ## 参见
 
-[PropertyGrid](property-grid.md) · [FormField](form-field.md) · [SettingsRow](settings-row.md) · [InteractionRequestCard](interaction-request-card.md) · [总览](index.md)
+[PropertyGrid](https://github.com/sena-nana/NanaUI/blob/main/docs/components/property-grid.md) · [FormField](https://github.com/sena-nana/NanaUI/blob/main/docs/components/form-field.md) · [SettingsRow](https://github.com/sena-nana/NanaUI/blob/main/docs/components/settings-row.md) · [InteractionRequestCard](https://github.com/sena-nana/NanaUI/blob/main/docs/components/interaction-request-card.md) · [总览](https://github.com/sena-nana/NanaUI/blob/main/docs/components/index.md)

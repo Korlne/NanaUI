@@ -24,7 +24,7 @@ let completed = driver.sample(consumer_id)?;
 
 `render_document` 返回 Runtime 的 flush 结果，不保证 GPU 已提交。若 `driver.work().output_deferred` 大于零，宿主应稍后重试呈现；可使用 `render_scene(document.scene(), ...)` 重试同一份 Scene，无需重复业务 mutation。仅 `poll` 不会补交被跳过的生产帧。`render_scene` 的返回值分别说明各组 `Submitted`、`Reused` 或 `Deferred`。
 
-所有不兼容组共用 driver 里的一个 `SceneWgpuPainter`，并录进同一个帧。每组的目标状态、uniform 与实例缓冲各自独立，共享的字形图集按录制顺序上传（见 [实时画面](gpu.md)）；移除某组时回收它的目标与不再使用的管线集。`PresentationDriver` 固定在创建时的 `GpuContext` 代际上：`configure` 拒绝其他代际的消费方并保留旧计划，设备丢失后 `render_scene` 返回错误且不提交；宿主换到新代际时要新建 driver。
+所有不兼容组共用 driver 里的一个 `SceneWgpuPainter`，并录进同一个帧。每组的目标状态、uniform 与实例缓冲各自独立，共享的字形图集按录制顺序上传（见 [实时画面](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/gpu.md)）；移除某组时回收它的目标与不再使用的管线集。`PresentationDriver` 固定在创建时的 `GpuContext` 代际上：`configure` 拒绝其他代际的消费方并保留旧计划，设备丢失后 `render_scene` 返回错误且不提交；宿主换到新代际时要新建 driver。
 
 无窗口宿主可用 `set_resource_fetch_host` 注入与窗口相同的 policy-gated HTTP(S) 图片传输，用 `set_image_update_waker` 让异步图片完成时唤醒自己的调度器；应在首帧前安装 waker。切换或清空 fetch host 会取消旧 egress 的未完成请求，旧缓存不会跨 host 使用。
 
@@ -112,7 +112,7 @@ fn window_output(&self, id: WindowId) -> Option<WindowOutputConfig> {
 | Headless | `PresentationDriver::render_document`，没有 Window 或 event loop。 |
 | Native host | `PresentationDriver::present_to` 实现同设备目标 transfer；Windows `window-output-probe` / `native_export` 包含真实 D3D11 shared-handle import、GPU wait/copy/release。Windows WARP CI 已通过 native-export 及 240 次 native-host 消费子集，完整硬件/跨进程矩阵未验收。 |
 | OpenVR / SteamVR | `openvr-output-probe` 通过 DX12 ready/release fence、同适配器 D3D11 共享纹理与 `IVROverlay_028` 提交到 SteamVR。默认采用官方 `DXGISharedHandle` 的持久纹理原子 `CopyResource` 更新；本机仅编译与协议检查，未执行 Windows/SteamVR。 |
-| Web bridge | [Electron 44.9.1 参考宿主](../../examples/web-output-bridge/README.md) + `web-output-producer`：跨进程 NT handle → managed `sharedTexture` → `VideoFrame` → WebGPU 绘制。本机覆盖真实 main 使用的协议模块；未执行 Windows/Electron GPU 路径。普通 Web API 无法导入任意 native GPU handle，必须由具体宿主安装并检测专用 bridge；通用 GPU transport 不代表 Electron bridge 已安装。 |
+| Web bridge | [Electron 44.9.1 参考宿主](https://github.com/sena-nana/NanaUI/blob/main/examples/web-output-bridge/README.md) + `web-output-producer`：跨进程 NT handle → managed `sharedTexture` → `VideoFrame` → WebGPU 绘制。本机覆盖真实 main 使用的协议模块；未执行 Windows/Electron GPU 路径。普通 Web API 无法导入任意 native GPU handle，必须由具体宿主安装并检测专用 bridge；通用 GPU transport 不代表 Electron bridge 已安装。 |
 
 通用 `OverlayHostAdapter` 只负责同设备 transfer 与宿主提供的异步消费凭据，不提供或检测浏览器 native import。使用该 transport 的宿主对自己的 `FrameContext` 先 `record`，提交后以同一 submission 调用 `bind_submission`，再非阻塞 `poll`。NanaUI 的 copy 完成后才调用 transport。每个 transport 使用独立目标池，未释放的目标返回 `Deferred`；不得将一个原生单消费方 token 复制给多个独立消费者。
 
@@ -171,7 +171,7 @@ python3 perf/runners/nana/run.py --scenario output-direct --from-report target/p
 python3 perf/contract.py --evaluate-invariants target/performance/output/direct.json
 ```
 
-全部场景的 adapter、invariant 与报告命令见 [性能合同](../../perf/README.md)。Windows/DX12、SteamVR、Electron foreign import 及实际 device-loss 需要对应平台或服务证据；没有执行时明确报告 unavailable，不能用编译通过或合成零计数替代。当前没有实现通用第三方框架/传输协议，也没有 CPU fallback。
+全部场景的 adapter、invariant 与报告命令见 [性能合同](https://github.com/sena-nana/NanaUI/blob/main/perf/README.md)。Windows/DX12、SteamVR、Electron foreign import 及实际 device-loss 需要对应平台或服务证据；没有执行时明确报告 unavailable，不能用编译通过或合成零计数替代。当前没有实现通用第三方框架/传输协议，也没有 CPU fallback。
 
 额外六个 `transport-{overlay-static,overlay-changing,overlay-multi,overlay-slow,web-static,web-changing}` 用真实本地 GPU transfer 验证独立 consumer 池与退休，foreign retirement 明确为 mock。通过 `--transport-only` 独立执行，避免改变原七场景负载。三个 `transport-{native-host,openvr-native,web-native}` 只接收对应真实参考报告：30 次实际预热后，240 次测量，严格核对 fixture、平台路径、设备、尺寸、生产/消费工作量与 CPU 计时。缺指标、空负载或 mock 报告不能判为平台通过。
 
@@ -190,4 +190,4 @@ python3 perf/contract.py --evaluate-invariants target/performance/output/direct.
 
 ## 参见
 
-- [实时画面](gpu.md) · [窗口](window.md) · [架构合同](architecture.md) · [Issue #242 实施记录](https://github.com/sena-nana/NanaUI/tree/docs-archive/archive/docs-notes/issue242-delivery.md) · [GPU 与帧生命周期](/learn/gpu-frame)
+- [实时画面](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/gpu.md) · [窗口](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/window.md) · [架构合同](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/architecture.md) · [Issue #242 实施记录](https://github.com/sena-nana/NanaUI/tree/docs-archive/archive/docs-notes/issue242-delivery.md) · [GPU 与帧生命周期](/learn/gpu-frame)

@@ -71,7 +71,7 @@ button("开始").on_cx(|_button, _event: &nana_ui::runtime::Activate, cx| {
 
 模板里把 `on:Activate={…}` 写成 `|组件, 事件, cx|` 就是这一个方法。`cx.emit(事件)` 把你自己的事件放进队列。跨窗口、换 GPU、持久化走 `dispatch_program`，下一帧进 `update`。点击本身不要塞进 `update`。
 
-这些监听写在节点的 `EventListeners` 上，那是 Runtime 里的权威名单。扩展控件不要在类型外面再存一份。见 [扩展控件](registry.md)。
+这些监听写在节点的 `EventListeners` 上，那是 Runtime 里的权威名单。扩展控件不要在类型外面再存一份。见 [扩展控件](https://github.com/sena-nana/NanaUI/blob/main/docs/guide/components/registry.md)。
 
 ## 接下来
 

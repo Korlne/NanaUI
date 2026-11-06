@@ -1,6 +1,6 @@
 # 类与样式
 
-排一行或一列，先用 `column()` / `row()` 的 `gap`。要写一段 CSS 时，样式表在构建时编译，运行时不再解析。`view!`、`css!` 和 `stylesheet!` 都在 `view-macro` 后面。属性全集不在这里列出，见 [布局（CSS 子集）](../../reference/layout.md) 和 [布局（Rust）](../../reference/rust-layout.md)。
+排一行或一列，先用 `column()` / `row()` 的 `gap`。要写一段 CSS 时，样式表在构建时编译，运行时不再解析。`view!`、`css!` 和 `stylesheet!` 都在 `view-macro` 后面。属性全集不在这里列出，见 [布局（CSS 子集）](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/layout.md) 和 [布局（Rust）](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/rust-layout.md)。
 
 类名写错，两边都是编译错误。
 
@@ -70,7 +70,7 @@ Rust 词法写不出的值放进双引号，例如 `font-size: "1.5em"`。构建
 @container card (max-width: 300px) { .row { height: 40px; } }
 ```
 
-`card` 的宽度不超过 300px 时，里面的 `.row` 高 40px。尺寸由运行时量，跨过断点时只重排受影响的节点。写在后面的普通规则仍然压过容器规则。一个元素同一时刻只跟一个容器的一条轴，至多 16 个断点，超出时在元素上报警告。`css!` 里不能写 `@container`。能写的条件和不支持的部分见 [布局（CSS 子集）](../../reference/layout.md)。
+`card` 的宽度不超过 300px 时，里面的 `.row` 高 40px。尺寸由运行时量，跨过断点时只重排受影响的节点。写在后面的普通规则仍然压过容器规则。一个元素同一时刻只跟一个容器的一条轴，至多 16 个断点，超出时在元素上报警告。`css!` 里不能写 `@container`。能写的条件和不支持的部分见 [布局（CSS 子集）](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/layout.md)。
 
 `each`、`when` 的容器同样接受 `.class`、`.class_when` 和 `.css`。模板里用 `<Block class="strip">` 包住一个 `v-for` 或一条 `v-if` 链，类给容器，不给每一行。行和分支自己的 `class` 仍然留在行上。
 
@@ -104,7 +104,7 @@ column()
 
 :::
 
-`.border` 只写边框颜色。宽度在布局里。颜色和宽度缺一边，边框就不画。组件上一次写全用 `NodeStyle::outline(role, width)` 或 `Stack::outline(role, width)`，见 [布局（Rust）](../../reference/rust-layout.md)。
+`.border` 只写边框颜色。宽度在布局里。颜色和宽度缺一边，边框就不画。组件上一次写全用 `NodeStyle::outline(role, width)` 或 `Stack::outline(role, width)`，见 [布局（Rust）](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/rust-layout.md)。
 
 内置 `nana.light` 和 `nana.dark` 主题提供两套预制 token；应用也可以通过 `ThemeDefinition + ThemeRegistry` 注册自定义主题。当前选择持久化为 `ThemeId`，组件只依赖语义角色，不要依赖主题名称或外观提示。
 

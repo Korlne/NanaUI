@@ -41,7 +41,7 @@ fn task_list(list: Signal<Vec<Todo>>) -> impl IntoView {
 
 模板里 `v-for` 必须写 `key`。不写是模板错误。函数写法里 key 也要给：没写 key 的位置名是每次建行时各数各的，不能用来找回那一行。
 
-key 还在时，行内的字段变化应写在行自己的信号或 [Store](reactivity.md) 上，这样不会把整张列表重算一遍。行被删掉时，只回收这一行的作用域，并销毁它的节点。新行在一次单独的构建里挂上。
+key 还在时，行内的字段变化应写在行自己的信号或 [Store](https://github.com/sena-nana/NanaUI/blob/main/docs/guide/essentials/reactivity.md) 上，这样不会把整张列表重算一遍。行被删掉时，只回收这一行的作用域，并销毁它的节点。新行在一次单独的构建里挂上。
 
 重复的 key 只保留第一个，后面的跳过。
 
@@ -67,9 +67,9 @@ each(list, |todo| todo.id, |todo| text(todo.title)).gap(8)
 
 静态节点不写 key 时按位置命名，`#v0`、`#v1` 这样。需要 `resolve_assembly_path` 按名字找到它时，才在节点上写 `.key("title")`。`each` 里每一行是自己的范围：不同行可以写同样的 key，互不覆盖。挂载之后才加进来的行，同样登记在这个容器下面。
 
-`Store` 的列表用 `keyed(|item| item.id).each(|item| …)`，key 已经在 `keyed` 里，行闭包只负责视图。见 [响应式](reactivity.md)。
+`Store` 的列表用 `keyed(|item| item.id).each(|item| …)`，key 已经在 `keyed` 里，行闭包只负责视图。见 [响应式](https://github.com/sena-nana/NanaUI/blob/main/docs/guide/essentials/reactivity.md)。
 
-很长的列表不要一次建出每一行。`each_virtual` 只建视口盖到的行，合同在 [声明式视图](../../reference/reactive-view.md)。这一章的 `each` 会把现有的行都留在树上。
+很长的列表不要一次建出每一行。`each_virtual` 只建视口盖到的行，合同在 [声明式视图](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/reactive-view.md)。这一章的 `each` 会把现有的行都留在树上。
 
 ## 接下来
 

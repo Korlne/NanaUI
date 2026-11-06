@@ -81,7 +81,7 @@ app.filter().set("done".into());
 
 `.vue` 里 `let x = store(…)`，以及类型是 `Store`、`Subfield`、`Item` 的 prop，都按 store 处理：用到它的绑定在运行时追踪，不会折成常量。单独写这个名字（`:checked="done"`，`done` 是一个 `Subfield` prop）则直接绑定。
 
-字段追踪的表和触发规则在 [声明式视图](../../reference/reactive-view.md)。
+字段追踪的表和触发规则在 [声明式视图](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/reactive-view.md)。
 
 ## 接下来
 

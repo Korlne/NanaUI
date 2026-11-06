@@ -65,7 +65,7 @@ widget(
 
 ## 给标题工具留空
 
-`.heading_room()` 让滚动区向上伸出 `heading_overhang()`、再把内容缩回同样的距离：顶部标题行悬出的工具不被滚动区裁掉。见 [heading_row](heading-row.md)。
+`.heading_room()` 让滚动区向上伸出 `heading_overhang()`、再把内容缩回同样的距离：顶部标题行悬出的工具不被滚动区裁掉。见 [heading_row](https://github.com/sena-nana/NanaUI/blob/main/docs/components/heading-row.md)。
 
 ## 边缘渐隐
 
@@ -83,7 +83,7 @@ ScrollView::new(ScrollAxes::Vertical).edge_fade(14.0, 64.0)
 - 写 0 关掉那一条；两条都是 0 就是没有渐隐。
 - 它存在滚动区的样式上（`PaintStyle::scroll_edge_fade`，类型 `nana_ui_core::ScrollEdgeFade`），所以写在 `.style(…)` 之后；直接在样式里设这个字段也一样。只在竖向溢出裁剪的盒子上生效。
 
-背后是一块已知的实色表面、又想让渐隐只盖住一条底边时，[scroll_foot_fade](scroll-foot-fade.md) 更便宜：它不用把滚动区隔离成一层。
+背后是一块已知的实色表面、又想让渐隐只盖住一条底边时，[scroll_foot_fade](https://github.com/sena-nana/NanaUI/blob/main/docs/components/scroll-foot-fade.md) 更便宜：它不用把滚动区隔离成一层。
 
 ## 跟随末尾
 
@@ -159,4 +159,4 @@ ScrollView::new(ScrollAxes::Vertical).edge_fade(14.0, 64.0)
 
 ## 参见
 
-[总览](index.md) · [控件](../reference/components.md)
+[总览](https://github.com/sena-nana/NanaUI/blob/main/docs/components/index.md) · [控件](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/components.md)

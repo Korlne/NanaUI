@@ -1,6 +1,6 @@
 # 侦听
 
-要在依赖变化时做一件事，而不是派生一个值，用 `watch_effect`。派生用 [计算值](computed.md)。
+要在依赖变化时做一件事，而不是派生一个值，用 `watch_effect`。派生用 [计算值](https://github.com/sena-nana/NanaUI/blob/main/docs/guide/essentials/computed.md)。
 
 它马上跑一遍，记下读到的信号。这些信号以后变了，在下一次任意上下文的 flush 里再跑。返回值是 `Effect`，不是单独的 `Watch` 类型。它不接收旧值和新值，要比较就自己留一份。
 
@@ -45,7 +45,7 @@ fn echoed_label() -> impl IntoView {
 
 这个副作用读 `count`，写的是另一个信号 `echoed`。它写在挂载闭包、某一行或某个分支里时，归那个作用域，作用域回收就停。想提前停，调用 `effect.dispose()`。回收作用域也会停掉它。
 
-副作用互相触发，超过 64 轮还不停，会报 `runtime.reactive.did_not_settle`，剩下的队列被丢掉。不要在 `watch_effect` 里写它自己读的那个信号。怎么改见 [诊断码](../../reference/errors.md)。
+副作用互相触发，超过 64 轮还不停，会报 `runtime.reactive.did_not_settle`，剩下的队列被丢掉。不要在 `watch_effect` 里写它自己读的那个信号。怎么改见 [诊断码](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/errors.md)。
 
 `watch_effect` 的闭包是 `FnMut`，可以改自己捕获的状态。
 

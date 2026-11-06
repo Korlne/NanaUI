@@ -62,7 +62,7 @@ widget(
 
 ## 读屏
 
-打开的菜单和 [Select 的读屏](select.md#读屏) 一样，是字段下的列表框，但只列查询匹配到的选项：位置和总数按匹配项算，查询藏起来的选项没有节点。选项按值认，查询变化时留下来的选项节点不变。读屏激活一项选中的就是这一行显示的选项。
+打开的菜单和 [Select 的读屏](https://github.com/sena-nana/NanaUI/blob/main/docs/components/select.md#读屏) 一样，是字段下的列表框，但只列查询匹配到的选项：位置和总数按匹配项算，查询藏起来的选项没有节点。选项按值认，查询变化时留下来的选项节点不变。读屏激活一项选中的就是这一行显示的选项。
 
 ## 属性
 
@@ -80,7 +80,7 @@ widget(
 | `invalid` | — | 字段 |
 | `opened` | — | 字段 |
 | `highlighted` | — | 字段。`set_query` 把高亮移到第一项；`close` 在开着时清掉高亮 |
-| `menu_scroll` | — | 字段。菜单的滚动位置；`set_query` 让菜单回到第一个匹配项。菜单的展开、滚动和滚动条见 [Select 的菜单](select.md#菜单) |
+| `menu_scroll` | — | 字段。菜单的滚动位置；`set_query` 让菜单回到第一个匹配项。菜单的展开、滚动和滚动条见 [Select 的菜单](https://github.com/sena-nana/NanaUI/blob/main/docs/components/select.md#菜单) |
 
 ## 事件
 
@@ -101,4 +101,4 @@ widget(
 
 ## 参见
 
-[总览](index.md) · [控件](../reference/components.md)
+[总览](https://github.com/sena-nana/NanaUI/blob/main/docs/components/index.md) · [控件](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/components.md)

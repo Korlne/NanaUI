@@ -1,6 +1,6 @@
 # 布局（CSS 子集）
 
-Rust 的第一路径用控件自己的布局。你不写 CSS。排行、列和边框见 [布局与样式（Rust）](rust-layout.md)。
+Rust 的第一路径用控件自己的布局。你不写 CSS。排行、列和边框见 [布局与样式（Rust）](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/rust-layout.md)。
 
 这篇只描述 `nana-ui-css` 能映射的那一部分网页 CSS。`.vue` 方言的 `<style>`、`view!`、`stylesheet!` 与 `css!` 在构建期用它。你用它排界面骨架。
 
@@ -8,7 +8,7 @@ Rust 的第一路径用控件自己的布局。你不写 CSS。排行、列和�
 
 它不是浏览器里的 CSS 引擎。没有完整的选择器世界。对不上，就改布局。不靠容差假装一致。
 
-对话框、抽屉、菜单用 [控件](components.md) 里的浮层。
+对话框、抽屉、菜单用 [控件](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/components.md) 里的浮层。
 
 ## Layout intent authority
 
@@ -153,7 +153,7 @@ track 与间隔，Range 的间隔与 unit 字号，Progress 的标题行与间�
 已迁移：Button、Chip、ActionMenuItem、Checkbox、Switch、Range（label、value 槽、unit，#384）、Progress（label、cancel，#384）、ModalFrame（标题、说明、正文文字，#384）、StatusBadge、ValidationMessage、SelectionOption（竖排圆环、分段项、标签页）、EmptyState、Toast（裸提示的记号、标题、说明、关闭目标，装配后的记号）、MenuSurface 触发器（Popover / ActionMenu / HoverCard 的标签与图标）、ListItem/SidebarRow/FileTab 的文字部件、
 LabeledValue、FormField、Card 标题、Select 触发器。交互、数据行、文本编辑几何（菜单行、
 树行、编辑器）与图表、路径、画布不进部件。逐组件的分类和待迁移项见
-[组件内容布局与迁移审计](component-layout.md)。
+[组件内容布局与迁移审计](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/component-layout.md)。
 
 有子节点的组件把排在子节点前面的部件声明为前置部件（`parts::LeadingParts`，#385）：
 `UiWorld::leading_parts` 给出一条沿组件自己的轴（`Column` 在子节点上方，`Row` 在行内起点：
@@ -284,8 +284,8 @@ measure 计划沿用的前提是节点自己的输入都没变：约束、样式
 - 书写方向：LTR、RTL、vertical-rl。
 
 场景有九种：只改绘制、固定边界内的内容、顺序尺寸变化、父约束、flex 重新分配、grid 贡献、
-行内重排、语言作用域（#260，见 [文本引擎](./text-engine.md) 的「语言作用域与外部度量」）、
-字号缩放作用域（#266，见 [文本引擎](./text-engine.md) 的「字号缩放作用域」）。
+行内重排、语言作用域（#260，见 [文本引擎](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/text-engine.md) 的「语言作用域与外部度量」）、
+字号缩放作用域（#266，见 [文本引擎](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/text-engine.md) 的「字号缩放作用域」）。
 有 2000 段文字的作用域放在 100k 节点文档里的规模门禁，在 `world/issue266.rs`。
 
 门禁只读计数，不看时间：
@@ -300,7 +300,7 @@ measure 计划沿用的前提是节点自己的输入都没变：约束、样式
   移动的组要把子项重新写一遍，但带着计划平移（见下文「只移动了的容器」）；记不下计划的行内
   格式化上下文移动时仍要遍历自己的子项。编辑之前的部分一份也不重建。
 - 页头一列 1200 px 宽，里面只包住自己文字的标签换成更长、仍放得下一行的文字：一帧只排一次布局，
-  开销和不能换行的标签相同，标签下面的盒子都不动，1k 和 10k 相同（文本侧见 [文本引擎](./text-engine.md)
+  开销和不能换行的标签相同，标签下面的盒子都不动，1k 和 10k 相同（文本侧见 [文本引擎](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/text-engine.md)
   的「省略号」一节）。
 - 同样的标签，页面的卡片组直接跟在它那一列后面，是这一列的兄弟：放得下一行的更长文字（能不能
   换行都一样）不改列高，一帧建的图、走的边、放下的盒子在 1k 和 10k 下完全相同，只有标签移动；
@@ -712,7 +712,7 @@ ResponsiveRule)`。
 各层都投影到同一种规则：
 - Rust：`MutationQueue::set_responsive`；
 - `.vue` 的 `<style>`、`view!`、`stylesheet!`：构建期把 `@container` 编进样式表，元素挂载时装上规则
-  （见 [响应式视图](reactive-view.md)；`css!` 只写声明，里面的 `@container` 给出警告）。
+  （见 [响应式视图](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/reactive-view.md)；`css!` 只写声明，里面的 `@container` 给出警告）。
 
 CSS 路径只产出数据，不量容器（见下文「`@container`」）。
 
@@ -723,7 +723,7 @@ CSS 路径只产出数据，不量容器（见下文「`@container`」）。
 
 ## 布局递归与栈
 
-栈的总合同（运行环境、树深上限、哪些遍历可以递归、门禁与同类对照）见 [资源预算](resource-budgets.md)。这里只讲布局的两条递归。
+栈的总合同（运行环境、树深上限、哪些遍历可以递归、门禁与同类对照）见 [资源预算](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/resource-budgets.md)。这里只讲布局的两条递归。
 
 测量（`measure_node`）按树的深度递归：尺寸要从约束传下去的子项里算上来。每一层都先经过 `layout_engine::recursion::level`：
 
@@ -864,7 +864,7 @@ HTML 的 `dir="rtl"` 或 `dir="ltr"` 是 presentational hint。它写入同一�
 
 `text-orientation: mixed | upright | sideways` 会继承。它决定竖排里的字是直立还是侧卧。`upright` 按 CSS 把使用值 `direction` 变成 `ltr`。所以 `vertical-rl; direction: rtl; text-orientation: upright` 的行首回到顶端。逻辑边也跟着落。
 
-文本节点按列排。CJK 直立。那用字体的竖排度量，以及 `vert` 标点字形。拉丁字母和数字侧卧。按盒子高度折列。见 [文本引擎](text-engine.md#writing-mode-与-59)。
+文本节点按列排。CJK 直立。那用字体的竖排度量，以及 `vert` 标点字形。拉丁字母和数字侧卧。按盒子高度折列。见 [文本引擎](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/text-engine.md#writing-mode-与-59)。
 
 TextInput 和 TextArea 也在列里编辑。光标横跨一列。上下键沿列。左右键跨列。点击命中列里的字。
 
@@ -908,7 +908,7 @@ grid 的列是 inline 轴上的轨道。行是 block 轴上的轨道。这是 CS
 
 整值 `subgrid` 继承父网格在该项跨越范围内已经解析的轨道尺寸和 gap。父级没有轨道时，计算为 `none`。不臆造 auto 轨。
 
-把 `subgrid` 当作轨道列表里的单个 token 来写，例如 `subgrid 80px`，仍记 [`GridTrackListUnsupported::Subgrid`](../../crates/nana-ui-core/src/box_layout.rs)。
+把 `subgrid` 当作轨道列表里的单个 token 来写，例如 `subgrid 80px`，仍记 [`GridTrackListUnsupported::Subgrid`](https://github.com/sena-nana/NanaUI/blob/main/crates/nana-ui-core/src/box_layout.rs)。
 
 直接构造 `LayoutStyle { display: Grid }`、不经 css_map 时，`align-items` 默认 `start`。手写测试依赖此项。Default 无法按 display 区分「未写」和显式 `start`。经 `display:grid` 解析，会写成 `stretch`。
 
@@ -920,7 +920,7 @@ grid 的列是 inline 轴上的轨道。行是 block 轴上的轨道。这是 CS
 
 竖排时，盒子的物理宽高仍是 width 和 height。但 IFC 和 `flex-direction: row` 的主轴跟着 writing-mode 的 inline 轴走。`vertical-rl` 的行从右边起排。
 
-你可以用 `text-align`。`start` 和 `end` 随 `direction`，仅横排。`left` 和 `right` 保持物理边。还有 `center`。`justify` 在行内盒的摆放上按 `start` 处理，同时像 CSS 一样继承给下面的文字，让段落两端对齐（见 [文本引擎](text-engine.md#cjk-行决策211)）。
+你可以用 `text-align`。`start` 和 `end` 随 `direction`，仅横排。`left` 和 `right` 保持物理边。还有 `center`。`justify` 在行内盒的摆放上按 `start` 处理，同时像 CSS 一样继承给下面的文字，让段落两端对齐（见 [文本引擎](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/text-engine.md#cjk-行决策211)）。
 
 `white-space: pre` 在量测里保留换行和空格。
 
@@ -990,7 +990,7 @@ Scene 抽取、命中索引、无障碍和 Select 菜单的可用空间都按 `c
 
 窗口改变大小时，布局直接重放这些表面，不用重新投影组件。命中和无障碍读的都是布局给出的盒子。这个字段没有 CSS 写法，由控件写。门禁在 `world/issue200.rs`。
 
-Select、Dropdown、SearchDropdown 的菜单不是布局盒子，是字段的组件几何：按字段的盒子和「菜单看得见的空间」（`SelectMenuRoom`：窗口，再扣掉字段 clip 链上的裁剪，按此刻的滚动位置）用同一个解析器摆放。Scene 画的、`select_option_at` 选的、命中索引里字段那一项带的菜单表面，都从这一份几何来。空间由字段投影时记下；每一趟布局结束后（滚动保留之后），引擎再为文档里开着的菜单按刚发布的布局算一次空间，变了才写回，所以窗口改变大小、字段或外层容器被挪动时，菜单不用等字段重新投影就重新翻面、截高，命中索引随之重建字段那一项。只有滚动不跑布局：页面滚动时菜单跟着字段走，到下一次变化再重新摆放，画和命中仍是同一份。门禁 `issue200_a_select_menu_follows_the_viewport_and_hits_where_it_paints`：窗口变矮再变高，菜单翻上翻下，每一步画在某点的那一行就是指针选中的一行、命中给字段的一点，旧位置不再命中，与冷布局得到的菜单相同。字段（`ComboBox`）的范围是它的布局盒子；菜单打开时，字段下有一个列表框，每个露出来的行一个选项节点，范围同样取自这份几何（行与菜单视口、此刻的「看得见的空间」相交，再经字段的变换），所以读屏读到的、画出来的和指针选中的是同一行，见 [Select 的读屏](../components/select.md#读屏)。门禁在同一个文件：`issue200_a_select_listbox_*`、`issue200_an_open_select_menu_reads_as_a_listbox_of_its_rows` 等。
+Select、Dropdown、SearchDropdown 的菜单不是布局盒子，是字段的组件几何：按字段的盒子和「菜单看得见的空间」（`SelectMenuRoom`：窗口，再扣掉字段 clip 链上的裁剪，按此刻的滚动位置）用同一个解析器摆放。Scene 画的、`select_option_at` 选的、命中索引里字段那一项带的菜单表面，都从这一份几何来。空间由字段投影时记下；每一趟布局结束后（滚动保留之后），引擎再为文档里开着的菜单按刚发布的布局算一次空间，变了才写回，所以窗口改变大小、字段或外层容器被挪动时，菜单不用等字段重新投影就重新翻面、截高，命中索引随之重建字段那一项。只有滚动不跑布局：页面滚动时菜单跟着字段走，到下一次变化再重新摆放，画和命中仍是同一份。门禁 `issue200_a_select_menu_follows_the_viewport_and_hits_where_it_paints`：窗口变矮再变高，菜单翻上翻下，每一步画在某点的那一行就是指针选中的一行、命中给字段的一点，旧位置不再命中，与冷布局得到的菜单相同。字段（`ComboBox`）的范围是它的布局盒子；菜单打开时，字段下有一个列表框，每个露出来的行一个选项节点，范围同样取自这份几何（行与菜单视口、此刻的「看得见的空间」相交，再经字段的变换），所以读屏读到的、画出来的和指针选中的是同一行，见 [Select 的读屏](https://github.com/sena-nana/NanaUI/blob/main/docs/components/select.md#读屏)。门禁在同一个文件：`issue200_a_select_listbox_*`、`issue200_an_open_select_menu_reads_as_a_listbox_of_its_rows` 等。
 
 脱流盒子的高度没写，也没同时写 `top` 和 `bottom` 时，按内容算。它里面按高度填满的子项（`Fill`、百分比高度）没有确定的高度可依，按内容处理。不再取包含块的高度。包含块的高度由这些盒子撑出来时（按内容量高的虚拟列表行），那样会每一趟布局都长高一截，帧永远稳定不下来。
 
@@ -1012,7 +1012,7 @@ Select、Dropdown、SearchDropdown 的菜单不是布局盒子，是字段的组
 
 重叠处的命中排序用同一条前缀切断。否则后面的兄弟卡会抢走菜单点击。卡面本身也在这一层接指针。落在条目之间或内边距上的按下，留在菜单里。不穿到底下的页面。也不当成按触发器去开合菜单。
 
-Select、Dropdown、SearchDropdown 打开的菜单也排在根层叠上下文。层级是 `MENU_OVERLAY_Z_INDEX`，字段自己的 `z-index` 更高时取它，同层按字段的文档顺序排。所以它画在后出现的兄弟组之上，重叠处命中也归它。和弹出层不同，它不是 viewport-fixed：它带着字段的变换，仍受字段外层的裁剪。菜单摆放时只用看得见的那一块，见 [Select 的菜单](../components/select.md#菜单)。
+Select、Dropdown、SearchDropdown 打开的菜单也排在根层叠上下文。层级是 `MENU_OVERLAY_Z_INDEX`，字段自己的 `z-index` 更高时取它，同层按字段的文档顺序排。所以它画在后出现的兄弟组之上，重叠处命中也归它。和弹出层不同，它不是 viewport-fixed：它带着字段的变换，仍受字段外层的裁剪。菜单摆放时只用看得见的那一块，见 [Select 的菜单](https://github.com/sena-nana/NanaUI/blob/main/docs/components/select.md#菜单)。
 
 不要靠你的应用给整张卡抬 `z_index`。
 
@@ -1028,7 +1028,7 @@ Select、Dropdown、SearchDropdown 打开的菜单也排在根层叠上下文。
 
 `text-decoration: underline | line-through` 由 Scene 在文本盒上描线。
 
-`text-emphasis`、`text-emphasis-style`、`text-emphasis-position`、`text-emphasis-color`（以及 `-webkit-` 前缀）给每个字加着重号：`dot`、`circle`、`double-circle`、`triangle`、`sesame` 加 `filled` / `open`，或一个字符串（只取第一个字）。位置是 `over` 或 `under`（中文常用 `under`），默认 `over right`。三者都继承；简写设样式和颜色，不碰位置。记号是半字号的普通字形，标点和空白不加；行盒按记号实际高度长高。改样式或位置只重新布局，改颜色只重画。见 [text-engine.md](text-engine.md) 的「着重号」。
+`text-emphasis`、`text-emphasis-style`、`text-emphasis-position`、`text-emphasis-color`（以及 `-webkit-` 前缀）给每个字加着重号：`dot`、`circle`、`double-circle`、`triangle`、`sesame` 加 `filled` / `open`，或一个字符串（只取第一个字）。位置是 `over` 或 `under`（中文常用 `under`），默认 `over right`。三者都继承；简写设样式和颜色，不碰位置。记号是半字号的普通字形，标点和空白不加；行盒按记号实际高度长高。改样式或位置只重新布局，改颜色只重画。见 [text-engine.md](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/text-engine.md) 的「着重号」。
 
 `font-feature-settings` 和 `font-kerning` 写入 `nana-text` 的 OpenType features。
 
@@ -1066,7 +1066,7 @@ Spinner、stroke mesh，以及非 HostTexture 的 Custom，在透视下画 **ide
 
 `transform-origin` 是独立的 2D 字段。默认是盒中心。它对 2×3 和 4×4 都生效。`transition` 和 `@keyframes` 会插值它的 `%` 和 `px`。仍不算布局。
 
-`transform` 本身的动画走 compositor overlay。不是每帧改逻辑样式。见 [架构](architecture.md)。
+`transform` 本身的动画走 compositor overlay。不是每帧改逻辑样式。见 [架构](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/architecture.md)。
 
 `transform-box` 里，`border-box` 和 `view-box` 相对边框盒。HTML 下 `view-box` 就是边框盒。没有 SVG viewport。`content-box` 和 `fill-box` 相对内容盒。内容盒是边框盒减去 border 和 padding。padding 的 `%` 没有包含块时按 0。这和其它绘制期的 padding 解析一致。`stroke-box` 不解析。
 
@@ -1111,7 +1111,7 @@ mask 在节点的布局盒上求值，只作用于节点自己画的东西，不
 
 `background-image: url(...)` 与 `<img src>`、内联 `<svg>` 共用同一条 decode 加 URL 纹理缓存。支持 `data:image/png|jpeg|svg+xml`、`http://`、`https://`、`file://` 和相对路径。`.svg` 走已有的 `resvg`。最长边 2048，保持比例。不是第二套矢量引擎。
 
-相对 URL 和 `file:` URL 走与样式表相同的 [`canonicalize_within_jail`](../../crates/nana-ui-core/src/url_jail.rs)。非本机的 file host 拒绝。不把 `Url::path()` 回退到任意文件系统。
+相对 URL 和 `file:` URL 走与样式表相同的 [`canonicalize_within_jail`](https://github.com/sena-nana/NanaUI/blob/main/crates/nana-ui-core/src/url_jail.rs)。非本机的 file host 拒绝。不把 `Url::path()` 回退到任意文件系统。
 
 `http(s)` 不在这条 jail 里判。它走宿主注入的 `fetch_host`（`MountOptions.fetch_host`）。源白名单、逐跳复核重定向、跨源去掉授权头、超时，都按 `FetchPolicy`。没注入，就拒绝。
 
@@ -1119,11 +1119,11 @@ mask 在节点的布局盒上求值，只作用于节点自己画的东西，不
 
 正文上限取 8MB 与 `FetchPolicy.max_response_bytes` 的较小值。
 
-相对路径优先相对文档或宿主设置的 base。见 [`set_background_image_url_base`](../../crates/nana-ui/src/scene_paint/image_url.rs)。未设置时，安装版和便携版相对 `ApplicationPaths::runtime_resources()`。开发布局，以及没有应用路径的嵌入宿主，相对进程 cwd。
+相对路径优先相对文档或宿主设置的 base。见 [`set_background_image_url_base`](https://github.com/sena-nana/NanaUI/blob/main/crates/nana-ui/src/scene_paint/image_url.rs)。未设置时，安装版和便携版相对 `ApplicationPaths::runtime_resources()`。开发布局，以及没有应用路径的嵌入宿主，相对进程 cwd。
 
 绝对路径和 `file:` 的 jail 不变。有宿主 base 就用宿主 base，否则用 cwd。
 
-`nana://res/<逻辑路径>` 从打包资源读取。见 [打包与分发](packaging.md)。打包样式表里的相对 `url()`，在加载时改写成同一包内的绝对 `nana://res/` 地址。
+`nana://res/<逻辑路径>` 从打包资源读取。见 [打包与分发](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/packaging.md)。打包样式表里的相对 `url()`，在加载时改写成同一包内的绝对 `nana://res/` 地址。
 
 SVG 的 `<image href>` 不读本地文件。
 
@@ -1153,7 +1153,7 @@ CSS `url()` 的帧仍走 4× MSAA。它和 HostTexture、backdrop 的 interleave
 
 `overflow: auto|scroll` 的滚动权威是 Runtime 的 `ScrollOffset`。滚轮走这条路径。滚动不写回 `LayoutBox`。
 
-偏移保留小数。画面按设备像素吸附。见 [Runtime 与 Scene](runtime-scene.md)。
+偏移保留小数。画面按设备像素吸附。见 [Runtime 与 Scene](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/runtime-scene.md)。
 
 滚动起点在 start 边。这是 CSSOM View 的 scrolling area。`direction: rtl` 的行、`vertical-rl` 的块轴、`row-reverse` 和 `column-reverse` 从右或下开始排。初始视图就是右或下边。向左或向上溢出的内容，用负偏移滚到。和 CSSOM 一样，偏移从 0 往负走。越过 start 边另一侧的内容，滚不到。
 
@@ -1173,7 +1173,7 @@ CSS `url()` 的帧仍走 4× MSAA。它和 HostTexture、backdrop 的 interleave
 - 视口从 600 改成 500：只有跟着视口走的页面计一次视口变化，范围重算 1 次（只有页面自己的条目），clip 是 0。存进相同的度量不计。列表里一行变高，范围变了，视口不计。
 - 虚拟列表滚到窗口之外：滚动帧三项都是 0。同步后，新建行数等于新窗口的行数；下一帧新建的实体是新窗口的，删掉的是旧窗口的。范围重算不超过发布批次数乘以实体数，一万行和一百万行的集合相同。
 
-自定义滚动条铬是 [`ScrollView`](components.md)。`overflow` 不另做一套 thumb 绘制。
+自定义滚动条铬是 [`ScrollView`](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/components.md)。`overflow` 不另做一套 thumb 绘制。
 
 **选择器。** 视图里只有 class 和 class 复合选择器生效（`.card`、`.card.active`），其余选择器给构建警告。下面是引擎本身能解析和匹配的部分。匹配要的树信息（兄弟序号、是否为空、是否选中、焦点、`:has()` 的后代位集）都由调用引擎的一方给出，引擎不自己遍历树。
 
@@ -1211,7 +1211,7 @@ CSS `url()` 的帧仍走 4× MSAA。它和 HostTexture、backdrop 的 interleave
 
 `font-variation-settings` 的过渡在视图里给构建警告。要按轴动画，用 Rust 的 `TransitionBuilder::font_axis`：每个轴一条 Layout-class track。
 
-各属性走哪一类动画（Compositor、Paint、Layout）、fallback 和性能含义见 [架构](architecture.md)。
+各属性走哪一类动画（Compositor、Paint、Layout）、fallback 和性能含义见 [架构](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/architecture.md)。
 
 **增删节点时重算什么。** 什么都不重算。视图运行时不匹配选择器，增删一个子节点不会让兄弟、父节点或祖先重新级联。
 
@@ -1270,9 +1270,9 @@ CSS `url()` 的帧仍走 4× MSAA。它和 HostTexture、backdrop 的 interleave
 
 **`@font-face`。** 引擎只解析 `font-family`、`src`、`font-weight`（含 `200 700` 这种范围），不注册字体。视图里是构建警告。
 
-要用自己的字体，在宿主里调 [`register_host_font_face`](../../crates/nana-ui/src/nana_text.rs)：一个 family 加一段字重范围，登记成一个 face，写入共享的 `FontSystem`。和 `bundled-fonts` 是同一套库。要成组替换，用 `HostFontScope`。这不是 CSSOM 的 `FontFace`。
+要用自己的字体，在宿主里调 [`register_host_font_face`](https://github.com/sena-nana/NanaUI/blob/main/crates/nana-ui/src/nana_text.rs)：一个 family 加一段字重范围，登记成一个 face，写入共享的 `FontSystem`。和 `bundled-fonts` 是同一套库。要成组替换，用 `HostFontScope`。这不是 CSSOM 的 `FontFace`。
 
-宿主手里已经有解析好的 face，可以交给 [`ingest_host_font_faces`](../../crates/nana-ui/src/font_face_ingest.rs)：`HostFontFaceSpec` 的 `weight` 和 `weight_end` 就是 `font-weight` 的范围，整段登记。它读 jail 内的本机文件、`nana://res/` 和 `data:`。CSS 引擎的 `css_at_rule::load_font_face_bytes` 只读文件和资源包，不认 `data:`，因为 `data:` 不是文件路径。内联字体由 ingest 自己解码。
+宿主手里已经有解析好的 face，可以交给 [`ingest_host_font_faces`](https://github.com/sena-nana/NanaUI/blob/main/crates/nana-ui/src/font_face_ingest.rs)：`HostFontFaceSpec` 的 `weight` 和 `weight_end` 就是 `font-weight` 的范围，整段登记。它读 jail 内的本机文件、`nana://res/` 和 `data:`。CSS 引擎的 `css_at_rule::load_font_face_bytes` 只读文件和资源包，不认 `data:`，因为 `data:` 不是文件路径。内联字体由 ingest 自己解码。
 
 单个字体文件的读上限是 8MB。
 
@@ -1349,14 +1349,14 @@ prelude 是 `[名字] 条件`：
 - `::before`、`::after` 生成盒，`content`、`attr()`、计数器、`quotes`。
 - `-webkit-app-region` 和 `app-region`。任意盒不能当标题栏。拖窗只走 `AppTitleBar`，再到 `nana-window`。你写了也不会拖窗。
 - `overflow:auto` 的自定义滚动条铬。走 `ScrollView`。
-- `<iframe>` 加载。见 [应用内浏览器](gpu.md#应用内浏览器)。这一条未实现。
-- 浏览器式 `<video>` 的解码和播放。宿主推帧和 poster 规则见 [实时画面](gpu.md)。
-- 把 `<canvas>` 当成 2D 位图，或当成浏览器的 2D / WebGPU 上下文。GPU 画面走 [实时画面](gpu.md) 的 `GpuTextureView`（`"nana.host-texture"`）。那不是 Chromium 2D。
+- `<iframe>` 加载。见 [应用内浏览器](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/gpu.md#应用内浏览器)。这一条未实现。
+- 浏览器式 `<video>` 的解码和播放。宿主推帧和 poster 规则见 [实时画面](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/gpu.md)。
+- 把 `<canvas>` 当成 2D 位图，或当成浏览器的 2D / WebGPU 上下文。GPU 画面走 [实时画面](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/gpu.md) 的 `GpuTextureView`（`"nana.host-texture"`）。那不是 Chromium 2D。
 - 父级 CSS `perspective` 属性，以及 `preserve-3d`。元素自身的 `perspective()` 加 `rotateY` 已经会画。
 
 畸形的 `font-variation-settings` 仍 fail-closed。字体没有的轴，在 shaping 时跳过，不改写成 `wght`。
 
-Android 和 iOS **不是**产品布局目标。两个实验宿主（[移动宿主](mobile-host.md)）仍用同一份 `LayoutStyle`、Runtime 和 UiScene，没有第二套移动端布局引擎。见 [Android](android.md)、[iOS](ios.md)。 HarmonyOS / OpenHarmony 同样共用这份布局，只是编译档，见 [OHOS](ohos.md)。
+Android 和 iOS **不是**产品布局目标。两个实验宿主（[移动宿主](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/mobile-host.md)）仍用同一份 `LayoutStyle`、Runtime 和 UiScene，没有第二套移动端布局引擎。见 [Android](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/android.md)、[iOS](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/ios.md)。 HarmonyOS / OpenHarmony 同样共用这份布局，只是编译档，见 [OHOS](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/ohos.md)。
 
 `:has`、`::before`、`::after`、`::placeholder`、`::selection` 只是引擎能解析和匹配，视图里都是构建警告，见上文「选择器」。
 
@@ -1370,13 +1370,13 @@ Android 和 iOS **不是**产品布局目标。两个实验宿主（[移动宿�
 
 CSS 解析出来的，是同一份 `LayoutStyle`。
 
-L3 用 [`Stack`](rust-layout.md) 表达这份合同。用 `from_layout`，或用字段 builder。
+L3 用 [`Stack`](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/rust-layout.md) 表达这份合同。用 `from_layout`，或用字段 builder。
 
 真正算盒子的，是 Runtime 的 `RuntimeLayoutEngine`。产品帧走 `RuntimeDocument::flush`。
 
 ## 页面与卡片的留白
 
-NanaUI 的容器边距归属见 [Rust 布局合同](rust-layout.md#浮层定位与容器内边距归属)。
+NanaUI 的容器边距归属见 [Rust 布局合同](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/rust-layout.md#浮层定位与容器内边距归属)。
 
 CSS 只覆盖你声明的边。`padding: 0` 明确清零。
 

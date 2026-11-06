@@ -20,7 +20,7 @@ Rust L3 在修好按组件类型的索引之后，250 到 2,000 行每个规模�
 
 欠下的工作本身是常数时，代价也是常数：502 到 8,002 个节点都在 0.008–0.011 ms。下面每一行都要移位时，仍然是 O(节点数)。
 
-长列表用 `each_virtual`：5 万行挂载加布局加出窗口 2.4 ms，一次建完的 `each` 是 175 ms，每行常驻约 2.3 KB。写法见 [列表](../essentials/list.md)。
+长列表用 `each_virtual`：5 万行挂载加布局加出窗口 2.4 ms，一次建完的 `each` 是 175 ms，每行常驻约 2.3 KB。写法见 [列表](https://github.com/sena-nana/NanaUI/blob/main/docs/guide/essentials/list.md)。
 
 帧上要和 UI 对齐，就走宿主这一次提交：
 
@@ -36,7 +36,7 @@ Rust L3 在修好按组件类型的索引之后，250 到 2,000 行每个规模�
 
 这些数字来自一台机器上的 hover，不是 CI 门禁。Gallery 的 559 张像素门禁守的是这条纯 Rust 路径。时钟曾经被冻在 0，那时 2,000 行的 L3 记成 0.0242 ms，比后来的 0.0819 ms 乐观大约 3.4 倍。现在每个事件按 16 ms 推进，上面的 0.0003 ms 是索引修好之后的数。
 
-测量命令和分段计时在 [一个指针事件的成本](../../reference/input-cost.md)。
+测量命令和分段计时在 [一个指针事件的成本](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/input-cost.md)。
 
 ## 接下来
 

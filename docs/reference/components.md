@@ -12,11 +12,11 @@ let (_, save) = cx.mount_view_root(document_id, || {
 })?;
 ```
 
-视觉与尺寸见 [视觉](look.md)。
+视觉与尺寸见 [视觉](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/look.md)。
 
 ## 目录
 
-**操作与输入。** `Button`、`IconButton`、`TextInput`、`TextArea`、`NumberInput`、`ScrubField`、`Checkbox`、`Switch`、`RangeField`、`RangeSpanField`、`CurveField`、`Select`、`Dropdown`、`SearchDropdown`、`SegmentedControl`、`Tabs`、`XYPad`、`ColorField`、`PathField`、`DatePicker`。`RangeField` 默认在轨道旁画当前值和单位。`.show_value(false)` 只留轨道。读屏仍能读到数值。`.show_label(false)` 不画标签。轨道占满。标签仍是读屏名称。`.rail(粗细)` 只画一条横贯控件的细轨，圆点只在焦点可见时出现，控件高度就是命中区。`.track_gradient(色标)` 把轨道画成渐变条（色相、不透明度这类颜色刻度），没有填充，圆点换成对比色圆环，读屏语义不变。`.value_thumb(true)` 把读数写进宽胶囊滑块（在胶囊上拖动不跳值，单击或 Enter 键入），`.show_bounds(true)` 在轨道两端写最小值和带单位的最大值，`.default_value(Some(值))` 在行末放恢复默认按钮；拖动中按住 Alt（Option）每像素的变化乘 0.1，见 [RangeField](../components/range-field.md)「读数滑块」。`XYPad` 的 `.surface(XYPadSurface::Picture)` 让垫子自己的背景色和背景图层当画面，不画十字轴，值用同样的对比色圆环标出；`ColorField` 的 HSV 方块和色相条就是这两样。`RangeSpanField`（`<RangeSpan>`）是两个滑块圈出的区间，可竖向（最小值在下）；两个滑块各是一个焦点停留点和读屏 `Slider`。`indicator` 是轨道上不吸附、不收输入的实时值，只改它是一次绘制更新。轨道两端从节点边缘内缩 `range_span_track_inset(size)`，旁边的自绘按它对齐。`CurveField`（`<Curve>`）是单位方格里的折线：各点横向位置固定、均匀排开，只能上下拖；每个点是一个焦点停留点和竖向读屏 `Slider`（值读作百分比），左右方向键在点之间走，上下改高度；`ends` 给出两端的固定高度。方格四边内缩 `curve_plot_inset(size)`。
+**操作与输入。** `Button`、`IconButton`、`TextInput`、`TextArea`、`NumberInput`、`ScrubField`、`Checkbox`、`Switch`、`RangeField`、`RangeSpanField`、`CurveField`、`Select`、`Dropdown`、`SearchDropdown`、`SegmentedControl`、`Tabs`、`XYPad`、`ColorField`、`PathField`、`DatePicker`。`RangeField` 默认在轨道旁画当前值和单位。`.show_value(false)` 只留轨道。读屏仍能读到数值。`.show_label(false)` 不画标签。轨道占满。标签仍是读屏名称。`.rail(粗细)` 只画一条横贯控件的细轨，圆点只在焦点可见时出现，控件高度就是命中区。`.track_gradient(色标)` 把轨道画成渐变条（色相、不透明度这类颜色刻度），没有填充，圆点换成对比色圆环，读屏语义不变。`.value_thumb(true)` 把读数写进宽胶囊滑块（在胶囊上拖动不跳值，单击或 Enter 键入），`.show_bounds(true)` 在轨道两端写最小值和带单位的最大值，`.default_value(Some(值))` 在行末放恢复默认按钮；拖动中按住 Alt（Option）每像素的变化乘 0.1，见 [RangeField](https://github.com/sena-nana/NanaUI/blob/main/docs/components/range-field.md)「读数滑块」。`XYPad` 的 `.surface(XYPadSurface::Picture)` 让垫子自己的背景色和背景图层当画面，不画十字轴，值用同样的对比色圆环标出；`ColorField` 的 HSV 方块和色相条就是这两样。`RangeSpanField`（`<RangeSpan>`）是两个滑块圈出的区间，可竖向（最小值在下）；两个滑块各是一个焦点停留点和读屏 `Slider`。`indicator` 是轨道上不吸附、不收输入的实时值，只改它是一次绘制更新。轨道两端从节点边缘内缩 `range_span_track_inset(size)`，旁边的自绘按它对齐。`CurveField`（`<Curve>`）是单位方格里的折线：各点横向位置固定、均匀排开，只能上下拖；每个点是一个焦点停留点和竖向读屏 `Slider`（值读作百分比），左右方向键在点之间走，上下改高度；`ends` 给出两端的固定高度。方格四边内缩 `curve_plot_inset(size)`。
 
 **布局与文本基元。** `Text`、`Stack`（`row` / `column` / `bar` / `spacer` / `layers` / `overlay_layer` 等预设）、`Divider`、`IconGlyph`、`ScrollView`。`Stack::spacer()` 是零宽 flex-grow。它把其后兄弟推到行尾。`Stack::layers()` 是叠层：子项共用同一块区域、各自对齐，等同 ZStack / Box。`Stack::overlay_layer()` 是铺满已定位父级的叠层。它脱流。不命中。会裁剪。给舞台 HUD / 弹幕当容器。节点池仍由你的应用挂。`Divider` 默认交叉轴 `Fill` + `align_self: Stretch`。放进 `align_items: Start` 的列里仍能看见。
 
@@ -24,7 +24,7 @@ let (_, save) = cx.mount_view_root(document_id, || {
 
 **展示。** `Card`、`List` / `ListItem`、`FormField`、`EmptyState`、`Progress`、`Skeleton`、`Spinner`、`StatusBadge`、`Chip`、`Avatar`、`PathText`、`Tooltip`、`ValidationMessage`、`QrCode`、`ImageViewer`、`NativeMarkdown`、`CalendarHeatmap`、`Chart`、`GraphCanvas`、`GraphMinimap`。
 
-**浮层。** `Dialog`、`ConfirmDialog`、`Drawer`、`Popover`、`ActionMenu`、`ContextMenu`、`CommandPalette`。应用内菜单栏 `AppMenuBar` 自己弹出菜单面板，不经 `OverlayHost`，见 [AppMenuBar](../components/app-menu-bar.md)。浮层由框架放在窗口里。靠近边缘时收进视口。不要用 `position: fixed` 自己搭一层。`Popover` / `ActionMenu` 的触发器支持文本（`trigger`）与图标（`trigger_icon`）两种。图标触发器渲染为 28×28 方形按钮。图标在按钮内几何居中。可访问名由 `trigger_icon` 的 label 提供。裸符号（如 `+`）不要用文本触发器。要「图标 + 文字 + 计数」这类触发器（收藏 1800），用视图的 `.trigger(view)` 具名 slot（`Popover::trigger_content(id)`）。那段内容是触发器自己的子节点。它在触发器的外壳里横排。面板关着时照样显示。不算面板的条目。`trigger` 文本仍是可访问名。**触发器仍是 popover 自己。** 按下、焦点、Enter / 空格、面板的锚点都是它的。所以这段内容只做显示。里面不要放可按的控件。面板因按它的触发器、Escape、点外面或应用写 `open = false` 关上时，焦点若还在面板里的条目上，回到触发器。取舍：没有做成「任意元素 `anchor: NodeRef` 打开 popover」。那样面板要跟随另一个节点的盒子。布局里要多一条跨节点依赖（锚点挪了而 popover 没重新布局时面板会留在旧处）。还要额外接线打开、焦点归还和点外判定。slot 让锚点、命中、键盘和关闭沿用 popover 现有的一条路径。代价是触发器的外壳（默认 Subtle 底、控件高度）由 popover 给。`Popover::bare_trigger(true)`（`ActionMenu` 同样转发）去掉静止底色和描边，悬停、按下和打开时仍铺一层洗色。不传则保持浅底加描边。弹出表面是 viewport-fixed。**不进入父级 isolation group。** 卡内菜单会画到后面的兄弟卡之上。重叠处命中同一排序。应用不必给整张卡抬 `z_index`。所在面板的 overflow 裁剪也裁不到它。卡面和面板内容同一层。盖在触发器和页面后面的内容（包括 `z_index` 更高的后出现兄弟）之上。卡面空白处的按下留在面板里。不落到底下。也不开合面板。`Popover` / `ActionMenu` / `HoverCard` 的弹出层挂在触发器**显示的位置**上（经过祖先滚动与变换之后的盒子）。按 `placement` 的一侧放不下而对侧放得下时，翻到对侧。再沿两轴收进视口。两侧都放不下才会压住触发器。打开后滚动页面，弹出层留在原处，直到下一次布局。`DesktopShell` 有两层 `OverlayHost`。`overlay` 放对话框。`status` 放 toast。确认框打开时 toast 仍可显示。`Dialog` / `Drawer` 的标题行可以放一段视图代替标题文字：`.title_content(view)`（`ModalSlots::title_content`），比如名字后面跟一枚状态徽章；它站在标题文字的位置、在行里竖直居中，标题文字不再画，`title` 仍是无障碍名（见 [Dialog](../components/dialog.md#标题内容)）。`Dialog` / `ConfirmDialog` 的卡片外形可以由应用自己画：`.surface_painter(painter)` 在遮罩之上、卡片文字与插槽之下按卡面坐标录一次，`PaintContext::modal_sections` 给出标题行、标题块、正文、底栏的位置；位置、分段和动效仍归主题配方（见 [Dialog](../components/dialog.md#自己画卡面)）。模态面板（对话框、抽屉）打开时，它的表面拿下落在上面的每一次按下。底下侧栏、分栏、Dock 的拖动手柄靠「几像素容差」抢按下的规则，只对没被模态盖住的手柄生效。光标也不会在面板上变成拖动样式。
+**浮层。** `Dialog`、`ConfirmDialog`、`Drawer`、`Popover`、`ActionMenu`、`ContextMenu`、`CommandPalette`。应用内菜单栏 `AppMenuBar` 自己弹出菜单面板，不经 `OverlayHost`，见 [AppMenuBar](https://github.com/sena-nana/NanaUI/blob/main/docs/components/app-menu-bar.md)。浮层由框架放在窗口里。靠近边缘时收进视口。不要用 `position: fixed` 自己搭一层。`Popover` / `ActionMenu` 的触发器支持文本（`trigger`）与图标（`trigger_icon`）两种。图标触发器渲染为 28×28 方形按钮。图标在按钮内几何居中。可访问名由 `trigger_icon` 的 label 提供。裸符号（如 `+`）不要用文本触发器。要「图标 + 文字 + 计数」这类触发器（收藏 1800），用视图的 `.trigger(view)` 具名 slot（`Popover::trigger_content(id)`）。那段内容是触发器自己的子节点。它在触发器的外壳里横排。面板关着时照样显示。不算面板的条目。`trigger` 文本仍是可访问名。**触发器仍是 popover 自己。** 按下、焦点、Enter / 空格、面板的锚点都是它的。所以这段内容只做显示。里面不要放可按的控件。面板因按它的触发器、Escape、点外面或应用写 `open = false` 关上时，焦点若还在面板里的条目上，回到触发器。取舍：没有做成「任意元素 `anchor: NodeRef` 打开 popover」。那样面板要跟随另一个节点的盒子。布局里要多一条跨节点依赖（锚点挪了而 popover 没重新布局时面板会留在旧处）。还要额外接线打开、焦点归还和点外判定。slot 让锚点、命中、键盘和关闭沿用 popover 现有的一条路径。代价是触发器的外壳（默认 Subtle 底、控件高度）由 popover 给。`Popover::bare_trigger(true)`（`ActionMenu` 同样转发）去掉静止底色和描边，悬停、按下和打开时仍铺一层洗色。不传则保持浅底加描边。弹出表面是 viewport-fixed。**不进入父级 isolation group。** 卡内菜单会画到后面的兄弟卡之上。重叠处命中同一排序。应用不必给整张卡抬 `z_index`。所在面板的 overflow 裁剪也裁不到它。卡面和面板内容同一层。盖在触发器和页面后面的内容（包括 `z_index` 更高的后出现兄弟）之上。卡面空白处的按下留在面板里。不落到底下。也不开合面板。`Popover` / `ActionMenu` / `HoverCard` 的弹出层挂在触发器**显示的位置**上（经过祖先滚动与变换之后的盒子）。按 `placement` 的一侧放不下而对侧放得下时，翻到对侧。再沿两轴收进视口。两侧都放不下才会压住触发器。打开后滚动页面，弹出层留在原处，直到下一次布局。`DesktopShell` 有两层 `OverlayHost`。`overlay` 放对话框。`status` 放 toast。确认框打开时 toast 仍可显示。`Dialog` / `Drawer` 的标题行可以放一段视图代替标题文字：`.title_content(view)`（`ModalSlots::title_content`），比如名字后面跟一枚状态徽章；它站在标题文字的位置、在行里竖直居中，标题文字不再画，`title` 仍是无障碍名（见 [Dialog](https://github.com/sena-nana/NanaUI/blob/main/docs/components/dialog.md#标题内容)）。`Dialog` / `ConfirmDialog` 的卡片外形可以由应用自己画：`.surface_painter(painter)` 在遮罩之上、卡片文字与插槽之下按卡面坐标录一次，`PaintContext::modal_sections` 给出标题行、标题块、正文、底栏的位置；位置、分段和动效仍归主题配方（见 [Dialog](https://github.com/sena-nana/NanaUI/blob/main/docs/components/dialog.md#自己画卡面)）。模态面板（对话框、抽屉）打开时，它的表面拿下落在上面的每一次按下。底下侧栏、分栏、Dock 的拖动手柄靠「几像素容差」抢按下的规则，只对没被模态盖住的手柄生效。光标也不会在面板上变成拖动样式。
 
 `Chip`、`ColorField`、`SizeField`、`PathField`、`FileTab` 这类**叶子复合件**在你写 props 的那一刻自己重建子节点。不需要再记一次 `assemble_*`。`Shell` / `Workspace` / `Dock` / `SplitPane` / `PaneSection` 不走这条。它们协调的是应用自己的槽位，而且不便宜。挂到每次写入会破坏「无变更不弄脏」的脏帧合同。这几个仍在装配好槽位后显式调用对应的 `assemble_*`。
 
@@ -36,9 +36,9 @@ let (_, save) = cx.mount_view_root(document_id, || {
 
 `Toast::timeout(Duration)` 让提示挂载满这么久后发一次 `ToastDismissed`，与按下关闭按钮的事件相同。计时器每个提示只启动一次，只在到期时唤醒宿主一次，不逐帧推进。不传则一直等用户关闭。框架不会自己移除提示，收到事件后由应用从列表里删掉。
 
-`AppContext::assemble_toast(toast)` 把提示永久换成由子节点组成的复合形式：标题与描述按配方的行数折行，多出进度条（`Toast::progress`，确定或不确定）、一个动作按钮（`Toast::action`，发 `ToastAction`）、可按的关闭按钮（`dismissible` 时，发 `ToastDismissed`）和替换色调字形的 `Toast::icon`。这几样只在装配后出现，裸 `Toast` 仍是原来那个绘制好的叶子。复合提示宽度随内容，显示进度时至少为配方的 `progress.min_width`；指针悬停或焦点在内时计时器暂停，离开后按剩余时间继续。见 [Toast](../components/toast.md)。
+`AppContext::assemble_toast(toast)` 把提示永久换成由子节点组成的复合形式：标题与描述按配方的行数折行，多出进度条（`Toast::progress`，确定或不确定）、一个动作按钮（`Toast::action`，发 `ToastAction`）、可按的关闭按钮（`dismissible` 时，发 `ToastDismissed`）和替换色调字形的 `Toast::icon`。这几样只在装配后出现，裸 `Toast` 仍是原来那个绘制好的叶子。复合提示宽度随内容，显示进度时至少为配方的 `progress.min_width`；指针悬停或焦点在内时计时器暂停，离开后按剩余时间继续。见 [Toast](https://github.com/sena-nana/NanaUI/blob/main/docs/components/toast.md)。
 
-通知角用 [ToastStack](../components/toast-stack.md)。`push_toast` 装配并放进最新的一条，先量高度、再按 `max_visible` 和高度决定显示哪些，其余排队；`remove_toast` 让在屏上的那条在原位播完退场再拿掉，其余收拢；`clear_toasts` 全部拿掉。`ToastStack::place_in` 与 `Toast::place_in` 同一个预留合同，多一个 `max_height`。栈本身不命中，空隙落到下面的舞台。应用把栈放在模态层之上（模态卡片的 `z_index` 是 1000）时，模态打开期间栈里的提示照常可按，不算点在模态外面，焦点和 Tab 留在模态里。
+通知角用 [ToastStack](https://github.com/sena-nana/NanaUI/blob/main/docs/components/toast-stack.md)。`push_toast` 装配并放进最新的一条，先量高度、再按 `max_visible` 和高度决定显示哪些，其余排队；`remove_toast` 让在屏上的那条在原位播完退场再拿掉，其余收拢；`clear_toasts` 全部拿掉。`ToastStack::place_in` 与 `Toast::place_in` 同一个预留合同，多一个 `max_height`。栈本身不命中，空隙落到下面的舞台。应用把栈放在模态层之上（模态卡片的 `z_index` 是 1000）时，模态打开期间栈里的提示照常可按，不算点在模态外面，焦点和 Tab 留在模态里。
 
 多窗口应用的通知用 `nana_ui::notices`。`NoticeCenter<K, A>` 只有一份，持有全部通知：带业务键 `K` 的按键原位替换，无键消息在 `repeat_window` 内同文不重复。总数超过 `max` 时，先让位普通消息，运行中的任务和它的结果不丢。每条记住来源窗口（`NoticeSource`），创建时落在聚焦窗口，否则依次是主窗、`set_visible` 给的优先窗口、最近活动的窗口。来源隐藏或关闭就迁走，优先回主窗；没有可见窗口时暂存，不计时。迁移会重建 Toast，旧窗口的回调失效，已播报过的内容不再读一遍。每个窗口挂一个 `NoticeHost`（内部是一个 `ToastStack`），每帧调用 `sync(cx, host, window, width, height, placement)` 投影，投影有变化才返回 true。动作和关闭经 `drain()` 带着来源返回。`set_shown_elsewhere(keys)` 暂停这些键的投影，留给别处原位显示。
 
@@ -61,17 +61,17 @@ inactive overlay 与关闭菜单属于结构性隐藏。`ComputedStyle::box_visi
 - **Escape** 关掉最上层的浮层：对话框、确认框、抽屉按 `close_policy`（默认允许，先发 `DialogCloseRequested { trigger: Escape }`）；`Popover` / `ActionMenu` 按 `close_on_escape`（默认开），关上后焦点若在面板里回到触发器。面板里还有打开的下拉框或补全时，Escape 先关那一层。
 - **Enter** 激活焦点所在的动作，没有另一个「默认按钮」的概念：模态打开时焦点落在 `initial_focus` 上（默认 `FirstAction`，确认框里是「取消」，误按 Enter 不会执行破坏性操作）。要 Enter 直接确认，写 `.initial_focus(ModalInitialFocus::Target(确认按钮))`。`Popover` 的触发器上 Enter / 空格开合面板。
 
-`Dialog`、`ConfirmDialog`、`Drawer` 也可以声明开合：`.open(..)` / `.model(信号)`，挂在 `OverlayHost` 下时就是 `activate_overlay` / `dismiss_overlay`，宿主自己做的开合发 `DialogToggled` 并写回 `open`（见 [Dialog](../components/dialog.md#声明式开合)）。
+`Dialog`、`ConfirmDialog`、`Drawer` 也可以声明开合：`.open(..)` / `.model(信号)`，挂在 `OverlayHost` 下时就是 `activate_overlay` / `dismiss_overlay`，宿主自己做的开合发 `DialogToggled` 并写回 `open`（见 [Dialog](https://github.com/sena-nana/NanaUI/blob/main/docs/components/dialog.md#声明式开合)）。
 
 `dismiss_overlay` 先关闭交互并恢复焦点。再保留菜单/对话框绘制到退出动画结束。宿主通过 `OverlayClosing { root }` 同步业务打开状态。通过 `OverlayChanged { active: None }` 处理最终释放。排队的关闭通知应在下一次投影前消费，并核对浮层身份，避免覆盖快速重开。退出期间保留父子关系和 `DesktopShell.overlays` 中的节点。直接 `remove_view` 会立即释放，并跳过退出动画。
 
-**壳层。** `AppShell` / `DesktopShell`、`AppTitleBar`、`Toolbar`、`StatusBar`、`MediaTransportBar`、`Workspace`、`SidebarFrame` / `SidebarSection` / `SidebarRow`、设置行和设置页、`Dock`、`SplitPane`、`PaneChrome`。壳是通用桌面结构。每个区域里放什么由应用决定。见 [工作区](workspace.md)。主区域圆不圆角（外观设置里的「工作区圆角」）写在 `DesktopShell::workspace_corners` 上。壳装配时交给它建的 `Workspace`。不要去改框架建的 `Workspace` 节点。下一次装配会用壳上的值盖掉。
+**壳层。** `AppShell` / `DesktopShell`、`AppTitleBar`、`Toolbar`、`StatusBar`、`MediaTransportBar`、`Workspace`、`SidebarFrame` / `SidebarSection` / `SidebarRow`、设置行和设置页、`Dock`、`SplitPane`、`PaneChrome`。壳是通用桌面结构。每个区域里放什么由应用决定。见 [工作区](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/workspace.md)。主区域圆不圆角（外观设置里的「工作区圆角」）写在 `DesktopShell::workspace_corners` 上。壳装配时交给它建的 `Workspace`。不要去改框架建的 `Workspace` 节点。下一次装配会用壳上的值盖掉。
 
 `SettingsRow::stack_below(480.0)` 可选开启按**该行实际布局宽度**的响应式排列。小于阈值时标签与控件上下排列。等于或大于时同行。默认未开启。`stacked(true)` 始终上下排列。无效阈值视为未开启。控件节点不重建。容器调整宽度由 Runtime 布局回流处理。应用不需要每帧扫描行。
 
 设置行的标签给它放的控件起无障碍名字。`SettingsRow` 装配时（视图里的 `settings_row(..).control(..)`、`mount_settings_leaf_row`、`AppearanceSection` 的各行）用 `MutationQueue::set_labelled_by(控件, 标签节点)` 把两者关联起来。控件自己有非空的名字时用它自己的（`switch("静音")`）。没有时（`switch("")`、分段控件、滑块、下拉选择）用行标签。行标签改了，控件的无障碍节点跟着重新投影。这层关联归组合控件所有。存在 `UiWorld` 里。不是控件 `AccessibilityState` 的一部分。所以控件重新投影自己的状态不会冲掉它。任一端被销毁时关联一起去掉。`Select` 的无障碍名字因此不再取它显示的选项。没人给它起名时仍按显示的文字命名。显示的选项是它的值（`value`）。
 
-`SettingsRow::label_accessory` 是标签后面同一行的应用节点（状态胶囊、徽章）。装配只在有附件时给标签和附件套一条行；标签先收窄省略，附件保持宽度；行的无障碍名字仍是标签。`AppContext::flash_settings_row(row)` 让一行闪一下，用于应用把用户带到这一行之后：行下面一块不参与排版、不接指针的 `AccentSoft` 淡底，左右外扩一个列表项内边距，在表现层上按 `MotionRole::Attention` 保持后淡出，结束时连节点一起拿掉；减少动态效果时全色停留同样时长。见 [SettingsRow](../components/settings-row.md)。
+`SettingsRow::label_accessory` 是标签后面同一行的应用节点（状态胶囊、徽章）。装配只在有附件时给标签和附件套一条行；标签先收窄省略，附件保持宽度；行的无障碍名字仍是标签。`AppContext::flash_settings_row(row)` 让一行闪一下，用于应用把用户带到这一行之后：行下面一块不参与排版、不接指针的 `AccentSoft` 淡底，左右外扩一个列表项内边距，在表现层上按 `MotionRole::Attention` 保持后淡出，结束时连节点一起拿掉；减少动态效果时全色停留同样时长。见 [SettingsRow](https://github.com/sena-nana/NanaUI/blob/main/docs/components/settings-row.md)。
 
 设置行之外，视图里的任何元素都能声明同一层关联：`.labelled_by(标题)`（模板 `labelled_by={caption}`，`.vue` 里 `labelled-by="caption"`）。`标题` 是那段文字的 `NodeRef`、节点 id 或选出它的闭包。写在控件之前、之后或另一段视图里都行。标题重建（在 `when` 里）后关联跟到新节点上。字段标题写在旁边的下拉框、滑块、空标签开关都这样起名，不用挂载后再扫描文档。没有可见标题时，`Select` 写自己的 `label`（`aria-label`，不画出来），`RangeField` 写 `label` 加 `show_label(false)`。
 
@@ -91,13 +91,13 @@ inactive overlay 与关闭菜单属于结构性隐藏。`ComputedStyle::box_visi
 `mount_settings_leaf_row` 保留标签、提示和控件槽。初始没有提示也可以随后通过 `update_component(row, |row, _| row.hint = Some(...))` 显示提示。设置 `None` 隐藏。`assemble_appearance_section` 刷新已有行时保留应用设置的 `stack_below` 与 `stacked`。
 
 
-部分族需要 Cargo feature（`calendar`、`charts`、`graph-canvas`、`rich-text` 等）。见 [应用 API](application-api.md)。这些 feature 会转发到 `nana-ui-runtime` 和 `nana-ui-scene`。它们控制对应实现、几何投影和公开导出。`components` 启用全部可选控件族。精简宿主按需选择。
+部分族需要 Cargo feature（`calendar`、`charts`、`graph-canvas`、`rich-text` 等）。见 [应用 API](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/application-api.md)。这些 feature 会转发到 `nana-ui-runtime` 和 `nana-ui-scene`。它们控制对应实现、几何投影和公开导出。`components` 启用全部可选控件族。精简宿主按需选择。
 
 `DatePicker` 是月历网格。由现有控件组合而成（表头图标按钮 + 日期按钮）。`assemble_date_picker` 建好并复用这 6×7 个按钮。翻月只换标签，不重建。选中发 `DateChanged`。翻月发 `DateCursorMoved`。`range` 之外与非本月的日期不可选。**月份标题由应用给**（`month_label`）。月名是 locale 相关的。框架不带 locale 数据。日期类型是 `nana_ui_core::CivilDate`。只有年月日。不是日期时间库。
 
 `Toolbar` / `StatusBar` 是两条横条容器。内容由应用放。相对裸 `Stack::bar` 多的是壳层表面和**无障碍角色**。读屏把工具栏播报成一组控件。状态栏播报成 live status 区域。普通布局盒表达不了这个。`chrome(false)` 用于已经自带表面的父容器。
 
-两条横条放不下时会先收紧再溢出（Dynamic Layout，见 [布局](layout.md) 的「Dynamic Layout」）：横条自己的 gap 先收到四分之一，再收 `Button`、`Chip` 声明的左右 padding（各收到三分之一），都收完还放不下才溢出或交给 shrink。这是横条样式里 `adaptation: Some(AdaptationProfile::strip())` 带来的；`Button` / `Chip` 默认带 `AdaptationProfile::control()`，只是声明，放在不求解的容器里（普通 `Stack`、行、列、Dock、SplitPane）不读也不花代价。任何容器写 `solve_overflow: true` 都能这样求解；要让某个按钮不被收紧，把它的 `adaptation` 设成 `AdaptationProfile::RIGID`。`StatusBadge` 不声明：状态点画在左侧 padding 里，收紧会让文字压上状态点。
+两条横条放不下时会先收紧再溢出（Dynamic Layout，见 [布局](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/layout.md) 的「Dynamic Layout」）：横条自己的 gap 先收到四分之一，再收 `Button`、`Chip` 声明的左右 padding（各收到三分之一），都收完还放不下才溢出或交给 shrink。这是横条样式里 `adaptation: Some(AdaptationProfile::strip())` 带来的；`Button` / `Chip` 默认带 `AdaptationProfile::control()`，只是声明，放在不求解的容器里（普通 `Stack`、行、列、Dock、SplitPane）不读也不花代价。任何容器写 `solve_overflow: true` 都能这样求解；要让某个按钮不被收紧，把它的 `adaptation` 设成 `AdaptationProfile::RIGID`。`StatusBadge` 不声明：状态点画在左侧 padding 里，收紧会让文字压上状态点。
 
 拖放：`set_drop_target(entity, DropAccepts::files())` 登记节点接受什么。`drop_target_at(document, x, y, kind)` 回答某点上最内层接受该载荷的节点（按布局盒匹配，不要求节点可点击）。**框架只回答落在哪里。** 落下之后做什么仍是应用的。和 `SecondaryPress` 一样。Tab / Dock / `ReorderList` 的拖动移动的是框架自己的结构。仍走各自的合同。
 
@@ -145,16 +145,16 @@ inactive overlay 与关闭菜单属于结构性隐藏。`ComputedStyle::box_visi
 
 ### 标记与分组（view::marks）
 
-这些视图拼在一起时的规则（内容线、标题行、状态层级、滚动区）见 [版式与组合](../guide/composition.md)。
+这些视图拼在一起时的规则（内容线、标题行、状态层级、滚动区）见 [版式与组合](https://github.com/sena-nana/NanaUI/blob/main/docs/guide/composition.md)。
 
 不是控件，是由 `Stack` / `Text` / `IconGlyph` 拼成的视图，只说主题角色和档位：
 
 - `kbd(key)`、`kbd_glyph(icon)`、`chord("Ctrl+B")`、`chord_with(keys, draw_key)`：键帽和组合键，键帽由 `KeycapPainter` 画（表面、边框、强边框色的底边，随明暗模式），高度和底边取自已安装主题的 `ThemeMetrics::keycap`。
 - `tag(text)` / `tag_frame()`：不可交互的标签；要能选、能关的用 `Chip`。
-- `callout(icon, tone, text)`：按 `StatusTone` 着色的提示条；`.quiet()` 是没有底色、不带水平内边距的一行说明，`.trailing(view)` 放行尾动作。见 [callout](../components/callout.md)。
-- `heading_row(title, tools)` + `heading_tools(tools)`：标题行。标题先让出宽度，工具保持宽度；`.lead(view)` 放标题前的图标。紧凑工具（`IconButton::tool`，目标 `COMPACT_TARGET`）默认按 `heading_overhang()` 上下悬出、不撑高标题行，`.inline()` 留在行内；标题在滚动区顶部时滚动区写 `ScrollView::heading_room()`。见 [heading_row](../components/heading-row.md)。
-- `scroll_foot_fade(height, surface)`：放在滚动区底边上的渐隐，不接收输入；滚动区用了 `ScrollView::gutter` 时写 `.clear_of(gutter)` 让出滚动条车道。见 [scroll_foot_fade](../components/scroll-foot-fade.md)。背后不是实色时用 `ScrollView::edge_fade`。
-- `settings_group(title, rows)` + `group_row(view).visible(cond)`：标题在上、卡片在下，行间是缩进 `CONTENT_INSET` 的细线，隐藏的行带走它的分隔线。卡片和 `group_row` 都不加左右内边距：行用 `group_row_on_line(view)`（即 `group_row(content_line(view))`）放到内容线上，已带内边距的行直接 `group_row`。见 [settings_group](../components/settings-group.md)。
+- `callout(icon, tone, text)`：按 `StatusTone` 着色的提示条；`.quiet()` 是没有底色、不带水平内边距的一行说明，`.trailing(view)` 放行尾动作。见 [callout](https://github.com/sena-nana/NanaUI/blob/main/docs/components/callout.md)。
+- `heading_row(title, tools)` + `heading_tools(tools)`：标题行。标题先让出宽度，工具保持宽度；`.lead(view)` 放标题前的图标。紧凑工具（`IconButton::tool`，目标 `COMPACT_TARGET`）默认按 `heading_overhang()` 上下悬出、不撑高标题行，`.inline()` 留在行内；标题在滚动区顶部时滚动区写 `ScrollView::heading_room()`。见 [heading_row](https://github.com/sena-nana/NanaUI/blob/main/docs/components/heading-row.md)。
+- `scroll_foot_fade(height, surface)`：放在滚动区底边上的渐隐，不接收输入；滚动区用了 `ScrollView::gutter` 时写 `.clear_of(gutter)` 让出滚动条车道。见 [scroll_foot_fade](https://github.com/sena-nana/NanaUI/blob/main/docs/components/scroll-foot-fade.md)。背后不是实色时用 `ScrollView::edge_fade`。
+- `settings_group(title, rows)` + `group_row(view).visible(cond)`：标题在上、卡片在下，行间是缩进 `CONTENT_INSET` 的细线，隐藏的行带走它的分隔线。卡片和 `group_row` 都不加左右内边距：行用 `group_row_on_line(view)`（即 `group_row(content_line(view))`）放到内容线上，已带内边距的行直接 `group_row`。见 [settings_group](https://github.com/sena-nana/NanaUI/blob/main/docs/components/settings-group.md)。
 - `tone_role(tone)`：状态色调对应的颜色角色。
 
 `Avatar` 的空槽仍是 Subtle 占位，不画首字母；需要首字母的应用自己叠一层。
@@ -173,7 +173,7 @@ inactive overlay 与关闭菜单属于结构性隐藏。`ComputedStyle::box_visi
 
 ### OverlayVisibility
 
-媒体/舞台 HUD 的自动隐藏用 `OverlayVisibility` **策略对象**。`MediaTransportBar::auto_hide(true)` 让运行时自己驱动它（画面区域内的指针活动、按键与指针离开画面或窗口，加上运行时时钟），每次翻转发 `OverlayVisibilityChanged`；只放视频的窗口用这条，见 [MediaTransportBar](../components/media-transport-bar.md#自动收起)。下面是宿主自己驱动的写法。idle 超时隐藏。hover dwell 延迟显现。焦点 / 拖拽 / 菜单锁（`OverlayLocks`）保持可见。`active = false`（加载 / 暂停 / 空）保持可见。它不是叶子控件。不进 `register_component`。不参与布局或命中。`MediaTransportBar` 内持一份策略。用 `AppContext::sync_overlay_visibility(bar, now, active)` 从 world 收集锁（焦点 / capture 是否在条或其菜单内、任一子 `Popover.open`）、推进策略、返回 wakeup。画面上的指针活动用 `reveal_overlay`。祖先查询走公开的 `AppContext::is_descendant`。**空闲收起不写条的 `hidden`。** 条自己的 `hidden`（视图里 `.visible(..)` / `v-show`）只归应用。用来表达「传输不可用时整条不出现」。两者任一要藏，条就不出现（`MediaTransportBar::shown()` 读合起来的结果，投影出去的节点样式同样是它）。所以绑定重跑（播放进度每次刷新）不会把空闲收起的条又显出来。`reveal_overlay` 也不会显出应用藏起的条。
+媒体/舞台 HUD 的自动隐藏用 `OverlayVisibility` **策略对象**。`MediaTransportBar::auto_hide(true)` 让运行时自己驱动它（画面区域内的指针活动、按键与指针离开画面或窗口，加上运行时时钟），每次翻转发 `OverlayVisibilityChanged`；只放视频的窗口用这条，见 [MediaTransportBar](https://github.com/sena-nana/NanaUI/blob/main/docs/components/media-transport-bar.md#自动收起)。下面是宿主自己驱动的写法。idle 超时隐藏。hover dwell 延迟显现。焦点 / 拖拽 / 菜单锁（`OverlayLocks`）保持可见。`active = false`（加载 / 暂停 / 空）保持可见。它不是叶子控件。不进 `register_component`。不参与布局或命中。`MediaTransportBar` 内持一份策略。用 `AppContext::sync_overlay_visibility(bar, now, active)` 从 world 收集锁（焦点 / capture 是否在条或其菜单内、任一子 `Popover.open`）、推进策略、返回 wakeup。画面上的指针活动用 `reveal_overlay`。祖先查询走公开的 `AppContext::is_descendant`。**空闲收起不写条的 `hidden`。** 条自己的 `hidden`（视图里 `.visible(..)` / `v-show`）只归应用。用来表达「传输不可用时整条不出现」。两者任一要藏，条就不出现（`MediaTransportBar::shown()` 读合起来的结果，投影出去的节点样式同样是它）。所以绑定重跑（播放进度每次刷新）不会把空闲收起的条又显出来。`reveal_overlay` 也不会显出应用藏起的条。
 
 跟着指针走的 chrome（主窗的标题、工具条、贴底 Dock）也用这一份策略，不另做一套。`OverlayVisibility::hidden(config)` 起始为已落定的隐藏；指针进来调 `set_pointer_inside(now, true)`，离开调 `conceal(now)`，`OverlayVisibilityConfig::leave_grace` 内回来就不隐藏（吸收窗口边缘的离开紧跟进入，连续离开不推迟已排的时刻）；键盘把 chrome 调出来用 `reveal(now)`，它不改「指针在外」，所以之后占用一结束 chrome 仍会收起；宿主自己判断的占用（它打开的确认框、文本编辑、手势）放进 `OverlayLocks::interaction`；`active` 传 `false`，不按时钟隐藏。`visible()` 是逻辑目标，`phase()` 给出 `PresencePhase`：淡入淡出的 chrome 把每次过渡结束报给 `transition_finished(shown)`（来自 `PresenceLifecycle::animation_events` 或自己的动画），与目标不符的完成事件（淡出途中指针回来）被忽略。占用只保住或召回仍在淡出的 chrome，不把已落定隐藏的重新显示。`MediaTransportBar` 即时显隐，翻转时同步落定；它没有离开宽限。
 
@@ -183,7 +183,7 @@ inactive overlay 与关闭菜单属于结构性隐藏。`ComputedStyle::box_visi
 
 同一控件有两个正交维度。改字段后下一次 `sync_media_transport_bar` 生效。不是第二套绘制：
 
-- `density`：`Regular`（读数在进度上方，可开第二行）、`Compact`（单行紧凑，读数在进度旁；设置 / 全屏默认隐藏，`show_settings` / `show_fullscreen` 可显式打开，三个槽照常可用）、`Stacked`（按钮与 Compact 相同，读数与进度单独占上面一整行，窄表面如迷你播放器不必把进度挤在按钮之间）或 `Mini`（`.mini()`：顶边 2px 进度细轨带 16px 透明命中带，下面一行是播放、静音钮 `Mute(bool)`、无圆点音量细轨、`leading`、时间读数、`trailing`；没有音量弹出层。应用不再搬动条内部节点，见 [MediaTransportBar](../components/media-transport-bar.md#mini)）。
+- `density`：`Regular`（读数在进度上方，可开第二行）、`Compact`（单行紧凑，读数在进度旁；设置 / 全屏默认隐藏，`show_settings` / `show_fullscreen` 可显式打开，三个槽照常可用）、`Stacked`（按钮与 Compact 相同，读数与进度单独占上面一整行，窄表面如迷你播放器不必把进度挤在按钮之间）或 `Mini`（`.mini()`：顶边 2px 进度细轨带 16px 透明命中带，下面一行是播放、静音钮 `Mute(bool)`、无圆点音量细轨、`leading`、时间读数、`trailing`；没有音量弹出层。应用不再搬动条内部节点，见 [MediaTransportBar](https://github.com/sena-nana/NanaUI/blob/main/docs/components/media-transport-bar.md#mini)）。
 - `placement`：`Overlay`（Absolute 贴父级底边、`max_width` 封顶、外壳不命中）或 `Inline`（参与父级文档流，高度即 chrome 高度，横向填满父级，不用 `max_width`）。
 
 播放钮在每种密度下都显示。`show_play = Some(false)`（`MediaTransportBar::new().show_play(false)`，视图里 `.bind(move |bar| bar.show_play = Some(ready.get()))`，模板 `<Widget of={MediaTransportBar::new().show_play(false)}>`）把它藏起。例如直播间还没准备好播放时。藏起的钮不占位。不能聚焦。焦点在它上面时会被清掉。
@@ -273,7 +273,7 @@ if let Some(first) = validity.first_invalid() {
 
 `TextInput::character_counter(limit)` 可选在框内右侧显示已提交 Unicode 标量数与上限；
 超限使用危险色，IME 预编辑不计入，编辑区域自动避让。计数与 `max_length` 的 UTF-16 编辑硬限制独立，
-不限制输入或提交，业务门控由消费方负责。见 [TextInput](../components/text-input.md#字数计数)。
+不限制输入或提交，业务门控由消费方负责。见 [TextInput](https://github.com/sena-nana/NanaUI/blob/main/docs/components/text-input.md#字数计数)。
 
 Rust `TextArea::read_only(true)` 保留焦点、光标/选区、查找和复制。拒绝修改、替换、剪切及粘贴。它与 `disabled(true)` 不同。禁用控件不参与这些交互。运行时切换为只读会结束未提交的 IME 组合，并拒绝此前开始的文本拖放写入。程序仍可通过组件更新提供新的权威文本。`HostedTextarea` 转发同一属性。语义构造属性为 `readOnly`。应用显示只读文档时应使用此属性。而不是以禁用样式替代只读状态。
 
@@ -286,7 +286,7 @@ Rust `TextArea::read_only(true)` 保留焦点、光标/选区、查找和复制�
 
 应用编辑菜单可用 `TextEditAction` 和 `AppContext::text_edit_action_enabled` 查询状态，
 通过 `edit_text_action(document, node, action, services)` 执行撤销、重做、剪切、复制、粘贴与全选。
-剪贴板仍由宿主的 `HostServices` 提供；富文本编辑器的复制粘贴保留进程内的格式和对象，菜单可直接调 `AppContext::rich_clipboard(entity, RichClipboardCommand, services)`（含 `PastePlainText`）。只有剪贴板的变更序号仍是复制时记下的那个，粘贴才贴回富文本；宿主不提供序号时按文字匹配。见 [RichTextEditor](../components/rich-text-editor.md#输入)。
+剪贴板仍由宿主的 `HostServices` 提供；富文本编辑器的复制粘贴保留进程内的格式和对象，菜单可直接调 `AppContext::rich_clipboard(entity, RichClipboardCommand, services)`（含 `PastePlainText`）。只有剪贴板的变更序号仍是复制时记下的那个，粘贴才贴回富文本；宿主不提供序号时按文字匹配。见 [RichTextEditor](https://github.com/sena-nana/NanaUI/blob/main/docs/components/rich-text-editor.md#输入)。
 源码工具栏改写使用 `edit_text_area_value` 记为一个可撤销步骤；重新绑定业务文档仍使用普通程序设值并清空撤销会话。
 
 编辑器的文本**只有一条写路径**：`AppContext::commit_editor_edit(entity, origin, apply)`。键入、删除、粘贴、IME 提交、行变换、代码片段、应用设值，全部汇入这里。凡是「每次编辑都要做」的事只在这一处做：发变更事件、记撤销。新增一种编辑操作时，不要自己 `update_component` 写 `state.value`。走这个入口。否则它不会进撤销。
@@ -307,11 +307,11 @@ IME 预编辑存在 world 的 `ime` 槽里，不在编辑器的 `value` 里。�
 
 ## 滚动与滚动条
 
-`ScrollView` 是滚动容器。位置权威是 Runtime 的 `ScrollOffset`。尺寸权威是 `ScrollMetrics`（任何改动布局盒、子节点或样式的提交结束时由 Runtime 重新测量，偏移随之夹取；起点在右 / 下边的轴偏移为负，见 [布局](layout.md)）。滚动条不另存一份偏移。`overflow: auto|scroll` 共用同一份 `ScrollOffset` 与 overflow clip（滚轮同样更新这份偏移）。但**不**再画一套 thumb。自定义滚动条铬只属于 `ScrollView`。
+`ScrollView` 是滚动容器。位置权威是 Runtime 的 `ScrollOffset`。尺寸权威是 `ScrollMetrics`（任何改动布局盒、子节点或样式的提交结束时由 Runtime 重新测量，偏移随之夹取；起点在右 / 下边的轴偏移为负，见 [布局](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/layout.md)）。滚动条不另存一份偏移。`overflow: auto|scroll` 共用同一份 `ScrollOffset` 与 overflow clip（滚轮同样更新这份偏移）。但**不**再画一套 thumb。自定义滚动条铬只属于 `ScrollView`。
 
-触摸（`PointerType::Touch`）拖动超过 8 逻辑像素即滚动最近的可滚容器，抬起后按宿主设置的 `ScrollPhysics`（iOS 衰减加橡皮筋回弹，或 Android 样条甩动并在边缘钳住）甩动；按压被取消、不触发点击。合同见 [Runtime 与 Scene](runtime-scene.md#触摸滚动与-scrollphysics)。
+触摸（`PointerType::Touch`）拖动超过 8 逻辑像素即滚动最近的可滚容器，抬起后按宿主设置的 `ScrollPhysics`（iOS 衰减加橡皮筋回弹，或 Android 样条甩动并在边缘钳住）甩动；按压被取消、不触发点击。合同见 [Runtime 与 Scene](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/runtime-scene.md#触摸滚动与-scrollphysics)。
 
-`ScrollView::edge_fade(top, bottom)` 让内容在滚动口上下边缘渐隐：滚动区和它的子树合成成一个 dest group，alpha 在每条带里降到边缘处的 0，所以透明背景上也成立，滚动条留在组外不渐隐。每条带的长度是 `min(长度, 边外的内容)`，随偏移长出、缩回。见 [ScrollView](../components/scroll-view.md#边缘渐隐)。
+`ScrollView::edge_fade(top, bottom)` 让内容在滚动口上下边缘渐隐：滚动区和它的子树合成成一个 dest group，alpha 在每条带里降到边缘处的 0，所以透明背景上也成立，滚动条留在组外不渐隐。每条带的长度是 `min(长度, 边外的内容)`，随偏移长出、缩回。见 [ScrollView](https://github.com/sena-nana/NanaUI/blob/main/docs/components/scroll-view.md#边缘渐隐)。
 
 `ScrollView::scrollbars` 选三种：`AutoHide`（悬停或滚动时淡入，离开后保持主题的 `hide_delay` 再淡出）、`Always`（能滚就常驻，带轨道）、`Hidden`（不画，滚轮与 `scroll_to` 照常）。不写时跟随主题的策略 `ScrollbarRecipe::visibility`（内置 `AutoHide`），应用用 `ThemeDefinition::with_scrollbar_visibility` 一次改全部。
 
@@ -327,13 +327,13 @@ IME 预编辑存在 world 的 `ime` 槽里，不在编辑器的 `value` 里。�
 2. 用 `UiExtension` + `ExtensionRegistrar::register_component` 登记。稳定身份是 `ComponentTypeId`（如 `nana.button`、`app.preview-card`）。
 3. 登记的 tag 等于 `ComponentTypeId` 去掉 `nana.` 前缀。和 HTML 同语义就用原生标签（`button`、`table`/`tr`/`td`、`ul`/`li`、`details`）。语义不同就换名（`search-dropdown`，不是 HTML `<search>`）。tag 与 Rust `create_component<C>` 解析同一张 `ComponentRegistry`。
 
-实时画面不要做成「自己往窗口上画的控件」。走 [实时画面](gpu.md)。不支持动态加载 dylib 插件。
+实时画面不要做成「自己往窗口上画的控件」。走 [实时画面](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/gpu.md)。不支持动态加载 dylib 插件。
 
 `GpuTextureView` 不加载网页。`<iframe>` 也不加载网页。需要应用内网页内容时，使用 `runtime::BrowserView` 的宿主原生内容例外。它不是 `GpuTextureView` 别名。当前只有 macOS `WKWebView` 实现。Windows 与 Linux 明确不可用。Gallery 不得把普通纹理或 iframe 当成浏览器。
 
-`GpuTextureView`、`Thumbnail` 与 `Avatar` 默认只采样宿主纹理的第 0 层。宿主应按 `HostTextureRegistry::painted_extent` 准备尺寸。纹理带 mip 链时用 `.sampling(ImageSampling::Mipmap)` 切到三线性采样。`url()` 图片的默认重采样与 mip 选项见 [应用 API · 图片采样](application-api.md#图片采样)。
+`GpuTextureView`、`Thumbnail` 与 `Avatar` 默认只采样宿主纹理的第 0 层。宿主应按 `HostTextureRegistry::painted_extent` 准备尺寸。纹理带 mip 链时用 `.sampling(ImageSampling::Mipmap)` 切到三线性采样。`url()` 图片的默认重采样与 mip 选项见 [应用 API · 图片采样](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/application-api.md#图片采样)。
 
-`Thumbnail` 默认维持控件高度 × aspect。显式 style 的宽高、约束与圆角（`style.radius` 档位或 `border_radius` 像素）优先。可用于响应式卡片封面。都没写时才取 `Xs`。`fit(ContentFit::Cover)` 保留封面裁切。默认仍是 Contain。空、加载、就绪与不可用共享布局尺寸。Loading 态的 spinner 居中绘制。边长 28（紧凑 `Spinner` 的两倍）。带标签的独立 `Spinner` 仍贴左，作为文字的前置槽。封面角标挂成 Thumbnail 的子节点。控件是 containing block（`position: relative`）并裁剪圆角。`Thumbnail::badge()` 给出右下角、不命中的实底徽章。`Thumbnail::pickable()`（模板 `pickable=true`）让控件自己接指针，以 `ThumbnailPick` 报图片坐标（`0..=1`）的悬停、离开与主键按下；`intrinsic_size` 给出纹理像素尺寸，Contain 的留边与 Cover 裁掉的部分不报。控件不取焦点，键盘替代由宿主另给列表。见 [Thumbnail](../components/thumbnail.md#在图片上拾取)。
+`Thumbnail` 默认维持控件高度 × aspect。显式 style 的宽高、约束与圆角（`style.radius` 档位或 `border_radius` 像素）优先。可用于响应式卡片封面。都没写时才取 `Xs`。`fit(ContentFit::Cover)` 保留封面裁切。默认仍是 Contain。空、加载、就绪与不可用共享布局尺寸。Loading 态的 spinner 居中绘制。边长 28（紧凑 `Spinner` 的两倍）。带标签的独立 `Spinner` 仍贴左，作为文字的前置槽。封面角标挂成 Thumbnail 的子节点。控件是 containing block（`position: relative`）并裁剪圆角。`Thumbnail::badge()` 给出右下角、不命中的实底徽章。`Thumbnail::pickable()`（模板 `pickable=true`）让控件自己接指针，以 `ThumbnailPick` 报图片坐标（`0..=1`）的悬停、离开与主键按下；`intrinsic_size` 给出纹理像素尺寸，Contain 的留边与 Cover 裁掉的部分不报。控件不取焦点，键盘替代由宿主另给列表。见 [Thumbnail](https://github.com/sena-nana/NanaUI/blob/main/docs/components/thumbnail.md#在图片上拾取)。
 
 ### 图表与带图标按钮
 
@@ -345,7 +345,7 @@ Rust 行内标题工具使用 `IconButton::compact(true)`：固定 24×24 logica
 这些选项默认关闭；关闭后恢复原有 `size`／主题尺寸。静息无底色的菜单入口可另配
 `bare_trigger(true)`，菜单内容区和菜单项仍沿用标准尺寸。
 
-`Chart::new(option)` 画一张图。`ChartOption` 的结构对应 ECharts 的 `option`（`grid`、`x_axis`、`y_axis`、`series`、`tooltip`、`legend`、`data_zoom`），值是 Rust 类型，模型在 `nana_ui::runtime::chart`（`nana-ui-charts` crate）。系列有折线/面积、柱状、饼/环/玫瑰、散点、雷达、仪表盘。换一份 option 就是一次更新：元素从屏幕上正在显示的位置过渡到新位置。悬停按类目或按项触发，强调和轴指针由着色器按动效时钟画，提示是图表自己的浮层，带颜色点和右对齐的数值。离开、卸载或 park 后关闭。图例切换、缩放窗口存在 `Chart::view`，事件是 `ChartEvent`。数据、名称和数值格式仍由应用提供。见 [Chart](../components/chart.md)。
+`Chart::new(option)` 画一张图。`ChartOption` 的结构对应 ECharts 的 `option`（`grid`、`x_axis`、`y_axis`、`series`、`tooltip`、`legend`、`data_zoom`），值是 Rust 类型，模型在 `nana_ui::runtime::chart`（`nana-ui-charts` crate）。系列有折线/面积、柱状、饼/环/玫瑰、散点、雷达、仪表盘。换一份 option 就是一次更新：元素从屏幕上正在显示的位置过渡到新位置。悬停按类目或按项触发，强调和轴指针由着色器按动效时钟画，提示是图表自己的浮层，带颜色点和右对齐的数值。离开、卸载或 park 后关闭。图例切换、缩放窗口存在 `Chart::view`，事件是 `ChartEvent`。数据、名称和数值格式仍由应用提供。见 [Chart](https://github.com/sena-nana/NanaUI/blob/main/docs/components/chart.md)。
 
 `Chart` 只从 Rust 创建：option 是类型化数据，没有标签。
 

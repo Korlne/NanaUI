@@ -1215,7 +1215,7 @@ locale 作用域有三层：
 
 各层的写法：
 - Rust：`Text::localized`，视图里的 `t(...)`，以及 `El::locale(...)` 声明子树的 locale 作用域
-  （见 [响应式视图](reactive-view.md)）。
+  （见 [响应式视图](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/reactive-view.md)）。
 - `.vue` 编译成 Rust 视图和 `view!`：`<T id="files" :count="n" />`，以及元素上的 `locale="ar"`。
 
 `lang` 一直只管塑形语言；消息、格式和方向跟 locale 走。
@@ -1582,7 +1582,7 @@ world 镜像、`TextChanged`、presentation 三处）。现在剩下编辑本身
 
 ## 富文本 span
 
-应用把一段带样式的文本交给普通文本节点：`MutationQueue::set_rich_text(id, RichText)`，或者用 [`RichTextView`](../components/rich-text-view.md) 组件。值是 `nana_ui_core::RichText`，由应用持有：一个 `Arc<str>` 加一份 `Arc<AttributedRanges<RichSpanStyle>>`，克隆是两次引用计数。框架不在应用背后改它。
+应用把一段带样式的文本交给普通文本节点：`MutationQueue::set_rich_text(id, RichText)`，或者用 [`RichTextView`](https://github.com/sena-nana/NanaUI/blob/main/docs/components/rich-text-view.md) 组件。值是 `nana_ui_core::RichText`，由应用持有：一个 `Arc<str>` 加一份 `Arc<AttributedRanges<RichSpanStyle>>`，克隆是两次引用计数。框架不在应用背后改它。
 
 ```text
 RichText（应用持有）
@@ -1779,7 +1779,7 @@ entry 的颜色指纹把 span 颜色和 `rich.revision` 合在一起：改描边
   那篇写于 constraint-only 门禁之前。2026-09-22 的收口报告见
   [text-cutover-2026-09-22](https://github.com/sena-nana/NanaUI/tree/docs-archive/archive/docs-notes/performance-data/text-cutover-2026-09-22/README.md)（五道门禁。含新增的
   `gpu-scene-text-constraint-resize`）。
-- **第三方与许可证**：[third-party.md](third-party.md)。release 依赖图（全平台 normal + build 边）
+- **第三方与许可证**：[third-party.md](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/third-party.md)。release 依赖图（全平台 normal + build 边）
   586 个外部 crate 全是宽松许可证。`cryoglyph` 与 `cosmic-text` 都不在 `Cargo.lock` 里。
   照抄的片段（`SubpixelBin::split`、DirectWrite 覆盖率校正）已就地署名。
 - **依赖门禁**：`check-engine-boundary.py` 禁止任何工作区成员有通向 cosmic-text / cryoglyph /
@@ -2169,7 +2169,7 @@ staging 拿不到（设备已丢失而宿主还没察觉。或显存不足）时
 （`tests/text_lost_device.rs`）。
 
 因为块和区间是在宿主的 encoder 里拷进去的。**这个 encoder 必须提交**。丢掉它。GPU 上的
-缓冲就落后于 arena 与画序的账本（契约写在 `SceneWgpuPainter::paint` 和 [GPU](gpu.md)）。
+缓冲就落后于 arena 与画序的账本（契约写在 `SceneWgpuPainter::paint` 和 [GPU](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/gpu.md)）。
 
 缓冲区换掉时。wgpu 自己保证旧的活到引用它的命令完成为止。这一侧要保证的是**没有句柄还
 指着旧布局**。那是 arena 代际和 `GlyphAtlasEntryId` 的代际两道闸。

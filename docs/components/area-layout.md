@@ -98,7 +98,7 @@ widget(AreaLayout::new(model).editor_select(AreaEditorSelect::new(["outliner", "
 
 ## 和 Dock 怎么选
 
-[Dock](dock.md) 是 IDE 式停靠：面板可以拖到边上或拖进 Tab 组，也可以浮出成独立窗口，一个位置可以叠放多个面板。`AreaLayout` 是 DCC 软件式的切分：
+[Dock](https://github.com/sena-nana/NanaUI/blob/main/docs/components/dock.md) 是 IDE 式停靠：面板可以拖到边上或拖进 Tab 组，也可以浮出成独立窗口，一个位置可以叠放多个面板。`AreaLayout` 是 DCC 软件式的切分：
 
 - 区域永不重叠，一个区域只显示一种编辑器。
 - 改布局靠从角上切开或合并，不靠拖放面板。
@@ -135,4 +135,4 @@ widget(AreaLayout::new(model).editor_select(AreaEditorSelect::new(["outliner", "
 
 ## 参见
 
-[Dock](dock.md) · [Workspace](workspace.md) · [总览](index.md)
+[Dock](https://github.com/sena-nana/NanaUI/blob/main/docs/components/dock.md) · [Workspace](https://github.com/sena-nana/NanaUI/blob/main/docs/components/workspace.md) · [总览](https://github.com/sena-nana/NanaUI/blob/main/docs/components/index.md)

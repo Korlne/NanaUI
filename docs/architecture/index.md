@@ -1,6 +1,6 @@
 # 架构总览
 
-本板块面向**应用作者**，建立开发 NanaUI 桌面产品所需的核心心智模型。如果你需要查阅 crate 之间的完整边界合同，请见 [架构合同](../reference/architecture.md)；如果你想深入各个 crate 的内部源码与数据流，请进入 [架构学习](/learn/)。
+本板块面向**应用作者**，建立开发 NanaUI 桌面产品所需的核心心智模型。如果你需要查阅 crate 之间的完整边界合同，请见 [架构合同](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/architecture.md)；如果你想深入各个 crate 的内部源码与数据流，请进入 [架构学习](/learn/)。
 
 ## 一条唯一的产品路径
 

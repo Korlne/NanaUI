@@ -48,7 +48,7 @@ cx.update_component(toast, |toast, _| {
 cx.remove_toast(stack, toast)?;
 ```
 
-`push_toast` 先装配提示（[`assemble_toast`](toast.md#复合形式)），再把它作为最新的一条放进栈，返回提示自己的实体：事件听它，更新也写它。它从不挪焦点。
+`push_toast` 先装配提示（[`assemble_toast`](https://github.com/sena-nana/NanaUI/blob/main/docs/components/toast.md#复合形式)），再把它作为最新的一条放进栈，返回提示自己的实体：事件听它，更新也写它。它从不挪焦点。
 
 ## 放置
 
@@ -82,7 +82,7 @@ cx.remove_toast(stack, toast)?;
 
 ## 无障碍
 
-栈是一个 Region，名字是 `label`，不给时是框架文案 `toast.region`（「通知」）。在屏上的每一条提示是一个 live 的 Status（见 [Toast](toast.md#无障碍)），排队的、还在量的和正在离开的都听不到。
+栈是一个 Region，名字是 `label`，不给时是框架文案 `toast.region`（「通知」）。在屏上的每一条提示是一个 live 的 Status（见 [Toast](https://github.com/sena-nana/NanaUI/blob/main/docs/components/toast.md#无障碍)），排队的、还在量的和正在离开的都听不到。
 
 ## 属性
 
@@ -105,7 +105,7 @@ cx.remove_toast(stack, toast)?;
 
 ## 事件
 
-栈自己不发事件。`ToastDismissed`、`ToastAction` 发在各条提示上，见 [Toast](toast.md#事件)。
+栈自己不发事件。`ToastDismissed`、`ToastAction` 发在各条提示上，见 [Toast](https://github.com/sena-nana/NanaUI/blob/main/docs/components/toast.md#事件)。
 
 ## 插槽
 
@@ -115,4 +115,4 @@ cx.remove_toast(stack, toast)?;
 
 ## 参见
 
-[总览](index.md) · [Toast](toast.md) · [控件](../reference/components.md)（含多窗口通知中心 `nana_ui::notices`）
+[总览](https://github.com/sena-nana/NanaUI/blob/main/docs/components/index.md) · [Toast](https://github.com/sena-nana/NanaUI/blob/main/docs/components/toast.md) · [控件](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/components.md)（含多窗口通知中心 `nana_ui::notices`）

@@ -1,7 +1,10 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
+import { useData } from "vitepress";
 
 const key = "nanaui-docs-style";
+const { lang } = useData();
+const label = computed(() => (lang.value.startsWith("zh") ? "写法" : "Style"));
 const current = ref<"view" | "rust">("view");
 
 function apply(style: "view" | "rust") {
@@ -26,7 +29,7 @@ onMounted(() => {
 
 <template>
   <div class="api-style">
-    <div class="api-style-label" id="api-style-label">写法</div>
+    <div class="api-style-label" id="api-style-label">{{ label }}</div>
     <div class="api-style-row" role="radiogroup" aria-labelledby="api-style-label">
       <button
         type="button"

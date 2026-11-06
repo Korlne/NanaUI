@@ -70,7 +70,7 @@ each(items, |item| item.id, |item| text(item.title.clone())).transition(
 
 虚拟列表（`each_virtual`）不支持。滚出视口的行本来就要立刻回收，包上 `<Transition>` 会在编译模板时报错。
 
-类名可以写在这两个标签上，落在它们包住的那一列容器上，不是每一行。见 [声明式视图](../../reference/reactive-view.md) 的进出场一节。
+类名可以写在这两个标签上，落在它们包住的那一列容器上，不是每一行。见 [声明式视图](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/reactive-view.md) 的进出场一节。
 
 ## 接下来
 

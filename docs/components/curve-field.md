@@ -43,11 +43,11 @@ curve(0.001)
 
 ## 外观
 
-方格有一圈 `Border` 细框和四等分的 `BorderSoft` 网格线，曲线是一条强调色（`Accent`）折线，拐角圆接。点与 [RangeField](range-field.md) 的滑块同样，直径小一档（`curve_point_extent(size)`）。禁用时曲线转 `Faint`，点转禁用色。点动了只换方格节点的绘制键和那个点的位置。
+方格有一圈 `Border` 细框和四等分的 `BorderSoft` 网格线，曲线是一条强调色（`Accent`）折线，拐角圆接。点与 [RangeField](https://github.com/sena-nana/NanaUI/blob/main/docs/components/range-field.md) 的滑块同样，直径小一档（`curve_point_extent(size)`）。禁用时曲线转 `Faint`，点转禁用色。点动了只换方格节点的绘制键和那个点的位置。
 
 ## 可见取值和提交
 
-`CurveInput { point, values }` 是每一次可见取值，含拖拽中的预览。`CurveChanged { point, values }` 是提交：指针抬起且点动了、键盘步进、无障碍的增减或设值，或 `set_curve_point` / `set_curve_values`。`point` 是动的那个点；整组替换时是 `None`。取消的拖拽不提交，并恢复按下前的高度。拖动起止另有 `CurveDragging { dragging }`，键盘和无障碍步进不算拖动。三者与 [RangeSpanField](range-span-field.md) 的 `RangeSpanInput` / `RangeSpanChanged` / `RangeSpanDragging` 一一对应。
+`CurveInput { point, values }` 是每一次可见取值，含拖拽中的预览。`CurveChanged { point, values }` 是提交：指针抬起且点动了、键盘步进、无障碍的增减或设值，或 `set_curve_point` / `set_curve_values`。`point` 是动的那个点；整组替换时是 `None`。取消的拖拽不提交，并恢复按下前的高度。拖动起止另有 `CurveDragging { dragging }`，键盘和无障碍步进不算拖动。三者与 [RangeSpanField](https://github.com/sena-nana/NanaUI/blob/main/docs/components/range-span-field.md) 的 `RangeSpanInput` / `RangeSpanChanged` / `RangeSpanDragging` 一一对应。
 
 ## 指针
 
@@ -102,4 +102,4 @@ curve(0.001)
 
 ## 参见
 
-[总览](index.md) · [RangeSpanField](range-span-field.md) · [RangeField](range-field.md) · [TimelineEditor](timeline-editor.md)
+[总览](https://github.com/sena-nana/NanaUI/blob/main/docs/components/index.md) · [RangeSpanField](https://github.com/sena-nana/NanaUI/blob/main/docs/components/range-span-field.md) · [RangeField](https://github.com/sena-nana/NanaUI/blob/main/docs/components/range-field.md) · [TimelineEditor](https://github.com/sena-nana/NanaUI/blob/main/docs/components/timeline-editor.md)

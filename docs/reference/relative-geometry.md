@@ -2,7 +2,7 @@
 
 一棵子树换了位置，只改它根上的一个偏移：布局、命中索引、提取与 Scene、painter、无障碍都把盒子里的东西存在盒子自己的坐标里，绝对位置在读的时候沿参照系链求和得到。一次编辑的代价因此跟真正变了的东西成正比，而不是跟被挪动的节点数成正比。
 
-本文描述现在的规则：每个子系统在平移、改尺寸、改变换时处理谁，哪些情况仍按节点或整棵处理、为什么，代码在哪，以及改动时要守的冷对照。各阶段的基准数字见 [资源预算 · CPU 时间](resource-budgets.md#cpu-时间)，演进见文末。
+本文描述现在的规则：每个子系统在平移、改尺寸、改变换时处理谁，哪些情况仍按节点或整棵处理、为什么，代码在哪，以及改动时要守的冷对照。各阶段的基准数字见 [资源预算 · CPU 时间](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/resource-budgets.md#cpu-时间)，演进见文末。
 
 ## 1. 原则
 
@@ -387,7 +387,7 @@ cargo run --release -p component-gallery --bin ui-snapshots --features snapshots
 - 运行时的单元测试本身就是 `cfg(test)`，冷对照都在跑；Scene 的集成测试只有带 `nana-ui-runtime/layout-verify` 时才在里面跑运行时的冷对照；`rich-text` 打开 Markdown 那几页。
 - `nana-ui` 的 `scene_paint` 在 `gpu` 后面，不带 feature 时匹配 0 条也显示通过。
 - 快照预期零像素变化（`gallery-sidebar-collapsed-dark` 是已知抖动）。
-- 成本：`perf/micro/stack-depth` 下 `PRINT_STAGES=1 cargo run --release -- edits 2000 height`，以及 `width`、`transform`、`scale` 和 `CONTROLS=1`、`MIXED=1`、`SCROLLED=1`、`ROTATED=1`、`VISIBLE=1`、`OPEN_SELECT=1` 各页；与基线提交交替 8 轮、每轮交换先后读最小值，指令数取 `RUNS=240` 与 `RUNS=40` 两次 `/usr/bin/time -l` 之差除以 200。`PRINT_COUNTERS=1` 打印最后一次编辑的工作计数。结果写进 [资源预算](resource-budgets.md#cpu-时间)。
+- 成本：`perf/micro/stack-depth` 下 `PRINT_STAGES=1 cargo run --release -- edits 2000 height`，以及 `width`、`transform`、`scale` 和 `CONTROLS=1`、`MIXED=1`、`SCROLLED=1`、`ROTATED=1`、`VISIBLE=1`、`OPEN_SELECT=1` 各页；与基线提交交替 8 轮、每轮交换先后读最小值，指令数取 `RUNS=240` 与 `RUNS=40` 两次 `/usr/bin/time -l` 之差除以 200。`PRINT_COUNTERS=1` 打印最后一次编辑的工作计数。结果写进 [资源预算](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/resource-budgets.md#cpu-时间)。
 
 ### 9.4 变异实验
 
@@ -443,4 +443,4 @@ cargo run --release -p component-gallery --bin ui-snapshots --features snapshots
 | e443a2a1e、e41729572、138c79333 | 拆分 `world/accessibility/`、`world/hit_test/`、`nana-ui-scene/src/scene/` |
 | 2572617f5 | 接回合并 3fab98a65 丢掉的 `non_scroll_hit_dirty` 判定与清空：滚动容器同帧改盒子不再走滚动快路径 |
 
-各阶段的基准见 [资源预算 · CPU 时间](resource-budgets.md#cpu-时间)。逐项的做法与变异实验记录在各提交的提交信息里，以及当时版本的本文（`git show <提交>:docs/reference/relative-geometry.md`）。
+各阶段的基准见 [资源预算 · CPU 时间](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/resource-budgets.md#cpu-时间)。逐项的做法与变异实验记录在各提交的提交信息里，以及当时版本的本文（`git show <提交>:docs/reference/relative-geometry.md`）。

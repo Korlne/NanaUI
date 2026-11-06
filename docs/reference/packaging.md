@@ -1,6 +1,6 @@
 # 打包与分发合同
 
-本文规定 NanaUI 应用的打包配置（`nana-package.toml`）、资源包二进制格式（`.nrpack`）、分层密钥与发布者签名，以及最终交付物的自动化篡改校验流程（Issue #226）。日常快速上手步骤请先看指南中的 [打包](../guide/scaling/packaging.md)。
+本文规定 NanaUI 应用的打包配置（`nana-package.toml`）、资源包二进制格式（`.nrpack`）、分层密钥与发布者签名，以及最终交付物的自动化篡改校验流程（Issue #226）。日常快速上手步骤请先看指南中的 [打包](https://github.com/sena-nana/NanaUI/blob/main/docs/guide/scaling/packaging.md)。
 
 分发形态以 Steam 与独立安装包为主：正常启动始终只有**一个主进程、一个可执行文件**，不引入常驻启动器、不增加额外 IPC，也不依赖 A/B 双目录切换。`nana-packager` 不逆向调用 `cargo`，而是接收已经构建好的可执行文件并完成打包与验证：
 
@@ -28,7 +28,7 @@ CI 中的 `scripts/check-package-boundary.py` 强制守护以下边界：`nana-p
 
 ## 2. 逻辑位置与跨平台安装布局
 
-业务代码统一通过 `ApplicationPaths` 获取逻辑目录（详见 [诊断与应用路径](diagnostics.md)），切勿硬编码 `./runtime/...` 相对路径：
+业务代码统一通过 `ApplicationPaths` 获取逻辑目录（详见 [诊断与应用路径](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/diagnostics.md)），切勿硬编码 `./runtime/...` 相对路径：
 
 | 逻辑位置 | Windows / Linux | macOS（`.app` Bundle） |
 | --- | --- | --- |

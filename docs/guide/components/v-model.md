@@ -76,7 +76,7 @@ todos.each(|t| row().gap(4).children((
 | `Curve` | `values: Vec<f64>` | `CurveInput` |
 | `Select` | `value: Option<Arc<str>>` | `SelectChanged` |
 
-滑块这一行要看清楚：`.model` 听的是 `RangeInput`，也就是拖动过程中的每一个可见值，不是松手才发出的 `RangeChanged`。拖动时信号会跟着预览走。只要提交后的值，自己接 `.on_change`，不要用 `.model`。见 [事件](events.md)。
+滑块这一行要看清楚：`.model` 听的是 `RangeInput`，也就是拖动过程中的每一个可见值，不是松手才发出的 `RangeChanged`。拖动时信号会跟着预览走。只要提交后的值，自己接 `.on_change`，不要用 `.model`。见 [事件](https://github.com/sena-nana/NanaUI/blob/main/docs/guide/components/events.md)。
 
 文本框写回时走文字状态：新值和当前值相同就不替换，所以把同一次编辑回声到信号上，光标和选区留在原地。`TextChanged` 的 `value` 会转成 `String` 再 `set`。
 
@@ -117,7 +117,7 @@ select()
 
 `period` 的类型是 `Signal<Option<Arc<str>>>`。占位文字用 `.placeholder`，它不是当前值。
 
-开关和复选框的标签是无障碍名字。空标签的开关要放进设置行，让行标签替它起名。见 [无障碍](../scaling/accessibility.md)。
+开关和复选框的标签是无障碍名字。空标签的开关要放进设置行，让行标签替它起名。见 [无障碍](https://github.com/sena-nana/NanaUI/blob/main/docs/guide/scaling/accessibility.md)。
 
 ## 接下来
 

@@ -83,7 +83,7 @@ action_menu("预设").children((
 
 `.leading` 放一个图标。
 
-`.leading_image(slot)` 在图标的位置放一张圆图，画的是宿主纹理槽 `slot`，和同一个槽的 [Avatar](avatar.md) 一样（Cover，裁成圆，场景里是同一个 `nana.host-texture` 资源，名字就是槽名）。两个都写时图优先。边长是这一行文字的行高，比图标大一档，行不变高；没有图的条目照旧排。空槽画 Subtle 占位圆，标签位置不变；缺槽拒绝帧的约定和 Avatar 一样。图只作装饰，读屏只读标签。视图里绑 `.leading_image(..)`（`Option<TextureSlotName>`，字段 `fields::action_menu_item::leading_image`）。
+`.leading_image(slot)` 在图标的位置放一张圆图，画的是宿主纹理槽 `slot`，和同一个槽的 [Avatar](https://github.com/sena-nana/NanaUI/blob/main/docs/components/avatar.md) 一样（Cover，裁成圆，场景里是同一个 `nana.host-texture` 资源，名字就是槽名）。两个都写时图优先。边长是这一行文字的行高，比图标大一档，行不变高；没有图的条目照旧排。空槽画 Subtle 占位圆，标签位置不变；缺槽拒绝帧的约定和 Avatar 一样。图只作装饰，读屏只读标签。视图里绑 `.leading_image(..)`（`Option<TextureSlotName>`，字段 `fields::action_menu_item::leading_image`）。
 
 `.danger(true)` 走危险色。
 
@@ -115,7 +115,7 @@ action_menu("预设").children((
 | 视图上的 `.trigger(view)` | — | 和 popover 一样，只做显示，里面不要放可按的控件 |
 | `.placement` | — | 传给内部的 popover |
 | `.width` | — | 传给内部的 popover |
-| `.trigger_style` | `NodeStyle` | 传给内部的 popover：盖在触发器原有样式上，只替换写了的字段，见 [Popover](popover.md#触发器) |
+| `.trigger_style` | `NodeStyle` | 传给内部的 popover：盖在触发器原有样式上，只替换写了的字段，见 [Popover](https://github.com/sena-nana/NanaUI/blob/main/docs/components/popover.md#触发器) |
 | `.trigger_icon_size` | `f32` | 传给内部的 popover：图标触发器的字形边长，触发器的盒子不变 |
 | `.open` | — | 直接写出开关。开关跟 popover 一样，由控件自己切换 |
 | `ActionMenuItem::new(label)` | — | 条目 |
@@ -140,4 +140,4 @@ action_menu("预设").children((
 
 ## 参见
 
-[总览](index.md) · [控件](../reference/components.md)
+[总览](https://github.com/sena-nana/NanaUI/blob/main/docs/components/index.md) · [控件](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/components.md)

@@ -88,7 +88,7 @@ CLI 还有 `package`、`keygen content|publisher`、`inspect`、`delta OLD NEW`�
 
 还没有的：平台签名 adapter、安装包后端、可选自更新、打包校验里的真窗口 Early Splash / UiReady、StaticAppPlan 指纹、Android AssetManager、Linux FHS 路径、分页 TOC。
 
-字段、读取顺序和每一项检查在 [打包与分发](../../reference/packaging.md)。
+字段、读取顺序和每一项检查在 [打包与分发](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/packaging.md)。
 
 ## 接下来
 

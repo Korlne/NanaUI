@@ -2,7 +2,7 @@
 
 NanaUI 提供统一的诊断底座（采集、无锁缓冲、后台落盘、文件轮转、崩溃快照与离线导出），而诊断的业务语义（定义哪些应用事件和指标、什么情况算业务故障、如何脱敏与上报）由你的应用决定。核心设计原则是：**日志按设计允许有损丢弃，但画面渲染绝不允许因此卡顿或出错（Logging is lossy by design; rendering is not）**。
 
-诊断实现位于叶子 crate `crates/nana-diagnostics`：不依赖其它 NanaUI crate，跨平台部分只用标准库，Windows 上另依赖 `windows-sys`（高精度计时、线程优先级与卡顿时的线程栈采样所需的 Win32 接口）（经 `nana_ui::diagnostics` 再导出）；跨平台应用目录解析位于 `nana-ui-platform` 的 `ApplicationPaths`。写界面时常见的运行期故障码速查见 [诊断码](errors.md)。
+诊断实现位于叶子 crate `crates/nana-diagnostics`：不依赖其它 NanaUI crate，跨平台部分只用标准库，Windows 上另依赖 `windows-sys`（高精度计时、线程优先级与卡顿时的线程栈采样所需的 Win32 接口）（经 `nana_ui::diagnostics` 再导出）；跨平台应用目录解析位于 `nana-ui-platform` 的 `ApplicationPaths`。写界面时常见的运行期故障码速查见 [诊断码](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/errors.md)。
 
 ## 在应用中启用诊断
 

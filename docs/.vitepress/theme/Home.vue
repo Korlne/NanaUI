@@ -1,34 +1,66 @@
+<script setup lang="ts">
+import { computed } from "vue";
+import { useData, withBase } from "vitepress";
+
+const { lang } = useData();
+const zh = computed(() => lang.value.startsWith("zh"));
+const prefix = computed(() => (zh.value ? "/zh" : ""));
+const link = (path: string) => withBase(prefix.value + path);
+
+const copy = {
+  en: {
+    accent: "Retained-mode",
+    rest: "native desktop UI",
+    description: "A Rust UI framework where live GPU content is an ordinary node. One UI tree; your application owns the window and the GPU.",
+    start: "Get started",
+    quick: "Quick start",
+    learn: "Architecture",
+    highlights: [
+      ["One tree", "Buttons, text, sidebars and live GPU content are nodes in the same tree. They are laid out and clipped together, and receive clicks in the same order."],
+      ["Two styles", "<code>view!</code> and builder calls expand to the same calls. The switch at the top of the sidebar changes the examples in these docs; at runtime it is the same mount."],
+      ["Pixels in the tree", "Shaders and preview viewports are ordinary nodes. Your application owns the window and the device; the framework paints the tree into that surface."],
+    ],
+  },
+  zh: {
+    accent: "保留式",
+    rest: "原生桌面界面",
+    description: "易上手的桌面界面框架。一棵界面树，窗口和 GPU 由你的应用持有。",
+    start: "开始",
+    quick: "快速开始",
+    learn: "架构学习",
+    highlights: [
+      ["一棵树", "按钮、文字、侧栏和实时画面是同一棵树上的节点。它们一起排版、裁剪，也按同一个顺序接收点击。"],
+      ["两种写法", "<code>view!</code> 和函数调用展开成同一套调用。侧边栏顶部的开关切换文档里的示例，运行时还是同一次挂载。"],
+      ["画面在树上", "着色器和预览视口是普通节点。你的应用持有窗口和设备，框架把这棵树画进那块 Surface。"],
+    ],
+  },
+};
+const t = computed(() => (zh.value ? copy.zh : copy.en));
+</script>
+
 <template>
   <section id="hero">
     <h1 class="tagline">
-      <span class="accent">保留式</span>
-      <br />原生桌面界面
+      <span class="accent">{{ t.accent }}</span>
+      <br />{{ t.rest }}
     </h1>
-    <p class="description">易上手的桌面界面框架。一棵界面树，窗口和 GPU 由你的应用持有。</p>
+    <p class="description">{{ t.description }}</p>
     <p class="actions">
-      <a class="get-started" href="/guide/introduction">
-        开始
+      <a class="get-started" :href="link('/guide/introduction')">
+        {{ t.start }}
         <svg class="icon" xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24">
           <path d="M13.025 1l-2.847 2.828 6.176 6.176h-16.354v3.992h16.354l-6.176 6.176 2.847 2.828 10.975-11z" />
         </svg>
       </a>
-      <a class="setup" href="/guide/quick-start">快速开始</a>
-      <a class="setup" href="/learn/">架构学习</a>
+      <a class="setup" :href="link('/guide/quick-start')">{{ t.quick }}</a>
+      <a class="setup" :href="link('/learn/')">{{ t.learn }}</a>
     </p>
   </section>
 
   <section id="highlights">
-    <div class="highlight">
-      <h2>一棵树</h2>
-      <p>按钮、文字、侧栏和实时画面是同一棵树上的节点。它们一起排版、裁剪，也按同一个顺序接收点击。</p>
-    </div>
-    <div class="highlight">
-      <h2>两种写法</h2>
-      <p><code>view!</code> 和函数调用展开成同一套调用。侧边栏顶部的开关切换文档里的示例，运行时还是同一次挂载。</p>
-    </div>
-    <div class="highlight">
-      <h2>画面在树上</h2>
-      <p>着色器和预览视口是普通节点。你的应用持有窗口和设备，框架把这棵树画进那块 Surface。</p>
+    <div v-for="[title, body] in t.highlights" :key="title" class="highlight">
+      <h2>{{ title }}</h2>
+      <p v-html="body"></p>
     </div>
   </section>
 </template>

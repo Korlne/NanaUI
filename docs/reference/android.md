@@ -2,13 +2,13 @@
 
 Android（`platform/android`）是仓库内的**实验性 ARM64 宿主路径**，并非当前正式产品交付目标，也不是第二套产品渲染内核——请勿将其写入面向用户的跨平台承诺。
 
-比它低一级的 HarmonyOS / OpenHarmony 编译档见 [OHOS](ohos.md)：只承诺能编译，没有仓库内宿主。
+比它低一级的 HarmonyOS / OpenHarmony 编译档见 [OHOS](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/ohos.md)：只承诺能编译，没有仓库内宿主。
 
 在 Android 宿主上，界面同样进入 `nana-ui-runtime`（`UiWorld`）与 `nana-ui-scene`（`UiScene`），并由同一个 `SceneWgpuPainter` 绘制；窗口与 Vulkan 图形设备由宿主的 Android `Activity` 持有（不调用桌面端的 `run_runtime`）。
 
 ## 窗口内容
 
-整个 Surface 是一份 Runtime 文档，由 [移动宿主](mobile-host.md)（`nana-mobile-host`）持有，iOS 宿主也用同一层。`GameActivity` 把 Surface 铺到状态栏、导航栏和软键盘下面。文档根节点铺满主题背景色，按四边 inset（`WindowInsets` 的 `systemBars | displayCutout` 与 `ime`）留出内边距，横屏时左右两边的刘海和导航栏同样避让。Primary 之外的触摸交给系统。
+整个 Surface 是一份 Runtime 文档，由 [移动宿主](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/mobile-host.md)（`nana-mobile-host`）持有，iOS 宿主也用同一层。`GameActivity` 把 Surface 铺到状态栏、导航栏和软键盘下面。文档根节点铺满主题背景色，按四边 inset（`WindowInsets` 的 `systemBars | displayCutout` 与 `ime`）留出内边距，横屏时左右两边的刘海和导航栏同样避让。Primary 之外的触摸交给系统。
 
 窗口里挂的是两个宿主共用的测量页（`nana-mobile-probe`）。Android 在原型里没有接摄像头，打开「CPU 预览」后，宿主以 30 fps 生成 640×480 的帧并上传，用来测上传这条路径的开销。
 

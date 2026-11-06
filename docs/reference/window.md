@@ -290,7 +290,7 @@ IME：焦点进可编辑字段时 `Window::request_ime_update(Enable)` 一次（
 
 `installed_menu_bar()` 读回平台实际持有的菜单（macOS）。供宿主自检。`crates/nana-window/examples/menu-probe.rs` 就是用它做真机验收的。
 
-要画在界面里、跟随主题的菜单栏（自绘标题栏、Linux），用运行时组件 [`AppMenuBar`](../components/app-menu-bar.md)。它读同一份模型，选中项进同一个 `take_menu_activations()` 队列。
+要画在界面里、跟随主题的菜单栏（自绘标题栏、Linux），用运行时组件 [`AppMenuBar`](https://github.com/sena-nana/NanaUI/blob/main/docs/components/app-menu-bar.md)。它读同一份模型，选中项进同一个 `take_menu_activations()` 队列。
 
 菜单是整体替换：再调一次 `SetMenuBar` 换掉整条。没有增量条目 API。重建一个菜单很便宜。而跨三个平台做 diff 不便宜。
 
@@ -354,7 +354,7 @@ Linux portal 返回 URI 数组。可保留路径中的换行。zenity fallback �
 - 未设置时用默认几何标记。不要把它当品牌
 - 应用总是注册自己的图标时，可打开 `nana-ui` 的 `no-default-app-icon`：默认标记（约 1 MB PNG）不再链接进二进制，没有图标的窗口沿用平台默认。只由应用本身打开，库不要打开。打包时的默认 ICO/ICNS（`embed_windows`、`encode_icns`）不受影响
 - Windows exe 可在 `build.rs` 里 `nana_app_icon::embed_windows()`
-- macOS Dock：`nana_window::set_application_icon_png`。`.app` 由 `nana-packager` 生成（见[打包与分发](packaging.md)）
+- macOS Dock：`nana_window::set_application_icon_png`。`.app` 由 `nana-packager` 生成（见[打包与分发](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/packaging.md)）
 
 ## 打包
 
@@ -368,7 +368,7 @@ cargo run -p nana-packager -- macos-app --exe target/dist/component-gallery --na
 `dist` = `release` + `lto = "fat"` + `codegen-units = 1` + `strip = "symbols"` +
 `panic = "abort"`。`release` 保持原样。CI 和 benchmark 继续快速迭代。
 
-`macos-app` 只生成一个裸 `.app`。用来取代原来的 `nana-package-app`。完整的产品包（资源包、manifest、Steam/安装包布局、最终产物校验）用 `nana-packager package`。见[打包与分发](packaging.md)。两者默认都会再跑一次 `strip -x`（`--no-strip` 可关掉）。可执行文件里有溢出检查的 panic 文本时会警告（debug 构建一定有。个别目标的 release 构建也可能有）。并记入 manifest 的 `debug_assertions_suspected`。曾经有一个 108 MB 的 `.app` 就是误打了 debug 构建。其中 55 MB 是符号表。
+`macos-app` 只生成一个裸 `.app`。用来取代原来的 `nana-package-app`。完整的产品包（资源包、manifest、Steam/安装包布局、最终产物校验）用 `nana-packager package`。见[打包与分发](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/packaging.md)。两者默认都会再跑一次 `strip -x`（`--no-strip` 可关掉）。可执行文件里有溢出检查的 panic 文本时会警告（debug 构建一定有。个别目标的 release 构建也可能有）。并记入 manifest 的 `debug_assertions_suspected`。曾经有一个 108 MB 的 `.app` 就是误打了 debug 构建。其中 55 MB 是符号表。
 
 用 `scripts/report-artifact-size.py <artifact>` 逐段核对体积：它会数出二进制里内嵌了几份字体。发现 debug 构建时也会报警。
 
@@ -411,7 +411,7 @@ window.close().wait()?;
 
 `WindowDescriptor` 的字段全部公开。并且会随平台能力继续增加（`shadow`、`host_managed_drag` 都是这样加进来的）。构造时总是以 `..Default::default()` 或 `WindowDescriptor::new(...)` 的 builder 收尾。逐字段写满的结构体字面量在下一次加字段时就会编译失败。
 
-创建结果仅在隐藏原生窗口、Surface、输入状态和应用文档初始化成功后完成。失败会回滚。不发送 `Ready`。主窗口配置了 Early Splash 时是例外：窗口带着 Logo 先显示。设备和程序在其后就绪。失败时撤下 Logo 并关窗。见 [两阶段启动](startup.md)。`ApplicationState::build` 为每个窗口构建独立文档。自定义 `RuntimeProgram` 在 `initialize_window` 中完成构建。在 `discard_window` 中撤销失败的应用状态。成功后才注册并按 `WindowDescriptor::visible` 显示窗口。
+创建结果仅在隐藏原生窗口、Surface、输入状态和应用文档初始化成功后完成。失败会回滚。不发送 `Ready`。主窗口配置了 Early Splash 时是例外：窗口带着 Logo 先显示。设备和程序在其后就绪。失败时撤下 Logo 并关窗。见 [两阶段启动](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/startup.md)。`ApplicationState::build` 为每个窗口构建独立文档。自定义 `RuntimeProgram` 在 `initialize_window` 中完成构建。在 `discard_window` 中撤销失败的应用状态。成功后才注册并按 `WindowDescriptor::visible` 显示窗口。
 
 窗口 id 由服务分配。应用用 `WindowDescriptor::tag` 声明这扇窗口是哪种文档。不要靠创建请求的顺序去对应 id。标识对宿主不透明。从 `RuntimeProgramContext::window_tag()` 读回：`initialize_window` / `ApplicationState::build` 构建文档时。以及之后该窗口的每个回调（包括 `Ready`）都能读到。窗口关闭后为 `None`。按 id 持有的状态在 `window_closed` / `discard_window` 里清理。
 
@@ -459,7 +459,7 @@ fn build(&mut self, window: &mut ApplicationWindow, context: &RuntimeProgramCont
 
 ### 系统高对比
 
-`RuntimeProgramContext::high_contrast()` 返回系统高对比是否打开。窗口创建时读取。用户在运行中切换时，宿主向每扇窗口发送 `WindowEvent::HighContrastChanged { id, high_contrast }`。之后的回调上下文读到新值。原生宿主在窗口初始化和每次切换时对窗口文档调用 `AppContext::set_high_contrast`，已装主题随之改用同明暗的高对比调色板绘制（见 [外观](look.md)）。这是呈现层覆盖：已装主题不被改写，关闭后原样回来。自己持有 `AppContext` 的嵌入式宿主要自己调用它。
+`RuntimeProgramContext::high_contrast()` 返回系统高对比是否打开。窗口创建时读取。用户在运行中切换时，宿主向每扇窗口发送 `WindowEvent::HighContrastChanged { id, high_contrast }`。之后的回调上下文读到新值。原生宿主在窗口初始化和每次切换时对窗口文档调用 `AppContext::set_high_contrast`，已装主题随之改用同明暗的高对比调色板绘制（见 [外观](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/look.md)）。这是呈现层覆盖：已装主题不被改写，关闭后原样回来。自己持有 `AppContext` 的嵌入式宿主要自己调用它。
 
 - Windows：读取 `SPI_GETHIGHCONTRAST` 的 `HCF_HIGHCONTRASTON`。宿主窗口子类收到 `WM_SETTINGCHANGE`（`SPI_SETHIGHCONTRAST`）后在下一次 `about_to_wait` 重新读取。只在值变化时发送事件。这不是 DirectWrite 的文字 gamma。
 - macOS：读取「增强对比度」（`NSWorkspace.accessibilityDisplayShouldIncreaseContrast`）。变化走与减少动态效果同一个显示选项通知。只在值变化时发送事件。
@@ -545,7 +545,7 @@ commands.push(WindowCommand::SetContentAspectRatio { id, ratio: Some(9.0 / 16.0)
 - **最大化与全屏**不受约束，用平台给的尺寸。在最大化或全屏时换了比例，窗口回到普通状态后的第一次尺寸变化时再按新比例调整。
 - **平台**：拖动时保持比例只在 Windows 上实现。macOS 与 Linux 上开窗尺寸、换比例时的调整和最小尺寸照常生效，用户拖动不受约束。
 
-只放视频的窗口，外壳的显隐交给媒体条的 `auto_hide(true)`：指针空闲、离开窗口（包括全屏时）都会收起，标题栏听条的 `OverlayVisibilityChanged` 跟着走。标题栏写 `AppTitleBar::over_media(true)`，不要只写 `transparent(true)`：浅色主题的深色前景落在画面上看不清。不要再用 `PointerPresenceChanged` 自己维护「指针在不在」来切换外壳，那样全屏时外壳永远不会收起。写法见 [MediaTransportBar](../components/media-transport-bar.md#自动收起)。
+只放视频的窗口，外壳的显隐交给媒体条的 `auto_hide(true)`：指针空闲、离开窗口（包括全屏时）都会收起，标题栏听条的 `OverlayVisibilityChanged` 跟着走。标题栏写 `AppTitleBar::over_media(true)`，不要只写 `transparent(true)`：浅色主题的深色前景落在画面上看不清。不要再用 `PointerPresenceChanged` 自己维护「指针在不在」来切换外壳，那样全屏时外壳永远不会收起。写法见 [MediaTransportBar](https://github.com/sena-nana/NanaUI/blob/main/docs/components/media-transport-bar.md#自动收起)。
 
 ### 运行中改尺寸限制
 
@@ -645,7 +645,7 @@ python scripts/validate-desktop-overlay.py --presents
 
 **验证状态**：2026-10-08 在 Windows 11（RTX 5060 Ti，DX12）真机上，`--presents` 三轮均为每窗 60 帧 / 2 秒，三扇窗的标记像素都在屏幕上。完整的 `validate-desktop-overlay.py`（指针路由、任务栏）这次没有跑，因为这台机器没装 `comtypes`。
 
-隐藏、最小化或被遮挡的窗口仍可以出画面：程序用 `RuntimeProgram::window_output` 要一个窗口输出，并设 `while_hidden`。宿主在只做 GPU 的隐藏 tick 里 flush 文档，只画输出。合同与真机结果见 [Window-independent presentation](output.md#window-outputs)。
+隐藏、最小化或被遮挡的窗口仍可以出画面：程序用 `RuntimeProgram::window_output` 要一个窗口输出，并设 `while_hidden`。宿主在只做 GPU 的隐藏 tick 里 flush 文档，只画输出。合同与真机结果见 [Window-independent presentation](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/output.md#window-outputs)。
 
 ## Runtime 中的原生网页内容
 
@@ -690,7 +690,7 @@ python scripts/validate-desktop-overlay.py --presents
 `RuntimeProgram::web_surface_requests` 声明不挂在任何窗口上的网页实例，帧经
 `WebFrameSink` 直接交给应用，事件经 `web_surface_event` 回流。`ShowWindow` 打开的交互窗口
 由宿主平台层拥有，不是 Runtime 窗口，不进 `WindowService`。合同见
-[GPU 参考](gpu.md#无头网页画面websurface)。
+[GPU 参考](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/gpu.md#无头网页画面websurface)。
 
 ### Surface 故障恢复
 

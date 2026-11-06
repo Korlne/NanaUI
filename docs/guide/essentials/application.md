@@ -1,6 +1,6 @@
 # 创建应用
 
-一扇窗口背后是三件事：你持有一棵 `RuntimeDocument`，实现 `RuntimeProgram`，然后把它交给 `run_runtime`。依赖和第一段界面在 [快速开始](../quick-start.md)。这一章说明这几处各自做什么，并给出能打开的整段程序。
+一扇窗口背后是三件事：你持有一棵 `RuntimeDocument`，实现 `RuntimeProgram`，然后把它交给 `run_runtime`。依赖和第一段界面在 [快速开始](https://github.com/sena-nana/NanaUI/blob/main/docs/guide/quick-start.md)。这一章说明这几处各自做什么，并给出能打开的整段程序。
 
 桌面入口要打开 `hosted`。不打开就没有 `run_runtime`。依赖怎么写，见快速开始。
 
@@ -26,7 +26,7 @@ document
     .unwrap();
 ```
 
-`page` 是一个闭包，在挂载作用域里求值，返回 `impl IntoView`。根作为文档根。挂到某个已有节点下面用 `mount_view`。两种写法怎么写这棵树，见 [视图写法](view.md)。
+`page` 是一个闭包，在挂载作用域里求值，返回 `impl IntoView`。根作为文档根。挂到某个已有节点下面用 `mount_view`。两种写法怎么写这棵树，见 [视图写法](https://github.com/sena-nana/NanaUI/blob/main/docs/guide/essentials/view.md)。
 
 ## 宿主怎么找到这棵文档
 
@@ -46,7 +46,7 @@ fn with_document<R>(
 
 ## RuntimeProgram
 
-应用实现这个 trait，再交给宿主。`Message` 用来传递跨窗口、GPU 和持久化这类宿主消息，不是每一次点击的总线。点击改控件或信号，见 [事件](events.md)。
+应用实现这个 trait，再交给宿主。`Message` 用来传递跨窗口、GPU 和持久化这类宿主消息，不是每一次点击的总线。点击改控件或信号，见 [事件](https://github.com/sena-nana/NanaUI/blob/main/docs/guide/essentials/events.md)。
 
 | 方法 | 做什么 |
 | --- | --- |
@@ -72,7 +72,7 @@ fn main() -> Result<(), nana_ui::HostedRunError> {
 }
 ```
 
-`run_runtime` 打开 `WindowDescriptor` 描述的那扇窗口，创建 `App`，然后跑事件循环。它不设应用路径，也不开诊断。要目录和诊断，用 `NanaApplication::builder`，见 [应用 API](../../reference/application-api.md)。
+`run_runtime` 打开 `WindowDescriptor` 描述的那扇窗口，创建 `App`，然后跑事件循环。它不设应用路径，也不开诊断。要目录和诊断，用 `NanaApplication::builder`，见 [应用 API](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/application-api.md)。
 
 ## theme
 
@@ -82,13 +82,13 @@ fn theme(&self) -> std::sync::Arc<nana_ui::CompiledTheme> {
 }
 ```
 
-Light 和 Dark 是两个预制主题；应用可以通过 `ThemeDefinition` 和 `ThemeRegistry` 注册自己的 `ThemeId`。控件上要跟着主题走的颜色写语义角色，不要在样式里写死一份亮色，见 [类与样式](class-and-style.md)。
+Light 和 Dark 是两个预制主题；应用可以通过 `ThemeDefinition` 和 `ThemeRegistry` 注册自己的 `ThemeId`。控件上要跟着主题走的颜色写语义角色，不要在样式里写死一份亮色，见 [类与样式](https://github.com/sena-nana/NanaUI/blob/main/docs/guide/essentials/class-and-style.md)。
 
 ## 不必亲手实现 trait 的时候
 
 普通 Rust 应用可以实现 `ApplicationState`，用 `RuntimeApplication<State>` 去实现 `RuntimeProgram`。`initialize` 之后它会调用你的 `build`，窗口上的 `ApplicationWindow.document` 就是那棵 `RuntimeDocument`。`with_document` 按 `WindowId` 从它的窗口表里取。`theme` 默认返回内置 Dark。
 
-自己管理窗口和文档的宿主仍然直接写 `RuntimeProgram`。方法全表在 [应用 API](../../reference/application-api.md)。
+自己管理窗口和文档的宿主仍然直接写 `RuntimeProgram`。方法全表在 [应用 API](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/application-api.md)。
 
 ::: warning
 点击处理里不要把整页再 `mount_view_root` 一遍。树在挂载时建一次，之后改信号或改那一个控件。

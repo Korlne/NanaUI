@@ -127,4 +127,4 @@ widget(
 
 ## 参见
 
-[PropertyGrid](property-grid.md) · [总览](index.md)
+[PropertyGrid](https://github.com/sena-nana/NanaUI/blob/main/docs/components/property-grid.md) · [总览](https://github.com/sena-nana/NanaUI/blob/main/docs/components/index.md)

@@ -46,7 +46,7 @@ widget(
 
 ## 语气和工具
 
-`.tone` 是 `SidebarRowTone`：`Default`、`Warning`、`Error`。`.tools(…)` 是行尾的工具，指针在这一行上，或键盘焦点在这一行或行内时显出，代替 trailing 槽；所以 Tab 先停在行上、再停到工具上。收起时默认退出布局，长标签用满整行；`.tools_rest(RowToolsRest::Reserve)` 改成保留宽度、只是不画，这时工具一直占着 trailing 的位置。`.keep_tools(true)` 平时也显示。规则和 [ListItem](list-item.md) 的行内工具相同。
+`.tone` 是 `SidebarRowTone`：`Default`、`Warning`、`Error`。`.tools(…)` 是行尾的工具，指针在这一行上，或键盘焦点在这一行或行内时显出，代替 trailing 槽；所以 Tab 先停在行上、再停到工具上。收起时默认退出布局，长标签用满整行；`.tools_rest(RowToolsRest::Reserve)` 改成保留宽度、只是不画，这时工具一直占着 trailing 的位置。`.keep_tools(true)` 平时也显示。规则和 [ListItem](https://github.com/sena-nana/NanaUI/blob/main/docs/components/list-item.md) 的行内工具相同。
 
 ## 激活
 
@@ -78,4 +78,4 @@ widget(
 
 ## 参见
 
-[总览](index.md) · [控件](../reference/components.md) · [工作区](../reference/workspace.md)
+[总览](https://github.com/sena-nana/NanaUI/blob/main/docs/components/index.md) · [控件](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/components.md) · [工作区](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/workspace.md)

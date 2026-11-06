@@ -67,7 +67,7 @@ icon_button(Icon::Search, "搜索")
 | `selected` | `bool` | 由应用写。激活不自己改 `selected`。选中时字形和底色走选中态 |
 | `icon_size` | `Option<f32>` | 字形边长（逻辑像素），盖过尺寸档给的字号；不动方盒。默认 `None` |
 | `disabled` | `bool` | 为真时不发 `Activate`。按种类配色的按钮整枚降到 50% 不透明度，`colors_from_style` 的按钮照 `style.interaction.disabled` 画、不淡，见上文「种类」 |
-| `has_popup` | `bool` | 弹出菜单的按钮（`aria-haspopup="menu"`）：读屏报成菜单按钮；焦点在它上面时，ArrowUp / ArrowDown 和 `ContextMenu` 键一样发 `keyboard: true` 的 `SecondaryPress`，由你打开菜单。见 [控件](../reference/components.md) 的菜单按钮 |
+| `has_popup` | `bool` | 弹出菜单的按钮（`aria-haspopup="menu"`）：读屏报成菜单按钮；焦点在它上面时，ArrowUp / ArrowDown 和 `ContextMenu` 键一样发 `keyboard: true` 的 `SecondaryPress`，由你打开菜单。见 [控件](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/components.md) 的菜单按钮 |
 
 ## 事件
 
@@ -85,4 +85,4 @@ icon_button(Icon::Search, "搜索")
 
 ## 参见
 
-[总览](index.md) · [控件](../reference/components.md)
+[总览](https://github.com/sena-nana/NanaUI/blob/main/docs/components/index.md) · [控件](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/components.md)

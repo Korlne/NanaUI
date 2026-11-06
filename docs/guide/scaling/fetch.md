@@ -41,7 +41,7 @@ window.fetch_host = Some(shared_fetch_host(NativeFetchHost::new(policy)));
 
 宿主接口是 `FetchHost`：实现 `fetch` 和 `policy()`。`policy()` 声明这个 host 自己的白名单和上限。
 
-宿主合同在 [应用 API](../../reference/application-api.md#fetch-宿主)。
+宿主合同在 [应用 API](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/application-api.md#fetch-宿主)。
 
 ## 接下来
 

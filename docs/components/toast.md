@@ -1,8 +1,8 @@
 # Toast
 
-一条被动的通知：标题、可选的说明，和说它的口气（`ToastTone`：Info / Success / Warning / Danger）。`Toast::new(title, tone)` 创建它。控件表里没有 `<Toast>` 标签，两种写法都调用 `widget(Toast::new(..))`。外观归主题的 `ToastRecipe`，见 [主题](../reference/theme.md)。
+一条被动的通知：标题、可选的说明，和说它的口气（`ToastTone`：Info / Success / Warning / Danger）。`Toast::new(title, tone)` 创建它。控件表里没有 `<Toast>` 标签，两种写法都调用 `widget(Toast::new(..))`。外观归主题的 `ToastRecipe`，见 [主题](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/theme.md)。
 
-一条提示有两种形式。裸提示是一个画好的节点，标题和说明各一行。[`AppContext::assemble_toast`](#复合形式) 把它永久换成由子节点组成的复合形式：文案折行，多出进度条、一个动作按钮、可按的关闭按钮和自己的图标。通知角用 [ToastStack](toast-stack.md)，它装配放进去的每一条。
+一条提示有两种形式。裸提示是一个画好的节点，标题和说明各一行。[`AppContext::assemble_toast`](#复合形式) 把它永久换成由子节点组成的复合形式：文案折行，多出进度条、一个动作按钮、可按的关闭按钮和自己的图标。通知角用 [ToastStack](https://github.com/sena-nana/NanaUI/blob/main/docs/components/toast-stack.md)，它装配放进去的每一条。
 
 ## 基本用法
 
@@ -30,7 +30,7 @@ widget(Toast::new("已保存", ToastTone::Success).description("项目已导出"
 
 ## 放置与定时
 
-`Toast::place_in(viewport, align, max_width, insets)` 用与 `Panel::viewport` 相同的预留合同，把提示钉进应用留出的空闲区域，贴住预留的底边，见 [控件](../reference/components.md)。放置过的提示保留 `place_in` 给的宽度。
+`Toast::place_in(viewport, align, max_width, insets)` 用与 `Panel::viewport` 相同的预留合同，把提示钉进应用留出的空闲区域，贴住预留的底边，见 [控件](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/components.md)。放置过的提示保留 `place_in` 给的宽度。
 
 `Toast::timeout(Duration)` 让提示在屏上满这么久后发一次 `ToastDismissed`，和按下关闭按钮的事件相同。计时器不逐帧推进，只在到期时唤醒宿主。框架不自己移除提示，收到事件后由应用拿掉。
 
@@ -65,7 +65,7 @@ cx.on(toast, |_, _: &ToastDismissed, _| { /* 拿掉这条 */ })?;
 
 两个按钮按完整内容高度垂直居中，不把一行的提示撑高。主题可将 `control_radius` 设为 `RadiusTier::Xl` 等档位，让文字操作呈胶囊、方形关闭按钮的反馈呈圆形；圆角随当前主题度量解析，切换主题时原地更新。提示的宽度随内容（CSS `width: fit-content`），放不下时文案折行；显示进度时至少为配方的 `progress.min_width`（默认 240），进度条不跟着文案伸缩。放置过的提示保留 `place_in` 给的宽度。
 
-装配后的提示在指针悬停或焦点在里面时暂停计时，离开后从下一帧起按剩余时间继续。放在 [ToastStack](toast-stack.md) 里时，由栈决定什么时候计时。
+装配后的提示在指针悬停或焦点在里面时暂停计时，离开后从下一帧起按剩余时间继续。放在 [ToastStack](https://github.com/sena-nana/NanaUI/blob/main/docs/components/toast-stack.md) 里时，由栈决定什么时候计时。
 
 ## 布局
 
@@ -107,4 +107,4 @@ cx.on(toast, |_, _: &ToastDismissed, _| { /* 拿掉这条 */ })?;
 
 ## 参见
 
-[总览](index.md) · [ToastStack](toast-stack.md) · [控件](../reference/components.md) · [框架文案](../reference/framework-strings.md)
+[总览](https://github.com/sena-nana/NanaUI/blob/main/docs/components/index.md) · [ToastStack](https://github.com/sena-nana/NanaUI/blob/main/docs/components/toast-stack.md) · [控件](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/components.md) · [框架文案](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/framework-strings.md)

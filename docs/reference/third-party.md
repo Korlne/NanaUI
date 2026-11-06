@@ -1,6 +1,6 @@
 # 第三方代码与许可证审计
 
-NanaUI 自身代码采用 **MIT 或 Apache-2.0** 双许可发布（详见仓库根目录的 [LICENSE-MIT](../../LICENSE-MIT) 与 [LICENSE-APACHE](../../LICENSE-APACHE)）。本文面向需要打包分发 NanaUI 应用或进行法务合规审查的维护者，记录当前依赖图的许可证构成、文本引擎自研切换后（#99）旧分支的移除状态，以及仓库内含有的两处显式署名移植代码。
+NanaUI 自身代码采用 **MIT 或 Apache-2.0** 双许可发布（详见仓库根目录的 [LICENSE-MIT](https://github.com/sena-nana/NanaUI/blob/main/LICENSE-MIT) 与 [LICENSE-APACHE](https://github.com/sena-nana/NanaUI/blob/main/LICENSE-APACHE)）。本文面向需要打包分发 NanaUI 应用或进行法务合规审查的维护者，记录当前依赖图的许可证构成、文本引擎自研切换后（#99）旧分支的移除状态，以及仓库内含有的两处显式署名移植代码。
 
 ## 核心合规结论
 

@@ -1,6 +1,6 @@
 # Select
 
-单值下拉。选项身份归应用，框架不另编一份 id。要多选，或要和菜单共用字段表面，用 [Dropdown](dropdown.md)。边输入边查，用 [SearchDropdown](search-dropdown.md)。
+单值下拉。选项身份归应用，框架不另编一份 id。要多选，或要和菜单共用字段表面，用 [Dropdown](https://github.com/sena-nana/NanaUI/blob/main/docs/components/dropdown.md)。边输入边查，用 [SearchDropdown](https://github.com/sena-nana/NanaUI/blob/main/docs/components/search-dropdown.md)。
 
 模板里的标签是 `<Select>`。它没有构造参数。选项用 `.options(…)` 给。
 
@@ -32,7 +32,7 @@ select().placeholder("语言").options(options).model(language)
 
 `.hint(text)` 给选项配一段次要文字，例如译名后面的原文：`SelectOption::new("x", "头部左右转").hint("FaceAngleX")`。菜单里它在这一行的末尾，比标签小一号、用次要色；收起的框里跟在所选项的标签后面。宽度先给标签，提示放不下时省略，连一小段都放不下就不画。读屏把它读在标签之后，画不下时也读。空字符串就是没有。
 
-`.image(slot)` 给选项配一张圆图，画的是宿主纹理槽 `slot`，和同一个槽的 [Avatar](avatar.md) 一样（Cover，裁成圆，场景里是同一个 `nana.host-texture` 资源，名字就是槽名）。菜单里它在这一行标签的前面；收起的框里，所选项有图时画在标签前面。边长是这个尺寸文字的行高，比图标大一档，行不变高。没配图的选项照旧排，不留空位。空槽画 Subtle 占位圆，标签位置不变；缺槽拒绝帧的约定和 Avatar 一样。图只作装饰，读屏只读标签。
+`.image(slot)` 给选项配一张圆图，画的是宿主纹理槽 `slot`，和同一个槽的 [Avatar](https://github.com/sena-nana/NanaUI/blob/main/docs/components/avatar.md) 一样（Cover，裁成圆，场景里是同一个 `nana.host-texture` 资源，名字就是槽名）。菜单里它在这一行标签的前面；收起的框里，所选项有图时画在标签前面。边长是这个尺寸文字的行高，比图标大一档，行不变高。没配图的选项照旧排，不留空位。空槽画 Subtle 占位圆，标签位置不变；缺槽拒绝帧的约定和 Avatar 一样。图只作装饰，读屏只读标签。
 
 `options` 可以是 `Vec<SelectOption>`，也可以是这个类型的信号。这是单值字段，不是多选。
 
@@ -124,10 +124,10 @@ layout.min_width = Some(LengthSpec::Px(122.0));
 
 - 滚轮在菜单上滚动选项，滚到头也不交给下面的页面。菜单装得下全部选项时，滚轮照旧滚页面。按住 Ctrl 时滚轮不归菜单。
 - 方向键移动高亮时，把高亮的一项滚进来，只滚必要的距离。菜单打开时，当前选中的一项尽量放在中间。
-- 右侧有一条滚动条，尺寸和配色与 [ScrollView](scroll-view.md) 的一样，取自主题的 `ScrollbarMetrics` 和 `ScrollbarRecipe`。菜单开着、装不下时一直显示；主题的显示策略是 `Always` 时带常驻轨道，是 `Hidden` 时不画，滚轮和键盘照常。指针移到滚动条上时滑块变粗、换成悬停色；拖动滑块滚动选项；按在空轨道上时滑块先对准按下的位置，再接着拖；拖动被取消时回到按下前的位置。选项让出滚动条那一条，滑块不会压住文字和高亮。
+- 右侧有一条滚动条，尺寸和配色与 [ScrollView](https://github.com/sena-nana/NanaUI/blob/main/docs/components/scroll-view.md) 的一样，取自主题的 `ScrollbarMetrics` 和 `ScrollbarRecipe`。菜单开着、装不下时一直显示；主题的显示策略是 `Always` 时带常驻轨道，是 `Hidden` 时不画，滚轮和键盘照常。指针移到滚动条上时滑块变粗、换成悬停色；拖动滑块滚动选项；按在空轨道上时滑块先对准按下的位置，再接着拖；拖动被取消时回到按下前的位置。选项让出滚动条那一条，滑块不会压住文字和高亮。
 - 点到的就是画在指针下的那一项：只有在菜单里看得见的部分接受点击，滚动条那一条不算选项。页面滚过之后也一样。
 
-滚动位置和高亮一样是交互状态（`Select::menu_scroll`，类型 `SelectMenuScroll`）：菜单每次打开都重新开始；应用刷新时值和选项没变就保留。[Dropdown](dropdown.md) 和 [SearchDropdown](search-dropdown.md) 用的是同一个菜单，表现相同；SearchDropdown 的查询词变了时，回到第一个匹配项。
+滚动位置和高亮一样是交互状态（`Select::menu_scroll`，类型 `SelectMenuScroll`）：菜单每次打开都重新开始；应用刷新时值和选项没变就保留。[Dropdown](https://github.com/sena-nana/NanaUI/blob/main/docs/components/dropdown.md) 和 [SearchDropdown](https://github.com/sena-nana/NanaUI/blob/main/docs/components/search-dropdown.md) 用的是同一个菜单，表现相同；SearchDropdown 的查询词变了时，回到第一个匹配项。
 
 ## 读屏
 
@@ -182,4 +182,4 @@ layout.min_width = Some(LengthSpec::Px(122.0));
 
 ## 参见
 
-[总览](index.md) · [控件](../reference/components.md)
+[总览](https://github.com/sena-nana/NanaUI/blob/main/docs/components/index.md) · [控件](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/components.md)

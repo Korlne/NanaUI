@@ -1,6 +1,6 @@
 # AppMenuBar
 
-`AppMenuBar` 把应用的 `MenuBar` 模型画在应用自己的界面里，例如自定义标题栏或窗口顶部。它跟随主题配色。原生菜单栏用的是同一份模型（见 [窗口](../reference/window.md#菜单栏)）。它没有模板标签，用 `widget(AppMenuBar::new(模型))` 放进视图。
+`AppMenuBar` 把应用的 `MenuBar` 模型画在应用自己的界面里，例如自定义标题栏或窗口顶部。它跟随主题配色。原生菜单栏用的是同一份模型（见 [窗口](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/window.md#菜单栏)）。它没有模板标签，用 `widget(AppMenuBar::new(模型))` 放进视图。
 
 ## 基本用法
 
@@ -100,4 +100,4 @@ Alt 按下期间按过其他键，算组合键，松开时不打开菜单。不�
 
 ## 参见
 
-[ContextMenu](context-menu.md) · [ActionMenu](action-menu.md) · [窗口：菜单栏](../reference/window.md#菜单栏) · [总览](index.md)
+[ContextMenu](https://github.com/sena-nana/NanaUI/blob/main/docs/components/context-menu.md) · [ActionMenu](https://github.com/sena-nana/NanaUI/blob/main/docs/components/action-menu.md) · [窗口：菜单栏](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/window.md#菜单栏) · [总览](https://github.com/sena-nana/NanaUI/blob/main/docs/components/index.md)

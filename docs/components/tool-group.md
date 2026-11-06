@@ -54,7 +54,7 @@ widget(ToolGroup::new().label("图层操作")).children((
 
 相邻的组之间留间距就行，不要再加 `Divider`：每条底槽已经收住了自己那一组。
 
-要用方向键在按钮之间走，给组加上 `.roving_focus(RovingFocusGroup::vertical())`（横排用 `horizontal()`）。见 [控件](../reference/components.md) 的方向键焦点组。
+要用方向键在按钮之间走，给组加上 `.roving_focus(RovingFocusGroup::vertical())`（横排用 `horizontal()`）。见 [控件](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/components.md) 的方向键焦点组。
 
 ## 属性
 

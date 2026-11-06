@@ -1,6 +1,6 @@
 # 开发期热重载合同
 
-本文说明开发期热重载（`nana-ui-dev`）的响应延迟、状态交接机制以及为什么 Rust L3 采用进程重执（re-exec）而非 dylib 热替换。快速配置步骤见指南中的 [热重载](../guide/scaling/hot-reload.md)。
+本文说明开发期热重载（`nana-ui-dev`）的响应延迟、状态交接机制以及为什么 Rust L3 采用进程重执（re-exec）而非 dylib 热替换。快速配置步骤见指南中的 [热重载](https://github.com/sena-nana/NanaUI/blob/main/docs/guide/scaling/hot-reload.md)。
 
 ## 各层改动方式与实测延迟
 
@@ -23,7 +23,7 @@ Rust L3 不做进程内 `dlopen / dlclose` 代码热替换，因为在不破坏�
 4. **平台动态库卸载限制**：macOS 的 `dlclose` 不会真正卸载含有 Objective-C 元数据或线程本地存储（TLS）的镜像；
 5. **全局静态量分裂**：dylib 若重复链接 `wgpu` 会产生两套实例。
 
-因此 Rust L3 的诚实方案是**后台增量编译 + 状态交接 + 原地 `re-exec`**（完整示例见 [`crates/nana-ui-dev/examples/l3-dev-entry.rs`](../../crates/nana-ui-dev/examples/l3-dev-entry.rs)）：
+因此 Rust L3 的诚实方案是**后台增量编译 + 状态交接 + 原地 `re-exec`**（完整示例见 [`crates/nana-ui-dev/examples/l3-dev-entry.rs`](https://github.com/sena-nana/NanaUI/blob/main/crates/nana-ui-dev/examples/l3-dev-entry.rs)）：
 
 ```rust
 // 1. main 入口使用 run_with_restart 包装

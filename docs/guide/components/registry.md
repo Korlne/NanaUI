@@ -82,7 +82,7 @@ mutations.set_custom_render(
 );
 ```
 
-普通实时画面仍然用 `GpuTextureView` 和同一条字符串 slot。那条路径的槽也落在 Runtime 的 `CustomRenderNode` 上。见 [实时画面](../../reference/gpu.md)。
+普通实时画面仍然用 `GpuTextureView` 和同一条字符串 slot。那条路径的槽也落在 Runtime 的 `CustomRenderNode` 上。见 [实时画面](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/gpu.md)。
 
 ## 限制
 

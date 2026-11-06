@@ -80,4 +80,4 @@ Chip 不是 list item。无障碍上，本体是一个可激活的 Button，`sel
 
 ## 参见
 
-[总览](index.md) · [控件](../reference/components.md)
+[总览](https://github.com/sena-nana/NanaUI/blob/main/docs/components/index.md) · [控件](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/components.md)

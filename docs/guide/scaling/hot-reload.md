@@ -72,7 +72,7 @@ cargo build -p my-app --bin dev --features dev,headless
 
 同一份 JSON 可以问无障碍树、截图和点击。
 
-步骤、测量条件和为什么不能热替换，写在 [热重载](../../reference/hot-reload.md)。
+步骤、测量条件和为什么不能热替换，写在 [热重载](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/hot-reload.md)。
 
 ## 接下来
 

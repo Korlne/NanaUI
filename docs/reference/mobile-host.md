@@ -2,7 +2,7 @@
 
 移动宿主是 iOS 和 Android 两个**实验性**宿主共用的那一层（`platform/mobile-core`，crate `nana-mobile-host`）。目前它只用来验证一个问题：NanaUI 加上混合原生，能不能达到原生 App 的性能和手感。它不是产品交付目标，不要据此对外承诺移动端支持。
 
-两个宿主的平台细节分别见 [iOS](ios.md) 和 [Android](android.md)。iOS 宿主是 rlib，App 通过 `IosApp` 把自己的视图放进去（见 [iOS](ios.md#在宿主上做一个-app)）。
+两个宿主的平台细节分别见 [iOS](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/ios.md) 和 [Android](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/android.md)。iOS 宿主是 rlib，App 通过 `IosApp` 把自己的视图放进去（见 [iOS](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/ios.md#在宿主上做一个-app)）。
 
 ## 分层
 
@@ -61,11 +61,11 @@ nana-ui（只开 gpu，不开 hosted）
 
 `MobileViewport` 包括物理尺寸、缩放（UIKit 的 `contentScaleFactor`，Android 的 `densityDpi / 160`）和四边安全区（`SafeArea`，单位是物理像素）。`MobileRuntime` 的根节点铺满整个 surface，按安全区给应用视图留内边距。横屏时刘海和导航栏所在的左右两边同样避让。
 
-移动宿主默认安装触屏密度 `TOUCH_METRICS`（见 [theme.md](theme.md)）。
+移动宿主默认安装触屏密度 `TOUCH_METRICS`（见 [theme.md](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/theme.md)）。
 
 ## 输入
 
-`push_touch` 只跟随主触点，第二根手指不参与。触摸拖动滚动、甩动和回弹由 runtime 完成（见 [runtime-scene.md](runtime-scene.md#触摸滚动与-scrollphysics)）。`set_scroll_physics` 选择物理档位：iOS 宿主用 `Ios`，Android 宿主用 `Android`。甩动和回弹走动画 deadline，所以进行期间 `frame_demand` 返回 `At`，停下后回到 `Idle`。`push_composition` 接平台文本系统的组字事件。点击编辑器以外的位置时，先提交未完成的组字，再移动焦点。
+`push_touch` 只跟随主触点，第二根手指不参与。触摸拖动滚动、甩动和回弹由 runtime 完成（见 [runtime-scene.md](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/runtime-scene.md#触摸滚动与-scrollphysics)）。`set_scroll_physics` 选择物理档位：iOS 宿主用 `Ios`，Android 宿主用 `Android`。甩动和回弹走动画 deadline，所以进行期间 `frame_demand` 返回 `At`，停下后回到 `Idle`。`push_composition` 接平台文本系统的组字事件。点击编辑器以外的位置时，先提交未完成的组字，再移动焦点。
 
 ## 测量页
 
@@ -75,4 +75,4 @@ nana-ui（只开 gpu，不开 hosted）
 
 - `cargo test -p nana-mobile-host -p nana-mobile-probe`：帧需求、安全区、触屏密度、组字、选区回写，以及光标框与点命中的互逆；另外，两种物理档位下，网格都要能拖动、甩动，停下后回到 Idle（`a_swipe_scrolls_the_grid_flings_and_settles_idle`）。`every_preview_path_paints` 在本机 GPU 上真的画一遍原生预览和 CPU 预览两条路径（没有 GPU 时跳过），宿主纹理缺失这类整帧失败只有这样才测得出来。
 - `scripts/check-ios-arm64.sh` 和 `scripts/check-android-arm64.sh`：交叉编译。
-- 性能和手感只认真机数据，模拟器的数字不能作为证据。达标线和对照方法见 [iOS](ios.md#验收)。
+- 性能和手感只认真机数据，模拟器的数字不能作为证据。达标线和对照方法见 [iOS](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/ios.md#验收)。

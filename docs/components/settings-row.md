@@ -102,7 +102,7 @@ if let Some(row) = row.get() {
 
 ## 错误
 
-`.error(reason)` 说这一行的值哪里不对：必填项为空、端口被占用、身份码不正确。原因占提示的位置，画成 Danger 的 [ValidationMessage](validation-message.md)，提示先让开；写回 `None` 后提示回来。原因就在用户正看的那一行，有提示的行高度不变。
+`.error(reason)` 说这一行的值哪里不对：必填项为空、端口被占用、身份码不正确。原因占提示的位置，画成 Danger 的 [ValidationMessage](https://github.com/sena-nana/NanaUI/blob/main/docs/components/validation-message.md)，提示先让开；写回 `None` 后提示回来。原因就在用户正看的那一行，有提示的行高度不变。
 
 行本身读作 invalid，读屏的值是原因。控件自己的红框由控件的 `invalid` 管，行只说为什么：两样一起写。
 
@@ -150,4 +150,4 @@ if let Some(row) = row.get() {
 
 ## 参见
 
-[总览](index.md) · [控件](../reference/components.md) · [工作区](../reference/workspace.md)
+[总览](https://github.com/sena-nana/NanaUI/blob/main/docs/components/index.md) · [控件](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/components.md) · [工作区](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/workspace.md)

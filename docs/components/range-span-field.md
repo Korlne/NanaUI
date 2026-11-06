@@ -49,11 +49,11 @@ Arc::make_mut(&mut field.style.layout).height = Some(LengthSpec::Px(180.0));
 
 ## 外观
 
-两个滑块之间是一条实心强调色（`Accent`）细条，粗细约为轨道的三分之二，居中、两端圆角；区间外是中性色轨道（`BorderStrong`）。滑块与 [RangeField](range-field.md) 的滑块同样。禁用时轨道转 `Border`，区间转 `Faint`，滑块转禁用色。
+两个滑块之间是一条实心强调色（`Accent`）细条，粗细约为轨道的三分之二，居中、两端圆角；区间外是中性色轨道（`BorderStrong`）。滑块与 [RangeField](https://github.com/sena-nana/NanaUI/blob/main/docs/components/range-field.md) 的滑块同样。禁用时轨道转 `Border`，区间转 `Faint`，滑块转禁用色。
 
 ## 数值胶囊
 
-`value_thumbs={true}`（或 `RangeSpanField::value_thumbs(true)`）把两个滑块画成写着自己数值的强调色胶囊，与 [RangeField](range-field.md) 的 `value_thumb` 同样：胶囊一样宽，宽到放得下最小值、最大值和两个滑块的值，高度是 `range_span_value_thumb_height(size, typography, spacing)`。竖向时控件默认宽度就是胶囊加焦点环，轨道内缩变成半个胶囊高加焦点环，旁边要对齐的画用 `range_span_value_track_inset(size, typography, spacing)`（主题从绘制上下文的 `cx.theme()` 取）。实时指示画在胶囊下面，不盖住数字。
+`value_thumbs={true}`（或 `RangeSpanField::value_thumbs(true)`）把两个滑块画成写着自己数值的强调色胶囊，与 [RangeField](https://github.com/sena-nana/NanaUI/blob/main/docs/components/range-field.md) 的 `value_thumb` 同样：胶囊一样宽，宽到放得下最小值、最大值和两个滑块的值，高度是 `range_span_value_thumb_height(size, typography, spacing)`。竖向时控件默认宽度就是胶囊加焦点环，轨道内缩变成半个胶囊高加焦点环，旁边要对齐的画用 `range_span_value_track_inset(size, typography, spacing)`（主题从绘制上下文的 `cx.theme()` 取）。实时指示画在胶囊下面，不盖住数字。
 
 按在胶囊上、挪动不超过一小段再抬起是点击：不移动滑块，原地换成数字输入框，选中当前值、拿到焦点；挪远了才是拖动。焦点在胶囊上时按回车、空格或无障碍的按下也一样。回车提交、Esc 还原，之后焦点回到那个滑块；焦点离开控件也结束输入。提交时先发 `RangeSpanEntered { thumb, value }`：输入的是哪个滑块、值是多少（夹进范围、对齐步进，但不停在另一个滑块那里），再按这个值和另一个滑块排好的一对值发 `RangeSpanInput` / `RangeSpanChanged`，越过另一个滑块时两者交换。应用自己按另一种方向保存这一对值时（比如允许上下颠倒），听 `RangeSpanEntered` 就知道改的是哪一端。
 
@@ -63,7 +63,7 @@ Arc::make_mut(&mut field.style.layout).height = Some(LengthSpec::Px(180.0));
 
 ## 可见取值和提交
 
-`RangeSpanInput { low, high }` 是每一次可见取值，含拖拽中的预览。`RangeSpanChanged { low, high }` 是提交：指针抬起且有滑块动了、键盘步进、无障碍的增减或设值，或 `set_range_span` / `set_range_span_thumb`。取消的拖拽不提交，并恢复按下前的一对值。拖动起止另有 `RangeSpanDragging { dragging }`，键盘和无障碍步进不算拖动。三者与 [RangeField](range-field.md) 的 `RangeInput` / `RangeChanged` / `RangeDragging` 一一对应。
+`RangeSpanInput { low, high }` 是每一次可见取值，含拖拽中的预览。`RangeSpanChanged { low, high }` 是提交：指针抬起且有滑块动了、键盘步进、无障碍的增减或设值，或 `set_range_span` / `set_range_span_thumb`。取消的拖拽不提交，并恢复按下前的一对值。拖动起止另有 `RangeSpanDragging { dragging }`，键盘和无障碍步进不算拖动。三者与 [RangeField](https://github.com/sena-nana/NanaUI/blob/main/docs/components/range-field.md) 的 `RangeInput` / `RangeChanged` / `RangeDragging` 一一对应。
 
 ## 指针
 
@@ -124,4 +124,4 @@ Arc::make_mut(&mut field.style.layout).height = Some(LengthSpec::Px(180.0));
 
 ## 参见
 
-[总览](index.md) · [RangeField](range-field.md) · [控件](../reference/components.md)
+[总览](https://github.com/sena-nana/NanaUI/blob/main/docs/components/index.md) · [RangeField](https://github.com/sena-nana/NanaUI/blob/main/docs/components/range-field.md) · [控件](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/components.md)

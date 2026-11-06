@@ -1,10 +1,10 @@
 # 布局与样式（Rust 路径）
 
-本文说明在 Rust L3 路径中如何排列容器、设置语义样式、控制边框与处理容器内边距。如果你使用 `.vue` 或构建时 `<style>` / `stylesheet!` 编写 CSS，支持的 CSS 属性子集请查阅 [布局（CSS 子集）](layout.md)。
+本文说明在 Rust L3 路径中如何排列容器、设置语义样式、控制边框与处理容器内边距。如果你使用 `.vue` 或构建时 `<style>` / `stylesheet!` 编写 CSS，支持的 CSS 属性子集请查阅 [布局（CSS 子集）](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/layout.md)。
 
 ## 优先使用 `Stack` 预设，避免手写底层布局字段
 
-[`Stack`](../../crates/nana-ui-runtime/src/view_components.rs) 是 Rust 路径的标准布局容器。常用排列直接使用预设构造器（声明式视图中对应 `<Column>` / `<Row>` 或 `column()` / `row()`）；需要 Grid、定位、溢出或绘制属性时，通过 `with_layout` 或 `from_layout` 写入同一份 [`LayoutStyle`](../../crates/nana-ui-core/src/box_layout.rs)，无需另外定义新的布局组件。
+[`Stack`](https://github.com/sena-nana/NanaUI/blob/main/crates/nana-ui-runtime/src/view_components.rs) 是 Rust 路径的标准布局容器。常用排列直接使用预设构造器（声明式视图中对应 `<Column>` / `<Row>` 或 `column()` / `row()`）；需要 Grid、定位、溢出或绘制属性时，通过 `with_layout` 或 `from_layout` 写入同一份 [`LayoutStyle`](https://github.com/sena-nana/NanaUI/blob/main/crates/nana-ui-core/src/box_layout.rs)，无需另外定义新的布局组件。
 
 Row/Column 预设直接写入 `display: flex` 与方向，进入同一个 Flex formatting context；它们不建立另一种布局身份。`from_layout` 保留传入的 display，Grid 也只通过同一份布局意图表达。Rust、`view!` 和构建期 `.vue` 方言共用这条 Runtime 路径；比较等价 CSS 时，需同时写明预设的尺寸与对齐默认值。
 
@@ -45,7 +45,7 @@ let card = Stack::column(7.0)
 
 布局结果 `LayoutBox` 带 `right()`、`bottom()`、`union`、`intersection`（不相交为 `None`）和 `inset(amount)`（四边内收，收过头时在中点缩成 0），算浮层、安全区和命中范围时直接用。
 
-子节点在声明式视图中通过 `.children((...))` 或 `.with(|c| c.add(...))` 挂入容器（见 [L3：用 Rust 构建保留式界面](l3-authoring.md)）。`Stack` 只负责纯排版；具备列表或表格语义的容器请使用 [`List`](../components/list.md) 或 [`Table`](../components/table.md)。
+子节点在声明式视图中通过 `.children((...))` 或 `.with(|c| c.add(...))` 挂入容器（见 [L3：用 Rust 构建保留式界面](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/l3-authoring.md)）。`Stack` 只负责纯排版；具备列表或表格语义的容器请使用 [`List`](https://github.com/sena-nana/NanaUI/blob/main/docs/components/list.md) 或 [`Table`](https://github.com/sena-nana/NanaUI/blob/main/docs/components/table.md)。
 
 | 预设构造器 | 主轴方向 | 尺寸行为 | 典型用途 |
 | --- | --- | --- | --- |
@@ -63,7 +63,7 @@ Rust 预设的 `Stack` 容器默认不参与指针命中测试（`pointer_events
 
 ## 节点样式：`NodeStyle` 与边框规则
 
-控件通过 `.style(NodeStyle)` 接收自定义样式。颜色一律使用 [`SemanticColorRole`](../../crates/nana-ui-core/src/semantics.rs) 语义角色，切勿硬编码裸 RGBA 值（原因见 [视觉与主题规范](look.md)）：
+控件通过 `.style(NodeStyle)` 接收自定义样式。颜色一律使用 [`SemanticColorRole`](https://github.com/sena-nana/NanaUI/blob/main/crates/nana-ui-core/src/semantics.rs) 语义角色，切勿硬编码裸 RGBA 值（原因见 [视觉与主题规范](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/look.md)）：
 
 ```rust
 use nana_ui::runtime::{NodeStyle, SemanticColorRole};

@@ -1,6 +1,6 @@
 # HarmonyOS / OpenHarmony（OHOS）编译档
 
-OHOS 是比 [Android 实验宿主](android.md)**低一级**的支持档位：仓库只承诺核心 crate 能为 OHOS 编译、在 OHOS 上的平台分支行为正确。仓库里没有 OHOS 宿主，窗口、XComponent、输入法与剪贴板接入都由应用自己完成。不要把它写进面向用户的跨平台承诺。
+OHOS 是比 [Android 实验宿主](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/android.md)**低一级**的支持档位：仓库只承诺核心 crate 能为 OHOS 编译、在 OHOS 上的平台分支行为正确。仓库里没有 OHOS 宿主，窗口、XComponent、输入法与剪贴板接入都由应用自己完成。不要把它写进面向用户的跨平台承诺。
 
 OHOS 上的界面走同一条 `UiWorld` → `UiScene` → `SceneWgpuPainter` 路径，不另起树、不另起绘制器，也没有 WebView 外壳。
 

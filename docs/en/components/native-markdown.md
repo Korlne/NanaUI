@@ -1,0 +1,93 @@
+# NativeMarkdown
+
+`NativeMarkdown` parses CommonMark / GFM source into native blocks and shows them in the tree. While it has focus, copy takes its selection snapshot.
+
+There is no `<NativeMarkdown>` in the control table.
+
+## Basic usage
+
+`NativeMarkdown::new()` is an empty document.
+
+`NativeMarkdown::from_source(source)` and `NativeMarkdown::parse(source)` go through the same parse.
+
+:::api
+
+```rust view
+use nana_ui::runtime::view;
+use nana_ui::runtime::NativeMarkdown;
+
+view! {
+    <Widget of={NativeMarkdown::from_source("# Notes\n\nA paragraph of body text.")} />
+}
+```
+
+```rust rust
+use nana_ui::runtime::view::widget;
+use nana_ui::runtime::NativeMarkdown;
+
+widget(NativeMarkdown::from_source("# Notes\n\nA paragraph of body text."))
+```
+
+:::
+
+## Feature
+
+This type is behind the Cargo feature `rich-text`.
+
+`components` turns it on.
+
+## Parsing
+
+Parsing enables GFM, tables, strikethrough and task lists, and math delimiters too.
+
+`from_blocks` takes `MarkdownBlock`s that are already split.
+
+`blocks()` reads the parse result.
+
+The source is kept in the control so you can read it again.
+
+## Diagrams and formulas
+
+Mermaid fences and formula fences are drawn by the control itself: formulas with RaTeX, diagrams with the native diagram engine (see [Native diagram engine](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/diagram-engine.md)), with colours following the theme.
+
+Both kinds of fence also offer a presenter slot carrying the source. `MERMAID_PRESENTER` is `"mermaid"` and `MATH_PRESENTER` is `"math"`. A host that wants its own presentation can take over by this identity; the diagram slot also carries an accessible name and description.
+
+Mermaid source it cannot read is shown as a code block. Tables, strikethrough and task lists go through native blocks.
+
+## Assembly
+
+`assemble_markdown` is a `slot_assembler`.
+
+On view commit, and after reactive patches, it assembles the blocks into child nodes.
+
+After placing components by hand with `create_component`, call it once yourself.
+
+The write that changes a field does not reassemble automatically.
+
+## Selection
+
+Selection hangs off an internal `TextSelectionGroup` and is compared by identity, not by selection content.
+
+## Properties
+
+| Property | Type | Description |
+| --- | --- | --- |
+| `source` | — | `from_source(source)` and `parse(source)` go through the same parse. The source is kept in the control. `new()` is an empty document |
+| `blocks` | `MarkdownBlock` | `from_blocks` takes blocks that are already split. `blocks()` reads the parse result |
+
+## Events
+
+| Event | Payload | Description |
+| --- | --- | --- |
+| None | None | None |
+
+## Slots
+
+| Slot | Description |
+| --- | --- |
+| `mermaid` | `MERMAID_PRESENTER` is `"mermaid"`. The control already draws natively; the slot gives the source and the identity |
+| `math` | `MATH_PRESENTER` is `"math"`. The control already draws natively; the slot gives the source and the identity |
+
+## See also
+
+[Overview](https://github.com/sena-nana/NanaUI/blob/main/docs/components/index.md) · [Controls](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/components.md)

@@ -73,4 +73,4 @@ widget(Workspace::new()).region(RegionId::Primary, column())
 
 ## 参见
 
-[AreaLayout](area-layout.md)（DCC 式区域切分与工作区预设） · [总览](index.md) · [控件](../reference/components.md) · [工作区](../reference/workspace.md)
+[AreaLayout](https://github.com/sena-nana/NanaUI/blob/main/docs/components/area-layout.md)（DCC 式区域切分与工作区预设） · [总览](https://github.com/sena-nana/NanaUI/blob/main/docs/components/index.md) · [控件](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/components.md) · [工作区](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/workspace.md)

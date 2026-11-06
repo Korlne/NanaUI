@@ -1,8 +1,8 @@
 # L3：用 Rust 构建保留式界面
 
-本文说明 Rust 声明式视图（L3）的挂载方式、节点身份（Key）规则、细粒度更新合同以及与即时模式 / GPUI 类框架的本质区别。首次编写窗口请先看 [快速开始](../guide/quick-start.md) 与 [创建应用](../guide/essentials/application.md)。
+本文说明 Rust 声明式视图（L3）的挂载方式、节点身份（Key）规则、细粒度更新合同以及与即时模式 / GPUI 类框架的本质区别。首次编写窗口请先看 [快速开始](https://github.com/sena-nana/NanaUI/blob/main/docs/guide/quick-start.md) 与 [创建应用](https://github.com/sena-nana/NanaUI/blob/main/docs/guide/essentials/application.md)。
 
-Rust 应用通过 [声明式视图](reactive-view.md) 构建界面：视图是一个普通 Rust 表达式（可用 `view!` 宏或等价的函数调用编写），**只在挂载时求值一次**并批量提交（commit）进保留的 `UiWorld`；后续状态变化仅通过信号（`Signal` / `Store`）或组件句柄定点更新受影响的字段，绝不每帧重跑整棵视图函数。
+Rust 应用通过 [声明式视图](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/reactive-view.md) 构建界面：视图是一个普通 Rust 表达式（可用 `view!` 宏或等价的函数调用编写），**只在挂载时求值一次**并批量提交（commit）进保留的 `UiWorld`；后续状态变化仅通过信号（`Signal` / `Store`）或组件句柄定点更新受影响的字段，绝不每帧重跑整棵视图函数。
 
 ## 挂载与句柄提取
 
@@ -51,7 +51,7 @@ let (view, start) = cx.mount_view_root(document_id, || {
 | 大规模长列表 / 树 / 表格 | 使用 `each_virtual`（底层对应 `materialize_virtual_*_retained`） |
 
 ::: warning
-切勿在 `RuntimeProgram::update` 或点击回调里卸载再重新 `mount_view_root` 整棵树。如果需要开发期改代码后快速预览，请参考 [开发期热重载](hot-reload.md)。
+切勿在 `RuntimeProgram::update` 或点击回调里卸载再重新 `mount_view_root` 整棵树。如果需要开发期改代码后快速预览，请参考 [开发期热重载](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/hot-reload.md)。
 :::
 
 ## 作者面 API 分工
@@ -72,7 +72,7 @@ let (view, start) = cx.mount_view_root(document_id, || {
 
 - **稳态渲染**：60 秒、21 万帧纯 Rust 场景下 CPU prepare 的 P95 为 `0.0105 ms`。
 - **首次挂载与大批量结构变更**：5,000 节点的 Runtime 布局 P95 为 `11.6–29.7 ms`；超过 5,000 节点应使用虚拟滚动或分批挂载。
-- **单次指针移动事件**：$O(1)$ 常数开销，约为 `0.0003 ms`，不随树规模增长（详见 [输入成本](input-cost.md)）。
+- **单次指针移动事件**：$O(1)$ 常数开销，约为 `0.0003 ms`，不随树规模增长（详见 [输入成本](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/input-cost.md)）。
 
 ### 与 GPUI 类框架的差异
 

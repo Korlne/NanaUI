@@ -88,4 +88,4 @@ widget(FormField::new("显示名").hint("将显示在标题栏")).control(text_i
 
 ## 参见
 
-[总览](index.md) · [控件](../reference/components.md)
+[总览](https://github.com/sena-nana/NanaUI/blob/main/docs/components/index.md) · [控件](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/components.md)

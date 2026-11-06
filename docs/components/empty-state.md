@@ -42,7 +42,7 @@ empty_state("还没有文件")
 
 ## 空列表
 
-列表完全为空时，往往和 `v-if` 一起用；跟着数据出现或消失的写法见 [视图写法](../guide/essentials/view.md)。
+列表完全为空时，往往和 `v-if` 一起用；跟着数据出现或消失的写法见 [视图写法](https://github.com/sena-nana/NanaUI/blob/main/docs/guide/essentials/view.md)。
 
 ## 布局
 
@@ -77,4 +77,4 @@ empty_state("还没有文件")
 
 ## 参见
 
-[总览](index.md) · [控件](../reference/components.md)
+[总览](https://github.com/sena-nana/NanaUI/blob/main/docs/components/index.md) · [控件](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/components.md)

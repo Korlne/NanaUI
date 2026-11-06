@@ -11,7 +11,7 @@ Phase 0 的章节保留成**当时**的审计记录。不回头重写。那份�
 
 **没有改任何一个已有像素。** 新增的 29 个 fixture。拍的是以前没拍过的状态。语义基线逐文件确认。是纯追加。token 收敛在默认主题下逐字节不变。语义基线是 146/146 MATCH。变的是「数值从哪里来」。
 
-你写应用。请看 [视觉](look.md) 和 [控件](components.md)。这篇是给要动 Theme 架构的人看的。
+你写应用。请看 [视觉](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/look.md) 和 [控件](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/components.md)。这篇是给要动 Theme 架构的人看的。
 
 ## 主题注册与持久化
 
@@ -103,29 +103,29 @@ nana_ui_core::motion::{HOVER_COLOR, …} ─────► 组件动画
 
 | 类型 | 位置 | 是什么 | 归宿 |
 | --- | --- | --- | --- |
-| `ThemeId` / `ThemeAppearance` | [theme/mod.rs](../../crates/nana-ui-core/src/theme/mod.rs) | 可持久化主题身份与 Light / Dark / Custom 外观提示 | 运行时主题身份；Light/Dark 是注册表内置预制主题 |
-| `SemanticPalette` | [style_model.rs](../../crates/nana-ui-core/src/style_model.rs) | 24 个语义色字段，dark/light 两份常量 | **保留**，直接作为 semantic color token 层，禁止复制第二份 |
+| `ThemeId` / `ThemeAppearance` | [theme/mod.rs](https://github.com/sena-nana/NanaUI/blob/main/crates/nana-ui-core/src/theme/mod.rs) | 可持久化主题身份与 Light / Dark / Custom 外观提示 | 运行时主题身份；Light/Dark 是注册表内置预制主题 |
+| `SemanticPalette` | [style_model.rs](https://github.com/sena-nana/NanaUI/blob/main/crates/nana-ui-core/src/style_model.rs) | 24 个语义色字段，dark/light 两份常量 | **保留**，直接作为 semantic color token 层，禁止复制第二份 |
 | `SemanticColorRole` | 同上 | 39 个角色：24 个对应字段，15 个在 `get()` 里派生（`WarningSoft*`、`DangerSoft*`、`Titlebar`、9 个代码 token 角色） | **保留**；派生规则是 recipe 的雏形，Phase 1 要把它显式化 |
 | `SemanticColorMix` | 同上 | 两个角色的 premultiplied 混合 / 单角色 alpha，权重用 basis points | **保留**，这是「状态层」的现有表达 |
 | `SemanticColor` | 同上 | 后端中立 RGBA 0..=1 | **保留** |
-| `ThemeMetrics` | [theme/mod.rs](../../crates/nana-ui-core/src/theme/mod.rs) | 非颜色 token：radius ×4、control height ×3、padding、icon size、panel padding、field/list padding，外加组合进来的 scrollbar。~~**motion ×2**~~ 已删（§7） | **已演进**：§7 的 `DesignTokens.metrics` 按值持有它本身 |
+| `ThemeMetrics` | [theme/mod.rs](https://github.com/sena-nana/NanaUI/blob/main/crates/nana-ui-core/src/theme/mod.rs) | 非颜色 token：radius ×4、control height ×3、padding、icon size、panel padding、field/list padding，外加组合进来的 scrollbar。~~**motion ×2**~~ 已删（§7） | **已演进**：§7 的 `DesignTokens.metrics` 按值持有它本身 |
 | `UI_METRICS` | 同上 | `ThemeMetrics` 的 `const` 默认值 | **废弃为唯一权威**：现在是 `DesignTokens::for_appearance` 的初值；仍有 62 处产品读取点，见 §1.5 |
-| `ScrollbarMetrics` / `SCROLLBAR_METRICS` | [scrollbar.rs](../../crates/nana-ui-core/src/scrollbar.rs) | 滚动条独有的 5 个几何 token（thickness 12 / thumb 6 / min length 24 / inset 2 / page 0.9） | **保留**：本轮已由 `ThemeMetrics.scrollbar` 组合持有（§1.5），不再是第三份 metrics |
+| `ScrollbarMetrics` / `SCROLLBAR_METRICS` | [scrollbar.rs](https://github.com/sena-nana/NanaUI/blob/main/crates/nana-ui-core/src/scrollbar.rs) | 滚动条独有的 5 个几何 token（thickness 12 / thumb 6 / min length 24 / inset 2 / page 0.9） | **保留**：本轮已由 `ThemeMetrics.scrollbar` 组合持有（§1.5），不再是第三份 metrics |
 | `space` / `type_scale` | 同上 | 间距 10 档、字号 8 档（含 `HINT` 11 / `TITLE` 18，以及卡片或对话框名字的 `CARD_TITLE` 15，对应 `TypeRole::CardTitle`）+ 字重 4 档，裸 `const`；`TypeRole` 的每一档都有同名裸常量 | **已演进**：§7 的 `SpacingTokens` / `TypographyTokens`；`const` 现在读它们的 `DEFAULT`，不再自己拿着数字 |
-| `StyleModelRef` | [style_model.rs](../../crates/nana-ui-core/src/style_model.rs) | appearance + metrics + palette + titlebar 的只读视图，`color(role)` 是 token 读取入口 | 由已安装的 `CompiledTheme` 提供 |
+| `StyleModelRef` | [style_model.rs](https://github.com/sena-nana/NanaUI/blob/main/crates/nana-ui-core/src/style_model.rs) | appearance + metrics + palette + titlebar 的只读视图，`color(role)` 是 token 读取入口 | 由已安装的 `CompiledTheme` 提供 |
 | `ControlSemantics` | 同上 | size + button/card kind + status 的组合 | **保留**，是 recipe 的 selector |
-| `ControlSize` / `ButtonKind` / `CardKind` / `StatusTone` / `ToastTone` / `ValidationIntent` | [semantics.rs](../../crates/nana-ui-core/src/semantics.rs) | 组件意图枚举 | **保留**，Component Recipe 的 variant 轴 |
-| `ThemeTokens` / `ThemeAppearanceExt` | [nana-ui/theme.rs](../../crates/nana-ui/src/theme.rs) | L3 宿主侧 adapter：直接装 `SemanticPalette` + `ThemeMetrics` + titlebar | **保留**（`Colors` 副本本轮已删，见 §1.5）；§7 起 `ThemeTokens` 是 `ThemeDefinition` 的颜色+尺寸投影，`with_backdrop` 按 `SurfaceTokens` 决定给哪个角色上 alpha |
-| `RadiusTier` | [theme.rs](../../crates/nana-ui-core/src/theme.rs) | 圆角档位意图（Xs/Sm/Md/Lg），由 `NodeStyle.radius` 携带、样式写入时对安装的 `ThemeMetrics` 解析 | **保留**：这是「组件说意图、主题给数值」在尺寸侧的第一个落点，其余 metrics 按同一形状推进 |
-| `ControlHeight` | [theme.rs](../../crates/nana-ui-core/src/theme.rs) | 控件高度意图：`Min(ControlSize)` / `Exact(ControlSize)`，由 `NodeStyle.control_height` 携带、样式写入时解析 | **保留**：`Min` / `Exact` 的区分以前藏在调用点写 `min_height` 还是 `height` 里，现在是被说出来的意图 |
+| `ControlSize` / `ButtonKind` / `CardKind` / `StatusTone` / `ToastTone` / `ValidationIntent` | [semantics.rs](https://github.com/sena-nana/NanaUI/blob/main/crates/nana-ui-core/src/semantics.rs) | 组件意图枚举 | **保留**，Component Recipe 的 variant 轴 |
+| `ThemeTokens` / `ThemeAppearanceExt` | [nana-ui/theme.rs](https://github.com/sena-nana/NanaUI/blob/main/crates/nana-ui/src/theme.rs) | L3 宿主侧 adapter：直接装 `SemanticPalette` + `ThemeMetrics` + titlebar | **保留**（`Colors` 副本本轮已删，见 §1.5）；§7 起 `ThemeTokens` 是 `ThemeDefinition` 的颜色+尺寸投影，`with_backdrop` 按 `SurfaceTokens` 决定给哪个角色上 alpha |
+| `RadiusTier` | [theme.rs](https://github.com/sena-nana/NanaUI/blob/main/crates/nana-ui-core/src/theme/mod.rs) | 圆角档位意图（Xs/Sm/Md/Lg），由 `NodeStyle.radius` 携带、样式写入时对安装的 `ThemeMetrics` 解析 | **保留**：这是「组件说意图、主题给数值」在尺寸侧的第一个落点，其余 metrics 按同一形状推进 |
+| `ControlHeight` | [theme.rs](https://github.com/sena-nana/NanaUI/blob/main/crates/nana-ui-core/src/theme/mod.rs) | 控件高度意图：`Min(ControlSize)` / `Exact(ControlSize)`，由 `NodeStyle.control_height` 携带、样式写入时解析 | **保留**：`Min` / `Exact` 的区分以前藏在调用点写 `min_height` 还是 `height` 里，现在是被说出来的意图 |
 | `ControlPadding` | 同上 | 水平 inset 意图：`Compact` / `Standard` / `Roomy` / `Field` / `ListItem`，由 `NodeStyle.control_padding_x` 携带；多行 field 另用 `control_padding_y` | **保留**：不是 `ControlSize` 的包装——text field 与 list row 各有独立 metrics 字段 |
 | `SurfacePadding` | 同上 | 面板 inset：`Panel` 写四边，`PanelX` 只写左右 | **保留**：卡片/设置组/表单表面用，不是 control |
 | `SquareSize` | 同上 | 方盒：`IconButton`、`Control(ControlSize)` 或 `Keycap`，写 `min_width`/`min_height`；节点自己写了 `width` / `height` 的轴不写 | **保留**：icon button 默认走 `icon_button_size`，`size()` 才换成 ControlSize |
 | `ChromeRadii` | 同上 | 已解析的四档圆角，搭 `ExtractedNode` 运到 renderer | **保留**：让 renderer 只消费不解析，`nana-ui-scene` 因此一处都不再读 `UI_METRICS` |
-| `CornerShape` | [theme/mod.rs](../../crates/nana-ui-core/src/theme/mod.rs) | 圆角形状：`Round`（圆弧，默认）或 CSS `superellipse(k)`，由 `ThemeMetrics.corner_shape` 持有 | **场景级的值**，不像 `ChromeRadii` 搭 `ExtractedNode`：painter 按一次绘制写 uniform，而不是按图元——quad 的顶点属性和裁剪数据都已占满，逐图元携带要扩每条管线的实例结构。`RuntimeDocument` 每帧把它同步成 `UiScene::corner_shape`，变了就换 scene instance；只改形状不标 LAYOUT，主题安装照旧把全部节点标 RENDER，形状随同一帧的增量落地 |
-| `AppearanceSettings` | [settings.rs](../../crates/nana-ui-core/src/settings.rs) | 用户/系统 policy：radius ×4、window material、backdrop target/opacity、titlebar 跟随、workspace corners | **演进**为 #100 §11 的 policy overlay，不是第二套 theme |
-| `NodeStyle` / `InteractionStyle` / `SemanticPaint` | [nana-ui-runtime](../../crates/nana-ui-runtime/src) | 节点本地样式意图（语义色角色 + 圆角档位）+ 7 个交互状态的 paint overlay | **保留**，是 explicit local style intent 与 state 输入；意图字段是尺寸/颜色收敛的落点 |
-| `ComputedStyle` + `ResolvedStyle(Arc<ComputedStyle>, palette_epoch)` | [nana-ui-runtime](../../crates/nana-ui-runtime/src) | 继承解析结果 + 主题代 | **演进**为 #100 §6 的 `ResolvedStyle`（现在已经叫这个名字，但只覆盖继承与颜色，不覆盖 metrics/recipe） |
+| `CornerShape` | [theme/mod.rs](https://github.com/sena-nana/NanaUI/blob/main/crates/nana-ui-core/src/theme/mod.rs) | 圆角形状：`Round`（圆弧，默认）或 CSS `superellipse(k)`，由 `ThemeMetrics.corner_shape` 持有 | **场景级的值**，不像 `ChromeRadii` 搭 `ExtractedNode`：painter 按一次绘制写 uniform，而不是按图元——quad 的顶点属性和裁剪数据都已占满，逐图元携带要扩每条管线的实例结构。`RuntimeDocument` 每帧把它同步成 `UiScene::corner_shape`，变了就换 scene instance；只改形状不标 LAYOUT，主题安装照旧把全部节点标 RENDER，形状随同一帧的增量落地 |
+| `AppearanceSettings` | [settings.rs](https://github.com/sena-nana/NanaUI/blob/main/crates/nana-ui-core/src/settings.rs) | 用户/系统 policy：radius ×4、window material、backdrop target/opacity、titlebar 跟随、workspace corners | **演进**为 #100 §11 的 policy overlay，不是第二套 theme |
+| `NodeStyle` / `InteractionStyle` / `SemanticPaint` | [nana-ui-runtime](https://github.com/sena-nana/NanaUI/tree/main/crates/nana-ui-runtime/src) | 节点本地样式意图（语义色角色 + 圆角档位）+ 7 个交互状态的 paint overlay | **保留**，是 explicit local style intent 与 state 输入；意图字段是尺寸/颜色收敛的落点 |
+| `ComputedStyle` + `ResolvedStyle(Arc<ComputedStyle>, palette_epoch)` | [nana-ui-runtime](https://github.com/sena-nana/NanaUI/tree/main/crates/nana-ui-runtime/src) | 继承解析结果 + 主题代 | **演进**为 #100 §6 的 `ResolvedStyle`（现在已经叫这个名字，但只覆盖继承与颜色，不覆盖 metrics/recipe） |
 | `StandardVisual` / `ComponentGeometry` | 同上 | 保留期「这是个什么控件 / 它的几何」 | **保留**，是 recipe 的 selector 与 layout 产物 |
 
 ### 1.3 默认样式来源
@@ -133,7 +133,7 @@ nana_ui_core::motion::{HOVER_COLOR, …} ─────► 组件动画
 | 层 | 默认样式从哪来 | 冲突点 |
 | --- | --- | --- |
 | **L3 Rust** | `view_components.rs` 的 `impl ComponentView`：按 `ButtonKind` 等语义选 `SemanticColorRole`，写进 `NodeStyle.interaction`；几何与其余颜色由 `world/geometry.rs` + `world/extraction.rs` 决定 | 同一控件的外观分散在三处：组件体（角色 + 状态）、extraction（`StandardVisual` 配色）、scene primitives（圆角/描边） |
-| **CSS** | [`css_map.rs`](../../crates/nana-ui-css/src/css_map.rs) 把 CSS 子集映射到 Layout；[`style.rs`](../../crates/nana-ui-css/src/style.rs) 只做 paint 解析；已知 token 名经 `SemanticColorRole::from_css_token_name` 进 Tokens，未知 `#hex` 只能当受限 paint hint | 规则已经写死且有测试，是目前最干净的一层 |
+| **CSS** | [`css_map.rs`](https://github.com/sena-nana/NanaUI/blob/main/crates/nana-ui-css/src/css_map.rs) 把 CSS 子集映射到 Layout；[`style.rs`](https://github.com/sena-nana/NanaUI/blob/main/crates/nana-ui-css/src/style.rs) 只做 paint 解析；已知 token 名经 `SemanticColorRole::from_css_token_name` 进 Tokens，未知 `#hex` 只能当受限 paint hint | 规则已经写死且有测试，是目前最干净的一层 |
 
 `from_css_token_name` 认得的名字就是 CSS 的正式 token 表面：`background`/`surface`/`subtle`/`raised`（别名 `elevated`）/`header`/`hover`/`active`/`selected*`/`border*`/`text`/`muted`/`faint`/`accent*`/`success`/`warning*`/`danger*`/`titlebar`/`on-media`。以及 `--nana-` 前缀与 `var()` 包裹。9 个代码 token 角色（`Keyword`/`Function`/…）**不在** CSS 表面。只在 L3 语义高亮里用。
 
@@ -150,7 +150,7 @@ nana_ui_core::motion::{HOVER_COLOR, …} ─────► 组件动画
 → #100 §8 / #87 对接时。这两个字段要么接上要么删掉。不能继续当「看起来已经有了」。**Phase 1 选了删掉**：那两个字段没了。八个时长各自成为一个 `MotionRole`。`SIDEBAR_COLLAPSE` 的 260 不再需要和谁对齐。它就是自己那一档。
 
 **F3 — Theme 在 extract 阶段解析。不在保留期 style 阶段。**
-`SetTheme` 只标 RENDER。不标 STYLE（[world/tests.rs](../../crates/nana-ui-runtime/src/world/tests.rs) 的 `set_theme_marks_render_not_style_when_only_palette_roles_change` 已经钉住这个行为）。真正换色发生在 `extract_node` 里：`resolved_epoch != palette_epoch` 时重跑 `palette_paint_colors`。把新颜色打进 `ExtractedNode.style`。保留期 `ComputedStyle` 并不刷新。
+`SetTheme` 只标 RENDER。不标 STYLE（[world/tests.rs](https://github.com/sena-nana/NanaUI/blob/main/crates/nana-ui-runtime/src/world/tests.rs) 的 `set_theme_marks_render_not_style_when_only_palette_roles_change` 已经钉住这个行为）。真正换色发生在 `extract_node` 里：`resolved_epoch != palette_epoch` 时重跑 `palette_paint_colors`。把新颜色打进 `ExtractedNode.style`。保留期 `ComputedStyle` 并不刷新。
 这对 palette-only 切换是**便宜**的（不碰 Layout、不 reshape。见 §4）。但它把 token 读取放在了每帧 extract 路径上。正是 #100 §6 要移走的形状。
 
 本轮在尺寸侧试过把同一形状推广过去。**不成立**：颜色一个 16 字节。重算便宜。尺寸落在 4808 字节的 `LayoutStyle` 里。放同一条路上会被每帧放大（§1.5）。所以 #100 §6 把解析移进保留期时。不是把 extract 的做法照搬。**要按被解析值的大小分别定解析点**。
@@ -241,7 +241,7 @@ runtime crate 里 `const NAME: f32/u16/u64 = <数字>` 共 217 个（`ROW_HEIGHT
 - 内边距放宽，树每层缩进加大，键帽高 32。
 - 颜色、字号和圆角不变。
 
-移动宿主（`platform/mobile-core`）默认安装这套密度，见 [mobile-host.md](mobile-host.md)。钉住它的测试：`touch_metrics_keep_every_target_at_the_touch_minimum`。
+移动宿主（`platform/mobile-core`）默认安装这套密度，见 [mobile-host.md](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/mobile-host.md)。钉住它的测试：`touch_metrics_keep_every_target_at_the_touch_minimum`。
 
 ### 键帽的几何并入主题（#345）
 
@@ -435,7 +435,7 @@ radius 走通之后。剩下的大头是 **control height / padding** 这类**�
 
 ### 2.1 清单怎么来的
 
-[`scripts/audit-theme-hardcoding.py`](../../scripts/audit-theme-hardcoding.py) 按**组件**扫描：每个 `impl ComponentView for X` 的函数体算 X 自己的设计权威。剩下的算「组件体之外的共享权威」。它是文本清点不是 parser。宁可多数不少数。
+[`scripts/audit-theme-hardcoding.py`](https://github.com/sena-nana/NanaUI/blob/main/scripts/audit-theme-hardcoding.py) 按**组件**扫描：每个 `impl ComponentView for X` 的函数体算 X 自己的设计权威。剩下的算「组件体之外的共享权威」。它是文本清点不是 parser。宁可多数不少数。
 
 ```bash
 python3 scripts/audit-theme-hardcoding.py --format markdown
@@ -486,11 +486,11 @@ python3 scripts/audit-theme-hardcoding.py --check scripts/baselines/theme-hardco
 
 ## 3. Component Gallery 基线
 
-两套基线。都在 [`examples/component-gallery/snapshots/`](../../examples/component-gallery/snapshots)。
+两套基线。都在 [`examples/component-gallery/snapshots/`](https://github.com/sena-nana/NanaUI/tree/main/examples/component-gallery/snapshots)。
 
 ### 3.1 像素基线（已有）
 
-`snapshots/<adapter-key>/component-migration/<component>/<dark|light>/<state>.png`：73 个组件 532 张。加上 shell / dock / titlebar 等整窗快照 82 张。提交树共 614 张。一次完整运行全部渲染。零容差。按 GPU adapter 分目录。规则见该目录的 [README](../../examples/component-gallery/snapshots/README.md)。那篇现在还记着**一张基线对不上另一张基线时该怎么读**。比单张对不上committed更常见也更难发现。
+`snapshots/<adapter-key>/component-migration/<component>/<dark|light>/<state>.png`：78 个组件 598 张。加上 shell / dock / titlebar 等整窗快照 84 张。提交树共 682 张。一次完整运行全部渲染。零容差。按 GPU adapter 分目录。规则见该目录的 [README](https://github.com/sena-nana/NanaUI/blob/main/examples/component-gallery/snapshots/README.md)。那篇现在还记着**一张基线对不上另一张基线时该怎么读**。比单张对不上committed更常见也更难发现。
 
 ```bash
 cargo run --release -p component-gallery --bin ui-snapshots --features snapshots --locked
@@ -500,7 +500,7 @@ cargo run --release -p component-gallery --bin ui-snapshots --features snapshots
 
 ### 3.2 语义基线（本轮新增）
 
-`snapshots/semantic/component-migration/<component>/<dark|light>.txt`。146 个文件。**不按 adapter 分目录**。里面没有一个像素是光栅化出来的。
+`snapshots/semantic/component-migration/<component>/<dark|light>.txt`。156 个文件。**不按 adapter 分目录**。里面没有一个像素是光栅化出来的。
 
 每个 fixture 记录：目标节点的 layout box、无障碍状态（role / disabled / checked / selected / mixed）、以及该帧全部 `ScenePrimitive` 按场景顺序的解析结果。背景、描边、边宽、四角圆角、阴影、文字颜色/字号/字重/行高/字距/斜体/下划线、opacity。
 
@@ -572,7 +572,7 @@ state: primary
 
 ### 4.1 counters
 
-新增 [`ThemeWorkCounters`](../../crates/nana-ui-core/src/work.rs)。由 `UiWorld::last_theme_work_counters()` 发布。它不是 `WorkCounters`：后者的 `style_processed` 只说「这次 drain 排了多少个节点」。Theme 基线要的是那次 pass **里面**发生了什么。
+新增 [`ThemeWorkCounters`](https://github.com/sena-nana/NanaUI/blob/main/crates/nana-ui-core/src/work.rs)。由 `UiWorld::last_theme_work_counters()` 发布。它不是 `WorkCounters`：后者的 `style_processed` 只说「这次 drain 排了多少个节点」。Theme 基线要的是那次 pass **里面**发生了什么。
 
 | counter | 含义 |
 | --- | --- |

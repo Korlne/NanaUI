@@ -22,7 +22,7 @@ callout(Icon::AlertTriangle, StatusTone::Warning, "模型还没有优化，首�
 | `callout(..)` | 浅色调底色，自带内边距，正文字号 | 需要注意但不打断操作：配置不完整、功能受限 |
 | `callout(..).quiet()` | 没有底色，不带水平内边距，字小一号、偏淡，和图标居中 | 已在内容线上的块里的一行说明 |
 
-`.quiet()` 不带水平内边距，因为它放进的块已经有内容线（见[版式与组合](../guide/composition.md#内容线)）。把它放在没有内边距的容器里，它会贴边。
+`.quiet()` 不带水平内边距，因为它放进的块已经有内容线（见[版式与组合](https://github.com/sena-nana/NanaUI/blob/main/docs/guide/composition.md#内容线)）。把它放在没有内边距的容器里，它会贴边。
 
 ## 行尾动作
 
@@ -43,4 +43,4 @@ callout(Icon::AlertTriangle, StatusTone::Warning, "模型还没有优化，首�
 
 ## 参见
 
-[版式与组合](../guide/composition.md) · [Toast](toast.md) · [EmptyState](empty-state.md) · [StatusBadge](status-badge.md)
+[版式与组合](https://github.com/sena-nana/NanaUI/blob/main/docs/guide/composition.md) · [Toast](https://github.com/sena-nana/NanaUI/blob/main/docs/components/toast.md) · [EmptyState](https://github.com/sena-nana/NanaUI/blob/main/docs/components/empty-state.md) · [StatusBadge](https://github.com/sena-nana/NanaUI/blob/main/docs/components/status-badge.md)

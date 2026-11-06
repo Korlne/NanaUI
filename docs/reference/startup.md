@@ -78,7 +78,7 @@ startup.cancel_takeover(ticket)?;    // 撤回接管请求并使旧 ticket 作�
 独立宿主（`run_runtime`）在窗口线程创建窗口与 Surface 后，立即将 GPU 适配器选择、设备请求与 `SceneWgpuPainter` 的管线编译放到后台的 `nana-startup-gpu` 线程执行，同时在主线程挂载原生 Splash——因此 **Splash 的显示与 GPU 初始化完全并行重叠**。
 
 在 `nana-startup-gpu` 线程内部：
-1. 若请求了合成后端（`CompositionCapable`），直接复用建窗前 DX12 合成探测已枚举出的适配器列表，省去第二次重复枚举（耗时从约 `0.74 s` 降至 `0.08 s`）；没有探测时在此枚举一次。在这份列表上按 `StartupOptions::adapter` 选卡，规则见 [GPU · 适配器选择](gpu.md#适配器选择)；
+1. 若请求了合成后端（`CompositionCapable`），直接复用建窗前 DX12 合成探测已枚举出的适配器列表，省去第二次重复枚举（耗时从约 `0.74 s` 降至 `0.08 s`）；没有探测时在此枚举一次。在这份列表上按 `StartupOptions::adapter` 选卡，规则见 [GPU · 适配器选择](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/gpu.md#适配器选择)；
 2. `SceneWgpuPainter` 的各大管线家族（quad、mesh/path、icon、text、HostTexture、backdrop）在 scoped 线程上并行编译，总构建耗时取决于最慢的单个家族（quad）而非全部累加；仅用于测试回读的 motion 求值管线不在产品启动路径中编译。
 3. macOS 上唯一较慢的 Dock 图标重采样与 PNG 编码放在独立的 `nana-startup-icons` 线程异步完成，不阻塞 `UiReady`。
 

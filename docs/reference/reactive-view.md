@@ -1,12 +1,12 @@
 # 声明式视图
 
-学习路径在 [视图写法](../guide/essentials/view.md)、[响应式](../guide/essentials/reactivity.md) 和 [从 Vue 过来](../guide/from-vue.md)。这篇是合同。
+学习路径在 [视图写法](https://github.com/sena-nana/NanaUI/blob/main/docs/guide/essentials/view.md)、[响应式](https://github.com/sena-nana/NanaUI/blob/main/docs/guide/essentials/reactivity.md) 和 [从 Vue 过来](https://github.com/sena-nana/NanaUI/blob/main/docs/guide/from-vue.md)。这篇是合同。
 
 `nana_ui::runtime::view` 让你把视图写成一个表达式。动态部分是信号或闭包。树只建一次。之后每个绑定只更新它写的那个节点字段。不整树 render。不做 diff。它和命令式的 `create_component` / `mount` 写同一棵 `UiWorld`、同一张 assembly key 表。最后落到的还是 `create` / `insert` / `project` / `commit`。
 
 **开关。** 视图层默认编译进来。不需要 feature。模板宏 `view!`、`css!`、`stylesheet!` 在 `view-macro` 后面。那是独立的 proc-macro crate。不用就不参与编译。因果追踪在 `reactive-trace` 后面。示例：`crates/nana-ui/examples/reactive-counter.rs`（用 `view!` 写）。`examples/reactive-sfc`（用 `.vue` 文件写）。
 
-**两种一级写法。一条路径。** `view!` 模板和 Rust 函数写法都是正式写法。能力对齐：`view!` 展开出来就是 Rust 写法的那些调用（`column().gap(8)`、`.class(..)`、`each(..)`……）。两者没有各自的实现。每个模板构造都有同名的 Rust 方法。对应表见 [`view!` 与 Rust 写法](#view-与-rust-写法)。`tests/view_macro.rs` 把同一个页面分别写成模板、tuple 子节点和 `.with` 块三种形式。挂载后逐节点相同。信号变化后也相同。Transition、KeepAlive、Suspense、Teleport、ErrorBoundary、虚拟列表和具名 slot 各有一组同样的对照。样式同样一份写成 `<style>`、一份写成 `stylesheet!`。布局相同。模板贴近 Vue。适合成段的界面。Rust 写法是普通 Rust。能写 `for` / `if`。有完整的补全和类型检查。类名写错是编译错误。`.vue` 文件属于[高级用法](#高级用法vue-方言)。
+**两种一级写法。一条路径。** `view!` 模板和 Rust 函数写法都是正式写法。能力对齐：`view!` 展开出来就是 Rust 写法的那些调用（`column().gap(8)`、`.class(..)`、`each(..)`……）。两者没有各自的实现。每个模板构造都有同名的 Rust 方法。对应表见 [`view!` 与 Rust 写法](#view-与-rust-写法)。`tests/view_macro.rs` 把同一个页面分别写成模板、tuple 子节点和 `.with` 块三种形式。挂载后逐节点相同。信号变化后也相同。Transition、KeepAlive、Suspense、Teleport、ErrorBoundary、虚拟列表和具名 slot 各有一组同样的对照。样式同样一份写成 `<style>`、一份写成 `stylesheet!`。布局相同。模板贴近 Vue。适合成段的界面。Rust 写法是普通 Rust。能写 `for` / `if`。有完整的补全和类型检查。类名写错是编译错误。`.vue` 文件属于[高级用法](#高级用法-vue-方言)。
 
 ## 写法
 
@@ -89,7 +89,7 @@ let view = cx.mount_view(parent, counter)?;                    // 或 mount_view
 - **从数据出发**：`list.each(key, row)` 就是 `each(list, key, row)`。`cond.then_show(|| v).otherwise(|| w)` 就是 `when(cond, || v).otherwise(|| w)`（不叫 `show`：Vue 的 `v-show` 保留节点。对应的是 `.visible(..)`）。
 
 - **属性**接受常量、`Signal<T>` / `Computed<T>`、`Fn() -> T` 闭包三种。常量在建节点时写进去。之后没有任何成本。信号直接绑定。只存一条"信号 id + 字段写入函数"的记录。没有闭包。闭包装箱一次。
-- **控件属性**由 `view/controls.rs` 按控件表逐字段生成 setter（`button(..).disabled(..)`、`slider(..).value(..)`）。每个 setter 对应一个 `FieldWrite`，可以按名字拿到：`view::fields::<元素函数>::<字段>`（`fields::text::value` 就是 `text(..)` 的 `.value(..)` 绑的那个）。`fields::Visible` 是 `.visible(..)`。`fields::HiddenWhenEmpty<W>` 包住任一字段：值为空（空字符串、`None`、空列表）时节点同时退出布局、绘制和命中，例如 `text("").prop::<_, HiddenWhenEmpty<fields::text::value>>(title)`，两者在同一次写入里变，不会先露出一个空值。有些字段带规则：滑块的 `value` 钳在范围内（还没有值、非有限值落在最小值）；数字框的 `value` 换成新值时光标放到末尾，回显的同一个值不动光标；`Tabs` 的 `selected` 连同标签条的焦点一起换；`ColorField` 的 `value` 经它的 builder 写，色相、饱和度、明度跟着变；`Thumbnail` 的 `resource` 非空即就绪；`EmptyState` 的 `message` 也收 `String`，空字符串就是没有。`Arc<str>` 字段要从 store 里的 `String` 绑定时，用 `fields::FromString<W>`（可选字段用 `FromOptionalString<W>`）包住：先比较、相同不分配，可以和 `HiddenWhenEmpty` 叠用，例如 `HiddenWhenEmpty<FromString<fields::labeled_value::value>>`。`ActionMenu` 不是模板标签（模板里的控件是叶子，它的条目是子节点），字段在 `fields::action_menu`：`label`（空则关上、不显示触发器）、`accessible_name`、`open`；`ReorderList` 的 `items` 在 `fields::reorder_list`（`controls` feature）。`Dialog`、`ConfirmDialog`、`Drawer` 也不是模板标签，`widget(..)` 上有 `.open(..)` 和双向的 `.model(信号)`，挂在 `OverlayHost` 下时开合它们（见 [Dialog](../components/dialog.md#声明式开合)）。任意控件都能用 `widget(component).bind(|c| …)` 和 `.on::<E>(|e| …)`。自定义字段写 `FieldWrite` 后用 `.prop::<T, W>(..)`。
+- **控件属性**由 `view/controls.rs` 按控件表逐字段生成 setter（`button(..).disabled(..)`、`slider(..).value(..)`）。每个 setter 对应一个 `FieldWrite`，可以按名字拿到：`view::fields::<元素函数>::<字段>`（`fields::text::value` 就是 `text(..)` 的 `.value(..)` 绑的那个）。`fields::Visible` 是 `.visible(..)`。`fields::HiddenWhenEmpty<W>` 包住任一字段：值为空（空字符串、`None`、空列表）时节点同时退出布局、绘制和命中，例如 `text("").prop::<_, HiddenWhenEmpty<fields::text::value>>(title)`，两者在同一次写入里变，不会先露出一个空值。有些字段带规则：滑块的 `value` 钳在范围内（还没有值、非有限值落在最小值）；数字框的 `value` 换成新值时光标放到末尾，回显的同一个值不动光标；`Tabs` 的 `selected` 连同标签条的焦点一起换；`ColorField` 的 `value` 经它的 builder 写，色相、饱和度、明度跟着变；`Thumbnail` 的 `resource` 非空即就绪；`EmptyState` 的 `message` 也收 `String`，空字符串就是没有。`Arc<str>` 字段要从 store 里的 `String` 绑定时，用 `fields::FromString<W>`（可选字段用 `FromOptionalString<W>`）包住：先比较、相同不分配，可以和 `HiddenWhenEmpty` 叠用，例如 `HiddenWhenEmpty<FromString<fields::labeled_value::value>>`。`ActionMenu` 不是模板标签（模板里的控件是叶子，它的条目是子节点），字段在 `fields::action_menu`：`label`（空则关上、不显示触发器）、`accessible_name`、`open`；`ReorderList` 的 `items` 在 `fields::reorder_list`（`controls` feature）。`Dialog`、`ConfirmDialog`、`Drawer` 也不是模板标签，`widget(..)` 上有 `.open(..)` 和双向的 `.model(信号)`，挂在 `OverlayHost` 下时开合它们（见 [Dialog](https://github.com/sena-nana/NanaUI/blob/main/docs/components/dialog.md#声明式开合)）。任意控件都能用 `widget(component).bind(|c| …)` 和 `.on::<E>(|e| …)`。自定义字段写 `FieldWrite` 后用 `.prop::<T, W>(..)`。
 - **key** 只在 `each` 的元素和需要按路径查找（`resolve_assembly_path`）的节点上写。静态结构只建一次。没写 key 的节点按位置命名（`#v0`、`#v1`…）。`when` / `dynamic` 切换后新建的分支、`keep_alive` 重新显示的分支。和 `each` 在挂载之后加进来的行。都和挂载时建的一样登记在容器下：`dynamic(..).key("a")` 里分支根写了 `key("b")`。切换前后 `a/b` 都找到当前显示的那个分支（在 `each_virtual` 的行里也一样）。`each` 的行只有写了 key 的才能按 key 找到（没写的位置名是每次建时各数各的。登记了会互相覆盖）。
 - **`mount_view` 接收闭包。** 视图表达式在挂载作用域里求值。组件函数里创建的信号归这个挂载。`unmount`、销毁根节点、或 `AppContext` 被丢弃时一起回收。`each` 的每一行、`when` 的每个分支各有一个子作用域。行被删掉、分支被切走时只回收它自己的信号和副作用。
 - 在任何作用域之外创建的信号（例如应用启动时的全局状态、事件处理器里新建的信号）不归任何挂载。会一直存在到线程结束。列表数据里每行需要的信号。应该在行视图里创建。或者由持有它的挂载创建。
@@ -185,7 +185,7 @@ suspense(
 
 ## 样式表
 
-样式表就是 CSS。用的是 [布局](layout.md) 里的 CSS 子集。由引擎 `nana-ui-css` 处理。L3 视图在**构建时**解析和匹配。运行时只拿到结果。
+样式表就是 CSS。用的是 [布局](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/layout.md) 里的 CSS 子集。由引擎 `nana-ui-css` 处理。L3 视图在**构建时**解析和匹配。运行时只拿到结果。
 
 :::api
 
@@ -293,11 +293,11 @@ column()
 
 :::
 
-只需要换行、放得下就并排的排法。优先用 `flex-wrap` 加 `flex-basis`（见[布局](layout.md)）。不必经过信号。
+只需要换行、放得下就并排的排法。优先用 `flex-wrap` 加 `flex-basis`（见[布局](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/layout.md)）。不必经过信号。
 
 ## 本地化文字
 
-`t(..)` 建一个说某条消息的文本节点。消息按节点所在作用域的 locale 解析。`.locale(..)` 让元素成为一个 locale 作用域。消息目录、回退、格式化和切换的成本见[文本引擎](text-engine.md)的「本地化文本与 locale 作用域」一节。
+`t(..)` 建一个说某条消息的文本节点。消息按节点所在作用域的 locale 解析。`.locale(..)` 让元素成为一个 locale 作用域。消息目录、回退、格式化和切换的成本见[文本引擎](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/text-engine.md)的「本地化文本与 locale 作用域」一节。
 
 :::api
 
@@ -367,7 +367,7 @@ each(items, |t| t.id, row).transition(Transition::slide(0.0, 12.0, ms(180)).move
 - **进场**：新行、新分支从给定的透明度和变换播到节点自己的值。挂载时已经存在的行不播。
 - **离场**：被删掉的行或分支不立刻销毁。它的作用域马上回收（不再跟随数据）。节点留在原位。不参与命中测试。焦点移走。播完离场后才销毁。
 - **移动**（`.moves(时长)`）：位置变了的行从原来的位置滑过去（FLIP）。插入、删除、重排都算。离场的行最终销毁、后面的行补位时也算。
-- 一个常驻节点的显示和隐藏（卡片、工具窗口的内容）用同一个 `Transition` 交给 `PresenceLifecycle`，见 [Runtime 与 Scene](runtime-scene.md)。
+- 一个常驻节点的显示和隐藏（卡片、工具窗口的内容）用同一个 `Transition` 交给 `PresenceLifecycle`，见 [Runtime 与 Scene](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/runtime-scene.md)。
 - 预设：`Transition::fade`、`slide(dx, dy, 时长)`、`scale(比例, 时长)`。自定义用 `Transition::new().enter(Presence::new(时长).opacity(0.0).translate(0.0, 8.0)).leave(..)`。`.ease(e)` 统一缓动，`Presence::ease_transform(e)` 给位移单独一条曲线。`without_enter()` / `without_leave()` 只要一半。
 - 全部走节点的合成器轨道。不写回逻辑样式。离场结束由 `advance_animations` 的完成事件驱动。移动在布局阶段之后、同一帧提取之前开始。所以不会先闪到新位置。
 - `when` 的新旧分支同时存在：旧分支原位离场。新分支接在它后面进场。加 `.moves` 后。旧分支消失时新分支平滑上移。Vue 的 `mode="out-in"`（先离场再进场）目前没有。
@@ -418,7 +418,7 @@ widget(DesktopShell::from_model(model).title("Gallery"))
 - **Dock 面板**：面板按布局里的 id 对应。数量由数据决定。所以不用具名 slot。而是用子节点的 key：`widget(Dock::new(layout)).children((files().key("files"), preview().key("preview")))`。模板里写 `<Widget of={dock}><FilesPanel key="files"/>…</Widget>`。装配时每个面板 id 找同名 key 的子节点作为内容。布局被绑定换掉后按 key 重新对应。面板节点不重建。key 对不上任何面板的子节点会被挂起。
 - **侧栏分组**：`widget(SidebarSection::new("资源").count(2).collapsible(true)).tools(…).children(行)`。分组自己建表头（展开按钮、标题、计数）和 body。应用的行（包括 `each` 的列表）被挪进 body。`tools` 放在表头里悬停时显示。建出的结构和手工拼出的分组逐节点相同。`SidebarFrame` 的 `.body(..)` 自动把内容放进它的纵向滚动区域。slot 按 top、body、footer 的顺序写。
 - **分段选择**：`segmented().children((segmented_option("面捕").selected(..).on_select(..), …))`（`view/selection.rs`）。选项就是控件的子节点。`label`、`disabled`、`selected` 可绑定。控件按子节点和 `selected` 标记登记选项与选中项（`assemble_segmented_control`）。任一选项的绑定变了也会重新登记。用户选中一项时。控件先发 `SegmentedSelectionRequested`。再在那一项上发 `SegmentedOptionChosen`。`.on_select` 听的是后者。要隐藏的选项仍留作子节点。同时把它禁用。
-- **设置行**：`settings_row(label).hint(..).divided(..).control(switch(""))`。行自己建标签和说明（`assemble_settings_row`）。结构和 `mount_settings_leaf_row` 建出的行逐节点相同。`label`、`hint`、`divided`、`stacked`、`first_in_group`、`last_in_group` 都可绑定。`.visible(..)` 控制显隐。分组里哪一行是首行、末行。由应用按自己的数据算好再绑定。行标签也是控件的无障碍名字：控件自己没有名字（`switch("")`、滑块、下拉选择）时读屏读行标签。`.label_accessory(view)` 把状态胶囊之类放在标签后面同一行。见[控件](components.md)。
+- **设置行**：`settings_row(label).hint(..).divided(..).control(switch(""))`。行自己建标签和说明（`assemble_settings_row`）。结构和 `mount_settings_leaf_row` 建出的行逐节点相同。`label`、`hint`、`divided`、`stacked`、`first_in_group`、`last_in_group` 都可绑定。`.visible(..)` 控制显隐。分组里哪一行是首行、末行。由应用按自己的数据算好再绑定。行标签也是控件的无障碍名字：控件自己没有名字（`switch("")`、滑块、下拉选择）时读屏读行标签。`.label_accessory(view)` 把状态胶囊之类放在标签后面同一行。见[控件](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/components.md)。
 
 ## `view!` 与 Rust 写法
 
@@ -516,7 +516,7 @@ view! { <SwitchRow on={Action::Mute} label="静音" checked={muted} /> }
 - 参数要拿所有权或是 `'static` 的值：模板建一次就把它们交出去。参数不能叫 `key`（组件标签上的 `key` 落在第一个根节点上），也不能以 `__` 开头。
 - `.vue` 同一批编译的视图仍由 `.vue` 编译器按 prop 名排好参数，直接调用函数；`.vue` 模板里的 Rust 函数组件和 `view!` 一样要 `#[component]`。
 
-在宏里能静态区分的只有三类：常量（字面量）、直接值或信号（路径、字段）、闭包（其他表达式）。"静态依赖"那一类需要知道哪个标识符是信号。只有能看到整段脚本的 [`.vue` 方言](#高级用法vue-方言)编译器才能做到。
+在宏里能静态区分的只有三类：常量（字面量）、直接值或信号（路径、字段）、闭包（其他表达式）。"静态依赖"那一类需要知道哪个标识符是信号。只有能看到整段脚本的 [`.vue` 方言](#高级用法-vue-方言)编译器才能做到。
 
 ## 高级用法：`.vue` 方言
 

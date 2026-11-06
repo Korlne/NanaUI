@@ -47,15 +47,15 @@ settings_row("静音").control(switch(""))
 
 控件自己有非空名字时用它自己的，例如 `switch("静音")`。空名字（`switch("")`、滑块、下拉选择）才用行标签。行标签改了，控件的无障碍节点跟着重新投影。`Select` 被这样命名之后，无障碍名字不是当前显示的选项；选项是它的值。没人给它起名时，仍按显示的文字命名。
 
-开关（`Switch`）默认不写 `role_description`，平台无障碍层会按系统语言念出“开关”或 “switch”（细节见 [框架文案](../../reference/framework-strings.md#开关的读法)）。
+开关（`Switch`）默认不写 `role_description`，平台无障碍层会按系统语言念出“开关”或 “switch”（细节见 [框架文案](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/framework-strings.md#开关的读法)）。
 
 `settings_row` 没有模板标签。分组里哪一行是首行、末行，由你按数据算好再绑定。
 
 ## 虚拟子节点与区域名称
 
-像 `TreeView` 和打开的菜单这类自绘单节点控件，框架会把每个可见行投影为无障碍树下的虚拟子节点（例如 `AccessibilityRole::Tree` 下的 `TreeItem`，带 `level`、`expanded`、`selected`、`disabled` 和行矩形边界；折叠后子行从无障碍树中移除），读屏的 `Click` / `Focus` / `Expand` / `Collapse` 与指针键盘走同一份状态更新（见 [TreeView](../../components/tree-view.md#无障碍)）。Select、Dropdown、SearchDropdown 打开的菜单是字段（`ComboBox`，带 `expanded` 和指向高亮项的 `active_descendant`）下的 `ListBox`，每个露出来的行一个 `ListBoxOption`，带 `selected`、`disabled`、`position_in_set` / `set_size`（见 [Select 的读屏](../../components/select.md#读屏)）。
+像 `TreeView` 和打开的菜单这类自绘单节点控件，框架会把每个可见行投影为无障碍树下的虚拟子节点（例如 `AccessibilityRole::Tree` 下的 `TreeItem`，带 `level`、`expanded`、`selected`、`disabled` 和行矩形边界；折叠后子行从无障碍树中移除），读屏的 `Click` / `Focus` / `Expand` / `Collapse` 与指针键盘走同一份状态更新（见 [TreeView](https://github.com/sena-nana/NanaUI/blob/main/docs/components/tree-view.md#无障碍)）。Select、Dropdown、SearchDropdown 打开的菜单是字段（`ComboBox`，带 `expanded` 和指向高亮项的 `active_descendant`）下的 `ListBox`，每个露出来的行一个 `ListBoxOption`，带 `selected`、`disabled`、`position_in_set` / `set_size`（见 [Select 的读屏](https://github.com/sena-nana/NanaUI/blob/main/docs/components/select.md#读屏)）。
 
-`AreaLayout` 中的每个区域在无障碍树里是一个 `Region`，名称通过 `.labels([(编辑器, 名称)])` 或切换语言时的 `AppContext::set_area_labels` 提供，不污染可序列化的布局模型（见 [AreaLayout](../../components/area-layout.md)）。
+`AreaLayout` 中的每个区域在无障碍树里是一个 `Region`，名称通过 `.labels([(编辑器, 名称)])` 或切换语言时的 `AppContext::set_area_labels` 提供，不污染可序列化的布局模型（见 [AreaLayout](https://github.com/sena-nana/NanaUI/blob/main/docs/components/area-layout.md)）。
 
 ## 播报变化
 
@@ -65,7 +65,7 @@ settings_row("静音").control(switch(""))
 
 `UiWorld::project_accessibility` 保留连接可见控件所需的结构祖先。`visibility: hidden` 的容器输出中性的 Generic：它自己的标签、值、描述、原来的角色和交互状态都不对外提供。显式 `visibility: visible` 的孩子继续有完整的父子链和语义。隐藏的叶子，以及不生成布局盒的子树，不进入投影。重新可见之后，恢复的是当前业务状态里的语义。
 
-节点的 `bounds` 相对父节点的空间，转过或缩放过的节点另带 `transform`（节点到父节点是 `translate(bounds.x, bounds.y) · transform`；正缩放是 `diag(a, d)`，页面根、`fixed`、`sticky`、逃逸的绝对定位被转过或缩放过时也带），`clip` 在视口坐标里；要屏幕坐标，拿着相对树时用 `AccessibilityPlacements`，直接从世界取用 `project_accessibility_in_viewport`（见 [应用 API](../../reference/application-api.md#无障碍节点的坐标)）。
+节点的 `bounds` 相对父节点的空间，转过或缩放过的节点另带 `transform`（节点到父节点是 `translate(bounds.x, bounds.y) · transform`；正缩放是 `diag(a, d)`，页面根、`fixed`、`sticky`、逃逸的绝对定位被转过或缩放过时也带），`clip` 在视口坐标里；要屏幕坐标，拿着相对树时用 `AccessibilityPlacements`，直接从世界取用 `project_accessibility_in_viewport`（见 [应用 API](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/application-api.md#无障碍节点的坐标)）。
 
 启用 `accesskit-tree` 的嵌入式宿主用 `AccessTreeProjector` 消费完整树或 `AccessibilityDelta`。隐藏的结构容器是没有点击、没有聚焦操作的 GenericContainer，孩子的操作和焦点还在。`AccessTreeProjector::new` 只建立保留状态。第一次要完整树时调用 `full_update()`。
 
@@ -79,7 +79,7 @@ hosted 适配器另有一个稳定的 Window 无障碍根。挂载、替换或�
 
 新建的主窗口和辅助窗口先只有 Window 根。首次成功呈现之后才发布内容。挂载前调用 `flush`，也不会把还没呈现的控件送进原生树。冷启动的第一批局部增量会补一次当前文档的快照。
 
-投影合同在 [应用 API](../../reference/application-api.md#隐藏层级中的无障碍语义)，帧的顺序在 [怎么工作](../../reference/how-it-works.md)。
+投影合同在 [应用 API](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/application-api.md#隐藏层级中的无障碍语义)，帧的顺序在 [怎么工作](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/how-it-works.md)。
 
 ## 接下来
 

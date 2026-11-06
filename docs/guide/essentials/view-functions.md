@@ -158,16 +158,16 @@ fn body(empty: bool) -> impl IntoView {
 `Option<视图>` 也是视图。`None` 什么也不建。`show.then(|| text("在"))` 在 `show` 为假时就是空的。
 
 ::: warning
-函数里的 `if` 在这次调用时决定结构，之后不再跟着数据变。`body` 要跟着信号换，用 [条件](conditional.md) 里的 `when`，不要在函数里 `if signal.get()`。`signal.get()` 在构造期间是当时的常量。
+函数里的 `if` 在这次调用时决定结构，之后不再跟着数据变。`body` 要跟着信号换，用 [条件](https://github.com/sena-nana/NanaUI/blob/main/docs/guide/essentials/conditional.md) 里的 `when`，不要在函数里 `if signal.get()`。`signal.get()` 在构造期间是当时的常量。
 :::
 
 `()` 是空视图。tuple 里可以夹一个 `()`，占一个位置但不建节点。写死的几个子节点优先用 tuple，`.children((a, b))`。要在建树时写 `for` 或 `let`，用 `.with(|c| c.add(…))`，这个块也只跑一次。
 
-内置标签不会去调用你的函数。`Column`、`Row`、`Text`、`Button` 这些展开成 `column()`、`text`、`button`，见 [视图写法](view.md) 的对照表。
+内置标签不会去调用你的函数。`Column`、`Row`、`Text`、`Button` 这些展开成 `column()`、`text`、`button`，见 [视图写法](https://github.com/sena-nana/NanaUI/blob/main/docs/guide/essentials/view.md) 的对照表。
 
 ## 参数从哪来
 
-父视图把信号、路径句柄或克隆出来的值传进来。行视图从 `each` 收到那一项的克隆，所以 `title: String` 这种参数在行里面是自己的。要跟着原数据变，传信号、`Computed`，或 [Store](reactivity.md) 的字段句柄，不要传 `get()` 出来的副本。
+父视图把信号、路径句柄或克隆出来的值传进来。行视图从 `each` 收到那一项的克隆，所以 `title: String` 这种参数在行里面是自己的。要跟着原数据变，传信号、`Computed`，或 [Store](https://github.com/sena-nana/NanaUI/blob/main/docs/guide/essentials/reactivity.md) 的字段句柄，不要传 `get()` 出来的副本。
 
 回调是普通参数：`fn toolbar(start: impl FnMut() + Send + 'static) -> impl IntoView`，里面 `button("开始").on_activate(start)`。没有单独的 emits。模板里这仍然是一个属性，不是 `@`。
 
