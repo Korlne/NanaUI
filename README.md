@@ -165,6 +165,26 @@ cargo run -p nana-ui --example egui-in-nanaui --features hosted,bundled-fonts,wg
 
 <p align="center"><sub>截图为 <a href="examples/component-gallery">component-gallery</a> 快照测试的渲染输出（Metal，Apple M4），随 GitHub 主题显示亮色或暗色版本。</sub></p>
 
+## 使用 NanaUI 的应用
+
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/assets/readme/nanatype.png" alt="NanaType" width="56" align="left">
+      <b>NanaType</b><br>
+      <sub>虚拟主播直播打字机：把打下的台词逐字演成 AVG / RPG 对话框，经 Spout2 / Syphon 送进 OBS。</sub><br>
+      <a href="https://github.com/sena-nana/NanaType">GitHub</a> ·
+      <a href="https://store.steampowered.com/app/5507600">Steam</a>
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/assets/readme/nanalive.png" alt="NanaLive" width="56" align="left">
+      <b>NanaLive</b><br>
+      <sub>面向虚拟主播的 Live2D 桌面场景与直播输出软件。</sub><br>
+      <sub>开发中</sub>
+    </td>
+  </tr>
+</table>
+
 ## 开始使用
 
 需要 Rust 1.98 或更新版本。先在仓库根目录跑一下示例：
