@@ -439,7 +439,7 @@ radius 走通之后。剩下的大头是 **control height / padding** 这类**�
 
 ```bash
 python3 scripts/audit-theme-hardcoding.py --format markdown
-python3 scripts/audit-theme-hardcoding.py --check archive/docs-notes/performance-data/theme-audit-2026-09-19/theme-hardcoding.json
+python3 scripts/audit-theme-hardcoding.py --check scripts/baselines/theme-hardcoding.json
 ```
 
 `--check` 在任一「本地设计值」类别变多时退出 1。这是 #100 Phase 9「防止重新引入 hard-coded default style authority」的种子：现在它守的是不要变得更糟。
@@ -619,7 +619,7 @@ extractor 与这些门禁本身由 `perf/contract.py --self-test` 的 `theme_bas
 
 **怎么读 `p50 ms`：只能同场 A/B。不能跨次录制比。** counter 列是确定性的。折进这份存档的 4 次运行逐字段完全相同。换台机器也一样。`elapsed_ms` 不是：同一个二进制在这台机器上。`theme-head-style-mutation` 因为旁边在不在编译。能在 7.7 ms 到 14.2 ms 之间摆动。接近 2×。表里的值是 4 次里的逐行最小值。仅用于量级参考。任何「变快/变慢了」的结论都要在一次坐下的时间里 A/B 出来。本文所有性能结论都是这么得到的。
 
-原始报告存档在 [`archive/docs-notes/performance-data/theme-audit-2026-09-19/`](../../archive/docs-notes/performance-data/theme-audit-2026-09-19)。
+原始报告存档在 [`archive/docs-notes/performance-data/theme-audit-2026-09-19/`](https://github.com/sena-nana/NanaUI/tree/docs-archive/archive/docs-notes/performance-data/theme-audit-2026-09-19)。
 
 ### 4.3 数字说明了什么
 
@@ -673,7 +673,7 @@ rg -c "SemanticColorRole::" crates/nana-ui-scene/src crates/nana-ui/src/scene_pa
 
 # 硬编码清单
 python3 scripts/audit-theme-hardcoding.py --format markdown
-python3 scripts/audit-theme-hardcoding.py --check archive/docs-notes/performance-data/theme-audit-2026-09-19/theme-hardcoding.json
+python3 scripts/audit-theme-hardcoding.py --check scripts/baselines/theme-hardcoding.json
 
 # Gallery 基线
 cargo run --release -p component-gallery --bin ui-snapshots --features snapshots --locked -- --semantic
@@ -834,7 +834,7 @@ cargo run --release --locked -p nana-ui-runtime --features benchmark \
   --bin nana-theme-benchmark -- --output target/performance/issue102/theme.json
 ```
 
-存档在 [`archive/docs-notes/performance-data/theme-phase1-2026-09-20/`](../../archive/docs-notes/performance-data/theme-phase1-2026-09-20)。要点：
+存档在 [`archive/docs-notes/performance-data/theme-phase1-2026-09-20/`](https://github.com/sena-nana/NanaUI/tree/docs-archive/archive/docs-notes/performance-data/theme-phase1-2026-09-20)。要点：
 
 - `theme-palette-switch` / `theme-accent-only` 的 `layout_copies` 仍是 **0**。`layout_nodes_from_style` 仍是 **0**。只动颜色不许碰盒子。这条没被新 token 破坏。
 - 这两个场景也**不触发**任何重投影：recipe 没变。`reproject_recipe_views` 不跑。

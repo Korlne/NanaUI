@@ -11,3 +11,7 @@ __pycache__/
 /perf/reports/**
 !/perf/reports/.gitkeep
 .zcode/
+
+# Local tool indexes and example output
+.codegraph/
+/web-surface-probe.png

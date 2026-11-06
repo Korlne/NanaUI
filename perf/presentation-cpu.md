@@ -82,6 +82,6 @@ replicates. Neither matching mixtures nor equal instruction counts establish a
 source cause. TG/coalition history remains a separate question if that is the
 claim being tested.
 
-The [2026-10-26 Issue 354 report](../archive/docs-notes/issue354-execution-context-2026-10-26.md)
+The [2026-10-26 Issue 354 report](https://github.com/sena-nana/NanaUI/tree/docs-archive/archive/docs-notes/issue354-execution-context-2026-10-26.md)
 contains a same-binary launch intervention, all five group results, public
 counter derivatives and a reproducible calculation check.

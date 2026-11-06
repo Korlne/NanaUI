@@ -335,7 +335,7 @@ impl Options {
                 | "--task-category-policy"
                 | "--allocator-observation" => {
                     return Err(
-                        "research CLI moved to archive/docs-notes/performance-data/issue242-r5-2026-10-15/research-fixture-source; use the archived frozen binary, not this maintained fixture",
+                        "research CLI moved to archive/docs-notes/performance-data/issue242-r5-2026-10-15/research-fixture-source in tag docs-archive; use the archived frozen binary, not this maintained fixture",
                     );
                 }
                 "--warmup-frames" | "--measured-frames" => {

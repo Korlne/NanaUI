@@ -1,1 +1,0 @@
-target/performance/high-refresh-current-large-scale.json

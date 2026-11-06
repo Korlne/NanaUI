@@ -160,7 +160,7 @@ compositor overlay 不改写程序自己的 `frame_demand`。也不唤醒无关�
 默认 `None` 不封顶。
 device/surface 丢失后宿主调用 `RuntimeDocument::set_surface_generation`。
 资源更新使用 `TextureSlot`。详细变更和当前验收范围见
-[高刷新重构](../../archive/docs-notes/high-refresh-refactor.md)。
+[高刷新重构](https://github.com/sena-nana/NanaUI/tree/docs-archive/archive/docs-notes/high-refresh-refactor.md)。
 
 应用实现这个 trait。再 `run_runtime::<App>(WindowDescriptor::new("…"))`。
 

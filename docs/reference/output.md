@@ -175,7 +175,7 @@ python3 perf/contract.py --evaluate-invariants target/performance/output/direct.
 
 额外六个 `transport-{overlay-static,overlay-changing,overlay-multi,overlay-slow,web-static,web-changing}` 用真实本地 GPU transfer 验证独立 consumer 池与退休，foreign retirement 明确为 mock。通过 `--transport-only` 独立执行，避免改变原七场景负载。三个 `transport-{native-host,openvr-native,web-native}` 只接收对应真实参考报告：30 次实际预热后，240 次测量，严格核对 fixture、平台路径、设备、尺寸、生产/消费工作量与 CPU 计时。缺指标、空负载或 mock 报告不能判为平台通过。
 
-具体参考与九个 transport 门禁现已进入代码。Windows WARP 的 native-export、同适配器 D3D11 消费及受控 `device.destroy()` 通知已有实际运行证据；这不等于硬件 driver reset。SteamVR live、Electron 实际 GPU import/消费/双凭据释放、完整硬件与跨进程矩阵、缺失的 GPU execution time/VRAM 仍未验收。Electron hosted runner 能力探测因无 WebGPU adapter 未通过，未用 mock 或零帧代替消费成功。当前交付范围及原始证据见 [最终收尾记录](../../archive/docs-notes/presentation-output-final-closeout-2026-10-26.md)；Issue 关闭不改变这些能力边界。
+具体参考与九个 transport 门禁现已进入代码。Windows WARP 的 native-export、同适配器 D3D11 消费及受控 `device.destroy()` 通知已有实际运行证据；这不等于硬件 driver reset。SteamVR live、Electron 实际 GPU import/消费/双凭据释放、完整硬件与跨进程矩阵、缺失的 GPU execution time/VRAM 仍未验收。Electron hosted runner 能力探测因无 WebGPU adapter 未通过，未用 mock 或零帧代替消费成功。当前交付范围及原始证据见 [最终收尾记录](https://github.com/sena-nana/NanaUI/tree/docs-archive/archive/docs-notes/presentation-output-final-closeout-2026-10-26.md)；Issue 关闭不改变这些能力边界。
 
 
 ### 按 producer / consumer 追踪
@@ -190,4 +190,4 @@ python3 perf/contract.py --evaluate-invariants target/performance/output/direct.
 
 ## 参见
 
-- [实时画面](gpu.md) · [窗口](window.md) · [架构合同](architecture.md) · [Issue #242 实施记录](../../archive/docs-notes/issue242-delivery.md) · [GPU 与帧生命周期](/learn/gpu-frame)
+- [实时画面](gpu.md) · [窗口](window.md) · [架构合同](architecture.md) · [Issue #242 实施记录](https://github.com/sena-nana/NanaUI/tree/docs-archive/archive/docs-notes/issue242-delivery.md) · [GPU 与帧生命周期](/learn/gpu-frame)

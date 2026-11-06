@@ -1,6 +1,6 @@
 # 单次指针事件的成本与脏帧分析
 
-本文记录 Rust L3 在指针高频移动（hover）下的实测开销、组件类型索引的收敛过程，以及当事件处理器触发真实视图更新时的脏帧成本。原始性能档案见 [`archive/docs-notes/performance-data/vue-hover-2026-09-08/`](../../archive/docs-notes/performance-data/vue-hover-2026-09-08) 与 [`archive/docs-notes/runtime-dirty-frame.md`](../../archive/docs-notes/runtime-dirty-frame.md)。
+本文记录 Rust L3 在指针高频移动（hover）下的实测开销、组件类型索引的收敛过程，以及当事件处理器触发真实视图更新时的脏帧成本。原始性能档案见 [`archive/docs-notes/performance-data/vue-hover-2026-09-08/`](https://github.com/sena-nana/NanaUI/tree/docs-archive/archive/docs-notes/performance-data/vue-hover-2026-09-08) 与 [`archive/docs-notes/runtime-dirty-frame.md`](https://github.com/sena-nana/NanaUI/tree/docs-archive/archive/docs-notes/runtime-dirty-frame.md)。
 
 ## 核心结论
 

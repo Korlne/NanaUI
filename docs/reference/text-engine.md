@@ -1772,12 +1772,12 @@ entry 的颜色指纹把 span 颜色和 `rich.revision` 合在一起：改描边
 
 ## 性能与许可证收口（#99）
 
-- **性能矩阵**：[text-release-matrix-2026-09-20](../../archive/docs-notes/performance-data/text-release-matrix-2026-09-20/README.md)
+- **性能矩阵**：[text-release-matrix-2026-09-20](https://github.com/sena-nana/NanaUI/tree/docs-archive/archive/docs-notes/performance-data/text-release-matrix-2026-09-20/README.md)
  。static steady / paint-only / compositor-only 三条门禁、#33 的 head-dirty
   网格（2k/4k/8k 节点上 `text_nodes_shaped` / `text_bytes_hashed` /
   `layouts_created` 全为 0）、以及 8000 行编辑器的每次编辑只重排一段。
   那篇写于 constraint-only 门禁之前。2026-09-22 的收口报告见
-  [text-cutover-2026-09-22](../../archive/docs-notes/performance-data/text-cutover-2026-09-22/README.md)（五道门禁。含新增的
+  [text-cutover-2026-09-22](https://github.com/sena-nana/NanaUI/tree/docs-archive/archive/docs-notes/performance-data/text-cutover-2026-09-22/README.md)（五道门禁。含新增的
   `gpu-scene-text-constraint-resize`）。
 - **第三方与许可证**：[third-party.md](third-party.md)。release 依赖图（全平台 normal + build 边）
   586 个外部 crate 全是宽松许可证。`cryoglyph` 与 `cosmic-text` 都不在 `Cargo.lock` 里。
@@ -1871,7 +1871,7 @@ resolve 以下的每一层都不知道段落是谁排的。#99 换掉的正是 r
 某个 workload 实际在哪条路上。
 
 A/B（`nana-text-paint-benchmark`。交替两种跑序各 3 轮取 min。见
-[performance-data](../../archive/docs-notes/performance-data/text-paint-retained-layout-2026-09-20)）：
+[performance-data](https://github.com/sena-nana/NanaUI/tree/docs-archive/archive/docs-notes/performance-data/text-paint-retained-layout-2026-09-20)）：
 
 | workload | batch p50（画笔自己排） | batch p50（取句柄） | |
 | --- | --- | --- | --- |
@@ -2101,7 +2101,7 @@ instance 放在 storage buffer 里。draw 不直接走它。draw 走的是一张
   不留空隙。文字恢复变长后。要等 break 攒够预算。下一次整理才重新留空隙。不会每帧来回。
   - 按帧、不按时间计。因为空隙的成本按画的帧累计。一万标签停止变化后 quad 152 085 → 136 045
     个/帧。draw 15 → 1。GPU 2.86 → 2.72 ms（负载 < 4、交替 10 轮取 min。
-    [数据](../../archive/docs-notes/performance-data/text-gap-reclaim-2026-09-24/README.md)）。那次整理重写 544 KB 索引。
+    [数据](https://github.com/sena-nana/NanaUI/tree/docs-archive/archive/docs-notes/performance-data/text-gap-reclaim-2026-09-24/README.md)）。那次整理重写 544 KB 索引。
     帧耗时里看不出尖峰。几帧空隙就抵得上它。60 帧是它的数倍。间歇刷新的文字留得住空隙。
   - 复用上一帧批次的帧（场景没变、旁边有 HostTexture / GPU 视图）照样画文字、付空隙。却不经过
     flush。所以也计入安静帧。到期那一帧不复用批次。重建一次。批次里没有文字时不计也不重建。
@@ -2110,7 +2110,7 @@ instance 放在 storage buffer 里。draw 不直接走它。draw 走的是一张
 
 画序不变、块不动的帧。索引表上传是 0 字节。
 
-实测（`archive/docs-notes/performance-data/text-draw-order-2026-09-22/`。一万标签、每帧随机 1% 的行换
+实测（tag `docs-archive` 的 `archive/docs-notes/performance-data/text-draw-order-2026-09-22/`。一万标签、每帧随机 1% 的行换
 随机长度文本、60 帧）：instance 上传 1 136 190 → **40 300** B/帧。也就是被重建段落自己的块
 （每段约 410 B）。一千标签那一档是 9 363 B/帧。标签多十倍、字节多 4.3 倍。不随屏上字形
 总数增长。新增的索引上传 65 107 B/帧。
@@ -2602,7 +2602,7 @@ text_prepare_nodes_considered / skipped / culled
 10 001 → 0。resolve 84 030 → 0。instance 上传 3.0 MB → 0。batch p50 8.9 → 4.8 ms（不是同一次运行。只作观察）。
 1.2×、1.75×、2× 同样为 0。presentation 行在吸附后的整像素变化的那些帧上传一次。1× 时
 平均每帧 59 B（160 B × 约 37% 的帧）。画廊 620 张基线无一变化：没有哪一张的最终平移
-带小数。数据在 [performance-data/text-scroll-snap-2026-09-23](../../archive/docs-notes/performance-data/text-scroll-snap-2026-09-23)。
+带小数。数据在 [performance-data/text-scroll-snap-2026-09-23](https://github.com/sena-nana/NanaUI/tree/docs-archive/archive/docs-notes/performance-data/text-scroll-snap-2026-09-23)。
 
 **编辑器的横向滚动也是平移。** 多行编辑器的滚动是它自己的。Runtime 过去把它直接算进值、
 光标、选区的页面坐标。画笔分不出滚动。长行横向小数滚动时整段每帧重解析。现在几何另带
@@ -2626,7 +2626,7 @@ text_prepare_nodes_considered / skipped / culled
 
 收尾这一轮的全矩阵（14 种 workload × 1 / 100 / 1k / 10k × 60 / 120 / 240）、四道门禁
 的真机报告和前后 A/B 在
-[performance-data/text-retained-2026-09-21](../../archive/docs-notes/performance-data/text-retained-2026-09-21)。
+[performance-data/text-retained-2026-09-21](https://github.com/sena-nana/NanaUI/tree/docs-archive/archive/docs-notes/performance-data/text-retained-2026-09-21)。
 A/B 的 14 个格子都在 −11% 到 +1.7% 之间。结构性的变化在计数里：一万标签整像素滚动
 的表格每帧 run/presentation 上传 479 KB → 96 B。两个窗口共享 Device 时第二个窗口
 一个字形都不重新栅格化。1% 的行持续换新汉字把 atlas 压满时其余 9 901 个标签仍由
@@ -2813,7 +2813,7 @@ cargo build --release -p nana-ui-scene --features benchmark --bin nana-dirty-fra
 ./target/release/nana-dirty-frame-benchmark --shape layout --position head --dirty 1 --rows 4000 --samples 150 --warmup 30
 ```
 
-Issue #33 收敛后的基线（Windows。2026-09-13。见 [脏帧](../../archive/docs-notes/runtime-dirty-frame.md)）：
+Issue #33 收敛后的基线（Windows。2026-09-13。见 [脏帧](https://github.com/sena-nana/NanaUI/tree/docs-archive/archive/docs-notes/runtime-dirty-frame.md)）：
 
 | 节点 | TextShape | Layout |
 | ---: | ---: | ---: |

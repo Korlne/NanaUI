@@ -1,3 +1,0 @@
-{"backend":"Vulkan","event":"adapter"}
-{"event":"retry_prepare","phase":4}
-{"event":"producer_failed","phase":4}

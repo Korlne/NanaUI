@@ -29,7 +29,7 @@ Runtime 和 framework benchmark 报告同时导出 `layout_context_transitions`�
 Iced / GPUI 对照——那两个 runner 对 `GpuScene` 一律 unsupported，摆进跨框架表格只会
 重新引入本文件开头警告的不可比性。规模写在 `params.node_repeat`，runner 必须原样回显，
 否则 extractor 拒绝该报告。基线与判据见
-[`archive/docs-notes/gpu-node-scale.md`](../archive/docs-notes/gpu-node-scale.md)。
+[`archive/docs-notes/gpu-node-scale.md`](https://github.com/sena-nana/NanaUI/tree/docs-archive/archive/docs-notes/gpu-node-scale.md)。
 
 ## Windows 合成器静止期
 
@@ -152,8 +152,9 @@ style mutation。和 motion / text 那两组一样，它们**不在** `harness_i
 python3 perf/runners/nana/run.py --print-plan --scenario theme-palette-switch
 cargo run --release --locked -p nana-ui-runtime --features benchmark --bin nana-theme-benchmark -- --output target/performance/issue101/theme.json
 python3 perf/runners/nana/run.py --scenario theme-palette-switch --from-report target/performance/issue101/theme.json
-# 不想重跑 benchmark 时，用归档的那份报告重放：
-python3 perf/runners/nana/run.py --scenario theme-density --from-report archive/docs-notes/performance-data/theme-audit-2026-09-19/theme-work-counters.json
+# 不想重跑 benchmark 时，用归档的那份报告重放（归档在 tag docs-archive 里）：
+git show docs-archive:archive/docs-notes/performance-data/theme-audit-2026-09-19/theme-work-counters.json > target/theme-work-counters.json
+python3 perf/runners/nana/run.py --scenario theme-density --from-report target/theme-work-counters.json
 ```
 
 这组没有单独的 `perf/fixtures/` 副本：归档报告只留一份（带日期、带机器），extractor 与门禁本身由
@@ -279,7 +280,7 @@ cargo run --release --locked -p nana-ui --example presentation-output-probe --fe
 Rust System 分配请求，并非 foreign malloc、驱动显存或 GPU 等待。
 
 R5 的 kind4/P/E、Mach endpoint、native helper、focus/category 干预与 allocator on/off
-实验已从维护示例移至[归档研究源码与冻结工具](../archive/docs-notes/performance-data/issue242-r5-2026-10-15/research-fixture-source/README.md)。
+实验已从维护示例移至[归档研究源码与冻结工具](https://github.com/sena-nana/NanaUI/tree/docs-archive/archive/docs-notes/performance-data/issue242-r5-2026-10-15/research-fixture-source/README.md)。
 `--execution-samples`、`--focus-schedule`、`--task-category-policy`、`--allocator-observation`
 在维护示例中会明确报迁移错误，不能静默执行另一种工作负载。旧实验仅使用已记录 hash 的
 冻结二进制或其精确源码快照；原 raw、构建记录和不完整/失败证据继续保留。
@@ -298,7 +299,7 @@ The two Issue #242 fixtures install a binary-only `System` allocator wrapper. `m
 可以另提供 caller-owned outcomes 或迭代接口，不以改写观测数据替代优化。
 
 最初 output 改造前未保留相同配置的 Release 耗时 baseline，因此不宣称相对改造前的时延改善。
-历史默认门禁与受控调查的配置、结果和保留证据见[交付记录](../archive/docs-notes/issue242-delivery.md)。
+历史默认门禁与受控调查的配置、结果和保留证据见[交付记录](https://github.com/sena-nana/NanaUI/tree/docs-archive/archive/docs-notes/issue242-delivery.md)。
 原始 trace、冻结 executable、失败记录和完整研究工具保留在原工作区，未作为代码提交上传。
 direct 时延信号与 P/E 推荐触发原因由 [#354](https://github.com/sena-nana/NanaUI/issues/354) 继续跟踪；
 GPU duration/driver VRAM 未观测时保持 unavailable，不能由 CPU 或分配计数替代。
@@ -368,7 +369,7 @@ CARGO_INCREMENTAL=0 RUSTC_WRAPPER= CARGO_PROFILE_TEST_DEBUG=0 CARGO_PROFILE_DEV_
 
 比较时必须使用同机、同构建配置和相同采样数，交替运行两个版本；调试构建绝对时间不能代表发布构建性能。该探针不能证明原生窗口帧率、输入延迟或耗电改善，真实长列表和订阅回调的业务开销需另测。
 
-本轮改动的同机交替测量和边界见 [2026-10-16 采样开销记录](../archive/docs-notes/smooth-scroll-cost-2026-10-16.md)。
+本轮改动的同机交替测量和边界见 [2026-10-16 采样开销记录](https://github.com/sena-nana/NanaUI/tree/docs-archive/archive/docs-notes/smooth-scroll-cost-2026-10-16.md)。
 
 Inline plain-label 固定机器成本使用 `crates/nana-ui-scene/tests/inline_cost.rs`。保留前后 executable，交错运行各至少三次；`NANA_INLINE_COST_OUTPUT` 写原始报告。manifest 的 `machine` 标明固定机器，`before` / `after` 是互不重复的报告相对路径数组。`python3 perf/contract.py --evaluate-inline-cost <manifest>` 复用现有 contract CLI，执行 idle p95 ≤1.05、retained live bytes ≤1.08、无新增 idle 分配及单实体门禁。它不推断 dirty-frame 成本，也不把进程 RSS 当作 live allocator bytes。
 

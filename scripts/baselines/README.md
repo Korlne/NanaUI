@@ -1,7 +1,7 @@
 # Theme audit baseline
 
 `theme-hardcoding.json` is the maintained inventory used by the repository gate.
-The reports under `archive/docs-notes/performance-data/` are historical phase
+The reports under `archive/docs-notes/performance-data/` (tag `docs-archive`) are historical phase
 evidence and keep their original source population.
 
 The 2026-10-17 baseline records the source at
