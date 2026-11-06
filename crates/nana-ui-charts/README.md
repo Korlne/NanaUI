@@ -1,12 +1,14 @@
 # nana-ui-charts
 
-NanaUI 的图表模型，option 的形状参照 ECharts。
+English · [简体中文](README.zh-CN.md)
 
-`ChartOption` 用 Rust 类型描述坐标轴、系列、图例、提示和缩放。`layout` 在 CPU 上把它和容器尺寸、主题一起算成 `ChartLayout`，里面有标签、悬停用的命中数据，以及图表着色器直接读取的 `ChartMarks`。标记同时带起始态和目标态，过渡由着色器插值；悬停查询在已完成的布局上进行，指针移动不会触发重新布局。目前支持折线（含面积、堆叠、平滑）、柱状、饼图、散点、雷达和仪表盘，坐标轴有类目、数值、时间和对数四种。
+NanaUI's chart model, with an option shape modeled on ECharts.
 
-本 crate 只依赖 `nana-ui-core`，不测量文字，标签宽度由调用方经 `LabelMeasure` 提供。`Chart` 组件在 [`nana-ui-runtime`](../nana-ui-runtime)，绘制管线在 [`nana-ui`](../nana-ui)。
+`ChartOption` describes axes, series, legend, tooltip, and zoom with Rust types. `layout` computes it on the CPU together with the container size and theme into a `ChartLayout`, which holds labels, hit data for hovering, and the `ChartMarks` that the chart shaders read directly. Marks carry both a start state and a target state, and transitions are interpolated by the shaders; hover queries run against the finished layout, so pointer movement never triggers relayout. Supported today: line (including area, stacked, and smooth), bar, pie, scatter, radar, and gauge, with four axis types: category, value, time, and log.
 
-## 示例
+This crate depends only on `nana-ui-core` and does not measure text; label widths are supplied by the caller through `LabelMeasure`. The `Chart` component is in [`nana-ui-runtime`](../nana-ui-runtime), and the paint pipelines are in [`nana-ui`](../nana-ui).
+
+## Example
 
 ```rust
 use nana_ui_charts::{
@@ -30,12 +32,12 @@ let chart = layout(&LayoutInput {
 });
 ```
 
-应用通常不直接调用 `layout`，而是把 `ChartOption` 交给 `nana_ui::runtime::Chart`。
+Applications usually do not call `layout` directly; they hand the `ChartOption` to `nana_ui::runtime::Chart`.
 
-## 测试
+## Tests
 
 ```bash
 cargo test -p nana-ui-charts
 ```
 
-更多内容见 [Chart 组件](../../docs/components/chart.md) 和 [支撑 crate](../../docs/learn/supporting-crates.md)。
+See also [Chart component](../../docs/en/components/chart.md) and [Supporting crates](../../docs/en/learn/supporting-crates.md).

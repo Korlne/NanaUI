@@ -62,5 +62,6 @@ Read the focused contract document named by the selected skill before editing. R
 - Inspect existing implementation, consumers, docs, features, manifests, lockfiles, and tests when a public or cross-layer contract changes.
 - Preserve unrelated worktree edits. Do not reset, overwrite, or create a temporary worktree.
 - Prefer the smallest root-cause change. Add behavior tests only for changed behavior.
+- Docs are bilingual. `docs/<path>.md` is Chinese and `docs/en/<path>.md` is its English mirror (served at the site root; Chinese under `/zh/`); README and crate READMEs pair `README.md` (English) with `README.zh-CN.md`. Change both languages in the same commit, and run `npm run build` in `docs/` when you add pages or links.
 - Run \`cargo fmt --all -- --check\` and the focused checks selected by \`$nanaui-validation\`; use \`git diff --check\` for documentation or Skill-only changes.
 - Report exact commands, results, and untested platform or consumer boundaries. A compile check alone is not GPU, visual, consumer, or native-window evidence.

@@ -1,14 +1,16 @@
 # nana-ui-diagram
 
-NanaUI 的原生 Mermaid 引擎，不依赖浏览器。
+English · [简体中文](README.zh-CN.md)
 
-它把 Mermaid 源码解析成类型化模型，再布局成 `DiagramScene`：一份由形状和单行文字组成的矢量显示列表。列表里的颜色、圆角和线宽仍是主题角色，换主题只需重新录制，不必重新布局。解析和布局都在 `Limits` 预算内结束，超限时返回 `DiagramError::TooLarge`；解析时跳过的语句记为 `Warning`，不会让整张图失败。
+NanaUI's native Mermaid engine, with no browser dependency.
 
-`DiagramKind::ALL` 列出的 34 种图都由原生实现，包括 flowchart、sequence、class、state、er、gantt、pie、mindmap、timeline、gitgraph、sankey、xychart 等。
+It parses Mermaid source into a typed model, then lays it out into a `DiagramScene`: a vector display list of shapes and single-line text. Colors, corner radii, and line widths in the list are still theme roles, so switching themes needs only a re-recording, not a relayout. Parsing and layout both finish within a `Limits` budget and return `DiagramError::TooLarge` when it is exceeded; statements skipped during parsing are recorded as `Warning` and do not fail the whole diagram.
 
-本 crate 不接触字体、GPU 和界面树，文字宽度由调用方经 `TextMeasure` 提供。Markdown 里 `mermaid` 围栏的识别和按主题录制在 [`nana-ui-runtime`](../nana-ui-runtime) 的 `rich-text` feature 里，应用一般不直接调用这里。
+All 34 diagram types listed in `DiagramKind::ALL` are implemented natively, including flowchart, sequence, class, state, er, gantt, pie, mindmap, timeline, gitgraph, sankey, xychart, and more.
 
-## 示例
+This crate does not touch fonts, the GPU, or the UI tree; text widths are supplied by the caller through `TextMeasure`. Recognizing `mermaid` fences in Markdown and recording against the theme happens in the `rich-text` feature of [`nana-ui-runtime`](../nana-ui-runtime); applications generally do not call this crate directly.
+
+## Example
 
 ```rust
 use nana_ui_diagram::{DiagramMetrics, FixedMeasure, Limits, render};
@@ -22,17 +24,17 @@ let scene = render(
 .unwrap();
 ```
 
-## 测试
+## Tests
 
 ```bash
 cargo test -p nana-ui-diagram
 NANA_DIAGRAM_BLESS=1 cargo test -p nana-ui-diagram --test golden
 ```
 
-第二条在有意改动后重写 `tests/golden/`。解析与布局基准需要 `benchmark` feature：
+The second command rewrites `tests/golden/` after an intentional change. The parse and layout benchmarks need the `benchmark` feature:
 
 ```bash
 cargo run --release -p nana-ui-diagram --features benchmark --bin nana-diagram-benchmark
 ```
 
-更多内容见 [原生图表引擎](../../docs/reference/diagram-engine.md) 和 [NativeMarkdown 组件](../../docs/components/native-markdown.md)。
+See also [Native diagram engine](../../docs/en/reference/diagram-engine.md) and [NativeMarkdown component](../../docs/en/components/native-markdown.md).

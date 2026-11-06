@@ -1,31 +1,33 @@
 # nana-ui-dev
 
-NanaUI 应用的开发期热重载，只用于开发构建。
+English · [简体中文](README.zh-CN.md)
 
-它监视源码，在后台增量编译，成功后把窗口几何和应用交给它的状态传给下一个进程，然后原地 re-exec。不做进程内 dylib 热替换。用 `.vue` 视图时，只改了静态文字的保存会直接送进运行中的窗口，不必重建。重载时保留哪些状态由应用决定，本 crate 只交付 `DevSignal` 消息和交接数据。
+Development-time hot reload for NanaUI applications, for development builds only.
 
-没有 `debug_assertions` 的构建会被 `compile_error!` 拒绝，所以 release 入口应该是另一个只调用 `run_runtime` 的 `main.rs`，不引用本 crate。无头会话本身在 [`nana-ui-devtools`](../nana-ui-devtools)。
+It watches the sources and compiles incrementally in the background. On success it hands the window geometry and the state the application gave it to the next process, then re-execs in place. It does no in-process dylib hot swapping. With `.vue` views, a save that only changes static text is sent straight into the running window without a rebuild. Which state survives a reload is up to the application; this crate only delivers `DevSignal` messages and handoff data.
+
+Builds without `debug_assertions` are rejected with `compile_error!`, so the release entry point should be a separate `main.rs` that only calls `run_runtime` and does not reference this crate. The headless session itself is in [`nana-ui-devtools`](../nana-ui-devtools).
 
 ## Features
 
-- `templates`：引入 `nana-ui-sfc`，提供 `watch_templates` 与 `TemplateText`，用于 `.vue` 静态文字热替换。
-- `headless`：引入 `nana-ui-devtools`，让 dev 二进制响应 `--stdio`、`--screenshot`、`--a11y`，不开窗也能验证重建结果。
+- `templates`: pulls in `nana-ui-sfc` and provides `watch_templates` and `TemplateText`, for hot swapping static text in `.vue`.
+- `headless`: pulls in `nana-ui-devtools` so the dev binary responds to `--stdio`, `--screenshot`, and `--a11y`, letting you verify a rebuild without opening a window.
 
-## 示例
+## Example
 
-完整的 dev 入口在 `examples/l3-dev-entry.rs`：
+The complete dev entry point is in `examples/l3-dev-entry.rs`:
 
 ```bash
 cargo run -p nana-ui-dev --example l3-dev-entry
 cargo run -p nana-ui-dev --example l3-dev-entry --features headless -- --a11y
 ```
 
-## 测试
+## Tests
 
 ```bash
 cargo test -p nana-ui-dev --features templates
 ```
 
-本 crate 只能在 debug 配置下编译，不要加 `--release`。其余检查见 [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml)。
+This crate compiles only in the debug profile; do not add `--release`. Other checks are in [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml).
 
-更多内容见 [热重载](../../docs/guide/scaling/hot-reload.md) 和 [开发期热重载合同](../../docs/reference/hot-reload.md)。
+See also [Hot reload](../../docs/en/guide/scaling/hot-reload.md) and [Development hot reload contract](../../docs/en/reference/hot-reload.md).

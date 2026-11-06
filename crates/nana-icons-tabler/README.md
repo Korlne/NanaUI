@@ -1,35 +1,37 @@
 # nana-icons-tabler
 
-完整的 [Tabler Icons](https://github.com/tabler/tabler-icons) outline 图标目录，每个图标是一个 `nana_ui_core::icon::Icon` 常量。
+English · [简体中文](README.zh-CN.md)
 
-常量名是图标 id 换成大写、`-` 换成 `_`，例如 `HOME`、`TRASH`、`ZOOM_IN`。每个常量指向独立的静态数据，没用到的图标会被链接器剔除。只收录 outline 风格。图标的栅格化在 `nana-ui` 里完成，壳层自己用的图标在 `nana-ui-core` 的内置目录中。
+The complete [Tabler Icons](https://github.com/tabler/tabler-icons) outline icon catalog, with each icon as a `nana_ui_core::icon::Icon` constant.
 
-在应用里打开 `nana-ui` 的 `icons-tabler` feature 后按名引用：
+Constant names are the icon id uppercased with `-` replaced by `_`, for example `HOME`, `TRASH`, `ZOOM_IN`. Each constant points to its own static data, so unused icons are stripped by the linker. Only the outline style is included. Icon rasterization happens in `nana-ui`, and the icons the shell itself uses are in the built-in catalog in `nana-ui-core`.
+
+In an application, turn on `nana-ui`'s `icons-tabler` feature and refer to icons by name:
 
 ```rust
 use nana_ui::icons_tabler::{HOME, USER};
 ```
 
-## 生成
+## Generation
 
-`src/lib.rs` 是生成的，不要手改：
+`src/lib.rs` is generated; do not edit it by hand:
 
 ```bash
 python3 scripts/generate_tabler_catalog.py
 ```
 
-Tabler 的版本写在脚本的 `TABLER_VERSION` 里。
+The Tabler version is set in the script's `TABLER_VERSION`.
 
-## 测试
+## Tests
 
-本 crate 被根 `Cargo.toml` 的 `[workspace] exclude` 排除，有自己的 `Cargo.lock`，升级依赖时要单独刷新，测试也要指定清单：
+This crate is excluded by `[workspace] exclude` in the root `Cargo.toml` and has its own `Cargo.lock`, which must be refreshed separately when upgrading dependencies. Tests must also name the manifest:
 
 ```bash
 cargo test --manifest-path crates/nana-icons-tabler/Cargo.toml
 ```
 
-## 许可证
+## License
 
-图标数据来自 Tabler Icons，以 MIT 许可证发布，本 crate 相应声明 `license = "MIT"`。
+The icon data comes from Tabler Icons and is released under the MIT license; this crate accordingly declares `license = "MIT"`.
 
-更多内容见 [IconGlyph 组件](../../docs/components/icon-glyph.md) 和 [第三方代码与许可证](../../docs/reference/third-party.md)。
+See also [IconGlyph component](../../docs/en/components/icon-glyph.md) and [Third-party code and licenses](../../docs/en/reference/third-party.md).

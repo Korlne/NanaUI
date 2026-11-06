@@ -1,12 +1,14 @@
 # nana-ui-input
 
-NanaUI 的规范输入事件，以及路由器向宿主要服务时用的接口。
+English · [简体中文](README.zh-CN.md)
 
-宿主把原生的指针、滚轮、按键、文本提交、IME 组字和文件拖放事件降维成 `CanonicalInputEvent`。每个输入源一个 `InputSequencer`，给事件盖上严格递增的序列号和时间戳。`InputEndpoint` 是按事件数和字节数限额的队列，相邻的指针移动和滚轮会合并，队列满时 `push` 把事件原样还给调用方。`HostServices` 是路由器反过来调用宿主的那一面：光标、IME 输入上下文和剪贴板。
+NanaUI's canonical input events, and the interface the router uses to request services from the host.
 
-这个 crate 没有平台依赖，不读原生事件，也不做路由。命中测试、焦点、捕获和 IME 状态都在 `nana-ui-runtime` 的路由器里，原生事件的降维在各个宿主。
+Hosts lower native pointer, wheel, key, text commit, IME composition, and file drop events into `CanonicalInputEvent`. Each input source has one `InputSequencer`, which stamps events with strictly increasing sequence numbers and timestamps. `InputEndpoint` is a queue bounded by event count and byte size; adjacent pointer moves and wheel events are coalesced, and when the queue is full `push` hands the event back to the caller unchanged. `HostServices` is the side where the router calls back into the host: cursor, IME input context, and clipboard.
 
-## 示例
+This crate has no platform dependencies, reads no native events, and does no routing. Hit testing, focus, capture, and IME state are in the router in `nana-ui-runtime`, and lowering native events happens in each host.
+
+## Example
 
 ```rust
 use std::time::Duration;
@@ -22,16 +24,16 @@ for step in 1..=1_000u64 {
     let payload = InputPayload::Pointer(PointerInput::mouse(PointerPhase::Move, step as f32, 2.0));
     endpoint.push(CanonicalInputEvent { metadata, payload }).unwrap();
 }
-// 相邻的移动合并成一条
+// adjacent moves coalesce into one
 assert_eq!(std::iter::from_fn(|| endpoint.pop()).count(), 1);
 ```
 
-## 测试
+## Tests
 
 ```bash
 cargo test -p nana-ui-input --lib
 ```
 
-路由侧的合同测试在 `nana-ui-runtime`，完整命令见输入验收矩阵。
+The routing-side contract tests are in `nana-ui-runtime`; the full commands are in the input conformance matrix.
 
-更多内容见 [输入链路](../../docs/learn/runtime-input.md) 和 [输入验收矩阵](../../docs/reference/input-conformance.md)。
+See also [Input pipeline](../../docs/en/learn/runtime-input.md) and [Input conformance matrix](../../docs/en/reference/input-conformance.md).

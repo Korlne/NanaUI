@@ -1,12 +1,14 @@
 # nana-frame-exchange
 
-把渲染线程画好的帧交给 UI 窗口显示的有界交换，建在宿主已有的 `GpuContext` 上。
+English · [简体中文](README.zh-CN.md)
 
-生产者调用 `FrameExchange::copy_from`，把完成的帧在 GPU 上复制进一个小纹理池；消费者从 `FrameInbox` 取最新一份完成的 `FrameLease` 去采样。双方互不等待：池满时这一帧直接丢弃（`CopyOutcome::PoolFull`），租约在采样它的那次提交完成后才归还槽位。像素从不读回 CPU。`set_epoch` 会立刻隐藏旧 epoch 的帧，帧还可以带上类型化的应用载荷，载荷变化不影响 token 身份或 epoch。
+A bounded exchange that hands frames drawn by a render thread to a UI window for display, built on the host's existing `GpuContext`.
 
-这个 crate 不拥有设备，也不负责提交和颜色转换。窗口侧把帧挂进界面用的是 [`nana-ui`](../nana-ui) 的 `FrameBinding`，跨进程共享纹理在 [`nana-gpu`](../nana-gpu) 的 `native-export`。
+The producer calls `FrameExchange::copy_from` to copy a completed frame on the GPU into a small texture pool; the consumer takes the latest completed `FrameLease` from a `FrameInbox` and samples it. Neither side waits for the other: when the pool is full the frame is simply dropped (`CopyOutcome::PoolFull`), and a lease returns its slot only after the submission that samples it completes. Pixels are never read back to the CPU. `set_epoch` immediately hides frames from older epochs, and frames can carry a typed application payload; payload changes do not affect token identity or epoch.
 
-## 示例
+This crate does not own the device and is not responsible for submission or color conversion. On the window side, frames are attached to the UI with `FrameBinding` in [`nana-ui`](../nana-ui); cross-process texture sharing is `native-export` in [`nana-gpu`](../nana-gpu).
+
+## Example
 
 ```rust
 use std::sync::Arc;
@@ -14,10 +16,10 @@ use nana_frame_exchange::{CopyOutcome, DEFAULT_CAPACITY, FrameExchange, GpuConte
 
 fn produce(gpu: &GpuContext, rendered: &GpuTexture) {
     let mut exchange = FrameExchange::new(gpu, DEFAULT_CAPACITY, 7u64, Arc::new(|| {}));
-    let inbox = exchange.inbox(); // 交给消费者线程
+    let inbox = exchange.inbox(); // hand to the consumer thread
 
     if let CopyOutcome::PoolFull = exchange.copy_from(rendered, 7) {
-        return; // 丢弃这一帧，不等待
+        return; // drop this frame without waiting
     }
     if exchange.poll() {
         let lease = inbox.latest().unwrap();
@@ -28,14 +30,14 @@ fn produce(gpu: &GpuContext, rendered: &GpuTexture) {
 
 ## Features
 
-- `wgpu-interop`：打开 `FrameExchange::copy_from_wgpu*`，给渲染到裸 WGPU 纹理的生产者用。
+- `wgpu-interop`: enables `FrameExchange::copy_from_wgpu*`, for producers that render into raw WGPU textures.
 
-## 测试
+## Tests
 
 ```bash
 cargo test -p nana-frame-exchange
 ```
 
-测试需要一个可用的 GPU 适配器。
+The tests need a working GPU adapter.
 
-更多内容见 [GPU 集成](../../docs/reference/gpu.md) 和 [GPU 与帧生命周期](../../docs/learn/gpu-frame.md)。
+See also [GPU integration](../../docs/en/reference/gpu.md) and [GPU and the frame lifecycle](../../docs/en/learn/gpu-frame.md).

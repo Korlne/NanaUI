@@ -1,16 +1,18 @@
 # nana-package
 
-Nana 打包格式的读取侧：包清单、`.nrpack` 资源包、内容密钥和发布者签名，随应用一起发布。
+English · [简体中文](README.zh-CN.md)
 
-`PackReader` 随机访问 `.nrpack`，遇到任何不一致就拒绝：先校验 Header、发布者签名和 TOC 哈希，再按需逐块校验、解密、解压。内容密钥由应用实现的 `KeyProvider` 提供，是否要求发布者签名由 `TrustPolicy` 决定。因为会链接进发行的应用，它只依赖纯 Rust 库，`scripts/check-package-boundary.py` 会检查这一点。
+The read side of the Nana package format: package manifest, `.nrpack` resource packs, content keys, and publisher signatures. It ships with the application.
 
-应用通常不直接用它，而是通过 `nana-ui` 的 `packaged-resources` feature 和 `ResourcePackOptions` 挂载资源包。构建资源包、生成密钥和签名在构建期的 [`nana-packager`](../nana-packager) 里。
+`PackReader` gives random access to a `.nrpack` and refuses on any inconsistency: it first verifies the header, publisher signature, and TOC hash, then verifies, decrypts, and decompresses block by block on demand. Content keys come from a `KeyProvider` implemented by the application, and `TrustPolicy` decides whether a publisher signature is required. Because it is linked into shipped applications, it depends only on pure-Rust libraries; `scripts/check-package-boundary.py` checks this.
 
-## 测试
+Applications usually do not use it directly; they mount resource packs through `nana-ui`'s `packaged-resources` feature and `ResourcePackOptions`. Building resource packs and generating keys and signatures happens at build time in [`nana-packager`](../nana-packager).
+
+## Tests
 
 ```bash
 cargo test -p nana-package
 python3 scripts/check-package-boundary.py
 ```
 
-更多内容见 [打包与分发](../../docs/reference/packaging.md) 和 [打包指南](../../docs/guide/scaling/packaging.md)。
+See also [Packaging and distribution](../../docs/en/reference/packaging.md) and [Packaging guide](../../docs/en/guide/scaling/packaging.md).

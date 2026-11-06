@@ -1,25 +1,27 @@
 # nana-ui-platform
 
-NanaUI 与宿主平台之间不含原生句柄的那一层：窗口合同、路径拼写、应用目录，以及剪贴板、HTTP(S)、WebSocket 和文件持久化这些宿主服务。
+English · [简体中文](README.zh-CN.md)
 
-`WindowDescriptor`、`WindowEvent`、`WindowId` 描述开窗申请和结果，只有数据。`path` 模块（应用里是 `nana_ui::path`）负责共享路径拼写：`normalize_path` 不碰磁盘，`canonicalize_path` 只在 I/O 线程调用，`display_path` 生成的文字只用于显示，不能写回设置或用来打开文件。`ApplicationPaths::resolve` 把数据、配置、缓存、日志等目录映射到当前平台。它还原样再导出 [`nana-ui-input`](../nana-ui-input) 的输入合同。
+The layer between NanaUI and the host platform that holds no native handles: window contracts, path spelling, application directories, and host services for clipboard, HTTP(S), WebSocket, and file persistence.
 
-原生窗口、系统材质和标题栏的执行在 [`nana-window`](../nana-window)，输入路由在 `nana-ui-runtime`。
+`WindowDescriptor`, `WindowEvent`, and `WindowId` describe window-open requests and results, and are data only. The `path` module (`nana_ui::path` in applications) owns shared path spelling: `normalize_path` never touches the disk, `canonicalize_path` is called only on I/O threads, and the text produced by `display_path` is for display only and must never be written back into settings or used to open files. `ApplicationPaths::resolve` maps data, config, cache, log, and other directories onto the current platform. The crate also re-exports the input contract of [`nana-ui-input`](../nana-ui-input) unchanged.
+
+Native windows, system materials, and title bars are carried out in [`nana-window`](../nana-window); input routing is in `nana-ui-runtime`.
 
 ## Features
 
-- `clipboard`（默认开启）：系统剪贴板，桌面上基于 `arboard`。
-- `fetch`（默认开启）：`FetchHost` 和基于 `ureq` 的 `NativeFetchHost`。默认不放行任何源，由应用的 `FetchPolicy` 决定。
-- `ws`：`WebSocketHost` 和基于 `tungstenite` 的 `NativeWebSocketHost`。
-- `experimental-android`：实验性 Android 宿主的平台能力。
+- `clipboard` (on by default): the system clipboard, based on `arboard` on desktop.
+- `fetch` (on by default): `FetchHost` and the `ureq`-based `NativeFetchHost`. No origin is allowed by default; the application's `FetchPolicy` decides.
+- `ws`: `WebSocketHost` and the `tungstenite`-based `NativeWebSocketHost`.
+- `experimental-android`: platform capabilities for the experimental Android host.
 
-## 测试
+## Tests
 
 ```bash
 cargo test -p nana-ui-platform
 cargo test -p nana-ui-platform --features ws
 ```
 
-其余组合见 [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml)。真实剪贴板、网络和原生窗口行为要在目标平台上验证。
+Other combinations are in [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml). Real clipboard, network, and native window behavior must be verified on the target platform.
 
-更多内容见 [窗口参考](../../docs/reference/window.md) 和 [窗口与平台](../../docs/learn/window-platform.md)。
+See also [Window reference](../../docs/en/reference/window.md) and [Window and platform](../../docs/en/learn/window-platform.md).

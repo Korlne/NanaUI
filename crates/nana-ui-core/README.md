@@ -1,12 +1,14 @@
 # nana-ui-core
 
-NanaUI 各层共用的基础类型，位于依赖图最底层。
+English · [简体中文](README.zh-CN.md)
 
-这里定义样式模型（`LayoutStyle`、语义色、设计 token）、主题（`ThemeDefinition`、`CompiledTheme`、`ThemeRegistry`）、逻辑像素几何、Workspace 区域模型和动效时间线（`MotionTrack`）。Rust 构建器、`view!`、`.vue` 方言和 `css!` 写出的样式最后都落到同一份数据上。组件只声明档位，比如圆角档和动效角色，具体数值由当前主题决定。
+Foundation types shared by every NanaUI layer, at the bottom of the dependency graph.
 
-本 crate 只有数据和纯计算，不解析 CSS、不排版文字、不持有界面树。CSS 由 [`nana-ui-css`](../nana-ui-css) 在构建期映射过来，文字在 [`nana-text`](../nana-text)，界面树在 [`nana-ui-runtime`](../nana-ui-runtime)。
+This crate defines the style model (`LayoutStyle`, semantic colors, design tokens), themes (`ThemeDefinition`, `CompiledTheme`, `ThemeRegistry`), logical-pixel geometry, the Workspace region model, and motion timelines (`MotionTrack`). Styles written with Rust builders, `view!`, the `.vue` dialect, and `css!` all end up as the same data. Components declare only tiers, such as a radius tier or a motion role; the concrete values come from the current theme.
 
-## 示例
+This crate holds only data and pure computation: it does not parse CSS, lay out text, or own the UI tree. CSS is mapped in at build time by [`nana-ui-css`](../nana-ui-css), text lives in [`nana-text`](../nana-text), and the UI tree lives in [`nana-ui-runtime`](../nana-ui-runtime).
+
+## Example
 
 ```rust
 use nana_ui_core::{SemanticColorRole, ThemeAppearance, builtin_theme};
@@ -17,17 +19,17 @@ let accent = theme.style_model().color(SemanticColorRole::Accent);
 
 ## Features
 
-默认不开启任何 feature。
+No features are on by default.
 
-- `bundled-font-regular`：嵌入 Noto Sans SC 可变字体（约 4.4 MB），SVG 光栅化和 Canvas2D 文本需要它。
-- `bundled-fonts`：把同一字体作为主题的界面字体，供桌面宿主注册，不额外嵌入数据。
+- `bundled-font-regular`: embeds the Noto Sans SC variable font (about 4.4 MB), needed by SVG rasterization and Canvas2D text.
+- `bundled-fonts`: uses the same font as the theme's UI font, for desktop hosts to register; embeds no extra data.
 
-## 测试
+## Tests
 
 ```bash
 cargo test -p nana-ui-core
 ```
 
-主题里的硬编码数值由 `python3 scripts/audit-theme-hardcoding.py` 检查，其余命令见 [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml)。
+Hard-coded values in themes are checked by `python3 scripts/audit-theme-hardcoding.py`; other commands are in [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml).
 
-更多内容见 [核心合同](../../docs/learn/core-contracts.md) 和 [主题](../../docs/reference/theme.md)。
+See also [Core contracts](../../docs/en/learn/core-contracts.md) and [Theme](../../docs/en/reference/theme.md).

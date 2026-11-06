@@ -1,12 +1,14 @@
 # nana-gpu
 
-NanaUI 与 GPU 之间的接口层，目前只有 WGPU 一个实现。
+English · [简体中文](README.zh-CN.md)
 
-`GpuContext` 代表应用唯一的 GPU 设备，由宿主创建，供 NanaUI 的绘制器和应用自己的渲染代码共用。每一帧从 `GpuContext::begin_frame` 拿到一个 `FrameContext`，录制完调用 `submit()`；不提交就丢弃，这一帧也就作废了。纹理会记住自己是在哪一代设备上创建的，设备丢失并重建之后，旧纹理会被拒绝，而不是悄悄画错。
+The interface layer between NanaUI and the GPU. WGPU is currently the only implementation.
 
-这个 crate 不创建窗口，不调度帧，也不负责绘制界面。那些工作在 [`nana-ui`](../nana-ui) 里。
+`GpuContext` represents the application's single GPU device. The host creates it, and NanaUI's painter and the application's own rendering code share it. Each frame gets a `FrameContext` from `GpuContext::begin_frame` and calls `submit()` after recording; if it is not submitted it is discarded, and that frame is void. Textures remember which device generation they were created on, so after device loss and rebuild, old textures are rejected instead of silently drawing the wrong thing.
 
-## 示例
+This crate does not create windows, schedule frames, or paint the UI. That work lives in [`nana-ui`](../nana-ui).
+
+## Example
 
 ```rust
 use nana_gpu::{GpuContext, GpuTextureDescriptor, GpuTextureFormat, GpuTextureUsages};
@@ -30,16 +32,16 @@ fn record(gpu: &GpuContext, usage: GpuTextureUsages) {
 
 ## Features
 
-- `wgpu-interop`：拿到 `GpuContext` 背后的 `wgpu` 设备、编码器和纹理。自己录制渲染管线、或者要接入已有 WGPU 设备时才需要。
-- `native-export`（仅 Windows）：把纹理导出为 DX12 共享纹理，交给其他 D3D 设备读取。
-- `native-import`（仅 Windows）：接收外部 GPU 生产者写入的 DX12 共享纹理。
+- `wgpu-interop`: access the `wgpu` device, encoder, and textures behind `GpuContext`. Needed only when you record your own render pipelines or integrate an existing WGPU device.
+- `native-export` (Windows only): export a texture as a DX12 shared texture for other D3D devices to read.
+- `native-import` (Windows only): receive DX12 shared textures written by an external GPU producer.
 
-## 测试
+## Tests
 
 ```bash
 cargo test -p nana-gpu
 ```
 
-测试需要一个可用的 GPU 适配器。设备丢失和 Windows 共享纹理的测试命令见 [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml)。
+The tests need a working GPU adapter. Test commands for device loss and Windows shared textures are in [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml).
 
-更多内容见 [GPU 集成](../../docs/reference/gpu.md) 和 [GPU 与帧生命周期](../../docs/learn/gpu-frame.md)。
+See also [GPU integration](../../docs/en/reference/gpu.md) and [GPU and the frame lifecycle](../../docs/en/learn/gpu-frame.md).

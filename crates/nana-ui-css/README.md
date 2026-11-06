@@ -1,18 +1,20 @@
 # nana-ui-css
 
-NanaUI 的 CSS 引擎，负责解析受支持的 CSS 子集、做级联，并把结果映射到 `nana_ui_core::LayoutStyle`。
+English · [简体中文](README.zh-CN.md)
 
-它只在构建期运行。`view!` 的 `<style>`、`stylesheet!`、`css!` 和 `.vue` 文件的 `<style>` 都经由它编译，运行时拿到的是已经算好的样式数据，不再解析 CSS 文本。`@container` 被编译成运行时求值的区间数据，本 crate 自己从不测量容器。样式表体积、`@import` 深度和嵌套深度都有硬上限，超出的部分跳过或拒绝。
+NanaUI's CSS engine. It parses the supported CSS subset, runs the cascade, and maps the result onto `nana_ui_core::LayoutStyle`.
 
-应用一般不直接调用它。盒模型求解和 `@container` 是否成立由 `nana-ui-runtime` 的布局引擎决定，模板展开在 [`nana-ui-view-codegen`](../nana-ui-view-codegen)。
+It runs only at build time. `<style>` in `view!`, `stylesheet!`, `css!`, and `<style>` in `.vue` files are all compiled through it; at run time the program receives already computed style data and never parses CSS text again. `@container` is compiled into range data evaluated at run time; this crate never measures containers itself. Stylesheet size, `@import` depth, and nesting depth all have hard limits, and anything beyond them is skipped or rejected.
 
-## 测试
+Applications generally do not call it directly. Box model solving and whether an `@container` query holds are decided by the layout engine in `nana-ui-runtime`, and template expansion is in [`nana-ui-view-codegen`](../nana-ui-view-codegen).
+
+## Tests
 
 ```bash
 cargo test -p nana-ui-css
 cargo run -p nana-css-parity -- compare
 ```
 
-第二条把布局结果与浏览器盒模型的夹具逐项比对。其余检查见 [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml)。
+The second command compares layout results item by item against browser box model fixtures. Other checks are in [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml).
 
-更多内容见 [CSS 引擎](../../docs/learn/css-engine.md) 和 [布局（CSS 子集）](../../docs/reference/layout.md)。
+See also [CSS engine](../../docs/en/learn/css-engine.md) and [Layout (CSS subset)](../../docs/en/reference/layout.md).
