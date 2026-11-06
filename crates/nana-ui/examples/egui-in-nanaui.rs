@@ -14,14 +14,15 @@ use std::time::Instant;
 
 use nana_ui::runtime::view::{entity_ref, widget, with_refs};
 use nana_ui::runtime::{
-    Activate, Button, DocumentId, Entity, FrameworkError, GPU_VIEW_RENDERER, GpuView, GpuViewMode,
-    LengthSpec, List, NodeStyle, RuntimeDocument, Text,
+    Activate, AlignSpec, Button, Card, DocumentId, Entity, FrameworkError, GPU_VIEW_RENDERER,
+    GpuView, GpuViewMode, LengthSpec, NodeStyle, RuntimeDocument, Stack, Text,
 };
 use nana_ui::{
-    ButtonKind, RoutedInput, RuntimeProgram, RuntimeProgramContext, RuntimeProgramUpdate,
+    ButtonKind, CardKind, RoutedInput, RuntimeProgram, RuntimeProgramContext, RuntimeProgramUpdate,
     SceneGpuNode, SceneGpuPrepareContext, SceneGpuRenderContext, SceneGpuRenderer,
     SceneGpuRendererRegistry, ThemeAppearance, WindowDescriptor, WindowHandle, run_runtime,
 };
+use nana_ui_core::TypeRole;
 use nana_ui_platform::{InputPayload, PointerPhase, WheelUnit, WindowEvent, WindowId};
 
 /// What both toolkits look at.
@@ -59,25 +60,42 @@ impl std::fmt::Debug for EguiNode {
 }
 
 impl EguiNode {
+    /// egui's controls, inset inside the node NanaUI laid out. The card
+    /// around them is NanaUI's, so egui draws no frame of its own.
     fn ui(ctx: &egui::Context, bounds: egui::Rect, shared: &mut Shared) {
         egui::Area::new(egui::Id::unique("nana-egui"))
             .fixed_pos(bounds.min)
             .show(ctx, |ui| {
                 ui.set_clip_rect(bounds);
-                egui::Frame::window(ui.style()).show(ui, |ui| {
-                    ui.set_width(bounds.width() - 32.0);
-                    ui.set_min_height(bounds.height() - 32.0);
-                    ui.heading("egui");
-                    ui.label("这块面板由 egui 绘制，是 NanaUI 树上的一个 GpuView 节点。");
-                    ui.separator();
-                    ui.add(egui::Slider::new(&mut shared.strength, 0.0..=1.0).text("强度"));
-                    ui.checkbox(&mut shared.enabled, "启用");
-                    ui.horizontal(|ui| {
+                ui.set_width(bounds.width());
+                ui.spacing_mut().item_spacing = egui::vec2(12.0, 14.0);
+                ui.spacing_mut().slider_width = (bounds.width() - 140.0).max(120.0);
+                egui::Grid::new(egui::Id::unique("nana-egui-grid"))
+                    .num_columns(2)
+                    .spacing([16.0, 14.0])
+                    .show(ui, |ui| {
+                        ui.label("强度");
+                        ui.add(
+                            egui::Slider::new(&mut shared.strength, 0.0..=1.0)
+                                .custom_formatter(|v, _| format!("{:.0}%", v * 100.0)),
+                        );
+                        ui.end_row();
+                        ui.label("启用");
+                        ui.checkbox(&mut shared.enabled, "");
+                        ui.end_row();
                         ui.label("备注");
-                        ui.text_edit_singleline(&mut shared.note);
+                        ui.add(
+                            egui::TextEdit::singleline(&mut shared.note)
+                                .desired_width(bounds.width() - 72.0),
+                        );
+                        ui.end_row();
+                        ui.label("进度");
+                        ui.add(
+                            egui::ProgressBar::new(shared.strength)
+                                .desired_width(bounds.width() - 72.0),
+                        );
+                        ui.end_row();
                     });
-                    ui.add(egui::ProgressBar::new(shared.strength).show_percentage());
-                });
             });
     }
 }
@@ -205,36 +223,115 @@ fn egui_context() -> egui::Context {
             .push("noto-sans-sc".to_owned());
     }
     ctx.set_fonts(fonts);
+    ctx.set_visuals(nana_visuals(ThemeAppearance::Dark));
     ctx
 }
 
-/// The egui node fills the row and is 300 logical pixels tall.
+fn color(c: nana_ui::SemanticColor) -> egui::Color32 {
+    let byte = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+    egui::Color32::from_rgba_unmultiplied(byte(c.r), byte(c.g), byte(c.b), byte(c.a))
+}
+
+/// egui visuals taken from NanaUI's theme palette, so both halves of the
+/// window read as one interface.
+fn nana_visuals(theme: ThemeAppearance) -> egui::Visuals {
+    let palette = theme.palette();
+    let mut visuals = if theme == ThemeAppearance::Dark {
+        egui::Visuals::dark()
+    } else {
+        egui::Visuals::light()
+    };
+    let radius = egui::CornerRadius::same(6);
+    visuals.override_text_color = Some(color(palette.text));
+    visuals.panel_fill = egui::Color32::TRANSPARENT;
+    visuals.window_fill = color(palette.surface);
+    // Text fields and slider rails sit on the raised tone, like NanaUI inputs.
+    visuals.extreme_bg_color = color(palette.raised);
+    visuals.selection.bg_fill = color(palette.accent);
+    visuals.selection.stroke.color = color(palette.accent_strong);
+    visuals.hyperlink_color = color(palette.accent);
+    for (widget, fill, stroke) in [
+        (
+            &mut visuals.widgets.noninteractive,
+            palette.surface,
+            palette.border_soft,
+        ),
+        (&mut visuals.widgets.inactive, palette.hover, palette.border),
+        (
+            &mut visuals.widgets.hovered,
+            palette.active,
+            palette.border_strong,
+        ),
+        (
+            &mut visuals.widgets.active,
+            palette.accent_soft,
+            palette.accent,
+        ),
+        (
+            &mut visuals.widgets.open,
+            palette.active,
+            palette.border_strong,
+        ),
+    ] {
+        widget.bg_fill = color(fill);
+        widget.weak_bg_fill = color(fill);
+        widget.bg_stroke.color = color(stroke);
+        widget.corner_radius = radius;
+    }
+    visuals
+}
+
+/// The egui node fills the width of its card.
 fn egui_node_style() -> NodeStyle {
     let mut style = NodeStyle::default();
     let layout = Arc::make_mut(&mut style.layout);
     layout.width = Some(LengthSpec::Fill);
-    layout.height = Some(LengthSpec::Px(300.0));
+    layout.height = Some(LengthSpec::Px(160.0));
     style
+}
+
+/// A card that takes the remaining width of the row.
+fn grow(mut card: Card) -> Card {
+    let layout = Arc::make_mut(&mut card.style.layout);
+    layout.width = Some(LengthSpec::Fill);
+    layout.min_width = Some(LengthSpec::Px(0.0));
+    layout.flex_grow = Some(1.0);
+    layout.flex_shrink = Some(1.0);
+    layout.allow_shrink = true;
+    card
+}
+
+/// A card of a fixed width.
+fn fixed(mut card: Card, width: f32) -> Card {
+    Arc::make_mut(&mut card.style.layout).width = Some(LengthSpec::Px(width));
+    card
 }
 
 struct Demo {
     document: RuntimeDocument,
     egui: EguiNode,
-    readout: Entity<Text>,
+    readout: [Entity<Text>; 3],
     view: Entity<GpuView>,
 }
 
-fn readout(shared: &Shared) -> String {
-    format!(
-        "强度 {:.0}% · {} · 备注「{}」",
-        shared.strength * 100.0,
-        if shared.enabled {
-            "已启用"
-        } else {
-            "未启用"
-        },
-        shared.note
-    )
+fn readout(shared: &Shared) -> [String; 3] {
+    let note = if shared.note.is_empty() {
+        "（空）"
+    } else {
+        shared.note.as_str()
+    };
+    [
+        format!("强度　{:.0}%", shared.strength * 100.0),
+        format!(
+            "状态　{}",
+            if shared.enabled {
+                "已启用"
+            } else {
+                "未启用"
+            }
+        ),
+        format!("备注　{note}"),
+    ]
 }
 
 impl RuntimeProgram for Demo {
@@ -268,28 +365,65 @@ impl RuntimeProgram for Demo {
         let (_, (readout_text, view)) = document
             .context_mut()
             .mount_view_root(document_id, || {
-                let readout_text = entity_ref::<Text>();
+                let readout_text = [entity_ref::<Text>(), entity_ref::<Text>(), entity_ref::<Text>()];
                 let view = entity_ref::<GpuView>();
                 let reset_shared = Arc::clone(&shared);
-                let root = widget(List::new().label("NanaUI + egui")).children((
-                    widget(Text::new("NanaUI 面板")),
-                    widget(Text::new(initial)).entity_ref(readout_text),
-                    widget(Button::new("由 NanaUI 重置").kind(ButtonKind::Primary)).on_cx(
-                        move |_button, _event: &Activate, cx| {
-                            let mut shared = reset_shared.lock().unwrap();
-                            shared.strength = 0.0;
-                            shared.enabled = false;
-                            shared.note.clear();
-                            cx.dispatch_program(());
-                        },
-                    ),
+                let root = widget(Stack::column(20.0).padding(28.0)).children((
+                    widget(Stack::column(6.0)).children((
+                        widget(Text::new("NanaUI + egui").typography(TypeRole::Heading)),
+                        widget(
+                            Text::new(
+                                "右侧面板由 egui 绘制，它是 NanaUI 树上的一个 GpuView 节点。",
+                            )
+                            .typography(TypeRole::Meta),
+                        ),
+                    )),
+                    widget(Stack::row(16.0).with_layout(|layout| {
+                        layout.width = Some(LengthSpec::Fill);
+                        layout.align_items = AlignSpec::Stretch;
+                    }))
+                    .children((
+                        widget(fixed(
+                            Card::new().title("NanaUI").kind(CardKind::Outlined).padding(20.0),
+                            260.0,
+                        ))
+                        .children((
+                            widget(Stack::column(8.0).with_layout(|layout| {
+                                layout.padding_bottom = Some(LengthSpec::Px(12.0));
+                            }))
+                            .children((
+                                widget(Text::new(initial[0].clone())).entity_ref(readout_text[0]),
+                                widget(Text::new(initial[1].clone())).entity_ref(readout_text[1]),
+                                widget(Text::new(initial[2].clone())).entity_ref(readout_text[2]),
+                            )),
+                            widget(Button::new("重置").kind(ButtonKind::Primary)).on_cx(
+                                move |_button, _event: &Activate, cx| {
+                                    let mut shared = reset_shared.lock().unwrap();
+                                    shared.strength = 0.0;
+                                    shared.enabled = false;
+                                    shared.note.clear();
+                                    cx.dispatch_program(());
+                                },
+                            ),
+                        )),
+                        widget(grow(
+                            Card::new().title("egui").kind(CardKind::Outlined).padding(20.0),
+                        ))
+                        .children(
+                            widget(
+                                GpuView::new(EGUI_SLOT)
+                                    .mode(GpuViewMode::Standalone)
+                                    .style(egui_node_style()),
+                            )
+                            .entity_ref(view),
+                        ),
+                    )),
                     widget(
-                        GpuView::new(EGUI_SLOT)
-                            .mode(GpuViewMode::Standalone)
-                            .style(egui_node_style()),
-                    )
-                    .entity_ref(view),
-                    widget(Text::new("egui 面板下方仍是 NanaUI 的节点。")),
+                        Text::new(
+                            "两边读写同一份状态。egui 的网格与 NanaUI 共用一个 WGPU 设备，在同一帧里绘制。",
+                        )
+                        .typography(TypeRole::Meta),
+                    ),
                 ));
                 with_refs(root, (readout_text, view))
             })
@@ -426,15 +560,17 @@ impl Demo {
     /// Show what egui changed in a NanaUI label, and tell the egui node its
     /// content changed when NanaUI changed the value.
     fn sync(&mut self) {
-        let text = readout(&self.egui.shared.lock().unwrap());
-        let _ = self
-            .document
-            .context_mut()
-            .update_component(self.readout, |label, _| {
-                if label.value != text {
-                    label.value = text;
-                }
-            });
+        let lines = readout(&self.egui.shared.lock().unwrap());
+        for (entity, text) in self.readout.into_iter().zip(lines) {
+            let _ = self
+                .document
+                .context_mut()
+                .update_component(entity, |label, _| {
+                    if label.value != text {
+                        label.value = text;
+                    }
+                });
+        }
         let _ = self
             .document
             .context_mut()
@@ -447,7 +583,7 @@ impl Demo {
 fn main() -> Result<(), nana_ui::HostedRunError> {
     run_runtime::<Demo>(
         WindowDescriptor::new("NanaUI + egui")
-            .initial_size(900.0, 640.0)
+            .initial_size(920.0, 410.0)
             .system_caption(true),
     )
 }
