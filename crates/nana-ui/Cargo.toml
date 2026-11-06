@@ -125,6 +125,10 @@ accesskit_macos = { workspace = true, optional = true }
 
 [dev-dependencies]
 pollster = { workspace = true }
+# `egui-in-nanaui` mixes an egui panel into the tree. egui-wgpu 0.37 is on
+# the same WGPU major; default features off so it picks no backends.
+egui = { version = "0.37", default-features = false, features = ["default_fonts"] }
+egui-wgpu = { version = "0.37", default-features = false }
 log = "0.4"
 
 # `window-output-probe` reads its native output on a D3D11 device.
@@ -152,6 +156,10 @@ windows = { version = "0.62", optional = true, features = ["Win32_Foundation", "
 
 [[example]]
 name = "hosted-gpu-demo"
+required-features = ["hosted", "bundled-fonts", "wgpu-interop"]
+
+[[example]]
+name = "egui-in-nanaui"
 required-features = ["hosted", "bundled-fonts", "wgpu-interop"]
 
 [[example]]

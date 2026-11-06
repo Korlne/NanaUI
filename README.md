@@ -112,6 +112,20 @@ let count = signal(0);
 
 完整可运行的程序见 [`application-counter`](crates/nana-ui/examples/application-counter.rs)、[`reactive-counter`](crates/nana-ui/examples/reactive-counter.rs) 和 [`examples/reactive-sfc`](examples/reactive-sfc)。
 
+## 与其他 UI 框架混合
+
+因为 GPU 内容是树上的普通节点，另一个 UI 框架画出来的东西也可以作为节点放进 NanaUI：它和周围的 NanaUI 控件一起布局、裁剪和排序，共用同一个 WGPU 设备和同一次提交。已有的 egui 调试面板、游戏里现成的工具界面，不需要重写就能搬进 NanaUI 的窗口，再逐步迁移。
+
+<p align="center">
+  <img src="docs/assets/readme/egui-in-nanaui.png" alt="NanaUI 树中的 egui 面板" width="70%">
+</p>
+
+[`egui-in-nanaui`](crates/nana-ui/examples/egui-in-nanaui.rs) 把一个 egui 面板挂成 `GpuView` 节点，上下都是 NanaUI 控件，两边读写同一份状态。egui 的指针、滚轮和文字输入由 NanaUI 转交：
+
+```bash
+cargo run -p nana-ui --example egui-in-nanaui --features hosted,bundled-fonts,wgpu-interop
+```
+
 ## 截图
 
 <table>
