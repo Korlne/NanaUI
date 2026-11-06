@@ -3,6 +3,14 @@
 Committed reference frames for `ui-snapshots`. One PNG per snapshot, under a
 directory named after the GPU adapter that produced it.
 
+The Gallery is organized by the job a reader is trying to do. The sidebar groups
+the seven pages into 基础交互 (操作与输入), 内容浏览 (展示与容器、富文本),
+数据分析 (数据可视化、节点图), 反馈与浮层, and 工作区, and puts a
+`SpacingRole::GroupInPane` lead above every group after the first so each one
+reads as a block instead of another row. Each page presents its examples in
+responsive feature cards, so snapshot keys should continue to identify the page
+rather than an implementation-specific row order.
+
 ```
 snapshots/<adapter-key>/<snapshot key>.png
 ```

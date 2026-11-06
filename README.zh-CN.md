@@ -16,10 +16,11 @@
 </p>
 
 <p align="center">
-  <a href="docs/guide/quick-start.md">快速开始</a> ·
-  <a href="docs/guide/introduction.md">指南</a> ·
-  <a href="docs/components/index.md">组件</a> ·
-  <a href="docs/architecture/index.md">架构</a> ·
+  <a href="https://sena-nana.github.io/NanaUI/zh/">文档</a> ·
+  <a href="https://sena-nana.github.io/NanaUI/zh/guide/quick-start">快速开始</a> ·
+  <a href="https://sena-nana.github.io/NanaUI/zh/guide/introduction">指南</a> ·
+  <a href="https://sena-nana.github.io/NanaUI/zh/components/">组件</a> ·
+  <a href="https://sena-nana.github.io/NanaUI/zh/architecture/">架构</a> ·
   <a href="examples">示例</a>
 </p>
 
@@ -177,6 +178,15 @@ cargo run -p nana-ui --example egui-in-nanaui --features hosted,bundled-fonts,wg
       <sub>设置页与外观切换</sub>
     </td>
   </tr>
+  <tr>
+    <td colspan="2" align="center">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="examples/component-gallery/snapshots/metal-apple-m4/gallery-data-dark.png">
+        <img src="examples/component-gallery/snapshots/metal-apple-m4/gallery-data-light.png" alt="数据" width="50%">
+      </picture>
+      <sub>数据：柱线组合图、环形图与日历热力图</sub>
+    </td>
+  </tr>
 </table>
 
 <p align="center"><sub>截图为 <a href="examples/component-gallery">component-gallery</a> 快照测试的渲染输出（Metal，Apple M4），随 GitHub 主题显示亮色或暗色版本。</sub></p>
@@ -237,7 +247,7 @@ nana-ui = { git = "https://github.com/sena-nana/NanaUI", features = ["hosted", "
 
 </details>
 
-接下来读 [快速开始](docs/guide/quick-start.md) 和 [创建应用](docs/guide/essentials/application.md)。
+接下来读 [快速开始](https://sena-nana.github.io/NanaUI/zh/guide/quick-start) 和 [创建应用](https://sena-nana.github.io/NanaUI/zh/guide/essentials/application)。
 
 ## 平台支持
 
@@ -258,11 +268,11 @@ nana-ui = { git = "https://github.com/sena-nana/NanaUI", features = ["hosted", "
 | 完成一次布局所需的线程栈，嵌套 64 到 500 层 | 116 KiB，与深度无关 |
 | 冷启动整页布局，21 001 个盒子，每盒（Taffy 0.11 为 0.70 µs） | 1.24 µs |
 
-数据来自 Apple M4，release 构建。冷启动布局比 [Taffy](https://github.com/DioxusLabs/taffy) 慢约 1.8 倍，差距来自 NanaUI 布局时还要维护增量更新与无障碍所需的状态，仍在优化。测量方法与复现命令见 [资源预算](docs/reference/resource-budgets.md) 和 [`perf/`](perf/README.md)。
+数据来自 Apple M4，release 构建。冷启动布局比 [Taffy](https://github.com/DioxusLabs/taffy) 慢约 1.8 倍，差距来自 NanaUI 布局时还要维护增量更新与无障碍所需的状态，仍在优化。测量方法与复现命令见 [资源预算](https://sena-nana.github.io/NanaUI/zh/reference/resource-budgets) 和 [`perf/`](perf/README.md)。
 
 ## 项目结构
 
-应用通常只依赖 `nana-ui`。整体架构见 [docs/reference/architecture.md](docs/reference/architecture.md)。
+应用通常只依赖 `nana-ui`。整体架构见 [架构合同](https://sena-nana.github.io/NanaUI/zh/reference/architecture)。
 
 <details>
 <summary><b>全部 crate</b></summary>

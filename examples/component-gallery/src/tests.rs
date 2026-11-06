@@ -1,5 +1,5 @@
 use super::{
-    ContextAction, GalleryApp, GalleryContextMenuEvent, GalleryDock, GalleryMessage,
+    ContextAction, GalleryApp, GalleryChart, GalleryContextMenuEvent, GalleryDock, GalleryMessage,
     GalleryOverlay, GallerySection, GalleryState, SurfaceView,
 };
 use crate::runtime_host::RuntimeSceneInput;
@@ -329,6 +329,20 @@ fn command_palette_keybinding_opens_and_keyboard_navigation_selects() {
     );
     assert_eq!(state.theme, ThemeAppearance::Light);
     assert!(!state.overlay.is_open());
+}
+
+#[test]
+fn data_section_chart_selection_updates_real_state() {
+    let mut state = GalleryState::new();
+    state.update(GalleryMessage::SelectSection(GallerySection::Data));
+    state.update(GalleryMessage::SelectChartItem {
+        chart: GalleryChart::Trend,
+        series: 1,
+        index: 2,
+    });
+
+    assert_eq!(state.section, GallerySection::Data);
+    assert_eq!(state.chart_selection, Some((GalleryChart::Trend, 1, 2)));
 }
 
 #[test]

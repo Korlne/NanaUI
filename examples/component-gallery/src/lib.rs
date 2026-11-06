@@ -60,9 +60,17 @@ pub enum GallerySection {
     Controls,
     Surfaces,
     Feedback,
+    Data,
     RichText,
     Graph,
     Workspace,
+}
+
+/// The two charts on the data page; a click names one of them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GalleryChart {
+    Trend,
+    Share,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -156,6 +164,11 @@ pub enum GalleryMessage {
     SelectSearchResult(u8),
     SearchDropdownInput(String),
     CalendarHeatmap(CalendarHeatmapEvent),
+    SelectChartItem {
+        chart: GalleryChart,
+        series: usize,
+        index: usize,
+    },
     SelectListItem(usize),
     SelectSurfaceCard(usize),
     SelectSurfaceView(SurfaceView),
@@ -246,6 +259,7 @@ pub struct GalleryState {
     #[allow(dead_code)]
     calendar_model: OnceCell<CalendarHeatmapModel>,
     calendar_active: Option<CalendarHeatmapActiveCell>,
+    chart_selection: Option<(GalleryChart, usize, usize)>,
     selected_item: usize,
     selected_surface_card: usize,
     surface_selection: SingleSelection,
@@ -328,6 +342,7 @@ impl GalleryState {
             search_selection: Some(2),
             calendar_model: OnceCell::new(),
             calendar_active: None,
+            chart_selection: None,
             selected_item: 0,
             selected_surface_card: 0,
             surface_selection: SingleSelection::new(0),
@@ -713,6 +728,11 @@ impl GalleryState {
                 }
                 CalendarHeatmapEvent::CellLeave => self.calendar_active = None,
             },
+            GalleryMessage::SelectChartItem {
+                chart,
+                series,
+                index,
+            } => self.chart_selection = Some((chart, series, index)),
             GalleryMessage::SelectListItem(index) => self.selected_item = index,
             GalleryMessage::SelectSurfaceCard(index) => self.selected_surface_card = index,
             GalleryMessage::SelectSurfaceView(view) => {
@@ -1866,9 +1886,10 @@ fn appearance_message(event: AppearanceEvent) -> GalleryMessage {
 
 pub(crate) fn section_label(section: GallerySection) -> &'static str {
     match section {
-        GallerySection::Controls => "控件",
-        GallerySection::Surfaces => "表面",
-        GallerySection::Feedback => "反馈",
+        GallerySection::Controls => "操作与输入",
+        GallerySection::Surfaces => "展示与容器",
+        GallerySection::Feedback => "反馈与浮层",
+        GallerySection::Data => "数据可视化",
         GallerySection::RichText => "富文本",
         GallerySection::Graph => "节点图",
         GallerySection::Workspace => "工作区",

@@ -16,10 +16,11 @@
 </p>
 
 <p align="center">
-  <a href="docs/guide/quick-start.md">Quick start</a> ·
-  <a href="docs/guide/introduction.md">Guide</a> ·
-  <a href="docs/components/index.md">Components</a> ·
-  <a href="docs/architecture/index.md">Architecture</a> ·
+  <a href="https://sena-nana.github.io/NanaUI/">Documentation</a> ·
+  <a href="https://sena-nana.github.io/NanaUI/guide/quick-start">Quick start</a> ·
+  <a href="https://sena-nana.github.io/NanaUI/guide/introduction">Guide</a> ·
+  <a href="https://sena-nana.github.io/NanaUI/components/">Components</a> ·
+  <a href="https://sena-nana.github.io/NanaUI/architecture/">Architecture</a> ·
   <a href="examples">Examples</a>
 </p>
 
@@ -32,9 +33,6 @@
 
 > [!WARNING]
 > NanaUI is in early development. It is not published on crates.io yet, and the API will keep changing.
-
-> [!NOTE]
-> The documentation under [`docs/`](docs) is currently written in Chinese.
 
 ## Why NanaUI
 
@@ -180,6 +178,15 @@ cargo run -p nana-ui --example egui-in-nanaui --features hosted,bundled-fonts,wg
       <sub>Settings page and appearance switching</sub>
     </td>
   </tr>
+  <tr>
+    <td colspan="2" align="center">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="examples/component-gallery/snapshots/metal-apple-m4/gallery-data-dark.png">
+        <img src="examples/component-gallery/snapshots/metal-apple-m4/gallery-data-light.png" alt="Data" width="50%">
+      </picture>
+      <sub>Data: bar/line combination, donut and calendar heatmap</sub>
+    </td>
+  </tr>
 </table>
 
 <p align="center"><sub>Screenshots are rendered output from the <a href="examples/component-gallery">component-gallery</a> snapshot tests (Metal, Apple M4). They follow your GitHub theme. The gallery UI text is in Chinese.</sub></p>
@@ -240,7 +247,7 @@ nana-ui = { git = "https://github.com/sena-nana/NanaUI", features = ["hosted", "
 
 </details>
 
-Next, read [Quick start](docs/guide/quick-start.md) and [Creating an application](docs/guide/essentials/application.md).
+Next, read [Quick start](https://sena-nana.github.io/NanaUI/guide/quick-start) and [Creating an application](https://sena-nana.github.io/NanaUI/guide/essentials/application).
 
 ## Platform support
 
@@ -261,11 +268,11 @@ Next, read [Quick start](docs/guide/quick-start.md) and [Creating an application
 | Thread stack needed to finish a layout, 64 to 500 levels of nesting | 116 KiB, independent of depth |
 | Cold full-page layout, 21 001 boxes, per box (Taffy 0.11: 0.70 µs) | 1.24 µs |
 
-Measured on an Apple M4 with release builds. Cold layout is about 1.8× slower than [Taffy](https://github.com/DioxusLabs/taffy) because NanaUI's layout also maintains the state needed for incremental updates and accessibility; this is still being optimized. Methodology and reproduction commands are in [resource budgets](docs/reference/resource-budgets.md) and [`perf/`](perf/README.md).
+Measured on an Apple M4 with release builds. Cold layout is about 1.8× slower than [Taffy](https://github.com/DioxusLabs/taffy) because NanaUI's layout also maintains the state needed for incremental updates and accessibility; this is still being optimized. Methodology and reproduction commands are in [resource budgets](https://sena-nana.github.io/NanaUI/reference/resource-budgets) and [`perf/`](perf/README.md).
 
 ## Project layout
 
-Applications usually depend on `nana-ui` only. See [docs/reference/architecture.md](docs/reference/architecture.md) for the overall architecture.
+Applications usually depend on `nana-ui` only. See [architecture contracts](https://sena-nana.github.io/NanaUI/reference/architecture) for the overall architecture.
 
 <details>
 <summary><b>All crates</b></summary>

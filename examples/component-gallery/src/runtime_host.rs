@@ -373,7 +373,6 @@ pub(super) struct HostStack {
     height: Option<LengthSpec>,
     min_width: Option<LengthSpec>,
     min_height: Option<LengthSpec>,
-    max_width: Option<LengthSpec>,
     padding: Option<f32>,
     padding_x: Option<f32>,
     padding_y: Option<f32>,
@@ -393,7 +392,6 @@ impl HostStack {
             height: None,
             min_width: None,
             min_height: None,
-            max_width: None,
             padding: None,
             padding_x: None,
             padding_y: None,
@@ -496,21 +494,6 @@ impl HostStack {
             .background(SemanticColorRole::Background)
     }
 
-    pub(super) fn panel(gap: f32) -> Self {
-        Self::base(
-            FlexDirection::Column,
-            gap,
-            AlignSpec::Stretch,
-            JustifySpec::Start,
-        )
-        .width(LengthSpec::Fill)
-        .min_width(LengthSpec::Px(0.0))
-        .padding_xy(12.0, 10.0)
-        .background(SemanticColorRole::Surface)
-        .grow(0.0)
-        .shrink(1.0)
-    }
-
     pub(super) fn width(mut self, width: LengthSpec) -> Self {
         self.width = Some(width);
         self
@@ -528,11 +511,6 @@ impl HostStack {
 
     pub(super) fn min_height(mut self, min_height: LengthSpec) -> Self {
         self.min_height = Some(min_height);
-        self
-    }
-
-    pub(super) fn max_width(mut self, max_width: LengthSpec) -> Self {
-        self.max_width = Some(max_width);
         self
     }
 
@@ -589,7 +567,6 @@ impl ComponentView for HostStack {
         layout.height = self.height;
         layout.min_width = self.min_width;
         layout.min_height = self.min_height;
-        layout.max_width = self.max_width;
         if self.min_width == Some(LengthSpec::Px(0.0))
             || self.min_height == Some(LengthSpec::Px(0.0))
         {

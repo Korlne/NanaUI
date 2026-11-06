@@ -292,6 +292,24 @@ pub fn generate(mut recorder: Recorder) -> Result<Report, Box<dyn std::error::Er
         &mut feedback,
     )?;
 
+    // Settled like an overlay: the charts' entrance (bars growing, the ring
+    // sweeping open) runs a second, and t=0 is its empty first frame.
+    let mut data = GalleryState::new();
+    data.update(GalleryMessage::SelectSection(GallerySection::Data));
+    gallery_overlay_snapshot(
+        &mut snapshots,
+        &mut recorder,
+        "gallery-data-dark.png",
+        &mut data,
+    )?;
+    data.update(GalleryMessage::SetTheme(ThemeAppearance::Light));
+    gallery_overlay_snapshot(
+        &mut snapshots,
+        &mut recorder,
+        "gallery-data-light.png",
+        &mut data,
+    )?;
+
     let mut rich_text = GalleryState::new();
     rich_text.update(GalleryMessage::SelectSection(GallerySection::RichText));
     gallery_snapshot(
