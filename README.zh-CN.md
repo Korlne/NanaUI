@@ -70,9 +70,12 @@ NanaUI 不是浏览器套壳，不提供即时模式 API，本身也不是游戏
 
 同一个计数器的三种写法。最常用的是直接调用 Rust 函数；`view!` 宏和 `.vue` 单文件组件只是模板形式，展开后得到同样的函数调用和同一棵界面树。
 
-```rust
-use nana_ui::runtime::view::*;
+<table>
+<tr>
+<th align="left" valign="top" width="120">Rust 函数</th>
+<td>
 
+```rust
 fn counter() -> impl IntoView {
     let count = signal(0u64);
     row().gap(8).children((
@@ -82,13 +85,11 @@ fn counter() -> impl IntoView {
 }
 ```
 
-<table>
-<tr>
-<th>Rust · <code>view!</code></th>
-<th>.vue · <code>&lt;script lang="rust"&gt;</code></th>
+</td>
 </tr>
 <tr>
-<td valign="top">
+<th align="left" valign="top" width="120">Rust · <code>view!</code></th>
+<td>
 
 ```rust
 fn counter() -> impl IntoView {
@@ -96,16 +97,17 @@ fn counter() -> impl IntoView {
     view! {
         <Row gap=8>
             <Text>"计数 {count}"</Text>
-            <Button @activate={count.update(|c| *c += 1)}>
-                "增加"
-            </Button>
+            <Button @activate={count.update(|c| *c += 1)}>"增加"</Button>
         </Row>
     }
 }
 ```
 
 </td>
-<td valign="top">
+</tr>
+<tr>
+<th align="left" valign="top" width="120"><code>.vue</code></th>
+<td>
 
 ```vue
 <script setup lang="rust">
@@ -115,9 +117,7 @@ let count = signal(0);
 <template>
   <Row :gap="8">
     <Text>计数 {{ count }}</Text>
-    <Button @activate="count.update(|c| *c += 1)">
-      增加
-    </Button>
+    <Button @activate="count.update(|c| *c += 1)">增加</Button>
   </Row>
 </template>
 ```

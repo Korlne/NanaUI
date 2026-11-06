@@ -73,9 +73,12 @@ NanaUI is not a browser shell, does not offer an immediate-mode API, and is not 
 
 The same counter written three ways. Plain Rust functions are the most common style; the `view!` macro and `.vue` single-file components are template forms that expand to the same function calls and the same UI tree.
 
-```rust
-use nana_ui::runtime::view::*;
+<table>
+<tr>
+<th align="left" valign="top" width="120">Rust</th>
+<td>
 
+```rust
 fn counter() -> impl IntoView {
     let count = signal(0u64);
     row().gap(8).children((
@@ -85,13 +88,11 @@ fn counter() -> impl IntoView {
 }
 ```
 
-<table>
-<tr>
-<th>Rust · <code>view!</code></th>
-<th>.vue · <code>&lt;script lang="rust"&gt;</code></th>
+</td>
 </tr>
 <tr>
-<td valign="top">
+<th align="left" valign="top" width="120">Rust · <code>view!</code></th>
+<td>
 
 ```rust
 fn counter() -> impl IntoView {
@@ -99,16 +100,17 @@ fn counter() -> impl IntoView {
     view! {
         <Row gap=8>
             <Text>"Count: {count}"</Text>
-            <Button @activate={count.update(|c| *c += 1)}>
-                "Increment"
-            </Button>
+            <Button @activate={count.update(|c| *c += 1)}>"Increment"</Button>
         </Row>
     }
 }
 ```
 
 </td>
-<td valign="top">
+</tr>
+<tr>
+<th align="left" valign="top" width="120"><code>.vue</code></th>
+<td>
 
 ```vue
 <script setup lang="rust">
@@ -118,9 +120,7 @@ let count = signal(0);
 <template>
   <Row :gap="8">
     <Text>Count: {{ count }}</Text>
-    <Button @activate="count.update(|c| *c += 1)">
-      Increment
-    </Button>
+    <Button @activate="count.update(|c| *c += 1)">Increment</Button>
   </Row>
 </template>
 ```
