@@ -3,7 +3,11 @@
 </p>
 
 <p align="center">
-  一个把实时 GPU 画面作为普通界面节点的 Rust UI 框架。
+  <b>English</b> · <a href="README.zh-CN.md">简体中文</a>
+</p>
+
+<p align="center">
+  A Rust UI framework where live GPU content is an ordinary node in the UI tree.
 </p>
 
 <p align="center">
@@ -12,11 +16,11 @@
 </p>
 
 <p align="center">
-  <a href="docs/guide/quick-start.md">快速开始</a> ·
-  <a href="docs/guide/introduction.md">指南</a> ·
-  <a href="docs/components/index.md">组件</a> ·
-  <a href="docs/architecture/index.md">架构</a> ·
-  <a href="examples">示例</a>
+  <a href="docs/guide/quick-start.md">Quick start</a> ·
+  <a href="docs/guide/introduction.md">Guide</a> ·
+  <a href="docs/components/index.md">Components</a> ·
+  <a href="docs/architecture/index.md">Architecture</a> ·
+  <a href="examples">Examples</a>
 </p>
 
 <p align="center">
@@ -27,44 +31,47 @@
 </p>
 
 > [!WARNING]
-> NanaUI 仍在早期开发中，还没有发布到 crates.io，API 会持续变化。
+> NanaUI is in early development. It is not published on crates.io yet, and the API will keep changing.
 
-## 为什么做 NanaUI
+> [!NOTE]
+> The documentation under [`docs/`](docs) is currently written in Chinese.
 
-NanaUI 最初是为了一个具体的需求：在同一个窗口里把实时的 GPU 画面和完整的界面混合在一起。我们试过的方案大多只能二选一：要么界面是主角，GPU 画面只能当贴图、或者在界面上挖一个洞；要么渲染是主角，界面是叠在画面上的一层 HUD，裁剪、点击、焦点和窗口行为都得自己补。
+## Why NanaUI
 
-在 NanaUI 里，GPU 画面是界面树上的一个普通节点，和按钮、文字一起参与布局、裁剪、点击和绘制顺序。应用自己持有 WGPU 设备，NanaUI 画进应用交给它的帧。
+NanaUI started from one concrete need: mixing live GPU content and a complete UI in the same window. Most approaches we tried forced a choice. Either the UI is in charge, and GPU content can only be a texture or a hole cut into the interface; or rendering is in charge, and the UI is a HUD layered on top, with clipping, hit testing, focus and window behavior left for you to rebuild.
 
-因此它适用于几类程序：带预览视口的编辑器和创作工具、需要菜单与 HUD 的游戏、着色器调试和可视化这类实时渲染工具。在这些场景里，实时画面和控件共用一次布局、一套命中测试和一份 GPU 设备。
+In NanaUI, GPU content is an ordinary node in the UI tree. It takes part in layout, clipping, hit testing and draw order alongside buttons and text. The application owns the WGPU device, and NanaUI draws into the frames the application hands it.
 
-另一个原因是，Rust 现有的 UI 框架各有不完整的地方：有的是即时模式，难以承载大型桌面界面；有的布局、文字排版或输入法还不够成熟；有的要靠嵌入浏览器；很少有框架把窗口、无障碍、主题、开发工具和打包放在一起考虑。NanaUI 的目标是一个更完整的系统，这些都由框架统一提供，并且彼此配合。
+That makes it a fit for editors and creative tools with preview viewports, games that need menus and HUDs, and real-time tools such as shader debuggers and visualizers. In all of these, the live content and the controls share one layout pass, one hit-test structure and one GPU device.
 
-## 设计目标
+The other reason is that the Rust UI frameworks we looked at each leave gaps: some are immediate mode and struggle with large desktop interfaces; some have immature layout, text shaping or IME support; some rely on an embedded browser; few treat windowing, accessibility, theming, developer tools and packaging as one system. NanaUI aims to be a more complete system in which the framework provides all of these and they work together.
 
-- **单一界面树。** 控件、文字和 GPU 内容都在同一棵保留树里，只有一套布局、一套命中测试、一个文字引擎。
-- **GPU 归应用所有。** 窗口、Surface 和 WGPU 设备属于应用。NanaUI 不创建第二个 Device，也不把画面读回 CPU。
-- **工作量与改动成正比。** 没有变化的帧不做任何工作，局部修改只重算受影响的部分，由 CI 中的工作量计数器检查。
-- **完整性。** 窗口、输入法、无障碍、主题、热重载、调试和打包都由框架提供，不需要应用自己拼装。
+## Design goals
 
-NanaUI 不是浏览器套壳，不提供即时模式 API，本身也不是游戏引擎：场景、物理和资源管线仍由你的引擎或渲染代码负责，NanaUI 负责界面，并把你的画面放进界面里。
+- **One UI tree.** Controls, text and GPU content live in the same retained tree, with one layout engine, one hit-test structure and one text engine.
+- **The application owns the GPU.** The window, surface and WGPU device belong to the application. NanaUI never creates a second device and never reads frames back to the CPU.
+- **Work proportional to change.** Frames with no changes do no work, and a local edit only recomputes what it affects. Work counters in CI enforce this.
+- **Completeness.** Windowing, IME, accessibility, theming, hot reload, debugging and packaging come with the framework instead of being assembled by each application.
 
-## 功能
+NanaUI is not a browser shell, does not offer an immediate-mode API, and is not a game engine. Scenes, physics and asset pipelines stay with your engine or renderer; NanaUI handles the UI and places your content inside it.
 
-| 领域 | 内容 |
+## Features
+
+| Area | What you get |
 | --- | --- |
-| 控件 | 约 90 个：表单、列表、表格、树、对话框、抽屉、Toast、日期与颜色选择、节点图、时间线、富文本编辑器 |
-| 桌面壳层 | Shell、Workspace、Dock、命令面板、浮层、多窗口；Mica / Acrylic / Vibrancy 系统材质 |
-| 文字 | 自研引擎：塑形、排版、竖排、双向文本、IME 组合输入、CLDR 区域格式化 |
-| 富内容 | Markdown、KaTeX 公式、Mermaid 图、ECharts 风格图表，不经浏览器 |
-| 写法 | Rust builder、`view!` 宏、脚本用 Rust 写的 `.vue` 单文件组件 |
-| 样式 | 构建期编译的 CSS 子集，亮色与暗色主题，自定义主题与材质着色器 |
-| 无障碍 | 基于 AccessKit 的增量无障碍树 |
-| 工具 | 热重载、无头快照测试、调试会话、结构化诊断日志（`.nlog`） |
-| 打包 | 资源包、内容签名、平台目录布局、Steam 输出 |
+| Controls | About 90: forms, lists, tables, trees, dialogs, drawers, toasts, date and color pickers, node graphs, timelines, a rich text editor |
+| Desktop shell | Shell, Workspace, Dock, command palette, overlays, multiple windows; Mica / Acrylic / Vibrancy system materials |
+| Text | In-house engine: shaping, layout, vertical text, bidirectional text, IME composition, CLDR locale formatting |
+| Rich content | Markdown, KaTeX math, Mermaid diagrams and ECharts-style charts, with no browser involved |
+| Authoring | Plain Rust functions, the `view!` macro, and `.vue` single-file components whose scripts are Rust |
+| Styling | A CSS subset compiled at build time, light and dark themes, custom themes and material shaders |
+| Accessibility | An incremental accessibility tree built on AccessKit |
+| Tooling | Hot reload, headless snapshot tests, debugging sessions, structured diagnostic logs (`.nlog`) |
+| Packaging | Resource packs, content signing, platform directory layouts, Steam output |
 
-## 示例
+## Example
 
-同一个计数器的三种写法。最常用的是直接调用 Rust 函数；`view!` 宏和 `.vue` 单文件组件只是模板形式，展开后得到同样的函数调用和同一棵界面树。
+The same counter written three ways. Plain Rust functions are the most common style; the `view!` macro and `.vue` single-file components are template forms that expand to the same function calls and the same UI tree.
 
 ```rust
 use nana_ui::runtime::view::*;
@@ -72,8 +79,8 @@ use nana_ui::runtime::view::*;
 fn counter() -> impl IntoView {
     let count = signal(0u64);
     row().gap(8).children((
-        text!("计数 {count}"),
-        button("增加").on_activate(move || count.update(|c| *c += 1)),
+        text!("Count: {count}"),
+        button("Increment").on_activate(move || count.update(|c| *c += 1)),
     ))
 }
 ```
@@ -91,9 +98,9 @@ fn counter() -> impl IntoView {
     let count = signal(0u64);
     view! {
         <Row gap=8>
-            <Text>"计数 {count}"</Text>
+            <Text>"Count: {count}"</Text>
             <Button @activate={count.update(|c| *c += 1)}>
-                "增加"
+                "Increment"
             </Button>
         </Row>
     }
@@ -110,9 +117,9 @@ let count = signal(0);
 
 <template>
   <Row :gap="8">
-    <Text>计数 {{ count }}</Text>
+    <Text>Count: {{ count }}</Text>
     <Button @activate="count.update(|c| *c += 1)">
-      增加
+      Increment
     </Button>
   </Row>
 </template>
@@ -122,84 +129,84 @@ let count = signal(0);
 </tr>
 </table>
 
-完整可运行的程序见 [`application-counter`](crates/nana-ui/examples/application-counter.rs)、[`reactive-counter`](crates/nana-ui/examples/reactive-counter.rs) 和 [`examples/reactive-sfc`](examples/reactive-sfc)。
+For complete runnable programs, see [`application-counter`](crates/nana-ui/examples/application-counter.rs), [`reactive-counter`](crates/nana-ui/examples/reactive-counter.rs) and [`examples/reactive-sfc`](examples/reactive-sfc).
 
-## 与其他 UI 框架混合
+## Mixing with other UI frameworks
 
-因为 GPU 内容是树上的普通节点，另一个 UI 框架画出来的东西也可以作为节点放进 NanaUI：它和周围的 NanaUI 控件一起布局、裁剪和排序，共用同一个 WGPU 设备和同一次提交。已有的 egui 调试面板、游戏里现成的工具界面，不需要重写就能搬进 NanaUI 的窗口，再逐步迁移。
+Because GPU content is an ordinary node in the tree, whatever another UI framework draws can also become a node in NanaUI. It is laid out, clipped and ordered together with the surrounding NanaUI controls, and shares the same WGPU device and the same submission. An existing egui debug panel or a game's built-in tool UI can move into a NanaUI window without a rewrite, and be migrated piece by piece later.
 
 <p align="center">
-  <img src="docs/assets/readme/egui-in-nanaui.png" alt="NanaUI 树中的 egui 面板" width="70%">
+  <img src="docs/assets/readme/egui-in-nanaui.png" alt="An egui panel inside a NanaUI tree" width="70%">
 </p>
 
-[`egui-in-nanaui`](crates/nana-ui/examples/egui-in-nanaui.rs) 把一个 egui 面板挂成 `GpuView` 节点，上下都是 NanaUI 控件，两边读写同一份状态。egui 的指针、滚轮和文字输入由 NanaUI 转交：
+[`egui-in-nanaui`](crates/nana-ui/examples/egui-in-nanaui.rs) mounts an egui panel as a `GpuView` node between NanaUI controls, with both sides reading and writing the same state. NanaUI forwards pointer, wheel and text input to egui:
 
 ```bash
 cargo run -p nana-ui --example egui-in-nanaui --features hosted,bundled-fonts,wgpu-interop
 ```
 
-## 截图
+## Screenshots
 
 <table>
   <tr>
     <td width="50%" align="center">
       <picture>
         <source media="(prefers-color-scheme: dark)" srcset="examples/component-gallery/snapshots/metal-apple-m4/gallery-controls-dark.png">
-        <img src="examples/component-gallery/snapshots/metal-apple-m4/gallery-controls-light.png" alt="控件">
+        <img src="examples/component-gallery/snapshots/metal-apple-m4/gallery-controls-light.png" alt="Controls">
       </picture>
-      <sub>控件：尺寸档位、表单校验、选择与滑块</sub>
+      <sub>Controls: size tiers, form validation, selection and sliders</sub>
     </td>
     <td width="50%" align="center">
       <picture>
         <source media="(prefers-color-scheme: dark)" srcset="examples/component-gallery/snapshots/metal-apple-m4/gallery-rich-text-dark.png">
-        <img src="examples/component-gallery/snapshots/metal-apple-m4/gallery-rich-text-light.png" alt="富文本">
+        <img src="examples/component-gallery/snapshots/metal-apple-m4/gallery-rich-text-light.png" alt="Rich text">
       </picture>
-      <sub>富文本：竖排、Markdown、KaTeX 与 Mermaid</sub>
+      <sub>Rich text: vertical writing, Markdown, KaTeX and Mermaid</sub>
     </td>
   </tr>
   <tr>
     <td width="50%" align="center">
       <picture>
         <source media="(prefers-color-scheme: dark)" srcset="examples/component-gallery/snapshots/metal-apple-m4/gallery-surfaces-dark.png">
-        <img src="examples/component-gallery/snapshots/metal-apple-m4/gallery-surfaces-light.png" alt="表面">
+        <img src="examples/component-gallery/snapshots/metal-apple-m4/gallery-surfaces-light.png" alt="Surfaces">
       </picture>
-      <sub>表面与分栏</sub>
+      <sub>Surfaces and split panes</sub>
     </td>
     <td width="50%" align="center">
       <picture>
         <source media="(prefers-color-scheme: dark)" srcset="examples/component-gallery/snapshots/metal-apple-m4/gallery-settings-appearance-dark.png">
-        <img src="examples/component-gallery/snapshots/metal-apple-m4/gallery-settings-appearance-light.png" alt="设置">
+        <img src="examples/component-gallery/snapshots/metal-apple-m4/gallery-settings-appearance-light.png" alt="Settings">
       </picture>
-      <sub>设置页与外观切换</sub>
+      <sub>Settings page and appearance switching</sub>
     </td>
   </tr>
 </table>
 
-<p align="center"><sub>截图为 <a href="examples/component-gallery">component-gallery</a> 快照测试的渲染输出（Metal，Apple M4），随 GitHub 主题显示亮色或暗色版本。</sub></p>
+<p align="center"><sub>Screenshots are rendered output from the <a href="examples/component-gallery">component-gallery</a> snapshot tests (Metal, Apple M4). They follow your GitHub theme. The gallery UI text is in Chinese.</sub></p>
 
-## 使用 NanaUI 的应用
+## Built with NanaUI
 
 <table>
   <tr>
     <td width="50%" valign="top">
       <img src="docs/assets/readme/nanatype.png" alt="NanaType" width="56" align="left">
       <b>NanaType</b><br>
-      <sub>虚拟主播直播打字机：把打下的台词逐字演成 AVG / RPG 对话框，经 Spout2 / Syphon 送进 OBS。</sub><br>
+      <sub>A live-streaming typewriter for VTubers: lines you type play out character by character in an AVG / RPG dialogue box and go to OBS via Spout2 / Syphon.</sub><br>
       <a href="https://github.com/sena-nana/NanaType">GitHub</a> ·
       <a href="https://store.steampowered.com/app/5507600">Steam</a>
     </td>
     <td width="50%" valign="top">
       <img src="docs/assets/readme/nanalive.png" alt="NanaLive" width="56" align="left">
       <b>NanaLive</b><br>
-      <sub>面向虚拟主播的 Live2D 桌面场景与直播输出软件。</sub><br>
-      <sub>开发中</sub>
+      <sub>Live2D desktop scenes and stream output for VTubers.</sub><br>
+      <sub>In development</sub>
     </td>
   </tr>
 </table>
 
-## 开始使用
+## Getting started
 
-需要 Rust 1.98 或更新版本。先在仓库根目录跑一下示例：
+NanaUI requires Rust 1.98 or newer. From the repository root, try the examples first:
 
 ```bash
 cargo run -p component-gallery
@@ -209,7 +216,7 @@ cargo run -p component-gallery
 cargo run -p nana-ui --example hosted-gpu-demo --features hosted,bundled-fonts,wgpu-interop
 ```
 
-第一条是控件与工作区目录，第二条把界面和实时 GPU 画面放在同一个窗口里。然后在自己的项目中加上依赖：
+The first opens the control and workspace gallery; the second puts the UI and live GPU content in the same window. Then add the dependency to your own project:
 
 ```toml
 [dependencies]
@@ -217,86 +224,86 @@ nana-ui = { git = "https://github.com/sena-nana/NanaUI", features = ["hosted", "
 ```
 
 <details>
-<summary><b>常用 feature</b></summary>
+<summary><b>Common features</b></summary>
 <br>
 
-| Feature | 作用 |
+| Feature | Purpose |
 | --- | --- |
-| `hosted` | 桌面宿主：窗口、事件循环、平台无障碍，隐含 `gpu` |
-| `bundled-fonts` | 内置 Noto Sans SC 作为默认字体 |
-| `view-macro` | `view!`、`css!`、`stylesheet!` 宏 |
-| `components` | 日历、图表、节点图、图片查看器、富文本等控件族 |
-| `wgpu-interop` | 访问 `GpuContext` 背后的 WGPU 对象 |
-| `full` | `hosted`、`bundled-fonts`、`components`、`syntax-highlighting`、`icu` |
+| `hosted` | Desktop host: windows, event loop, platform accessibility; implies `gpu` |
+| `bundled-fonts` | Ships Noto Sans SC as the default UI font |
+| `view-macro` | The `view!`, `css!` and `stylesheet!` macros |
+| `components` | Calendar, charts, node graph, image viewer, rich text and other control families |
+| `wgpu-interop` | Access to the WGPU objects behind `GpuContext` |
+| `full` | `hosted`, `bundled-fonts`, `components`, `syntax-highlighting`, `icu` |
 
-默认开启 `wgpu-backends` 和 `icu`。完整列表见 [`nana-ui`](crates/nana-ui)。
+`wgpu-backends` and `icu` are on by default. The full list is in [`nana-ui`](crates/nana-ui).
 
 </details>
 
-接下来读 [快速开始](docs/guide/quick-start.md) 和 [创建应用](docs/guide/essentials/application.md)。
+Next, read [Quick start](docs/guide/quick-start.md) and [Creating an application](docs/guide/essentials/application.md).
 
-## 平台支持
+## Platform support
 
-| 平台 | 状态 |
+| Platform | Status |
 | --- | --- |
-| Windows 10 / 11 | 支持 |
-| macOS | 支持 |
-| Linux | 支持，系统材质不可用 |
-| Android / iOS | 实验性 |
-| OpenHarmony | 仅保证编译 |
+| Windows 10 / 11 | Supported |
+| macOS | Supported |
+| Linux | Supported; system materials unavailable |
+| Android / iOS | Experimental |
+| OpenHarmony | Builds only |
 
-## 性能
+## Performance
 
-| 测量 | 结果 |
+| Measurement | Result |
 | --- | --- |
-| 指针移动的派发，250 到 2 000 行的列表 | 0.3 µs，与行数无关 |
-| 42 001 个盒子的页面上修改一个控件的文字，整帧 | 21 µs |
-| 完成一次布局所需的线程栈，嵌套 64 到 500 层 | 116 KiB，与深度无关 |
-| 冷启动整页布局，21 001 个盒子，每盒（Taffy 0.11 为 0.70 µs） | 1.24 µs |
+| Dispatching a pointer move over a list of 250 to 2 000 rows | 0.3 µs, independent of row count |
+| Changing one control's text on a page with 42 001 boxes, full frame | 21 µs |
+| Thread stack needed to finish a layout, 64 to 500 levels of nesting | 116 KiB, independent of depth |
+| Cold full-page layout, 21 001 boxes, per box (Taffy 0.11: 0.70 µs) | 1.24 µs |
 
-数据来自 Apple M4，release 构建。冷启动布局比 [Taffy](https://github.com/DioxusLabs/taffy) 慢约 1.8 倍，差距来自 NanaUI 布局时还要维护增量更新与无障碍所需的状态，仍在优化。测量方法与复现命令见 [资源预算](docs/reference/resource-budgets.md) 和 [`perf/`](perf/README.md)。
+Measured on an Apple M4 with release builds. Cold layout is about 1.8× slower than [Taffy](https://github.com/DioxusLabs/taffy) because NanaUI's layout also maintains the state needed for incremental updates and accessibility; this is still being optimized. Methodology and reproduction commands are in [resource budgets](docs/reference/resource-budgets.md) and [`perf/`](perf/README.md).
 
-## 项目结构
+## Project layout
 
-应用通常只依赖 `nana-ui`。整体架构见 [docs/reference/architecture.md](docs/reference/architecture.md)。
+Applications usually depend on `nana-ui` only. See [docs/reference/architecture.md](docs/reference/architecture.md) for the overall architecture.
 
 <details>
-<summary><b>全部 crate</b></summary>
+<summary><b>All crates</b></summary>
 <br>
 
-| Crate | 说明 |
+| Crate | Description |
 | --- | --- |
-| [`nana-ui`](crates/nana-ui) | 门面 crate：应用入口、窗口宿主、WGPU 绘制 |
-| [`nana-ui-runtime`](crates/nana-ui-runtime) | 界面树、组件、布局、输入、无障碍 |
-| [`nana-ui-scene`](crates/nana-ui-scene) | 与 GPU 无关的绘制场景 |
-| [`nana-ui-core`](crates/nana-ui-core) | 样式、主题、几何等共享类型 |
-| [`nana-text`](crates/nana-text) | 文字引擎 |
-| [`nana-ui-css`](crates/nana-ui-css) | 构建期 CSS 引擎 |
-| [`nana-ui-sfc`](crates/nana-ui-sfc) | `.vue` 单文件组件编译器 |
-| [`nana-ui-view-macros`](crates/nana-ui-view-macros) | `view!` 宏 |
-| [`nana-ui-view-codegen`](crates/nana-ui-view-codegen) | 模板代码生成（内部） |
-| [`nana-ui-view-schema`](crates/nana-ui-view-schema) | 内置控件表（内部） |
-| [`nana-ui-dev`](crates/nana-ui-dev) | 热重载 |
-| [`nana-ui-devtools`](crates/nana-ui-devtools) | 无头快照与调试会话 |
-| [`nana-gpu`](crates/nana-gpu) | GPU 接口层 |
-| [`nana-frame-exchange`](crates/nana-frame-exchange) | 跨线程交换 GPU 帧 |
-| [`nana-window`](crates/nana-window) | 原生窗口、系统材质与标题栏 |
-| [`nana-ui-platform`](crates/nana-ui-platform) | 平台无关的窗口、剪贴板与路径接口 |
-| [`nana-ui-input`](crates/nana-ui-input) | 规范输入事件 |
-| [`nana-diagnostics`](crates/nana-diagnostics) | 结构化诊断与 `.nlog` |
-| [`nana-ui-charts`](crates/nana-ui-charts) | 图表模型 |
-| [`nana-ui-diagram`](crates/nana-ui-diagram) | Mermaid 图引擎 |
-| [`nana-svg-raster`](crates/nana-svg-raster) | SVG 光栅化 |
-| [`nana-icons-tabler`](crates/nana-icons-tabler) | Tabler 图标全集 |
-| [`nana-app-icon`](crates/nana-app-icon) | 应用图标编码与嵌入 |
-| [`nana-package`](crates/nana-package) | 资源包运行时 |
-| [`nana-packager`](crates/nana-packager) | 打包工具 |
+| [`nana-ui`](crates/nana-ui) | Facade crate: application entry points, window host, WGPU painting |
+| [`nana-ui-runtime`](crates/nana-ui-runtime) | UI tree, components, layout, input, accessibility |
+| [`nana-ui-scene`](crates/nana-ui-scene) | GPU-independent drawable scene |
+| [`nana-ui-core`](crates/nana-ui-core) | Shared types: style, themes, geometry |
+| [`nana-text`](crates/nana-text) | Text engine |
+| [`nana-ui-css`](crates/nana-ui-css) | Build-time CSS engine |
+| [`nana-ui-sfc`](crates/nana-ui-sfc) | `.vue` single-file component compiler |
+| [`nana-ui-view-macros`](crates/nana-ui-view-macros) | The `view!` macro |
+| [`nana-ui-view-codegen`](crates/nana-ui-view-codegen) | Template code generation (internal) |
+| [`nana-ui-view-schema`](crates/nana-ui-view-schema) | Built-in control table (internal) |
+| [`nana-ui-dev`](crates/nana-ui-dev) | Hot reload |
+| [`nana-ui-devtools`](crates/nana-ui-devtools) | Headless snapshots and debugging sessions |
+| [`nana-gpu`](crates/nana-gpu) | GPU interface layer |
+| [`nana-frame-exchange`](crates/nana-frame-exchange) | Passing GPU frames across threads |
+| [`nana-window`](crates/nana-window) | Native windows, system materials and title bars |
+| [`nana-ui-platform`](crates/nana-ui-platform) | Platform-neutral window, clipboard and path interfaces |
+| [`nana-ui-input`](crates/nana-ui-input) | Canonical input events |
+| [`nana-diagnostics`](crates/nana-diagnostics) | Structured diagnostics and `.nlog` |
+| [`nana-ui-charts`](crates/nana-ui-charts) | Chart model |
+| [`nana-ui-diagram`](crates/nana-ui-diagram) | Mermaid diagram engine |
+| [`nana-svg-raster`](crates/nana-svg-raster) | SVG rasterization |
+| [`nana-icons-tabler`](crates/nana-icons-tabler) | The full Tabler icon set |
+| [`nana-app-icon`](crates/nana-app-icon) | App icon encoding and embedding |
+| [`nana-package`](crates/nana-package) | Resource pack runtime |
+| [`nana-packager`](crates/nana-packager) | Packaging tool |
 
 </details>
 
-## 参与开发
+## Contributing
 
-动手之前请先读 [AGENTS.md](AGENTS.md)，里面写了框架的边界和必须遵守的约定。提交前运行：
+Before you start, read [AGENTS.md](AGENTS.md), which describes the framework's boundaries and the rules every change must follow. Before submitting, run:
 
 ```bash
 cargo fmt --all -- --check
@@ -306,6 +313,6 @@ cargo fmt --all -- --check
 cargo test --workspace
 ```
 
-## 许可
+## License
 
-NanaUI 以 [MIT](LICENSE-MIT) 或 [Apache-2.0](LICENSE-APACHE) 双许可发布，由你任选其一。
+NanaUI is dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option.
