@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/readme/banner.svg" alt="NanaUI" width="100%">
+  <img src="docs/assets/readme/banner.en.svg" alt="NanaUI" width="100%">
 </p>
 
 <p align="center">
@@ -189,14 +189,14 @@ cargo run -p nana-ui --example egui-in-nanaui --features hosted,bundled-fonts,wg
 <table>
   <tr>
     <td width="50%" valign="top">
-      <img src="docs/assets/readme/nanatype.png" alt="NanaType" width="56" align="left">
+      <img src="docs/assets/readme/app-nanatype.png" alt="NanaType" width="56" align="left">
       <b>NanaType</b><br>
       <sub>A live-streaming typewriter for VTubers: lines you type play out character by character in an AVG / RPG dialogue box and go to OBS via Spout2 / Syphon.</sub><br>
       <a href="https://github.com/sena-nana/NanaType">GitHub</a> ·
       <a href="https://store.steampowered.com/app/5507600">Steam</a>
     </td>
     <td width="50%" valign="top">
-      <img src="docs/assets/readme/nanalive.png" alt="NanaLive" width="56" align="left">
+      <img src="docs/assets/readme/app-nanalive.png" alt="NanaLive" width="56" align="left">
       <b>NanaLive</b><br>
       <sub>Live2D desktop scenes and stream output for VTubers.</sub><br>
       <sub>In development</sub>
@@ -316,3 +316,5 @@ cargo test --workspace
 ## License
 
 NanaUI is dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option.
+
+Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in NanaUI by you, as defined in the Apache-2.0 license, shall be dual-licensed as above, without any additional terms or conditions.

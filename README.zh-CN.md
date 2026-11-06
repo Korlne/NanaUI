@@ -186,14 +186,14 @@ cargo run -p nana-ui --example egui-in-nanaui --features hosted,bundled-fonts,wg
 <table>
   <tr>
     <td width="50%" valign="top">
-      <img src="docs/assets/readme/nanatype.png" alt="NanaType" width="56" align="left">
+      <img src="docs/assets/readme/app-nanatype.png" alt="NanaType" width="56" align="left">
       <b>NanaType</b><br>
       <sub>虚拟主播直播打字机：把打下的台词逐字演成 AVG / RPG 对话框，经 Spout2 / Syphon 送进 OBS。</sub><br>
       <a href="https://github.com/sena-nana/NanaType">GitHub</a> ·
       <a href="https://store.steampowered.com/app/5507600">Steam</a>
     </td>
     <td width="50%" valign="top">
-      <img src="docs/assets/readme/nanalive.png" alt="NanaLive" width="56" align="left">
+      <img src="docs/assets/readme/app-nanalive.png" alt="NanaLive" width="56" align="left">
       <b>NanaLive</b><br>
       <sub>面向虚拟主播的 Live2D 桌面场景与直播输出软件。</sub><br>
       <sub>开发中</sub>
@@ -313,3 +313,5 @@ cargo test --workspace
 ## 许可
 
 NanaUI 以 [MIT](LICENSE-MIT) 或 [Apache-2.0](LICENSE-APACHE) 双许可发布，由你任选其一。
+
+除非你另有明确声明，你按 Apache-2.0 许可的定义有意提交给 NanaUI 的任何贡献，都将按上述双许可发布，不附加任何其他条款或条件。
