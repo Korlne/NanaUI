@@ -802,7 +802,7 @@ When the `flex` **shorthand** omits shrink, it still writes 1, as CSS does. For 
 
 **Sizes.** You can use pixels, percentages, `em`, `rem`, `vw`, `vh`, `min`, `max`, and `clamp()`.
 
-The lightweight `calc` supports `+`, `-`, `*`, `/`, parentheses, and nested `calc`. It is evaluated after `var()` expansion. The result folds into the existing `%±px`, `vh±px`, `em±px`, or plain px spec. Nesting is capped at 16 levels of CSS parentheses or functions. Unary `+/-` counts separately, up to 16 signs. A unitless result, `0px + number`, division by zero, and a non-finite f32 all fail closed.
+The lightweight `calc` supports `+`, `-`, `*`, `/`, parentheses, and nested `calc`. It is evaluated after `var()` expansion. The result folds into the existing `%±px`, `vh±px`, `em±px`, or plain px spec. Nesting is capped at 16 levels of CSS parentheses or functions. Unary `+/-` counts separately, up to 16 signs. A unitless result, `0px+number`, division by zero, and a non-finite f32 all fail closed.
 
 Nested `min`, `max`, and `clamp` that share a unit and can be folded may be used. Mixed units that merge into the existing `Min2`, `Max2`, `Clamp3` may too. For example `min(10px, max(1px, 50%))` and `min(1px, 2%, 3px)`. They are resolved against the containing block at layout time. When the three branches are incomparable, it still fails closed.
 
@@ -1033,7 +1033,7 @@ A parent's `perspective` property and `transform-style: preserve-3d` still fail 
 
 Animating `transform` itself goes through the compositor overlay. It does not change logical style every frame. See [Architecture](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/architecture.md).
 
-In `transform-box`, `border-box` and `view-box` are relative to the border box. Under HTML, `view-box` is the border box. There is no SVG viewport. `content-box` and `fill-box` are relative to the content box. The content box is the border box minus border and padding. A percentage padding resolves to 0 when there is no containing block. That matches the other paint-time padding resolution. `stroke-box` does not resolve.
+In `transform-box`, `border-box` and `view-box` are relative to the border box. Under HTML, `view-box` is the border box. There is no SVG viewport. `content-box` and `fill-box` are relative to the content box. The content box is the border box minus border and padding. A padding `%` resolves to 0 when there is no containing block. That matches the other paint-time padding resolution. `stroke-box` does not resolve.
 
 **Painting.** You can use `background`, `background-color`, and `background-image: linear-gradient(...) | radial-gradient(...)`.
 
@@ -1291,8 +1291,8 @@ Do not expect these:
 - Vertical emphasis marks (`text-emphasis-position`'s `right` / `left` are parsed, but no marks are painted in vertical writing).
 - Vertical tables.
 - Vertical writing with float wrapping.
-- Pretending a whole rotated box gives glyph orientation.
-- Code editor decorations in a vertical editor are not painted, rather than painted sideways across the columns. That includes the line-number gutter, the minimap, indent and column guides, end-of-line diagnostics, completion, hover, and signature popups. This is #59.
+- Using a whole rotated box to stand in for glyph orientation.
+- Editor decorations in a vertical editor are not painted at all, rather than painted sideways across the columns. That includes the line-number gutter, the minimap, indent and column guides, end-of-line diagnostics, completion, hover, and signature popups. This is #59.
 - `unicode-bidi` isolation, and full bidirectional text in an IFC.
 - The remaining CSS math functions such as `tan()`, `atan2()`, `sin()`.
 - Mixed-unit nested `min`, `max`, `clamp` that do not fold into a length atom.
