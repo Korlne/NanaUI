@@ -64,7 +64,19 @@ NanaUI 不是浏览器套壳，不提供即时模式 API，本身也不是游戏
 
 ## 示例
 
-同一个计数器，左边用 `view!` 宏，右边用 `.vue` 单文件组件。两种写法展开成同一棵界面树。
+同一个计数器的三种写法。最常用的是直接调用 Rust 函数；`view!` 宏和 `.vue` 单文件组件只是模板形式，展开后得到同样的函数调用和同一棵界面树。
+
+```rust
+use nana_ui::runtime::view::*;
+
+fn counter() -> impl IntoView {
+    let count = signal(0u64);
+    row().gap(8).children((
+        text!("计数 {count}"),
+        button("增加").on_activate(move || count.update(|c| *c += 1)),
+    ))
+}
+```
 
 <table>
 <tr>
