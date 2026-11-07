@@ -36,6 +36,13 @@ const RING_BUDGET: u64 = 32 << 20;
 /// budget instead.
 const RING_WAIT: Duration = Duration::from_millis(250);
 
+fn bounded_chunk_size(size: u64, max_buffer_size: u64) -> u64 {
+    size.max(MIN_CHUNK)
+        .checked_next_power_of_two()
+        .unwrap_or(u64::MAX)
+        .min(max_buffer_size)
+}
+
 struct BufferCopy {
     source: u64,
     target: wgpu::Buffer,
@@ -285,7 +292,12 @@ impl UploadRing {
         if let Some(chunk) = self.take_free(size) {
             return chunk;
         }
-        let chunk_size = size.max(MIN_CHUNK).next_power_of_two();
+        // `next_power_of_two` may round a legal request above the adapter's
+        // limit (DX12 commonly exposes a 256 MiB max). Keep every staging
+        // buffer descriptor valid; callers reject batches larger than this
+        // limit before reaching the ring.
+        let max_buffer_size = device.limits().max_buffer_size;
+        let chunk_size = bounded_chunk_size(size, max_buffer_size);
         let over_budget = {
             let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
             state.owned + chunk_size > RING_BUDGET
@@ -340,7 +352,20 @@ pub(crate) fn record(
         ring.recycle(batch);
         return None;
     }
+    let max_buffer_size = device.limits().max_buffer_size;
     let size = (batch.bytes.len() as u64).next_multiple_of(wgpu::COPY_BUFFER_ALIGNMENT);
+    if size > max_buffer_size {
+        // A single ring chunk cannot represent this batch. Queue writes use
+        // wgpu's own bounded staging path and, unlike create_buffer, do not
+        // create a user-visible buffer larger than the adapter limit.
+        policy.record_flush(
+            batch.writes,
+            (batch.buffers.len() + batch.textures.len()) as u64,
+        );
+        write_directly(queue, &batch);
+        ring.recycle(batch);
+        return None;
+    }
     let chunk = ring.acquire(device, policy, size);
     match chunk.slice(..size).get_mapped_range_mut() {
         Ok(mut view) => view
@@ -475,6 +500,13 @@ mod tests {
             usage: wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         })
+    }
+
+    #[test]
+    fn chunk_growth_never_exceeds_device_limit() {
+        assert_eq!(bounded_chunk_size(200 << 20, 256 << 20), 256 << 20);
+        assert_eq!(bounded_chunk_size(200 << 20, 200 << 20), 200 << 20);
+        assert_eq!(bounded_chunk_size(1, 512), 512);
     }
 
     #[test]
