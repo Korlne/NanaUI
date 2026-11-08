@@ -76,15 +76,16 @@ impl AppContext {
         };
         let now = self.animation_now();
         let mut current = hit;
+        let mut hops = 0;
         while let Some(id) = current {
-            let parent = self.world.parent_id(id);
+            let next = self.wheel_next(id, &mut hops);
             if self.wheel_scroll_node(id, delta, now)? {
                 return Ok(Some(id));
             }
             if Some(id) == root {
                 break;
             }
-            current = parent;
+            current = next;
         }
         Ok(None)
     }

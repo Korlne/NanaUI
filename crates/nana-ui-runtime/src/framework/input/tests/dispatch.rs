@@ -1676,6 +1676,93 @@ fn wheel_routes_to_nearest_scrollview_and_bubbles_at_edge() {
     );
 }
 
+/// A node outside any scroll area takes no wheel turn until it names one to
+/// send them to; what scrolls inside it still comes first.
+#[test]
+fn wheel_over_a_node_goes_to_its_wheel_target() {
+    let mut context = AppContext::new();
+    let document = DocumentId::new(1).unwrap();
+    let column = context
+        .create_component(document, crate::Stack::column(0.0))
+        .unwrap();
+    // A header over a list: the header is no part of the list's scrollport.
+    let header = context
+        .create_component(document, TableCell::new("header"))
+        .unwrap();
+    let list = context
+        .create_component(document, ScrollView::new(ScrollAxes::Vertical))
+        .unwrap();
+    let rows = context
+        .create_component(document, TableCell::new("rows"))
+        .unwrap();
+    context.append_child(column, header).unwrap();
+    context.append_child(column, list).unwrap();
+    context.append_child(list, rows).unwrap();
+    let mut layout = MutationQueue::new();
+    let place = |x: f32, y: f32, width: f32, height: f32| LayoutBox {
+        x,
+        y,
+        width,
+        height,
+    };
+    layout.write_layout(column.stable_id(), place(0.0, 0.0, 200.0, 140.0));
+    layout.write_layout(header.stable_id(), place(0.0, 0.0, 200.0, 40.0));
+    layout.write_layout(list.stable_id(), place(0.0, 40.0, 200.0, 100.0));
+    // 300 of rows in the list's 100: it scrolls 200.
+    layout.write_layout(rows.stable_id(), place(0.0, 0.0, 200.0, 300.0));
+    context.commit_mutations(layout).unwrap();
+    context.take_system_work();
+    context.rebuild_hit_test(document);
+    let list_offset =
+        |context: &AppContext| context.world().scroll_offset(list.stable_id()).unwrap().y;
+
+    let mut adapter = TestInput::default();
+    let over_header = wheel(10.0, 10.0, -1.0);
+    assert!(
+        !adapter
+            .dispatch(&mut context, document, &over_header)
+            .unwrap()
+            .prevent_default
+    );
+    context.advance_animations(context.animation_now() + Duration::from_millis(180));
+    assert_eq!(list_offset(&context), 0.0);
+
+    context.set_wheel_target(header.stable_id(), Some(list));
+    assert!(
+        adapter
+            .dispatch(&mut context, document, &over_header)
+            .unwrap()
+            .prevent_default
+    );
+    context.advance_animations(context.animation_now() + Duration::from_millis(180));
+    let scrolled = list_offset(&context);
+    assert!(scrolled > 0.0, "the header's turn scrolls the list");
+
+    // Set back, the header bubbles to its own ancestors, which do not scroll.
+    context.set_wheel_target(header.stable_id(), None);
+    context.take_system_work();
+    context.rebuild_hit_test(document);
+    adapter
+        .dispatch(&mut context, document, &over_header)
+        .unwrap();
+    context.advance_animations(context.animation_now() + Duration::from_millis(180));
+    assert_eq!(list_offset(&context), scrolled);
+
+    // A target that has left the tree is dropped.
+    context.set_wheel_target(header.stable_id(), Some(list));
+    let mut gone = MutationQueue::new();
+    gone.despawn_subtree(list.stable_id());
+    context.commit_mutations(gone).unwrap();
+    context.take_system_work();
+    context.rebuild_hit_test(document);
+    assert!(
+        !adapter
+            .dispatch(&mut context, document, &over_header)
+            .unwrap()
+            .prevent_default
+    );
+}
+
 #[test]
 fn wheel_on_overflow_auto_updates_scroll_offset() {
     let mut context = AppContext::new();

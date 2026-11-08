@@ -67,6 +67,18 @@ widget(
 
 `.heading_room()` 让滚动区向上伸出 `heading_overhang()`、再把内容缩回同样的距离：顶部标题行悬出的工具不被滚动区裁掉。见 [heading_row](https://github.com/sena-nana/NanaUI/blob/main/docs/components/heading-row.md)。
 
+## 把滚轮转给滚动区
+
+滚轮从指针下的节点往上找第一个还能滚的滚动区。一块不在滚动区里的区域（比如固定在列表上方的表头）往上找不到滚动区，指针停在它上面滚滚轮就什么也不动。`AppContext::set_wheel_target(node, Some(scroll))` 让 `node` 上的滚轮在它里面没有可滚的东西时，像指针在 `scroll` 上一样交给 `scroll`，再从 `scroll` 往上冒泡，不再走 `node` 自己的祖先：
+
+```rust
+cx.set_wheel_target(header.stable_id(), Some(list));
+```
+
+- `node` 里面能滚的（嵌套的滚动区、多行编辑器）仍然先接住滚轮。
+- 传 `None` 恢复成往 `node` 自己的祖先冒泡。两个节点都还存在就一直有效，所以可以在子树挂上之前设好；任一个被销毁，转交就自动失效。
+- 转交按节点生效，`node` 的子孙没有自己的转交时，滚轮冒泡到 `node` 就转到 `scroll`。
+
 ## 边缘渐隐
 
 `.edge_fade(top, bottom)` 让内容在滚动口的上下边缘渐隐，长度是逻辑像素。滚动区连同它装的所有内容合成成一层，这一层的 alpha 在每条渐隐带里线性降到边缘处的 0：背后是什么就透出什么，透明背景、舞台上的浮动卡片之间的空隙都一样，不画任何表面色。滚动区的滚动条不跟着渐隐。

@@ -641,6 +641,9 @@ struct ComponentLifecycle {
     /// When each menu bar's submenu aim runs out.
     menu_aims: HashMap<StableNodeId, Duration, crate::BuildIdHasher>,
     wheel_scrolls: HashMap<StableNodeId, smooth_scroll::WheelScroll, crate::BuildIdHasher>,
+    /// Where a wheel turn over a node goes on when nothing inside it takes
+    /// it, in place of the node's parent ([`AppContext::set_wheel_target`]).
+    wheel_targets: HashMap<StableNodeId, StableNodeId, crate::BuildIdHasher>,
     /// Reused across samples; callbacks may mutate wheel_scrolls while we walk.
     wheel_scroll_due: Vec<StableNodeId>,
     /// Touch gestures in flight, flings and bounces, and the physics they use.
@@ -2051,6 +2054,11 @@ impl AppContext {
         self.component_lifecycle
             .wheel_scrolls
             .retain(|id, _| self.world.is_mounted(*id));
+        // Kept while both nodes exist, mounted or not: a redirect is often
+        // set up on a detached subtree before it is shown.
+        self.component_lifecycle
+            .wheel_targets
+            .retain(|id, target| self.world.contains(*id) && self.world.contains(*target));
         self.verify_text_histories(written_editors);
         for (document, root, previous, restore) in hover_restore {
             // Other focus owners (including overlay and scope restoration) win.

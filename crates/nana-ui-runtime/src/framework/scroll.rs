@@ -2,6 +2,10 @@
 
 use super::*;
 
+/// How many wheel targets one turn follows before it goes on to parents
+/// only: a target set back round to where the turn started ends there.
+const MAX_WHEEL_REDIRECTS: usize = 16;
+
 impl AppContext {
     /// Change follow mode and immediately move to the current end when enabled.
     /// Later layout passes also follow any newly measured content extent.
@@ -441,16 +445,54 @@ impl AppContext {
             return Err(FrameworkError::InvalidInput);
         }
         let mut current = hit;
+        let mut hops = 0;
         while let Some(id) = current {
-            // The parent is read before scrolling: a scroll mutates the
+            // The next node is read before scrolling: a scroll mutates the
             // container, never the hierarchy above it.
-            let parent = self.world.parent_id(id);
+            let next = self.wheel_next(id, &mut hops);
             if self.scroll_node_by(id, delta)? {
                 return Ok(Some(id));
             }
-            current = parent;
+            current = next;
         }
         Ok(None)
+    }
+
+    /// Send the wheel turns over `node` that nothing inside it takes to
+    /// `target`, as if the pointer were over `target`, and on up from there,
+    /// in place of `node`'s own ancestors: a fixed header standing beside a
+    /// scrolling list scrolls the list. Anything inside `node` that scrolls
+    /// still takes the turn first. `None` lets `node` bubble to its
+    /// ancestors again. It holds while both nodes exist, so it can be set
+    /// up on a subtree before it is mounted; either node being despawned
+    /// drops it.
+    pub fn set_wheel_target(&mut self, node: StableNodeId, target: Option<Entity<ScrollView>>) {
+        let targets = &mut self.component_lifecycle.wheel_targets;
+        match target {
+            Some(target) => {
+                targets.insert(node, target.id);
+            }
+            None => {
+                targets.remove(&node);
+            }
+        }
+    }
+
+    /// Where a wheel turn walking up from `id` goes next: `id`'s wheel target
+    /// ([`Self::set_wheel_target`]) while that is mounted, else its parent.
+    /// `hops` counts redirects, so targets pointing round in a circle end.
+    pub(super) fn wheel_next(&self, id: StableNodeId, hops: &mut usize) -> Option<StableNodeId> {
+        let redirect = (*hops < MAX_WHEEL_REDIRECTS)
+            .then(|| self.component_lifecycle.wheel_targets.get(&id).copied())
+            .flatten()
+            .filter(|target| self.world.is_mounted(*target));
+        match redirect {
+            Some(target) => {
+                *hops += 1;
+                Some(target)
+            }
+            None => self.world.parent_id(id),
+        }
     }
 
     /// Whether a node is a [`ScrollView`]. Scrollbar drag and hover chrome

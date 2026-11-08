@@ -67,6 +67,18 @@ In a Card or a settings group card, use `.gutter_theme(ThemeToken::PanelPaddingX
 
 `.heading_room()` extends the scroll area upward by `heading_overhang()` and then insets the content by the same distance, so tools that overhang from the top heading row are not clipped by the scroll area. See [heading_row](heading-row.md).
 
+## Sending the wheel to a scroll area
+
+A wheel turn walks up from the node under the pointer to the first scroll area that can still move. A region outside any scroll area, such as a header held above a list, finds none on the way up, so turning the wheel over it moves nothing. `AppContext::set_wheel_target(node, Some(scroll))` hands the turns over `node` that nothing inside it takes to `scroll`, as if the pointer were over `scroll`, and on up from there instead of through `node`'s own ancestors:
+
+```rust
+cx.set_wheel_target(header.stable_id(), Some(list));
+```
+
+- Anything inside `node` that scrolls (a nested scroll area, a multiline editor) still takes the turn first.
+- `None` lets `node` bubble to its own ancestors again. The redirect holds while both nodes exist, so it can be set up on a subtree before it is mounted; it is dropped when either node is despawned.
+- The redirect belongs to the node: a turn over one of its descendants that has none of its own bubbles up to `node` and goes on to `scroll` from there.
+
 ## Edge fade
 
 `.edge_fade(top, bottom)` fades the content at the top and bottom edges of the scrollport, with lengths in logical pixels. The scroll area and everything it holds are composited as one layer, and that layer's alpha falls linearly to 0 at the edge within each fade band: whatever is behind shows through, whether a transparent background or the gaps between floating cards on a stage, and no surface color is drawn. The scroll area's scrollbar does not fade.
