@@ -1182,11 +1182,16 @@ pub(crate) struct FrameSchedule {
     /// When the host first asked the platform for the paint that serves the
     /// due frame, until a redraw serves or defers it.
     requested: Option<Instant>,
+    /// A frame that flushed but found every frame slot in flight
+    /// ([`Self::retry`]). The flush consumed the document's dirty work, so
+    /// nothing else asks for it again: it is kept apart from `deadline`, which
+    /// a change of demand replaces, and holds until a frame is served.
+    owed: Option<Instant>,
 }
 
 impl FrameSchedule {
     pub(crate) fn due(&self, demand: FrameDemand, now: Instant) -> bool {
-        self.armed_deadline(demand, now)
+        earliest(self.armed_deadline(demand, now), self.owed)
             .is_some_and(|deadline| deadline <= now)
     }
 
@@ -1210,11 +1215,15 @@ impl FrameSchedule {
             self.demand = demand;
             self.deadline = Self::fresh_deadline(demand, now);
         }
-        self.deadline
+        earliest(self.deadline, self.owed)
     }
 
+    /// The frame could not be served for a reason other than frame slots (a
+    /// hidden window, a lost device): fall back to what the window asks for.
+    /// Whatever made it unservable asks for a frame again once it clears.
     pub(crate) fn defer(&mut self, demand: FrameDemand, now: Instant) -> Option<Instant> {
         self.requested = None;
+        self.owed = None;
         self.demand = demand;
         self.deadline = match demand {
             FrameDemand::OnDemand => None,
@@ -1231,17 +1240,19 @@ impl FrameSchedule {
 
     /// [`Self::defer`] for a frame that could not start (every frame slot in
     /// flight): even an on-demand window tries again shortly, since nothing
-    /// else will ask once the slots free.
+    /// else will ask once the slots free. The retry is owed whatever the
+    /// window asks for next, and only a served frame settles it.
     pub(crate) fn retry(&mut self, demand: FrameDemand, now: Instant) -> Option<Instant> {
         let deferred = self.defer(demand, now);
-        let retry = now + PRESENT_RETRY;
-        self.deadline = Some(deferred.map_or(retry, |at| at.min(retry).max(now)));
-        self.deadline
+        self.owed = Some(now + PRESENT_RETRY);
+        earliest(deferred, self.owed)
     }
 
-    /// Continuous consumes the served tick. At/OnDemand keep a still-due deadline.
+    /// Continuous consumes the served tick. At/OnDemand keep a still-due
+    /// deadline; an owed retry is settled.
     pub(crate) fn advance_served(&mut self, demand: FrameDemand, now: Instant) -> Option<Instant> {
         self.requested = None;
+        self.owed = None;
         match demand {
             FrameDemand::Continuous(_) => self.update(demand, now).1,
             _ => self.arm(demand, now),
@@ -1280,6 +1291,13 @@ impl FrameSchedule {
             FrameDemand::At(at) => Some(at),
             FrameDemand::Continuous(_) => Some(now),
         }
+    }
+}
+
+fn earliest(left: Option<Instant>, right: Option<Instant>) -> Option<Instant> {
+    match (left, right) {
+        (Some(left), Some(right)) => Some(left.min(right)),
+        (one, None) | (None, one) => one,
     }
 }
 
@@ -1427,6 +1445,34 @@ mod frame_schedule_tests {
         assert!(next > t0);
         assert!(!schedule.due(FrameDemand::OnDemand, t0));
         assert!(schedule.due(FrameDemand::OnDemand, next));
+    }
+
+    #[test]
+    fn a_retried_frame_survives_a_change_of_demand() {
+        // A click's press transition keeps the window continuous; the frame
+        // that flushed the click finds no slot, and the transition settles
+        // before the retry is due. The click must still be presented.
+        let t0 = Instant::now();
+        let mut schedule = FrameSchedule::default();
+        schedule.retry(fps(120), t0).expect("retry");
+        let next = t0 + PRESENT_RETRY;
+        assert_eq!(schedule.arm(FrameDemand::OnDemand, t0), Some(next));
+        assert!(!schedule.due(FrameDemand::OnDemand, t0));
+        assert!(schedule.due(FrameDemand::OnDemand, next));
+    }
+
+    #[test]
+    fn a_served_retry_leaves_an_on_demand_window_idle() {
+        let t0 = Instant::now();
+        let mut schedule = FrameSchedule::default();
+        let next = schedule.retry(FrameDemand::OnDemand, t0).expect("retry");
+        assert!(schedule.due(FrameDemand::OnDemand, next));
+        assert_eq!(schedule.advance_served(FrameDemand::OnDemand, next), None);
+        assert!(!schedule.due(FrameDemand::OnDemand, next));
+        assert!(!schedule.due(
+            FrameDemand::OnDemand,
+            next + std::time::Duration::from_secs(1)
+        ));
     }
 
     #[test]
