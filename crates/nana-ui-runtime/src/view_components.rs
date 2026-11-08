@@ -749,6 +749,7 @@ impl Button {
                 foreground: Some(nana_ui_core::SemanticColorRole::Text),
                 background: None,
                 border: None,
+                ring: None,
                 radius: None,
                 corner_radii: None,
                 shape: Some(nana_ui_core::ShapeRole::Button),
@@ -6786,9 +6787,17 @@ impl Stack {
         self
     }
 
-    /// 一次性写全边框：语义色角色与宽度必须同时给出，缺一边框不会绘制。
-    pub fn outline(mut self, role: nana_ui_core::SemanticColorRole, width: f32) -> Self {
-        self.style = self.style.outline(role, width);
+    /// 边框（CSS `border`）：语义色角色与宽度一次写全。边框占布局空间，
+    /// 改宽度会挪动内容；见 [`NodeStyle::border`]。
+    pub fn border(mut self, role: nana_ui_core::SemanticColorRole, width: f32) -> Self {
+        self.style = self.style.border(role, width);
+        self
+    }
+
+    /// 外环（CSS `outline`）：画在边框盒之外，不占布局空间，宽度为 0 即去掉；
+    /// 见 [`NodeStyle::ring`]。
+    pub fn ring(mut self, role: nana_ui_core::SemanticColorRole, width: f32) -> Self {
+        self.style = self.style.ring(role, width);
         self
     }
 
@@ -6798,9 +6807,9 @@ impl Stack {
         self
     }
 
-    /// 跟随主题的混合边框色与宽度，见 [`NodeStyle::outline_mix`]。
-    pub fn outline_mix(mut self, mix: nana_ui_core::SemanticColorMix, width: f32) -> Self {
-        self.style = self.style.outline_mix(mix, width);
+    /// 跟随主题的混合边框色与宽度，见 [`NodeStyle::border_mix`]。
+    pub fn border_mix(mut self, mix: nana_ui_core::SemanticColorMix, width: f32) -> Self {
+        self.style = self.style.border_mix(mix, width);
         self
     }
 

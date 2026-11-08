@@ -452,7 +452,7 @@ impl AppContext {
                 && cursor.position.column < view.screen.columns
             {
                 let mut style =
-                    NodeStyle::default().outline(SemanticColorRole::Text, nana_ui_core::HAIRLINE);
+                    NodeStyle::default().border(SemanticColorRole::Text, nana_ui_core::HAIRLINE);
                 let layout = Arc::make_mut(&mut style.layout);
                 layout.position = PositionSpec::Absolute;
                 layout.offset_left = Some(LengthSpec::Px(

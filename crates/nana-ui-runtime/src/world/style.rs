@@ -221,6 +221,7 @@ impl UiWorld {
             color,
             background,
             border_color,
+            ring_color: self.palette_ring_color(id),
             opacity: layout.opacity.unwrap_or(1.0) * inherited.opacity,
             visibility,
             box_visible,
@@ -780,6 +781,14 @@ impl UiWorld {
 }
 
 impl UiWorld {
+    /// `id`'s [`crate::NodeStyle::ring`] in the installed palette.
+    pub(super) fn palette_ring_color(&self, id: StableNodeId) -> Option<[f32; 4]> {
+        self.record(id)
+            .style
+            .ring
+            .map(|role| self.theme_color(role))
+    }
+
     pub(super) fn inherited_palette_color(
         &self,
         mut parent: Option<StableNodeId>,
@@ -1378,6 +1387,7 @@ fn carries_non_inherited_paint(style: &ComputedStyle) -> bool {
     let slots = &style.paint_colors;
     style.background.is_some()
         || style.border_color.is_some()
+        || style.ring_color.is_some()
         || slots.background.is_some()
         || slots.border.is_some()
         || slots.border_top.is_some()

@@ -2158,7 +2158,15 @@ pub struct NodeStyle {
     pub layout: Arc<LayoutStyle>,
     pub foreground: Option<SemanticColorRole>,
     pub background: Option<SemanticColorRole>,
+    /// Border colour by theme role. The border's width is
+    /// `layout.border_width`, and like a CSS `border` it takes layout space:
+    /// it sits between the box's edge and its padding. See [`Self::border`].
     pub border: Option<SemanticColorRole>,
+    /// Ring colour by theme role: a stroke painted outside the border box,
+    /// the CSS `outline`. Its width is `layout.paint.outline`, and it takes
+    /// no layout space, so changing it never moves anything. See
+    /// [`Self::ring`].
+    pub ring: Option<SemanticColorRole>,
     /// Radius step, resolved against the installed [`nana_ui_core::ThemeMetrics`].
     ///
     /// Same shape as [`Self::background`] one field up: the component names
@@ -2258,6 +2266,7 @@ impl PartialEq for NodeStyle {
             foreground,
             background,
             border,
+            ring,
             radius,
             corner_radii,
             shape,
@@ -2278,6 +2287,7 @@ impl PartialEq for NodeStyle {
         foreground == &other.foreground
             && background == &other.background
             && border == &other.border
+            && ring == &other.ring
             && radius == &other.radius
             && corner_radii == &other.corner_radii
             && shape == &other.shape
@@ -2309,6 +2319,7 @@ impl NodeStyle {
             && self.foreground.is_none()
             && self.background.is_none()
             && self.border.is_none()
+            && self.ring.is_none()
             && self.interaction.is_empty()
     }
 
@@ -2375,6 +2386,7 @@ impl NodeStyle {
             foreground: over.foreground.or(self.foreground),
             background: over.background.or(self.background),
             border: over.border.or(self.border),
+            ring: over.ring.or(self.ring),
             radius,
             corner_radii,
             shape,
@@ -2418,6 +2430,7 @@ impl NodeStyle {
             foreground: None,
             background: None,
             border: None,
+            ring: None,
             radius: None,
             corner_radii: None,
             shape: None,
@@ -2557,8 +2570,9 @@ impl NodeStyle {
         self
     }
 
-    /// Set a theme-relative outline color together with its width.
-    pub fn outline_mix(mut self, mix: nana_ui_core::SemanticColorMix, width: f32) -> Self {
+    /// A border in a theme-relative mix, colour and width together. Like
+    /// [`Self::border`] it takes layout space.
+    pub fn border_mix(mut self, mix: nana_ui_core::SemanticColorMix, width: f32) -> Self {
         self.interaction.base.border = None;
         self.interaction.base.border_mix = Some(mix);
         Arc::make_mut(&mut self.layout).border_width = Some(width.max(0.0));
@@ -2573,13 +2587,36 @@ impl NodeStyle {
         self
     }
 
-    /// 一次性写全边框：语义色角色与宽度必须同时给出，缺一边框不会绘制。
-    pub fn outline(mut self, role: SemanticColorRole, width: f32) -> Self {
+    /// A border, colour and width together: the CSS `border`. It takes
+    /// layout space (the content box shrinks by it, an auto size grows by
+    /// it), so a state that changes its width moves the content. For a
+    /// state stroke that moves nothing, change only the colour, or use
+    /// [`Self::ring`].
+    pub fn border(mut self, role: SemanticColorRole, width: f32) -> Self {
         self.border = Some(role);
         self.interaction.base.border = None;
         self.interaction.base.border_mix = None;
         let layout = Arc::make_mut(&mut self.layout);
         layout.border_width = Some(width.max(0.0));
+        self
+    }
+
+    /// A ring, colour and width together: a stroke painted outside the
+    /// border box, following its corners — the CSS `outline`. It takes no
+    /// layout space, so a selected or focused state can add or widen it
+    /// without moving anything. A width of `0` removes it.
+    pub fn ring(mut self, role: SemanticColorRole, width: f32) -> Self {
+        let width = width.max(0.0);
+        self.ring = (width > 0.0).then_some(role);
+        Arc::make_mut(&mut self.layout).paint.outline = nana_ui_core::OutlineSpec {
+            width,
+            color: None,
+            style: if width > 0.0 {
+                nana_ui_core::OutlineStyle::Solid
+            } else {
+                nana_ui_core::OutlineStyle::None
+            },
+        };
         self
     }
 
@@ -2599,6 +2636,8 @@ pub struct ComputedStyle {
     pub color: Option<[f32; 4]>,
     pub background: Option<[f32; 4]>,
     pub border_color: Option<[f32; 4]>,
+    /// [`NodeStyle::ring`] resolved against the installed palette.
+    pub ring_color: Option<[f32; 4]>,
     pub opacity: f32,
     /// CSS `visibility` after inheritance (`visible` / `hidden`).
     pub visibility: nana_ui_core::VisibilitySpec,
@@ -2694,6 +2733,7 @@ impl Default for ComputedStyle {
             color: None,
             background: None,
             border_color: None,
+            ring_color: None,
             opacity: 1.0,
             visibility: nana_ui_core::VisibilitySpec::Visible,
             box_visible: true,

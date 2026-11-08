@@ -37,7 +37,7 @@ let body = Stack::fill_column(12.0);
 let card = Stack::column(7.0)
     .padding(16.0)
     .surface(SemanticColorRole::Surface)
-    .outline(SemanticColorRole::Border, 1.0)
+    .border(SemanticColorRole::Border, 1.0)
     .radius(16.0);
 ```
 
@@ -70,7 +70,7 @@ use nana_ui::runtime::{NodeStyle, SemanticColorRole};
 
 let style = NodeStyle::default()
     .surface(SemanticColorRole::Surface)      // background surface color
-    .outline(SemanticColorRole::Border, 1.0) // border: color role + width in one call
+    .border(SemanticColorRole::Border, 1.0) // border: color role + width in one call
     .radius(8.0);
 ```
 
@@ -78,17 +78,31 @@ let style = NodeStyle::default()
 
 Internally a border is stored in two places: the color lives in `NodeStyle.border` (a semantic role) or `LayoutStyle.border_color`, and the width lives in `LayoutStyle.border_width`. **If either one is missing, the border is not drawn at all** (with no warning at compile time or run time). Therefore:
 
-- **To draw a border**: always call `NodeStyle::outline(role, width)` or `Stack::outline(role, width)` to set color and width together; do not change only one of the fields.
+- **To draw a border**: always call `NodeStyle::border(role, width)` or `Stack::border(role, width)` to set color and width together; do not change only one of the fields.
 - **To turn a border off**: set `border_width` to `Some(0.0)`, and also clear `border` and the border roles for interaction states (hover / focus).
-- **Cards with built-in appearance (`Card`)**: when you need a `1 px` outline, use `Card::new().kind(CardKind::Outlined)` directly instead of layering a `NodeStyle` by hand. Background, border, and radius specified explicitly through `.style(...)` take precedence over the `CardKind` defaults.
+- **A border takes layout space**: as with a CSS `border`, it sits between the box's edge and its padding, so the content box shrinks by it and a box sized by its content grows by it. Do not change a border's width for a state such as selected or focused, or the content moves with it; change only its color, or use a ring.
+- **Cards with built-in appearance (`Card`)**: when you need a `1 px` border, use `Card::new().kind(CardKind::Outlined)` directly instead of layering a `NodeStyle` by hand. Background, border, and radius specified explicitly through `.style(...)` take precedence over the `CardKind` defaults.
+
+### Ring: a state stroke that takes no layout space (`ring`)
+
+`NodeStyle::ring(role, width)` / `Stack::ring(role, width)` draws a ring, the CSS `outline`: a stroke outside the border box that follows its corners and **takes no layout space**, so adding, widening or removing it moves nothing. Its color is a semantic role too (stored in `NodeStyle.ring` and resolved against the theme); its width is stored in `LayoutStyle.paint.outline`. A width of `0` removes the ring.
+
+```rust
+// Selected: an accent ring outside the 1 px border, layout unchanged
+let card = Stack::column(0.0)
+    .border(SemanticColorRole::BorderSoft, 1.0)
+    .ring(SemanticColorRole::Accent, if selected { 1.0 } else { 0.0 });
+```
+
+The ring is drawn outside the box, so a parent's clipping (`overflow: hidden`) or a sibling right against it covers it; leave a gap about as wide as the ring.
 
 ### Theme-resolved semantic color mixing (`SemanticColorMix`)
 
 When you need to mix two semantic colors by ratio, or lower only the opacity of a background or border itself, use `SemanticColorMix`:
 
 - `SemanticColorMix::new(first_role, second_role, first_weight)`: mixes two semantic colors of the current theme in premultiplied-alpha sRGB space (`first_weight` ranges over `0.0..=1.0` with a precision of one ten-thousandth; it is re-resolved against the new palette automatically when the theme changes).
-- `SemanticColorMix::alpha(role, alpha)`: lowers only the alpha of that surface or outline color itself; **it does not lower the opacity of descendant text**.
-- Set the base mix with `NodeStyle::surface_mix(mix)` and `outline_mix(mix, width)` (whichever of these and `surface` / `outline` is called last wins; the same-named methods are available directly on `Stack`). To change a container's layout inside a `bind` closure, use `Stack::layout_mut()` instead of replacing the whole container. Each `InteractionStyle` state (`base` → `selected` → `hovered` → `pressed` → `focused` → `disabled`) can override the base state in priority order.
+- `SemanticColorMix::alpha(role, alpha)`: lowers only the alpha of that surface or border color itself; **it does not lower the opacity of descendant text**.
+- Set the base mix with `NodeStyle::surface_mix(mix)` and `border_mix(mix, width)` (whichever of these and `surface` / `border` is called last wins; the same-named methods are available directly on `Stack`). To change a container's layout inside a `bind` closure, use `Stack::layout_mut()` instead of replacing the whole container. Each `InteractionStyle` state (`base` → `selected` → `hovered` → `pressed` → `focused` → `disabled`) can override the base state in priority order.
 
 ## Key differences from Web CSS defaults
 

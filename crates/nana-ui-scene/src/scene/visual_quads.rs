@@ -257,8 +257,11 @@ pub(super) fn matching_paint_color(
     paint.filter(|paint| legacy == Some(paint.to_srgb()))
 }
 
+/// `ring_color` is the node's resolved [`nana_ui_runtime::NodeStyle::ring`]:
+/// an outline with no colour of its own takes it before the current colour.
 pub(super) fn quad_surface_from_style(
     style: &nana_ui_core::LayoutStyle,
+    ring_color: Option<[f32; 4]>,
     width: f32,
     height: f32,
 ) -> QuadSurfacePaint {
@@ -301,8 +304,9 @@ pub(super) fn quad_surface_from_style(
             0.0
         },
         // An outline never takes the border's colour: its own, then the
-        // current colour as CSS gives an outline without one. A colour set
-        // through `PaintStyle::outline` wins over a slot that disagrees.
+        // ring's theme role, then the current colour as CSS gives an outline
+        // without one. A colour set through `PaintStyle::outline` wins over a
+        // slot that disagrees.
         outline_color: match outline_color {
             Some(legacy) => slot_color(
                 matching_paint_color(style.paint_colors.outline, Some(legacy)),
@@ -311,6 +315,7 @@ pub(super) fn quad_surface_from_style(
             None => style
                 .paint_colors
                 .outline
+                .or(ring_color.map(nana_ui_core::PaintColor::srgb))
                 .or(style.paint_colors.color)
                 .or(style.color.map(nana_ui_core::PaintColor::srgb)),
         },
