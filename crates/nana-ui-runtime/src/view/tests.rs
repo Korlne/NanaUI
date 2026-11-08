@@ -3869,7 +3869,7 @@ fn a_keycap_follows_the_installed_keycap_height() {
     assert_eq!(height(&cx), compact.keycap.height);
 }
 
-/// A `Stack` takes a theme-relative wash and outline, and a fully round
+/// A `Stack` takes a theme-relative wash and border, and a fully round
 /// corner that does not need its height, from its own builder.
 #[test]
 fn a_stack_takes_mixes_and_a_full_radius_from_its_builder() {
@@ -3882,7 +3882,7 @@ fn a_stack_takes_mixes_and_a_full_radius_from_its_builder() {
             widget(
                 Stack::row(0.0)
                     .surface_mix(wash)
-                    .outline_mix(rim, 1.0)
+                    .border_mix(rim, 1.0)
                     .radius(RadiusTier::Full),
             )
             .key("pill")

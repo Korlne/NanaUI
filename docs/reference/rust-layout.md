@@ -37,7 +37,7 @@ let body = Stack::fill_column(12.0);
 let card = Stack::column(7.0)
     .padding(16.0)
     .surface(SemanticColorRole::Surface)
-    .outline(SemanticColorRole::Border, 1.0)
+    .border(SemanticColorRole::Border, 1.0)
     .radius(16.0);
 ```
 
@@ -70,7 +70,7 @@ use nana_ui::runtime::{NodeStyle, SemanticColorRole};
 
 let style = NodeStyle::default()
     .surface(SemanticColorRole::Surface)      // 背景表面色
-    .outline(SemanticColorRole::Border, 1.0) // 边框：颜色角色 + 线宽一次写全
+    .border(SemanticColorRole::Border, 1.0) // 边框：颜色角色 + 线宽一次写全
     .radius(8.0);
 ```
 
@@ -78,17 +78,31 @@ let style = NodeStyle::default()
 
 底层将边框拆分为两处存储：颜色位于 `NodeStyle.border`（语义角色）或 `LayoutStyle.border_color`，线宽位于 `LayoutStyle.border_width`。**只要任意一方缺省，边框就完全不会绘制**（编译期与运行期均不会报警）。因此：
 
-- **绘制边框**：始终调用 `NodeStyle::outline(role, width)` 或 `Stack::outline(role, width)` 一次性写全颜色与线宽，不要只改其中一个字段。
+- **绘制边框**：始终调用 `NodeStyle::border(role, width)` 或 `Stack::border(role, width)` 一次性写全颜色与线宽，不要只改其中一个字段。
 - **关闭边框**：将 `border_width` 设为 `Some(0.0)`，同时清空 `border` 以及交互态（hover / focus）的边框角色。
+- **边框占布局空间**：与 CSS `border` 一样，边框夹在盒子边缘与内边距之间，内容框因它收窄，随内容定高的盒子因它变高。所以选中、聚焦这类状态不要改边框宽度，否则内容会跟着挪动；只换颜色，或者改用外环。
 - **自带外观的卡片（`Card`）**：需要 `1 px` 描边时直接使用 `Card::new().kind(CardKind::Outlined)`，不必手动叠加 `NodeStyle`。通过 `.style(...)` 显式指定的背景、边框和圆角优先于 `CardKind` 的默认值。
+
+### 外环：不占布局的状态描边（`ring`）
+
+`NodeStyle::ring(role, width)` / `Stack::ring(role, width)` 画外环，对应 CSS `outline`：描在边框盒外侧并跟随圆角，**不占布局空间**，加上、加粗或去掉都不会挪动任何东西。颜色同样是语义角色（存于 `NodeStyle.ring`，随主题解析），线宽存于 `LayoutStyle.paint.outline`；宽度为 `0` 即去掉外环。
+
+```rust
+// 选中时在 1 px 边框外再加一圈强调色外环，布局不变
+let card = Stack::column(0.0)
+    .border(SemanticColorRole::BorderSoft, 1.0)
+    .ring(SemanticColorRole::Accent, if selected { 1.0 } else { 0.0 });
+```
+
+外环画在盒子外面，父级裁剪（`overflow: hidden`）或紧贴的兄弟节点会盖住它，留出与线宽相当的间距。
 
 ### 随主题解析的语义混色（`SemanticColorMix`）
 
 当需要在两个语义色之间按比例混合、或只降低背景/边框自身的不透明度时，使用 `SemanticColorMix`：
 
 - `SemanticColorMix::new(first_role, second_role, first_weight)`：在预乘 alpha 的 sRGB 空间对当前主题的两种语义色做混合（`first_weight` 取值 `0.0..=1.0`，精度至万分之一；切换主题时自动按新调色板重新解析）。
-- `SemanticColorMix::alpha(role, alpha)`：仅降低该表面或描边颜色自身的 alpha，**不会降低后代文本的不透明度**。
-- 通过 `NodeStyle::surface_mix(mix)` 与 `outline_mix(mix, width)` 设置基态混色（与 `surface` / `outline` 后调用者生效；`Stack` 上同名方法直接可用）；在 `bind` 闭包里改容器布局用 `Stack::layout_mut()`，不必整个替换容器；`InteractionStyle` 的各状态（`base` → `selected` → `hovered` → `pressed` → `focused` → `disabled`）可按优先级覆盖基态。
+- `SemanticColorMix::alpha(role, alpha)`：仅降低该表面或边框颜色自身的 alpha，**不会降低后代文本的不透明度**。
+- 通过 `NodeStyle::surface_mix(mix)` 与 `border_mix(mix, width)` 设置基态混色（与 `surface` / `border` 后调用者生效；`Stack` 上同名方法直接可用）；在 `bind` 闭包里改容器布局用 `Stack::layout_mut()`，不必整个替换容器；`InteractionStyle` 的各状态（`base` → `selected` → `hovered` → `pressed` → `focused` → `disabled`）可按优先级覆盖基态。
 
 ## 与 Web CSS 默认值的关键差异
 

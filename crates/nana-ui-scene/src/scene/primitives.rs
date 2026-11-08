@@ -326,8 +326,12 @@ impl UiScene {
                                 _ => None,
                             }),
                         surface: {
-                            let mut surface =
-                                quad_surface_from_style(style, bounds.width, bounds.height);
+                            let mut surface = quad_surface_from_style(
+                                style,
+                                node.style.ring_color,
+                                bounds.width,
+                                bounds.height,
+                            );
                             if is_filter_group(&self.nodes, &node) {
                                 surface.filter = None;
                             }

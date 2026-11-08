@@ -78,7 +78,7 @@ fn semantic_mix_theme_hover_disabled_and_raw_priority_share_the_normal_resolver(
     let mix = SemanticColorMix::new(R::Accent, R::Surface, 0.22);
     let mut style = NodeStyle::default()
         .surface_mix(mix)
-        .outline_mix(SemanticColorMix::new(R::Accent, R::Border, 0.58), 1.0);
+        .border_mix(SemanticColorMix::new(R::Accent, R::Border, 0.58), 1.0);
     // A local mix overrides a role in the same paint; a later state role clears it.
     style.interaction.base.background = Some(R::Danger);
     style.interaction.hovered.background = Some(R::Hover);
@@ -146,8 +146,8 @@ fn semantic_mix_and_role_builders_obey_last_assignment() {
     let style = NodeStyle::default()
         .surface_mix(mix)
         .surface(R::Surface)
-        .outline_mix(mix, 1.0)
-        .outline(R::Border, 2.0);
+        .border_mix(mix, 1.0)
+        .border(R::Border, 2.0);
     let node = cx
         .create_component(doc, Text::new("x").style(style))
         .unwrap();
@@ -164,7 +164,7 @@ fn semantic_mix_and_role_builders_obey_last_assignment() {
         model.color(R::Border).as_rgba_array(),
     );
     cx.update_component(node, |v, _| {
-        v.style = v.style.clone().surface_mix(mix).outline_mix(mix, 1.0)
+        v.style = v.style.clone().surface_mix(mix).border_mix(mix, 1.0)
     })
     .unwrap();
     cx.resolve_styles(&[id]).unwrap();
