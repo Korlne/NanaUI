@@ -488,12 +488,13 @@ pub use view_components::{
     Activate, Button, Card, Checkbox, CodeEditing, ComponentView, Dialog, DialogCloseRequested,
     DialogToggled, Divider, FileDropEvent, FocusWithinChanged, HostedTextarea, IconButton,
     IconButtonTooltip, IconGlyph, List, ListItem, ListItemRole, ListItemSlots, NumberChanged,
-    NumberInput, OverlayChanged, OverlayClosing, OverlayHost, PointerHoverChanged, RangeAdjustment,
-    RangeChanged, RangeDragState, RangeDragging, RangeField, RangeInput, RangeMarker,
-    RowToolsPresence, RowToolsRest, ScrollAnchor, ScrollAxes, ScrollChanged, ScrollLaidOut,
-    ScrollView, ScrollViewportChanged, ScrollbarDragState, SecondaryPress, SizeChanged, Stack,
-    Switch, Table, TableCell, TableCellFocused, TableRow, Text, TextArea, TextChanged, TextClamped,
-    TextInput, TextSubmitted, ToggleChanged, Tooltip, TrailingAlign, UserScroll,
+    NumberInput, OverlayChanged, OverlayClosing, OverlayHost, PointerDragPhase, PointerDragged,
+    PointerHoverChanged, PointerMoved, RangeAdjustment, RangeChanged, RangeDragState,
+    RangeDragging, RangeField, RangeInput, RangeMarker, RowToolsPresence, RowToolsRest,
+    ScrollAnchor, ScrollAxes, ScrollChanged, ScrollLaidOut, ScrollView, ScrollViewportChanged,
+    ScrollbarDragState, SecondaryPress, SizeChanged, Stack, Switch, Table, TableCell,
+    TableCellFocused, TableRow, Text, TextArea, TextChanged, TextClamped, TextInput, TextSubmitted,
+    ToggleChanged, Tooltip, TrailingAlign, UserScroll,
 };
 pub use workspace::{Workspace, WorkspaceRegionSlot, WorkspaceResizeHandle};
 pub use world::{

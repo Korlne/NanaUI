@@ -2525,6 +2525,59 @@ pub struct PointerHoverChanged {
     pub hovered: bool,
 }
 
+/// The pointer moved over this node's subtree, at `x` / `y` in the node's
+/// own layout px (its border box's top-left is `0, 0`).
+///
+/// Only nodes with a handler for it receive it, innermost first, the same
+/// nodes [`PointerHoverChanged`] calls hovered; leaving is told by that event
+/// alone. While a node holds the pointer's capture (a drag), the nodes
+/// enclosing it keep hearing moves, and the point may lie outside them.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PointerMoved {
+    pub x: f32,
+    pub y: f32,
+}
+
+/// Where a [`PointerDragged`] gesture is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PointerDragPhase {
+    /// The press moved past the slop: the node holds the pointer's capture,
+    /// and the control the press began on is no longer pressed and will not
+    /// activate. Carries the press point, with no delta.
+    Started,
+    /// The pointer moved while the drag holds it.
+    Moved,
+    /// The button was released.
+    Ended,
+    /// The press was cancelled or the node lost the capture; nothing the
+    /// drag did should be kept as if it were finished.
+    Cancelled,
+}
+
+/// A primary-button drag that began in this node's subtree.
+///
+/// Only the innermost node with a handler for it under the press hears it. A
+/// press that never travels past the slop is an ordinary press: it focuses,
+/// activates and opens what it always did, and raises nothing. One that does
+/// becomes this node's drag: `Started`, a `Moved` per sample (the crossing
+/// sample included), then `Ended` on release or `Cancelled`. A press another
+/// control already took for a gesture of its own (a slider, a text caret, a
+/// scrollbar) does not become a drag.
+///
+/// `x` / `y` are in the node's own layout px and may lie outside it while the
+/// drag holds the pointer; `dx` / `dy` are the travel from the press point
+/// in logical px as the window measures it, so a node that moves while it is
+/// dragged (a handle following its value) does not change them.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PointerDragged {
+    pub phase: PointerDragPhase,
+    pub x: f32,
+    pub y: f32,
+    pub dx: f32,
+    pub dy: f32,
+    pub modifiers: nana_ui_input::InputModifiers,
+}
+
 /// Keyboard focus entered (`focused`) or left this node's subtree.
 ///
 /// Only nodes with a handler for it receive it, innermost first. Moving focus

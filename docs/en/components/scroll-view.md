@@ -79,6 +79,8 @@ cx.set_wheel_target(header.stable_id(), Some(list));
 - `None` lets `node` bubble to its own ancestors again. The redirect holds while both nodes exist, so it can be set up on a subtree before it is mounted; it is dropped when either node is despawned.
 - The redirect belongs to the node: a turn over one of its descendants that has none of its own bubbles up to `node` and goes on to `scroll` from there.
 
+When a node inside a scroll area has a `PointerDragged` handler (see dragging in [Controls](../reference/components.md)), the wheel still scrolls. A finger is offered to the scroll area first: if it can scroll that way it scrolls, and no drag starts.
+
 ## Edge fade
 
 `.edge_fade(top, bottom)` fades the content at the top and bottom edges of the scrollport, with lengths in logical pixels. The scroll area and everything it holds are composited as one layer, and that layer's alpha falls linearly to 0 at the edge within each fade band: whatever is behind shows through, whether a transparent background or the gaps between floating cards on a stage, and no surface color is drawn. The scroll area's scrollbar does not fade.

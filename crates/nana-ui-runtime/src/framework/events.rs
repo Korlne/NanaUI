@@ -211,6 +211,7 @@ impl AppContext {
     ) {
         let slot = (source, on.event);
         self.index_event_handler(slot, observer);
+        self.note_gesture_listener(on.event);
         if on.event == TypeId::of::<TextClamped>() {
             self.clamp_watchers.entry(source).or_insert(None);
         }

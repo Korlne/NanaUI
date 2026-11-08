@@ -15,6 +15,7 @@ mod dispatch;
 mod edit_actions;
 pub use edit_actions::TextEditAction;
 mod effects;
+mod gestures;
 mod headless;
 
 use std::collections::{HashMap, HashSet};
@@ -275,6 +276,11 @@ pub(crate) struct InputState {
     /// bar the keyboard.
     pub(super) menu_alt: bool,
     caret_blink: blink::CaretBlink,
+    /// Primary presses that may become a [`crate::PointerDragged`] drag.
+    pub(super) drags: HashMap<(DocumentId, u64), gestures::ViewDrag>,
+    /// Which pointer gesture events any node has listened for, ever: until
+    /// one has, routing does no work for them.
+    pub(super) gesture_listeners: gestures::GestureListeners,
 }
 
 impl Default for InputState {
@@ -291,6 +297,8 @@ impl Default for InputState {
             menu_bars: HashMap::new(),
             menu_alt: false,
             caret_blink: blink::CaretBlink::default(),
+            drags: HashMap::new(),
+            gesture_listeners: gestures::GestureListeners::default(),
         }
     }
 }
@@ -608,6 +616,7 @@ impl AppContext {
                 let target = self.world.hit_test(document, *x, *y);
                 self.set_pointer_location(document, local, Some((*x, *y)));
                 self.set_pointer_hover_at(document, local, target, now)?;
+                self.emit_pointer_moved(target, *x, *y)?;
                 if let Some(state) = self.input.source(source) {
                     state.pointer = Some((local, *x, *y));
                 }
@@ -806,6 +815,7 @@ impl AppContext {
             // touch is a new pointer: leave no hover or position behind.
             self.set_pointer_location(document, local, None);
             self.set_pointer_hover_at(document, local, None, now)?;
+            self.input.drags.remove(&(document, local));
             if let Some(state) = self.input.source(source) {
                 state.pointers.retain(|_, identity| identity.local != local);
                 if state
