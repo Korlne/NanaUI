@@ -297,3 +297,172 @@ fn a_press_in_no_dragging_node_is_unchanged() {
     assert_eq!(*f.toggles.lock().unwrap(), [("plain", true)]);
     assert!(f.drags.lock().unwrap().is_empty());
 }
+
+/// A chip as an application lays one over a painted rail: an absolutely
+/// placed row (pinned by its right edge, not hittable) in an absolutely
+/// placed overlay in a card inside a scroll view, holding a popover whose
+/// text trigger shows the value the drag scrubs. Every sample routes, and
+/// a still press opens the popover afterwards.
+#[test]
+fn a_chip_pinned_right_in_a_scrolled_overlay_scrubs_and_opens_after() {
+    use crate::view::{Signal, signal};
+    use crate::{NodeStyle, PopoverPlacement, ScrollAxes, ScrollView};
+    use nana_ui_core::{LayoutStyle, PositionSpec};
+
+    let mut cx = AppContext::new();
+    let doc = DocumentId::new(1).unwrap();
+    let root = cx.create_component(doc, Stack::column(0.0)).unwrap();
+    let drags = Drags::default();
+    let dragged = Arc::clone(&drags);
+    let (_, (chip, popover)) = cx
+        .mount_view(root.stable_id(), move || {
+            let chip = entity_ref::<Stack>();
+            let popover = entity_ref::<Popover>();
+            let value: Signal<f32> = signal(0.5);
+            let trigger_style = NodeStyle {
+                layout: Arc::new(LayoutStyle {
+                    width: Some(LengthSpec::Px(48.0)),
+                    height: Some(LengthSpec::Px(20.0)),
+                    ..LayoutStyle::default()
+                }),
+                ..NodeStyle::default()
+            };
+            let view = widget(ScrollView::new(ScrollAxes::Vertical)).children(
+                widget(Stack::column(8.0)).children((
+                    sized(10.0, 40.0),
+                    widget(Stack::row(0.0).with_layout(|layout| {
+                        layout.position = PositionSpec::Relative;
+                        layout.width = Some(LengthSpec::Fill);
+                        layout.height = Some(LengthSpec::Px(80.0));
+                    }))
+                    .children(
+                        widget(Stack::row(0.0).with_layout(|layout| {
+                            layout.position = PositionSpec::Absolute;
+                            layout.offset_left = Some(LengthSpec::Px(0.0));
+                            layout.offset_top = Some(LengthSpec::Px(0.0));
+                            layout.width = Some(LengthSpec::Fill);
+                            layout.height = Some(LengthSpec::Percent(100.0));
+                        }))
+                        .children(
+                            widget(Stack::row(0.0).with_layout(|layout| {
+                                layout.position = PositionSpec::Absolute;
+                                layout.offset_top = Some(LengthSpec::Px(30.0));
+                                layout.offset_right = Some(LengthSpec::Px(40.0));
+                                layout.width = Some(LengthSpec::Px(48.0));
+                                layout.height = Some(LengthSpec::Px(20.0));
+                            }))
+                            .entity_ref(chip)
+                            .on(move |event: &PointerDragged| {
+                                dragged.lock().unwrap().push(*event);
+                                if matches!(
+                                    event.phase,
+                                    PointerDragPhase::Started | PointerDragPhase::Moved
+                                ) {
+                                    value.set(0.5 - event.dy / 100.0);
+                                }
+                            })
+                            .on(|_: &crate::PointerHoverChanged| {})
+                            .on(|_: &crate::FocusWithinChanged| {})
+                            .children(
+                                widget(
+                                    Popover::new()
+                                        .trigger("0.50")
+                                        .placement(PopoverPlacement::Top)
+                                        .trigger_style(trigger_style),
+                                )
+                                .entity_ref(popover)
+                                .bind(move |popover| {
+                                    popover.trigger = format!("{:.2}", value.get()).into();
+                                })
+                                .children(crate::view::button("Reset")),
+                            ),
+                        ),
+                    ),
+                )),
+            );
+            with_refs(view, (chip, popover))
+        })
+        .unwrap();
+    let layout = |cx: &mut AppContext| {
+        cx.layout_document(doc, LayoutViewport::new(800.0, 600.0))
+            .unwrap();
+        cx.rebuild_hit_test(doc);
+    };
+    layout(&mut cx);
+    let mut input = TestInput::default();
+    let mut pointer = |cx: &mut AppContext, phase: PointerPhase, (x, y): (f32, f32), ms: u64| {
+        let routed = input.dispatch_at(
+            cx,
+            doc,
+            &pointer_fixture! {
+                phase,
+                pointer_id: 1,
+                pointer_type: PointerType::Mouse,
+                x,
+                y,
+                screen_x: x,
+                screen_y: y,
+                button: 0,
+                buttons: u16::from(phase != PointerPhase::Up),
+                pressure: 0.0,
+                tangential_pressure: 0.0,
+                tilt_x: 0,
+                tilt_y: 0,
+                twist: 0,
+                is_primary: true,
+                activation_click: false,
+                modifiers: Default::default(),
+            },
+            Duration::from_millis(ms),
+        );
+        assert!(routed.is_ok(), "{phase:?} at {x},{y}: {routed:?}");
+        layout(cx);
+    };
+    let trigger = |cx: &AppContext| cx.read(popover, |p| p.trigger.to_string()).unwrap();
+    let open = |cx: &AppContext| cx.read(popover, |p| p.open).unwrap();
+    let b = cx.world().layout_box(popover.stable_id()).unwrap();
+    let chip_box = cx.world().layout_box(chip.stable_id()).unwrap();
+    assert!(
+        b.width > 0.0 && chip_box.width == 48.0,
+        "{b:?} {chip_box:?}"
+    );
+    let (x, y) = (b.x + b.width / 2.0, b.y + b.height / 2.0);
+    assert_eq!(cx.world().hit_test(doc, x, y), Some(popover.stable_id()));
+
+    pointer(&mut cx, PointerPhase::Down, (x, y), 100);
+    pointer(&mut cx, PointerPhase::Move, (x, y - 5.0), 110);
+    // The chip's row takes no pointer of its own, so the trigger the press
+    // landed on holds it, unpressed.
+    assert_eq!(
+        cx.world().pointer_capture(doc, 1),
+        Some(popover.stable_id())
+    );
+    assert_eq!(cx.world().pointer_press(doc, 1), None);
+    pointer(&mut cx, PointerPhase::Move, (x, y - 10.0), 120);
+    pointer(&mut cx, PointerPhase::Up, (x, y - 10.0), 130);
+    let phases: Vec<_> = drags
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|d| (d.phase, d.dy, d.x.is_finite() && d.y.is_finite()))
+        .collect();
+    assert_eq!(
+        phases,
+        [
+            (PointerDragPhase::Started, 0.0, true),
+            (PointerDragPhase::Moved, -5.0, true),
+            (PointerDragPhase::Moved, -10.0, true),
+            (PointerDragPhase::Ended, -10.0, true),
+        ]
+    );
+    assert_eq!(trigger(&cx), "0.60");
+    assert!(!open(&cx));
+    assert_eq!(cx.world().pointer_capture(doc, 1), None);
+
+    // A still press on the same chip opens it as before.
+    let b = cx.world().layout_box(popover.stable_id()).unwrap();
+    let at = (b.x + b.width / 2.0, b.y + b.height / 2.0);
+    pointer(&mut cx, PointerPhase::Down, at, 300);
+    pointer(&mut cx, PointerPhase::Up, at, 310);
+    assert!(open(&cx));
+}

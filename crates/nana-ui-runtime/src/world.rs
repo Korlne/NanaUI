@@ -5626,6 +5626,12 @@ impl UiWorld {
         None
     }
 
+    /// Whether `target` can be what a pointer of `document` is over: the
+    /// hover and capture owner routing writes each sample.
+    pub(crate) fn accepts_pointer(&self, document: DocumentId, target: StableNodeId) -> bool {
+        self.validate_pointer_target(document, target).is_ok()
+    }
+
     fn validate_pointer_target(
         &self,
         document: DocumentId,

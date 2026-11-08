@@ -2541,8 +2541,9 @@ pub struct PointerMoved {
 /// Where a [`PointerDragged`] gesture is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PointerDragPhase {
-    /// The press moved past the slop: the node holds the pointer's capture,
-    /// and the control the press began on is no longer pressed and will not
+    /// The press moved past the slop: the node holds the pointer's capture
+    /// (or, when the node takes no pointer itself, the control the press
+    /// landed on does), and that control is no longer pressed and will not
     /// activate. Carries the press point, with no delta.
     Started,
     /// The pointer moved while the drag holds it.

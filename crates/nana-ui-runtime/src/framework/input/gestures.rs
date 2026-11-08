@@ -5,9 +5,11 @@
 //! Both cost nothing until some node listens for them. A drag takes over a
 //! press only once it travels past [`DRAG_SLOP`]: until then the press is the
 //! ordinary one, focusing and activating what it always did. From the drag's
-//! start the listening node holds the pointer's capture and the press is
-//! released, so the control it began on shows no pressed state and the
-//! release activates nothing.
+//! start the press is released, so the control it began on shows no pressed
+//! state and the release activates nothing, and the pointer is captured: by
+//! the listening node, or, when that node takes no pointer itself (a layout
+//! `Stack` that is not hittable), by the node the press landed on, since
+//! routing makes the capture owner the hovered node on every sample.
 
 use std::any::TypeId;
 
@@ -36,6 +38,8 @@ pub(crate) struct GestureListeners {
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ViewDrag {
     node: StableNodeId,
+    /// What holds the pointer's capture once the drag starts.
+    holder: StableNodeId,
     /// The press point, in window coordinates.
     origin: (f32, f32),
     slop: f32,
@@ -128,7 +132,10 @@ impl AppContext {
         {
             return;
         }
-        let mut current = self.world.pointer_press(document, pointer_id);
+        let Some(pressed) = self.world.pointer_press(document, pointer_id) else {
+            return;
+        };
+        let mut current = Some(pressed);
         while let Some(id) = current {
             if self
                 .event_handlers
@@ -142,6 +149,11 @@ impl AppContext {
                     key,
                     ViewDrag {
                         node: id,
+                        holder: if self.world.accepts_pointer(document, id) {
+                            id
+                        } else {
+                            pressed
+                        },
                         origin: (x, y),
                         slop,
                         started: false,
@@ -170,7 +182,7 @@ impl AppContext {
             return Ok(false);
         };
         if drag.started {
-            if self.world.pointer_capture(document, pointer_id) != Some(drag.node) {
+            if self.world.pointer_capture(document, pointer_id) != Some(drag.holder) {
                 // Something else took the pointer, or the node went away.
                 self.input.drags.remove(&key);
                 self.emit_drag(drag, PointerDragPhase::Cancelled, x, y, modifiers)?;
@@ -185,6 +197,7 @@ impl AppContext {
             || self.world.pointer_press(document, pointer_id).is_none()
             || self.world.pointer_capture(document, pointer_id).is_some()
             || !self.world.contains(drag.node)
+            || !self.world.accepts_pointer(document, drag.holder)
         {
             self.input.drags.remove(&key);
             return Ok(false);
@@ -193,12 +206,12 @@ impl AppContext {
             return Ok(false);
         }
         // The press is no longer one: nothing shows pressed, the release
-        // activates nothing, and the drag's node holds the pointer.
+        // activates nothing, and the drag holds the pointer.
         self.release_pointer(document, pointer_id);
         let mut capture = MutationQueue::new();
-        capture.capture_pointer(pointer_id, drag.node);
+        capture.capture_pointer(pointer_id, drag.holder);
         self.commit_mutations(capture)?;
-        self.set_pointer_hover_at(document, pointer_id, Some(drag.node), now)?;
+        self.set_pointer_hover_at(document, pointer_id, Some(drag.holder), now)?;
         let drag = ViewDrag {
             started: true,
             ..drag
@@ -229,10 +242,10 @@ impl AppContext {
         if !drag.started {
             return Ok(false);
         }
-        let held = self.world.pointer_capture(document, pointer_id) == Some(drag.node);
+        let held = self.world.pointer_capture(document, pointer_id) == Some(drag.holder);
         if held {
             let mut release = MutationQueue::new();
-            release.release_pointer(pointer_id, drag.node);
+            release.release_pointer(pointer_id, drag.holder);
             self.commit_mutations(release)?;
         }
         let phase = if cancelled || !held {
