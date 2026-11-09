@@ -65,7 +65,7 @@ CSS 写作 `display: layers`，这是 NanaUI 的扩展值，对齐用 `justify-i
 
 `Stack::from_layout` 承接已经解析好的 `LayoutStyle`，默认可点。`.with_layout` 就地改布局字段。
 
-`.gap`、`.align`、`.justify`、`.width`、`.height`、`.grow`、`.shrink`、`.padding` 改预设上的对应项。`.surface` 写语义背景。`.outline` 要同时给出边框色和宽度，缺一则不画边框。
+`.gap`、`.align`、`.justify`、`.width`、`.height`、`.grow`、`.shrink`、`.padding` 改预设上的对应项。`.surface` 写语义背景。`.border` 要同时给出边框色和宽度，缺一则不画边框；边框和 CSS `border` 一样占布局空间。`.ring` 画外环（CSS `outline`），描在盒外，不占布局空间，适合选中、聚焦这类状态。
 
 ## 自绘
 
@@ -100,7 +100,8 @@ CSS 写作 `display: layers`，这是 NanaUI 的扩展值，对齐用 `justify-i
 | `.shrink` | — | 改预设上的对应项 |
 | `.padding` | — | 改预设上的对应项 |
 | `.surface` | — | 语义背景 |
-| `.outline` | — | 边框色和宽度都要给，缺一则不画边框 |
+| `.border` | — | 边框色和宽度都要给，缺一则不画边框；占布局空间 |
+| `.ring` | — | 外环色和宽度；描在盒外，不占布局空间，宽度为 0 即去掉 |
 | `.hittable` | — | 空白处的按下落在这个容器上 |
 | `.painter` | — | 自绘外观。装饰时在 `paint` 里调用 `cx.draw_default()` |
 

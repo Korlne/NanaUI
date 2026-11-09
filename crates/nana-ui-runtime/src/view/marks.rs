@@ -191,7 +191,7 @@ pub fn tag_frame() -> Stack {
         .padding_step(SpacingStep::Md, SpacingStep::Xxs)
         .align(AlignSpec::Center)
         .surface(SemanticColorRole::Subtle)
-        .outline(SemanticColorRole::BorderSoft, 1.0)
+        .border(SemanticColorRole::BorderSoft, 1.0)
         .shape(ShapeRole::Tag)
         .with_layout(|l| l.flex_shrink = Some(0.0))
 }

@@ -65,7 +65,7 @@ CSS writes `display: layers`, a NanaUI extension value; align with `justify-item
 
 `Stack::from_layout` takes an already parsed `LayoutStyle` and hits by default. `.with_layout` changes layout fields in place.
 
-`.gap`, `.align`, `.justify`, `.width`, `.height`, `.grow`, `.shrink` and `.padding` change the matching field on the preset. `.surface` writes a semantic background. `.outline` needs both the border color and the width; with one missing, no border is drawn.
+`.gap`, `.align`, `.justify`, `.width`, `.height`, `.grow`, `.shrink` and `.padding` change the matching field on the preset. `.surface` writes a semantic background. `.border` needs both the border color and the width; with one missing, no border is drawn. Like a CSS `border`, it takes layout space. `.ring` draws a ring (the CSS `outline`) outside the box that takes no layout space, for states such as selected or focused.
 
 ## Self-drawing
 
@@ -100,7 +100,8 @@ When the empty area of a QR-code card must also receive the pointer, use `Stack:
 | `.shrink` | — | Changes the matching field on the preset |
 | `.padding` | — | Changes the matching field on the preset |
 | `.surface` | — | Semantic background |
-| `.outline` | — | Both the border color and the width are required; with one missing, no border is drawn |
+| `.border` | — | Both the border color and the width are required; with one missing, no border is drawn. Takes layout space |
+| `.ring` | — | Ring color and width; drawn outside the box, takes no layout space, width 0 removes it |
 | `.hittable` | — | A press in the empty area lands on this container |
 | `.painter` | — | Self-drawn look. For decoration, call `cx.draw_default()` inside `paint` |
 

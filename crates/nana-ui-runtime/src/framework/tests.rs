@@ -11806,14 +11806,14 @@ fn stack_presets_express_row_and_column_layout() {
     assert_eq!(fill_column.layout.flex_grow, Some(1.0));
     assert_eq!(fill_column.layout.flex_shrink, Some(1.0));
 
-    let outlined = Stack::column(4.0)
-        .outline(nana_ui_core::SemanticColorRole::Border, 1.0)
+    let bordered = Stack::column(4.0)
+        .border(nana_ui_core::SemanticColorRole::Border, 1.0)
         .node_style();
     assert_eq!(
-        outlined.border,
+        bordered.border,
         Some(nana_ui_core::SemanticColorRole::Border)
     );
-    assert_eq!(outlined.layout.border_width, Some(1.0));
+    assert_eq!(bordered.layout.border_width, Some(1.0));
 }
 
 #[test]
@@ -11834,7 +11834,7 @@ fn card_kind_defaults_yield_to_explicit_style() {
     assert_eq!(style.border, None);
     assert_eq!(style.layout.border_width, Some(0.0));
 
-    let custom = NodeStyle::default().outline(nana_ui_core::SemanticColorRole::Border, 2.0);
+    let custom = NodeStyle::default().border(nana_ui_core::SemanticColorRole::Border, 2.0);
     let outlined = context
         .create_component(
             document,
@@ -14328,4 +14328,77 @@ fn context_and_world_stay_small_enough_to_move() {
     let world = std::mem::size_of::<UiWorld>();
     assert!(context <= 6 << 10, "AppContext is {context} bytes");
     assert!(world <= 10 << 10, "UiWorld is {world} bytes");
+}
+
+#[test]
+fn a_ring_takes_no_layout_space_and_a_border_does() {
+    use nana_ui_core::SemanticColorRole::Accent;
+    let mut context = AppContext::new();
+    let document = DocumentId::new(916).unwrap();
+    let root = context
+        .create_component(document, Stack::column(0.0))
+        .unwrap();
+    // Each frame holds one 10px square; only its stroke differs.
+    let mut framed = |frame: Stack| {
+        let frame = context.create_detached_component(document, frame).unwrap();
+        let square = context
+            .create_detached_component(
+                document,
+                Stack::row(0.0)
+                    .width(LengthSpec::Px(10.0))
+                    .height(LengthSpec::Px(10.0)),
+            )
+            .unwrap();
+        context.append_child(frame, square).unwrap();
+        context.append_child(root, frame).unwrap();
+        (frame.id, square.id)
+    };
+    let plain = framed(Stack::column(0.0).surface(Accent));
+    let ringed = framed(Stack::column(0.0).ring(Accent, 3.0));
+    let bordered = framed(Stack::column(0.0).border(Accent, 3.0));
+    context
+        .layout_document(document, crate::LayoutViewport::new(400.0, 300.0))
+        .unwrap();
+    let world = context.world();
+    let size = |id| {
+        let b = world.layout_box(id).unwrap();
+        (b.width, b.height)
+    };
+    let inset = |(frame, square)| {
+        let (f, s) = (
+            world.layout_box(frame).unwrap(),
+            world.layout_box(square).unwrap(),
+        );
+        (s.x - f.x, s.y - f.y)
+    };
+    assert_eq!(
+        size(ringed.0),
+        size(plain.0),
+        "a ring does not grow its box"
+    );
+    assert_eq!(
+        inset(ringed),
+        inset(plain),
+        "a ring does not move the content"
+    );
+    assert_eq!(size(bordered.0).1, 16.0, "a border grows an auto height");
+    assert_eq!(inset(bordered), (3.0, 3.0), "a border insets the content");
+    // The ring's colour is its theme role's, as a surface of that role is.
+    let work = context.compat_world_mut().take_system_work();
+    context
+        .compat_world_mut()
+        .resolve_styles(&work.style)
+        .unwrap();
+    let style = |id| context.world().extract_nodes(&[id]).pop().unwrap().style;
+    let (plain, ringed) = (style(plain.0), style(ringed.0));
+    assert!(ringed.ring_color.is_some());
+    assert_eq!(ringed.ring_color, plain.background);
+    assert_eq!(ringed.border_color, None);
+    // Width 0 takes the ring off again.
+    let off = Stack::column(0.0)
+        .ring(Accent, 3.0)
+        .ring(Accent, 0.0)
+        .node_style();
+    assert_eq!(off.ring, None);
+    assert!(!off.layout.paint.outline.is_active());
 }

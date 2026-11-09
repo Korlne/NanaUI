@@ -11403,6 +11403,40 @@ fn an_outline_is_not_painted_in_the_border_colour() {
     );
 }
 
+/// A ring is an outline in its theme role's colour: a node with nothing else
+/// to paint still gets its quad, stroked in the resolved role, not in the
+/// current text colour an outline without a colour falls back to.
+#[test]
+fn a_ring_paints_its_role_colour_as_the_outline() {
+    let mut painted = node(1, None, &[]);
+    let green = [0.0, 1.0, 0.0, 1.0];
+    painted.source_style = NodeStyle::default().ring(nana_ui_core::SemanticColorRole::Accent, 2.0);
+    style_mut(&mut painted).ring_color = Some(green);
+    style_mut(&mut painted).color = Some([1.0, 0.0, 0.0, 1.0]);
+    let mut scene = UiScene::new();
+    scene.apply_delta([painted], []);
+    let quad = scene
+        .primitive(PrimitiveId {
+            node: id(1),
+            slot: 0,
+        })
+        .expect("a ring alone still paints a quad");
+    let ScenePrimitiveKind::Quad {
+        surface,
+        border_width,
+        ..
+    } = &quad.kind
+    else {
+        panic!("expected quad");
+    };
+    assert_eq!(*border_width, 0.0);
+    assert_eq!(surface.outline_width, 2.0);
+    assert_eq!(
+        surface.outline_color,
+        Some(nana_ui_core::PaintColor::srgb(green))
+    );
+}
+
 /// A toast paints what its recipe resolved to: a glyph mark is the tone's
 /// icon in the tone colour where the dot was, a lift is the surface quad's
 /// shadow, and a recipe without a mark paints nothing in that slot.

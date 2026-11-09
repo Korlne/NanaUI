@@ -62,16 +62,19 @@ impl UiWorld {
     ) -> Option<[f32; 4]> {
         let (foreground, color, background, border_color) =
             self.palette_paint_colors(id, inherited_color);
+        let ring_color = self.palette_ring_color(id);
         if style.foreground != foreground
             || style.color != color
             || style.background != background
             || style.border_color != border_color
+            || style.ring_color != ring_color
         {
             let style = Arc::make_mut(style);
             style.foreground = foreground;
             style.color = color;
             style.background = background;
             style.border_color = border_color;
+            style.ring_color = ring_color;
         }
         color
     }
