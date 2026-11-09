@@ -2179,22 +2179,46 @@ impl UiWorld {
         // keeps the box its parent's held result recorded, so a parent is
         // checked against these and not against all of its children. One
         // list sorted by parent: a parent's children are one run of it.
-        let mut covered: Vec<(StableNodeId, StableNodeId)> = unique
-            .iter()
-            .filter_map(|&id| Some((self.parent_id(id)?, id)))
-            .collect();
-        covered.sort_unstable();
+        //
+        // A first publish (no result held) has nothing to check them
+        // against: every result is built, and only how many children it
+        // covers is counted.
+        let first_publish = self.layout_results.is_empty();
+        let (covered, mut children_visited) = if first_publish {
+            let count = unique
+                .iter()
+                .filter(|&&id| self.parent_id(id).is_some())
+                .count();
+            (Vec::new(), count)
+        } else {
+            let mut covered: Vec<(StableNodeId, StableNodeId)> = unique
+                .iter()
+                .filter_map(|&id| Some((self.parent_id(id)?, id)))
+                .collect();
+            covered.sort_unstable();
+            (covered, 0usize)
+        };
         let covered_ids: Vec<StableNodeId> = covered.iter().map(|&(_, id)| id).collect();
         #[cfg(feature = "benchmark")]
         let mut phase = crate::layout_engine::plan_stats::PhaseClock::start();
         let mut built = Vec::with_capacity(unique.len());
         let mut scratch = ResultScratch::default();
         let mut reused = 0usize;
-        let mut children_visited = 0usize;
         for &id in &unique {
             if boxless.contains(&id) {
                 self.layout_results.remove(&id);
                 self.layout_results_suppressed.remove(&id);
+                continue;
+            }
+            if first_publish {
+                children_visited = children_visited.saturating_add(
+                    self.nodes
+                        .get(id)
+                        .map_or(0, |node| node.hierarchy.children.len()),
+                );
+                if let Some(result) = self.build_layout_result(id, source, &mut scratch) {
+                    built.push((id, result));
+                }
                 continue;
             }
             let start = covered.partition_point(|&(parent, _)| parent < id);
@@ -2218,7 +2242,11 @@ impl UiWorld {
         #[cfg(feature = "benchmark")]
         phase.lap(8);
         let mut published = built;
+        // Nothing held to compare a first publish's results with.
         published.retain(|(id, result)| {
+            if first_publish {
+                return true;
+            }
             if self
                 .layout_results
                 .get(id)
