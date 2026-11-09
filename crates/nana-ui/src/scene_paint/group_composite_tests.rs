@@ -224,3 +224,122 @@ fn a_group_moving_on_the_gpu_is_not_clipped_to_its_encoded_bounds() {
         "where it was encoded"
     );
 }
+
+const CARD: [f32; 4] = [0.0, 0.0, 96.0, 96.0];
+
+/// A rounded `overflow: hidden` box, `children` inside it.
+fn rounded_overflow(value: u64, children: &[u64], bounds: [f32; 4], radius: f32) -> ExtractedNode {
+    let [x, y, width, height] = bounds;
+    extracted_div(
+        value,
+        children,
+        x,
+        y,
+        width,
+        height,
+        nana_ui_core::LayoutStyle {
+            overflow_x: OverflowSpec::Hidden,
+            overflow_y: OverflowSpec::Hidden,
+            border_radius: Some(radius),
+            ..nana_ui_core::LayoutStyle::default()
+        },
+        None,
+    )
+}
+
+/// A green quad at `quad` under two nested rounded clips: a card at `outer`
+/// with radius 16, and inside it `inner` with radius `inner_radius`, painted
+/// into 96 by 96 pixels.
+fn paint_under_nested_rounded_clips(
+    outer: [f32; 4],
+    inner: [f32; 4],
+    inner_radius: f32,
+    quad: [f32; 4],
+) -> (Vec<u8>, DestPassCounts) {
+    let (device, queue) = test_device();
+    let mut painter = SceneWgpuPainter::for_test(wgpu::TextureFormat::Rgba8Unorm);
+    let mut scene = UiScene::new();
+    let [x, y, width, height] = quad;
+    scene.apply_delta(
+        [
+            rounded_overflow(1, &[2], outer, 16.0),
+            child_of(rounded_overflow(2, &[3], inner, inner_radius), 1),
+            colored_quad_child(3, 2, x, y, width, height, [0.0, 1.0, 0.0, 1.0]),
+        ],
+        [],
+    );
+    let pixels = paint_scene_rgba(
+        &device,
+        &queue,
+        &mut painter,
+        &scene,
+        [96.0, 96.0],
+        [96, 96],
+        1.0,
+    );
+    let counts = painter.last_dest_pass_counts.expect("a painted frame");
+    (pixels, counts)
+}
+
+/// Content well inside an outer rounded clip, away from its corners, is kept
+/// whole by it: only the innermost clip, which the quad's own shader applies,
+/// cuts anything, so no dest group opens for the outer one.
+#[test]
+fn an_outer_rounded_clip_away_from_its_corners_opens_no_group() {
+    let (pixels, counts) = paint_under_nested_rounded_clips(
+        CARD,
+        [24.0, 24.0, 48.0, 48.0],
+        6.0,
+        [24.0, 24.0, 48.0, 48.0],
+    );
+    assert_eq!(counts.group, 0, "no clip group: {counts:?}");
+    // The inner clip still rounds the quad's own corners.
+    assert_eq!(pixel(&pixels, 96, 48, 48), [0, 255, 0, 255]);
+    assert_eq!(pixel(&pixels, 96, 24, 48), [0, 255, 0, 255]);
+    assert_eq!(pixel(&pixels, 96, 24, 24)[1], 0, "inner corner cut");
+    assert_eq!(pixel(&pixels, 96, 10, 10), [0, 0, 0, 255]);
+}
+
+/// Content reaching an outer rounded clip's corner square still composites
+/// through a group, which cuts what the inner clip alone would keep.
+#[test]
+fn an_outer_rounded_clip_still_cuts_content_at_its_corners() {
+    let (pixels, counts) =
+        paint_under_nested_rounded_clips(CARD, [0.0, 0.0, 96.0, 96.0], 4.0, [0.0, 0.0, 96.0, 96.0]);
+    assert!(
+        counts.group >= 1,
+        "the outer clip needs its group: {counts:?}"
+    );
+    // (2, 2) lies inside the inner radius-4 corner but outside the outer
+    // radius-16 one.
+    assert_eq!(pixel(&pixels, 96, 2, 2)[1], 0, "outer corner cut");
+    assert_eq!(pixel(&pixels, 96, 48, 48), [0, 255, 0, 255]);
+    assert_eq!(
+        pixel(&pixels, 96, 48, 1),
+        [0, 255, 0, 255],
+        "straight edge kept"
+    );
+}
+
+/// An outer straight edge on half a pixel ramps the pixel it crosses, which
+/// the scissor, rounded out to whole pixels, keeps whole: content reaching it
+/// still needs the outer clip's group.
+#[test]
+fn an_outer_rounded_clip_still_ramps_a_fractional_straight_edge() {
+    let (pixels, counts) = paint_under_nested_rounded_clips(
+        [0.0, 0.0, 95.5, 96.0],
+        [24.0, 24.0, 100.0, 48.0],
+        6.0,
+        [24.0, 24.0, 100.0, 48.0],
+    );
+    assert!(
+        counts.group >= 1,
+        "the outer clip needs its group: {counts:?}"
+    );
+    let edge = pixel(&pixels, 96, 95, 48);
+    assert!(
+        (100..=160).contains(&edge[1]),
+        "half covered at the fractional edge: {edge:?}"
+    );
+    assert_eq!(pixel(&pixels, 96, 60, 48), [0, 255, 0, 255]);
+}

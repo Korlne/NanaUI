@@ -70,7 +70,7 @@ Runtime 按节点的脏标记（`DirtyMask`）确定性地生成各阶段工作�
 祖先节点的 `clip-path` 与圆角 `overflow` 进入 `UiScene::ClipRegion` 链，并按复杂度分流到硬件 Scissor、片元着色器 SDF 或目标合成组（dest group）：
 
 - **轴对齐矩形**：走硬件 GPU Scissor + 顶点 `FragmentClip`。
-- **`clip-path: inset(... round R)` 与圆角 `overflow`**：圆角半径写入 `FragmentClip.corner_radius`（非平移变换或旋转下仍保留精确的圆角矩形 SDF，不会把半径清零；HostTexture 同样通过 `clip_inv_ef.z` 共用同一套圆角 SDF）。单层圆角裁剪留在顶点属性中完成；多层嵌套圆角或带旋转的外层裁剪自动升级进 dest 合成组。节点自身表面（slot 0）只挂直角裁剪，避免对本身已是圆角的填充和描边重复抗锯齿。
+- **`clip-path: inset(... round R)` 与圆角 `overflow`**：圆角半径写入 `FragmentClip.corner_radius`（非平移变换或旋转下仍保留精确的圆角矩形 SDF，不会把半径清零；HostTexture 同样通过 `clip_inv_ef.z` 共用同一套圆角 SDF）。单层圆角裁剪留在顶点属性中完成；多层嵌套圆角或带旋转的外层裁剪自动升级进 dest 合成组。图元画到的像素（每个合批命令记录的范围）都在某层轴对齐圆角裁剪的矩形之内、又碰不到它四角 `r × r` 的圆角区时，这层裁剪在那里处处覆盖为 1，不再开组（常见的是圆角卡片里输入框的文字）；GPU 节点、遮罩与组照旧开组。节点自身表面（slot 0）只挂直角裁剪，避免对本身已是圆角的填充和描边重复抗锯齿。
 - **`clip-path: polygon(...)`**：Scene 同时保存轴对齐包围盒（AABB）与局部多边形顶点。节点自身的 Quad 在片元着色器内直接做点在多边形内测试；子节点、文本与 HostTexture 则通过 dest 合成组在合成 pass 中执行环绕数（winding）多边形裁剪。
 
 ### CSS `filter: drop-shadow(...)`
