@@ -2031,7 +2031,7 @@ fn a_scale_under_a_3d_context_projects_what_it_holds_again() {
 /// leaves every row and what it holds as it was, which is a cold projection's to the bit. The
 /// tree placed through the scrolls stands where the viewport projection
 /// puts it, and a frame that scrolls both scrollers, or scrolls and moves,
-/// matches a full projection too.
+/// matches a full projection too, as does a scroll back to the origin.
 #[test]
 fn a_scroll_projects_the_scroller_and_its_pins_alone() {
     let (mut b, root) = Builder::page(document(), 1, 400.0);
@@ -2144,4 +2144,12 @@ fn a_scroll_projects_the_scroller_and_its_pins_alone() {
         );
         assert_matches_viewport(&page.context, &retained, &format!("{at}: moved"));
     }
+    // Back to the origin: no scroll offset is left to tell the stuck header
+    // by, and it unsticks all the same.
+    let mut queue = MutationQueue::new();
+    queue.set_scroll_offset(list, ScrollOffset::default());
+    let updated = edit(&mut page, &mut retained, queue, "back to the origin");
+    assert!(updated.contains(&header), "the header unsticks");
+    assert_eq!(retained[&list].scroll, [0.0, 0.0], "the list's scroll");
+    assert_matches_viewport(&page.context, &retained, "back to the origin");
 }

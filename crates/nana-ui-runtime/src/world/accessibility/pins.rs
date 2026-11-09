@@ -292,10 +292,13 @@ impl UiWorld {
         // Under a parent that scrolls, its bounds are its viewport box less
         // the parent's, in the space the parent's scroll moves: a scroll
         // changes them where its viewport box stays (a stuck `sticky` box).
+        // That includes a scroll back to the origin, which leaves no offset
+        // behind to tell by: a scroll container is enough.
         if parent.is_some_and(|parent| {
-            self.nodes
-                .get(parent)
-                .is_some_and(|record| record.scroll_offset != ScrollOffset::default())
+            self.nodes.get(parent).is_some_and(|record| {
+                record.resolved_layout.clips_overflow()
+                    || record.scroll_offset != ScrollOffset::default()
+            })
         }) {
             return false;
         }
