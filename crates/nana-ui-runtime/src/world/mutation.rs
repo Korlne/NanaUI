@@ -3333,7 +3333,7 @@ impl UiWorld {
             // Descendants keep LayoutBox; paint uses scroll_offset.
             self.scroll_hit_updates
                 .push((id, [previous.x - offset.x, previous.y - offset.y]));
-            self.mark_scroll_compatible(id, DirtyMask::INPUT | DirtyMask::RENDER);
+            self.mark_scrolled(id);
         }
     }
 
@@ -3353,7 +3353,7 @@ impl UiWorld {
         self.record_mut(id).scroll_offset = clamped;
         self.scroll_hit_updates
             .push((id, [current.x - clamped.x, current.y - clamped.y]));
-        self.mark_scroll_compatible(id, DirtyMask::INPUT | DirtyMask::RENDER);
+        self.mark_scrolled(id);
         true
     }
 

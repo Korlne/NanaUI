@@ -312,20 +312,35 @@ fn accessible_bounds_use_the_accumulated_affine_transform() {
     assert_hit_at_accessible_center(&world);
 }
 
+/// A scroll is the scroller's own: its children's bounds are offsets in its
+/// space moved by its scroll, so the delta hands out the scroller with its
+/// new scroll and keeps what it holds, which still stands where the viewport
+/// projection puts it.
 #[test]
-fn scrolling_publishes_moved_descendants_in_accessibility_delta() {
+fn scrolling_publishes_the_scroller_and_keeps_what_it_holds() {
     let mut world = fixture();
     world.take_system_work();
+    let before = world.project_accessibility(document());
     let mut queue = MutationQueue::new();
     queue.set_scroll_offset(node(1), ScrollOffset { x: 4.0, y: 180.0 });
     world.commit(queue).unwrap();
     world.update_hit_test_scroll(document(), node(1), [0.0, -20.0]);
     let work = world.take_system_work();
+    assert_eq!(work.accessibility_scrolled, vec![node(1)]);
     let delta = world.project_accessibility_delta(&work);
-    assert!(
-        delta.updated.iter().any(|item| item.id == node(3)),
-        "moving a scroll ancestor updates the cached descendant bounds"
-    );
+    let updated = delta.updated.iter().map(|item| item.id).collect::<Vec<_>>();
+    assert_eq!(updated, vec![node(1)], "only the scroller changed");
+    assert_eq!(delta.updated[0].scroll, [4.0, 180.0]);
+    let after = world.project_accessibility(document());
+    for id in [node(2), node(3)] {
+        let held = before.iter().find(|item| item.id == id);
+        let now = after.iter().find(|item| item.id == id);
+        assert_eq!(held, now, "{id:?} keeps its bounds under a scroll above");
+    }
+    let placed = crate::AccessibilityPlacements::new(&after)
+        .viewport_bounds(node(3))
+        .unwrap();
+    assert_eq!(placed, button_bounds(&world));
     assert_eq!(button_bounds(&world).y, 60.0);
     assert_hit_at_accessible_center(&world);
 }

@@ -37,6 +37,11 @@ impl DirtyMask {
     /// The box's own 2D transform changed and what it hands its children
     /// did not ([`SystemWork::transform_kept`]). Set with TRANSFORM.
     pub(crate) const TRANSFORM_KEPT: u16 = 1 << 12;
+    /// Set with an INPUT mark a scroll of the box makes, in place of
+    /// [`Self::INPUT_ELSEWHERE`]: a node whose INPUT carries it and lacks
+    /// that scrolled what it holds, and nothing else marked its INPUT but a
+    /// layout move ([`SystemWork::accessibility_scrolled`]).
+    pub(crate) const INPUT_SCROLLED: u16 = 1 << 13;
     pub(crate) const ALL: u16 = Self::STYLE
         | Self::TEXT
         | Self::LAYOUT
@@ -49,7 +54,8 @@ impl DirtyMask {
         | Self::INPUT_ELSEWHERE
         | Self::MOVED
         | Self::RESHAPED
-        | Self::TRANSFORM_KEPT;
+        | Self::TRANSFORM_KEPT
+        | Self::INPUT_SCROLLED;
 
     pub(crate) const fn all() -> Self {
         Self(Self::ALL)
@@ -118,6 +124,14 @@ pub struct SystemWork {
     /// subtree moved with it. Empty never narrows anything: every node of
     /// `input_hit_test` not listed here projects its whole subtree again.
     pub accessibility_moved: Vec<StableNodeId>,
+    /// The nodes of [`Self::input_hit_test`] that a scroll of their own put
+    /// there, with nothing else marking them but a layout move, sorted. Their
+    /// children's accessible bounds are offsets in their space moved by
+    /// their scroll ([`crate::AccessibilityNode::scroll`]), so such a node
+    /// projects again, and of what it holds only what does not scroll with
+    /// it to the bit: the boxes placed from the viewport and what they hold
+    /// (found from the pins). Empty never narrows anything.
+    pub accessibility_scrolled: Vec<StableNodeId>,
     /// The boxes layout wrote with a new origin, sorted: each the root of a
     /// subtree that moved with it, none of which is marked. Consumers that
     /// keep a moved box's descendants in its coordinates read what under one
@@ -336,7 +350,11 @@ pub(crate) fn push_work(work: &mut SystemWork, id: StableNodeId, bits: u16) {
     if bits & DirtyMask::INPUT != 0 {
         work.input_hit_test.push(id);
         if bits & DirtyMask::INPUT_ELSEWHERE == 0 {
-            work.accessibility_moved.push(id);
+            if bits & DirtyMask::INPUT_SCROLLED != 0 {
+                work.accessibility_scrolled.push(id);
+            } else {
+                work.accessibility_moved.push(id);
+            }
         }
     }
     if bits & DirtyMask::MOVED != 0 {
@@ -408,13 +426,15 @@ mod tests {
         assert_eq!(union & DirtyMask::MOVED, 0);
         assert_eq!(union & DirtyMask::RESHAPED, 0);
         assert_eq!(union & DirtyMask::TRANSFORM_KEPT, 0);
+        assert_eq!(union & DirtyMask::INPUT_SCROLLED, 0);
         assert_eq!(
             union
                 | DirtyMask::LAYOUT
                 | DirtyMask::INPUT_ELSEWHERE
                 | DirtyMask::MOVED
                 | DirtyMask::RESHAPED
-                | DirtyMask::TRANSFORM_KEPT,
+                | DirtyMask::TRANSFORM_KEPT
+                | DirtyMask::INPUT_SCROLLED,
             DirtyMask::ALL,
             "ALL must include the typed layout lane, mark INPUT as not a layout \
              move's and name the boxes layout moved or reshaped"

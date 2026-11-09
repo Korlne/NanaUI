@@ -89,6 +89,7 @@ impl UiWorld {
                     focused: *highlighted == Some(index),
                     bounds,
                     transform: None,
+                    scroll: [0.0, 0.0],
                     clip: menu.clip,
                     writing: menu.writing,
                 })
@@ -208,6 +209,7 @@ impl UiWorld {
                 focused: tree.focused && active.as_ref() == Some(&row.id),
                 bounds,
                 transform: None,
+                scroll: [0.0, 0.0],
                 clip: tree.clip,
                 writing: tree.writing,
             });
@@ -254,6 +256,7 @@ impl UiWorld {
                     focused: false,
                     bounds: icon,
                     transform: None,
+                    scroll: [0.0, 0.0],
                     clip: tree.clip,
                     writing: tree.writing,
                 }
@@ -405,6 +408,7 @@ impl UiWorld {
                 focused: false,
                 bounds,
                 transform: None,
+                scroll: [0.0, 0.0],
                 clip: field.clip,
                 writing: field.writing,
             });
@@ -451,6 +455,7 @@ impl UiWorld {
             focused: false,
             bounds: surface,
             transform: None,
+            scroll: [0.0, 0.0],
             clip: field.clip,
             writing: field.writing,
         });

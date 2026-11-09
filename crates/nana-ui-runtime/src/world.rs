@@ -1060,6 +1060,9 @@ pub struct UiWorld {
     /// Set while a layout move marks its box: the INPUT it marks is the
     /// move's alone (no [`DirtyMask::INPUT_ELSEWHERE`]).
     marking_layout_move: bool,
+    /// Set while a scroll marks its box: the INPUT it marks is the scroll's
+    /// ([`DirtyMask::INPUT_SCROLLED`], no [`DirtyMask::INPUT_ELSEWHERE`]).
+    marking_scroll: bool,
     /// Every accessibility node a projection handed out, as it handed it
     /// out: the nodes a delta leaves alone are checked against it.
     #[cfg(any(test, feature = "layout-verify"))]
@@ -1355,6 +1358,7 @@ impl UiWorld {
             page_origins: RefCell::default(),
             pointer_events_memo: RefCell::new(None),
             marking_layout_move: false,
+            marking_scroll: false,
             #[cfg(any(test, feature = "layout-verify"))]
             accessibility_shipped: Default::default(),
             pass_publishes_written_boxes: false,
@@ -2366,6 +2370,15 @@ impl UiWorld {
             self.mark(id, bits);
         }
         self.marking_layout_move = false;
+    }
+
+    /// [`Self::mark_scroll_compatible`] for `id`'s own scroll: its INPUT
+    /// mark is the scroll's ([`SystemWork::accessibility_scrolled`]) unless
+    /// something else marks INPUT on it too.
+    pub(super) fn mark_scrolled(&mut self, id: StableNodeId) {
+        self.marking_scroll = true;
+        let _ = self.mark_scroll_compatible(id, DirtyMask::INPUT | DirtyMask::RENDER);
+        self.marking_scroll = false;
     }
 
     /// Mark `id`, whose own 2D transform changed while what it hands its
@@ -3589,6 +3602,7 @@ impl UiWorld {
             focus_ime: Vec::new(),
             accessibility: Vec::new(),
             accessibility_moved: Vec::new(),
+            accessibility_scrolled: Vec::new(),
             layout_moved: Vec::new(),
             layout_reshaped: Vec::new(),
             accessibility_removals: sorted_unique(std::mem::take(
@@ -6686,11 +6700,14 @@ impl UiWorld {
         if bits & DirtyMask::LAYOUT != 0 {
             self.note_layout_source_change();
         }
-        let bits = if bits & DirtyMask::INPUT != 0 && !self.marking_layout_move {
-            // Marked for more than a move.
-            bits | DirtyMask::INPUT_ELSEWHERE
-        } else {
+        let bits = if bits & DirtyMask::INPUT == 0 || self.marking_layout_move {
             bits
+        } else if self.marking_scroll {
+            // Marked for its scroll.
+            bits | DirtyMask::INPUT_SCROLLED
+        } else {
+            // Marked for more than a move or a scroll.
+            bits | DirtyMask::INPUT_ELSEWHERE
         };
         let changed = self.record_mut(id).dirty.insert(bits);
         if changed {

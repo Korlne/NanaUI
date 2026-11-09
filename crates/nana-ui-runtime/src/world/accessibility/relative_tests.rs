@@ -525,7 +525,8 @@ fn grow_unevenly(
 
 /// Rows in a list scrolled by an uneven amount, grown by an uneven step again
 /// and again. Scrolling only translates, so a moved row is handed its offset
-/// less the list's scroll and what it holds its offset: the delta projects
+/// in the list's space moved by the list's scroll, which the list holds, and
+/// what it holds its offset: the delta projects
 /// the moved rows alone, from the pins, and what they kept is a cold
 /// projection's to the bit -- with a visual on the page too, and after the
 /// list scrolls again in a frame that also moves them.
@@ -575,10 +576,15 @@ fn boxes_moved_in_a_scrolled_list_keep_a_cold_projection_to_the_bit() {
                         let bounds = retained[row].bounds;
                         assert_eq!(
                             (bounds.y.to_bits(), bounds.height.to_bits()),
-                            ((local.y - scroll).to_bits(), local.height.to_bits()),
-                            "{at}: a row is handed its offset less the scroll"
+                            (local.y.to_bits(), local.height.to_bits()),
+                            "{at}: a row is handed its offset in the list's scrolled space"
                         );
                     }
+                    assert_eq!(
+                        retained[&page.list].scroll,
+                        [0.0, scroll],
+                        "{at}: the list holds its scroll"
+                    );
                 },
             );
             // Scroll and move in one frame, then go on from there.
@@ -2013,5 +2019,129 @@ fn a_scale_under_a_3d_context_projects_what_it_holds_again() {
             updated.contains(&page.rows[1][2]),
             "{at}: the column's space changed under the rows"
         );
+    }
+}
+
+/// A list scrolled by uneven steps, again and again, holding a sticky header
+/// with a box in it, rows of uneven boxes, a fixed and an absolute box in a
+/// row and a nested scroller in another. A scroll is the list's own: the
+/// delta projects the list (its scroll), the pins under it -- the sticky
+/// header, the fixed box, the absolute box placed from its viewport box --
+/// and what the nested scroller holds (its clip moved on the viewport), and
+/// leaves every row and what it holds as it was, which is a cold projection's to the bit. The
+/// tree placed through the scrolls stands where the viewport projection
+/// puts it, and a frame that scrolls both scrollers, or scrolls and moves,
+/// matches a full projection too.
+#[test]
+fn a_scroll_projects_the_scroller_and_its_pins_alone() {
+    let (mut b, root) = Builder::page(document(), 1, 400.0);
+    let list = b.element(
+        root,
+        LayoutStyle {
+            overflow_x: OverflowSpec::Auto,
+            overflow_y: OverflowSpec::Auto,
+            direction: Some(FlexDirection::Column),
+            flex_shrink: Some(0.0),
+            ..fixed(300.0, 120.0)
+        },
+    );
+    let header = b.element(
+        list,
+        LayoutStyle {
+            position: PositionSpec::Sticky,
+            offset_top: Some(LengthSpec::Px(0.0)),
+            flex_shrink: Some(0.0),
+            ..fixed(300.0, 8.0)
+        },
+    );
+    let held = b.element(header, fixed(30.0, 4.0));
+    let rows = uneven_rows(&mut b, list, 16);
+    let placed = |position, left: f32, top: f32| LayoutStyle {
+        position,
+        offset_left: Some(LengthSpec::Px(left)),
+        offset_top: Some(LengthSpec::Px(top)),
+        ..fixed(10.0, 10.0)
+    };
+    let fixed_box = b.element(rows[5][1], placed(PositionSpec::Fixed, 320.0, 10.0));
+    let absolute = b.element(rows[5][1], placed(PositionSpec::Absolute, 60.0, 2.0));
+    let inner = b.element(
+        rows[7][1],
+        LayoutStyle {
+            overflow_x: OverflowSpec::Auto,
+            overflow_y: OverflowSpec::Auto,
+            direction: Some(FlexDirection::Column),
+            ..fixed(60.0, 10.0)
+        },
+    );
+    let inner_rows = (0..3)
+        .map(|_| {
+            b.element(
+                inner,
+                LayoutStyle {
+                    flex_shrink: Some(0.0),
+                    ..fixed(60.0, 7.3)
+                },
+            )
+        })
+        .collect::<Vec<_>>();
+    let mut page = laid_out(b, rows, list);
+    let mut retained = snapshot(&page.context);
+    let carried = page
+        .rows
+        .iter()
+        .flatten()
+        .copied()
+        .chain([held])
+        .collect::<Vec<_>>();
+    let mut scroll = 0.0;
+    for step in 0..6 {
+        scroll += 13.37;
+        let at = format!("step {step}");
+        let mut queue = MutationQueue::new();
+        queue.set_scroll_offset(list, ScrollOffset { x: 0.0, y: scroll });
+        let updated = edit(&mut page, &mut retained, queue, &format!("{at}: scrolled"));
+        assert!(updated.contains(&list), "{at}: the list projects again");
+        assert_eq!(retained[&list].scroll, [0.0, scroll], "{at}: its scroll");
+        for id in &carried {
+            assert!(
+                !updated.contains(id),
+                "{at}: {id:?} scrolled with the list and keeps its bounds"
+            );
+        }
+        let mut expected = vec![list, header, fixed_box, absolute, inner];
+        expected.extend(&inner_rows);
+        expected.sort_unstable();
+        let mut got = updated.clone();
+        got.sort_unstable();
+        assert_eq!(got, expected, "{at}: the scroller and its pins alone");
+        assert_matches_viewport(&page.context, &retained, &format!("{at}: scrolled"));
+        // Both scrollers in one frame, then a scroll and a move.
+        let mut queue = MutationQueue::new();
+        queue.set_scroll_offset(
+            list,
+            ScrollOffset {
+                x: 0.0,
+                y: scroll + 0.5,
+            },
+        );
+        queue.set_scroll_offset(
+            inner,
+            ScrollOffset {
+                x: 0.0,
+                y: 1.1 * (step % 3) as f32,
+            },
+        );
+        edit(&mut page, &mut retained, queue, &format!("{at}: both"));
+        assert_matches_viewport(&page.context, &retained, &format!("{at}: both"));
+        let mut queue = MutationQueue::new();
+        queue.set_scroll_offset(list, ScrollOffset { x: 0.0, y: scroll });
+        row_height(&mut queue, page.rows[0][0], 20.0 + 1.37 * (step + 1) as f32);
+        edit(
+            &mut page,
+            &mut retained,
+            queue,
+            &format!("{at}: scrolled and moved"),
+        );
+        assert_matches_viewport(&page.context, &retained, &format!("{at}: moved"));
     }
 }

@@ -262,6 +262,8 @@ fn frame(
             for id in &work.input_hit_test {
                 if work.accessibility_moved.binary_search(id).is_ok() {
                     drained.accessibility_moved.push(*id);
+                } else if work.accessibility_scrolled.binary_search(id).is_ok() {
+                    drained.accessibility_scrolled.push(*id);
                 } else {
                     seeded_input.insert(*id);
                 }
@@ -317,6 +319,21 @@ fn frame(
             .retain(|id| !seeded_input.contains(id));
         drained.accessibility_moved.sort_unstable();
         drained.accessibility_moved.dedup();
+        drained.accessibility_scrolled.sort_unstable();
+        drained.accessibility_scrolled.dedup();
+        // A box one pass moved and another scrolled is neither alone: its
+        // subtree projects again.
+        let moved = std::mem::take(&mut drained.accessibility_moved);
+        let scrolled = std::mem::take(&mut drained.accessibility_scrolled);
+        drained.accessibility_scrolled = scrolled
+            .iter()
+            .copied()
+            .filter(|id| !seeded_input.contains(id) && moved.binary_search(id).is_err())
+            .collect();
+        drained.accessibility_moved = moved
+            .into_iter()
+            .filter(|id| scrolled.binary_search(id).is_err())
+            .collect();
         drained.layout_moved.sort_unstable();
         drained.layout_moved.dedup();
         drained.layout_reshaped.sort_unstable();

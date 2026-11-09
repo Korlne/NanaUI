@@ -3924,6 +3924,17 @@ pub struct AccessibilityNode {
     /// scrolls -- and on nodes inside a 3D context, whose `bounds` are the
     /// box around their projected corners, as in the viewport.
     pub transform: Option<nana_ui_core::PaintTransform>,
+    /// How far the node scrolls what it holds, in its own space: its
+    /// children's bounds are offsets in its space moved by `-scroll`
+    /// ([`Self::children_to_parent`]), so a scroll changes this node alone
+    /// and not the boxes it carries. Its scroll offset, scaled into its space
+    /// where its box stands upright there; `[0, 0]` on a node that does not
+    /// scroll, on one whose children are placed from their viewport boxes
+    /// (inside a 3D context, a modal frame or a motion overlay: their bounds
+    /// then hold the scroll), and in viewport projections. A platform tree
+    /// takes [`Self::children_to_parent`] as the node's transform and its
+    /// own box moved by `scroll` as its bounds, as AccessKit does.
+    pub scroll: [f32; 2],
     /// What the node's clip chain leaves of the viewport, in viewport
     /// coordinates: the overflow containers whose clip reaches it (#201),
     /// each where it sits after the scroll above it. `None` when no
@@ -3949,6 +3960,20 @@ impl AccessibilityNode {
         placed
     }
 
+    /// The map from the space this node's children's bounds are offsets in
+    /// into its parent's: [`Self::to_parent`] after the move by `-scroll`.
+    pub fn children_to_parent(&self) -> nana_ui_core::PaintTransform {
+        let placed = self.to_parent();
+        if self.scroll == [0.0, 0.0] {
+            return placed;
+        }
+        placed.then(nana_ui_core::PaintTransform {
+            e: -self.scroll[0],
+            f: -self.scroll[1],
+            ..nana_ui_core::PaintTransform::IDENTITY
+        })
+    }
+
     /// The node's box in its own space: `bounds`' size at the origin.
     pub fn local_bounds(&self) -> LayoutBox {
         LayoutBox {
@@ -3962,7 +3987,8 @@ impl AccessibilityNode {
 /// Where every node of a relative accessibility projection
 /// ([`crate::UiWorld::project_accessibility`], its deltas applied) stands in
 /// the viewport: [`AccessibilityNode::to_parent`] multiplied down each
-/// node's parent chain. A node whose parent is not among the nodes is
+/// node's parent chain, each parent's after its scroll
+/// ([`AccessibilityNode::children_to_parent`]). A node whose parent is not among the nodes is
 /// placed from the viewport, as a root is.
 ///
 /// For automation, hit queries and tests that hold the relative tree; a
@@ -3970,7 +3996,16 @@ impl AccessibilityNode {
 /// [`crate::UiWorld::project_accessibility_in_viewport`].
 #[derive(Debug, Clone, Default)]
 pub struct AccessibilityPlacements {
-    to_viewport: std::collections::HashMap<StableNodeId, (nana_ui_core::PaintTransform, LayoutBox)>,
+    /// Each node's map to the viewport, its own box, and the map its
+    /// children's space takes to the viewport.
+    to_viewport: std::collections::HashMap<
+        StableNodeId,
+        (
+            nana_ui_core::PaintTransform,
+            LayoutBox,
+            nana_ui_core::PaintTransform,
+        ),
+    >,
 }
 
 impl AccessibilityPlacements {
@@ -3997,11 +4032,13 @@ impl AccessibilityPlacements {
                 let above = node
                     .parent
                     .and_then(|parent| to_viewport.get(&parent))
-                    .map_or(nana_ui_core::PaintTransform::IDENTITY, |(placed, _)| {
-                        *placed
-                    });
+                    .map_or(
+                        nana_ui_core::PaintTransform::IDENTITY,
+                        |(_, _, children)| *children,
+                    );
                 let placed = above.then(node.to_parent());
-                to_viewport.insert(id, (placed, node.local_bounds()));
+                let children = above.then(node.children_to_parent());
+                to_viewport.insert(id, (placed, node.local_bounds(), children));
             }
         }
         Self { to_viewport }
@@ -4009,13 +4046,13 @@ impl AccessibilityPlacements {
 
     /// The map from `id`'s space to the viewport.
     pub fn transform(&self, id: StableNodeId) -> Option<nana_ui_core::PaintTransform> {
-        self.to_viewport.get(&id).map(|(placed, _)| *placed)
+        self.to_viewport.get(&id).map(|(placed, ..)| *placed)
     }
 
     /// `id`'s box corners in the viewport: top left, top right, bottom
     /// right, bottom left of its own box.
     pub fn corners(&self, id: StableNodeId) -> Option<[[f32; 2]; 4]> {
-        let (placed, local) = self.to_viewport.get(&id)?;
+        let (placed, local, _) = self.to_viewport.get(&id)?;
         let point = |x: f32, y: f32| {
             [
                 placed.a * x + placed.c * y + placed.e,
@@ -4055,7 +4092,7 @@ impl AccessibilityPlacements {
     /// Whether the viewport point `(x, y)` is inside `id`'s box, as a
     /// platform hit test through the node's transforms finds it.
     pub fn contains(&self, id: StableNodeId, x: f32, y: f32) -> bool {
-        let Some((placed, local)) = self.to_viewport.get(&id) else {
+        let Some((placed, local, _)) = self.to_viewport.get(&id) else {
             return false;
         };
         let det = placed.a * placed.d - placed.b * placed.c;

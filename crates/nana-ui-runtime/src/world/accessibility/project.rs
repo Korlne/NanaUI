@@ -367,6 +367,7 @@ impl UiWorld {
             focused: visible && self.input.focused.get(&document) == Some(&id),
             bounds,
             transform: None,
+            scroll: [0.0, 0.0],
             clip: if plain {
                 None
             } else {

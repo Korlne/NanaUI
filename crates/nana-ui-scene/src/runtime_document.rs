@@ -187,6 +187,7 @@ impl RuntimeDocument {
         let mut hit_geometry_changed = false;
         let mut accessibility_subtrees = BTreeSet::new();
         let mut accessibility_moved = BTreeSet::new();
+        let mut accessibility_scrolled = BTreeSet::new();
         let mut transform_kept: Vec<StableNodeId> = Vec::new();
         let mut layout_moved: Vec<StableNodeId> = Vec::new();
         let mut layout_reshaped: Vec<StableNodeId> = Vec::new();
@@ -239,9 +240,14 @@ impl RuntimeDocument {
             // nodes did not. The retained layout writer supplies the exact
             // moved nodes through `WriteLayout`. A box layout only moved with
             // its parent is no subtree seed in the pass that moved it.
+            // A box only its own scroll marked keeps what it holds in its
+            // scrolled space: of that, only what does not scroll with it
+            // projects again.
             for &id in &work.input_hit_test {
                 if work.accessibility_moved.binary_search(&id).is_ok() {
                     accessibility_moved.insert(id);
+                } else if work.accessibility_scrolled.binary_search(&id).is_ok() {
+                    accessibility_scrolled.insert(id);
                 } else {
                     accessibility_subtrees.insert(id);
                 }
@@ -275,13 +281,25 @@ impl RuntimeDocument {
             || !accessibility_removed.is_empty()
             || !accessibility_subtrees.is_empty()
             || !accessibility_moved.is_empty()
+            || !accessibility_scrolled.is_empty()
         {
             let started = std::time::Instant::now();
+            // A box one pass moved and another scrolled is neither alone: its
+            // subtree projects again.
+            let both = accessibility_moved
+                .intersection(&accessibility_scrolled)
+                .copied()
+                .collect::<Vec<_>>();
+            accessibility_subtrees.extend(both);
             let work = SystemWork {
                 generation,
                 accessibility: accessibility_dirty.into_iter().collect(),
                 accessibility_removals: accessibility_removed.into_iter().collect(),
                 accessibility_moved: accessibility_moved
+                    .difference(&accessibility_subtrees)
+                    .copied()
+                    .collect(),
+                accessibility_scrolled: accessibility_scrolled
                     .difference(&accessibility_subtrees)
                     .copied()
                     .collect(),
@@ -301,8 +319,12 @@ impl RuntimeDocument {
                     transform_kept
                 },
                 input_hit_test: accessibility_subtrees
-                    .union(&accessibility_moved)
+                    .iter()
+                    .chain(&accessibility_moved)
+                    .chain(&accessibility_scrolled)
                     .copied()
+                    .collect::<BTreeSet<_>>()
+                    .into_iter()
                     .collect(),
                 ..Default::default()
             };
@@ -1372,17 +1394,31 @@ mod tests {
             runtime.context().world().hit_test(document, 10.0, 10.0),
             Some(ids[2])
         );
-        let accessible = update
-            .accessibility
-            .updated
-            .iter()
-            .find(|node| node.id == ids[2])
-            .unwrap();
+        // The scroll is the scroller's and the frozen move the row's: the
+        // button keeps its offset in the row, and the delta hands out the
+        // two boxes that changed.
+        let updated = |id| {
+            update
+                .accessibility
+                .updated
+                .iter()
+                .find(|node| node.id == id)
+                .cloned()
+        };
+        assert_eq!(updated(ids[0]).unwrap().scroll, [0.0, 60.0]);
+        assert_eq!(updated(ids[1]).unwrap().bounds.y, 60.0);
+        let tree = runtime.context().world().project_accessibility(document);
+        let accessible = tree.iter().find(|node| node.id == ids[2]).unwrap();
         assert_eq!(accessible.bounds.y, 0.0);
         assert_eq!(
             runtime.scene().draw_node_bounds(ids[2]).unwrap().y,
             accessible.bounds.y
         );
+        // Through the scroll and the move, it stands where it is hit.
+        let placed = nana_ui_runtime::AccessibilityPlacements::new(&tree)
+            .viewport_bounds(ids[2])
+            .unwrap();
+        assert_eq!(placed.y, 0.0);
     }
 
     #[test]

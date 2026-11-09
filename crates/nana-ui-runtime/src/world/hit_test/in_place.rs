@@ -20,7 +20,7 @@ impl UiWorld {
     ///
     /// `skips` carries the unshifted entries above deep parents from one
     /// entry to the next ([`HitIndex::inherited_shift_skipping`]).
-    fn rebuilt_hit_entry_in_place(
+    pub(super) fn rebuilt_hit_entry_in_place(
         &self,
         document: DocumentId,
         id: StableNodeId,
@@ -108,7 +108,7 @@ impl UiWorld {
     /// [`Self::rebuilt_hit_entry_in_place`]) in place over their children, and
     /// refresh the bounds above them once each. An entry that only moved
     /// takes a new origin this way; what hangs below it keeps its own.
-    fn replace_hit_entries_in_place(
+    pub(super) fn replace_hit_entries_in_place(
         &mut self,
         document: DocumentId,
         rebuilt: Vec<(StableNodeId, HitEntry)>,
@@ -146,7 +146,7 @@ impl UiWorld {
     /// The pinned entries ([`HitEntry::pinned`]) below a node of `dirty`
     /// and not in it: they read geometry a change above them can move,
     /// so they are built again although nothing marked them.
-    fn pinned_hit_entries_under(
+    pub(super) fn pinned_hit_entries_under(
         &mut self,
         document: DocumentId,
         dirty: &[StableNodeId],
@@ -236,9 +236,12 @@ impl UiWorld {
         // the patches after it build again.
         // The checks walk every entry in full; the walks the rebuild took
         // are what `deep_walk_tests` counts.
+        // The eligibility audit exists under `debug_assertions` alone, as at
+        // its other sites: a release test build checks the moved entries.
         #[cfg(test)]
         crate::world::page_origins::steps::uncounted(|| {
             self.check_moved_hit_entries(document, &_replaced);
+            #[cfg(debug_assertions)]
             self.audit_hit_eligibility("scoped rebuild");
         });
         #[cfg(all(not(test), feature = "layout-verify"))]

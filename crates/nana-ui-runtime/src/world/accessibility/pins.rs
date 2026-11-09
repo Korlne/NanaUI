@@ -289,6 +289,16 @@ impl UiWorld {
         }) {
             return false;
         }
+        // Under a parent that scrolls, its bounds are its viewport box less
+        // the parent's, in the space the parent's scroll moves: a scroll
+        // changes them where its viewport box stays (a stuck `sticky` box).
+        if parent.is_some_and(|parent| {
+            self.nodes
+                .get(parent)
+                .is_some_and(|record| record.scroll_offset != ScrollOffset::default())
+        }) {
+            return false;
+        }
         [Some(id), parent].into_iter().flatten().all(|node| {
             !self.is_modal_frame(node)
                 && (self.axis_aligned(node, memo)

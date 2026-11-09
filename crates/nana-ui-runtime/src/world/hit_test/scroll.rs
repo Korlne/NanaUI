@@ -61,15 +61,30 @@ impl UiWorld {
         node.entry.scroll[1] -= delta[1];
         index.shifted = true;
         index.refresh_bounds(scroller);
-        // Ordinary descendants share one lazy scroll shift. Sticky branches
-        // additionally change their local placement, so rebase just those
-        // branches against current layout instead of translating them twice.
+        // Ordinary descendants share one lazy scroll shift. Sticky boxes
+        // additionally change their local placement: each is built again
+        // against current layout. What it holds is in its own box's
+        // coordinates and keeps its entries, so the sticky entry alone is
+        // replaced in place where it hands its children what it did
+        // ([`Self::rebuilt_hit_entry_in_place`]); a branch holding a pinned
+        // entry, or one that cannot be, is patched whole, as before.
         let mut sticky = self.sticky_nodes.affected(scroller);
         sticky.sort_by_key(|id| {
             std::iter::successors(self.parent_id(*id), |id| self.parent_id(*id)).count()
         });
+        let pinned = self.pinned_hit_entries_under(document, &sticky);
         for id in sticky {
-            if !self.patch_hit_subtree(document, id) {
+            let mut skips = ShiftSkips::default();
+            let rebuilt = (!pinned
+                .iter()
+                .any(|&pin| self.is_descendant_or_self(pin, id)))
+            .then(|| self.rebuilt_hit_entry_in_place(document, id, &mut skips))
+            .flatten();
+            if let Some(entry) = rebuilt {
+                let _replaced = self.replace_hit_entries_in_place(document, vec![(id, entry)]);
+                #[cfg(any(test, feature = "layout-verify"))]
+                self.check_moved_hit_entries(document, &_replaced);
+            } else if !self.patch_hit_subtree(document, id) {
                 self.rebuild_hit_test(document);
                 break;
             }
