@@ -347,6 +347,11 @@ impl EmptyState {
         style.border = None;
         let layout = Arc::make_mut(&mut style.layout);
         layout.width = Some(LengthSpec::Percent(100.0));
+        // A flex column: icon, title, message and action keep their own
+        // widths and line up centred (or at the start when compact).
+        layout
+            .display
+            .get_or_insert(nana_ui_core::DisplaySpec::Flex);
         layout.direction = Some(FlexDirection::Column);
         layout.align_items = if self.compact {
             AlignSpec::Start

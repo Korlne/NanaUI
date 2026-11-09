@@ -1024,6 +1024,12 @@ impl ComponentView for Button {
             );
         }
         let mut effective_style = self.style.clone();
+        // Retained children are a flex line: they keep their own widths and
+        // are aligned across it, which a block container would not do.
+        if effective_style.layout.display.is_none() {
+            Arc::make_mut(&mut effective_style.layout).display =
+                Some(nana_ui_core::DisplaySpec::Flex);
+        }
         // Retained children share the label's content box, so they sit where
         // the label does: centred vertically and placed across by
         // `content_align`. An author style that already aligns them wins;

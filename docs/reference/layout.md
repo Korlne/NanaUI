@@ -66,7 +66,7 @@ transform、hover 和 accessibility 更新不会 bump。
   它由父级的 context、节点解析后的布局意图和节点自己的内容推出来，是一个视图，
   不是组件，也不另存一棵树。
 - **建立的 context**（`FormattingContextKind`）：这个节点怎么排自己的子项。布局记下它
-  实际跑的那一种：`Flow`（`display: block` 或不写）、`Flex`、`Grid`、`Inline`（在流
+  实际跑的那一种：`Flow`（`display: block` 或不写，两者是同一种块布局）、`Flex`、`Grid`、`Inline`（在流
   子项里有行内级盒子）、`Layers`（`display: layers`，叠层）、`Overlay`（模态框按槽位放
   子项）。有文字的叶子为自己的文字建立
   `Inline`，字形归 nana-text，不变成布局节点；空叶子不建立 context。
@@ -912,7 +912,7 @@ grid 的列是 inline 轴上的轨道。行是 block 轴上的轨道。这是 CS
 
 直接构造 `LayoutStyle { display: Grid }`、不经 css_map 时，`align-items` 默认 `start`。手写测试依赖此项。Default 无法按 display 区分「未写」和显式 `start`。经 `display:grid` 解析，会写成 `stretch`。
 
-块布局没有 `align-items`。显式写了 `display: block` 或 `flow-root`、沿块轴排子项的容器，按 CSS 块布局排：没写 `align-self` 的块级子项 `auto` 宽撑满包含块，减去左右外边距（CSS 2.1 §10.3.3），不论 `align_items` 是什么（`LayoutStyle::child_align_items`）。所以直接构造 `LayoutStyle { display: Some(Block) }`（例如经 `Stack::from_layout`）和经 css_map 解析的 `display: block` 得到同一个盒子。不写 `display` 的容器是 NanaUI 默认的流（Stack 语义），子项仍按 `align_items` 对齐，缺省 `start`、按内容收缩。
+块布局没有 `align-items`。不写 `display`、写 `display: block` 或 `flow-root`、沿块轴排子项的容器（`LayoutStyle::stacks_as_block`），按 CSS 块布局排：没写 `align-self` 的块级子项 `auto` 宽撑满包含块，减去左右外边距（CSS 2.1 §10.3.3），不论 `align_items` 是什么（`LayoutStyle::child_align_items`）。所以 `LayoutStyle::default()`、直接构造的 `LayoutStyle { display: Some(Block) }`（例如经 `Stack::from_layout`）和经 css_map 解析的 `display: block` 得到同一个盒子。三种子项保留自己的宽度：写了 `align-self` 的（流里照样生效）、宽度不是 `auto` 的（`Px`、百分比、`Fill`、`Shrink`、`fit-content` 等）、有自然尺寸的替换内容（图片等，CSS 2.1 §10.3.4）和书写模式与容器正交的子项（它在这一轴上的是块尺寸，由内容定，CSS Writing Modes 3 §7.3）。沿行排（`direction: Row`）的流和 flex、grid、叠层容器仍按 `align_items` 对齐。要子项按内容收缩、居中或靠后，把容器写成 `display: Flex`（`Stack` 预设都是），或给子项写 `align-self` / `width: Shrink`。
 
 `display: layers` 是 NanaUI 的扩展值，见上文 `Layers`。它不写入 `stretch`：叠层的子项默认按起点对齐，和 ZStack / Box 一样；`justify-items` 没写时也按起点，不按网格的 `stretch`。
 

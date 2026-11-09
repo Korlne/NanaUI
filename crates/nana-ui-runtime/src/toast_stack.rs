@@ -135,6 +135,11 @@ impl ToastStack {
         let recipe = world.theme().recipes().toast();
         let mut style = self.style.clone();
         let layout = Arc::make_mut(&mut style.layout);
+        // A flex column: `align_items` places the toasts across it (the
+        // alignment `place_in` chose), which a block container would ignore.
+        layout
+            .display
+            .get_or_insert(nana_ui_core::DisplaySpec::Flex);
         layout.direction = Some(FlexDirection::Column);
         // The containing block of the slot a toast is measured in, also
         // before the stack is placed in its viewport.

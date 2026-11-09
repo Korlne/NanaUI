@@ -545,6 +545,10 @@ fn migration_runtime_document(
     let mut root_style = NodeStyle::default();
     {
         let layout = Arc::make_mut(&mut root_style.layout);
+        // The controls stand at their own sizes, stacked from the start: a
+        // flex column aligned to the start, not a block that stretches them.
+        layout.display = Some(nana_ui_core::DisplaySpec::Flex);
+        layout.direction = Some(nana_ui_core::FlexDirection::Column);
         layout.width = Some(LengthSpec::Fill);
         layout.height = Some(LengthSpec::Fill);
         layout.padding_left = Some(LengthSpec::Px(24.0));

@@ -65,7 +65,7 @@ Layout splits a node into three things, none of which replaces another:
   It is derived from the parent's context, the node's resolved layout intent, and the node's own content. It is a view,
   not a component, and it is not stored as another tree.
 - **Established context** (`FormattingContextKind`): how this node lays out its children. Layout records the one it
-  actually ran: `Flow` (`display: block` or unset), `Flex`, `Grid`, `Inline` (there are inline-level boxes among the in-flow
+  actually ran: `Flow` (`display: block` or unset, the same block layout), `Flex`, `Grid`, `Inline` (there are inline-level boxes among the in-flow
   children), `Layers` (`display: layers`, stacking), `Overlay` (a modal places its children by slot). A leaf with text establishes
   `Inline` for its own text; the glyphs belong to nana-text and do not become layout nodes. An empty leaf establishes no context.
 
@@ -884,7 +884,7 @@ Writing `subgrid` as a single token in a track list, such as `subgrid 80px`, sti
 
 When you build `LayoutStyle { display: Grid }` directly, without going through css_map, `align-items` defaults to `start`. Hand-written tests rely on this. `Default` cannot tell "not written" from an explicit `start` by display. Parsed through `display:grid`, it writes `stretch`.
 
-Block layout has no `align-items`. A container with an explicit `display: block` or `flow-root` that stacks its children down the block axis lays them out as CSS block layout does: a block-level child with no `align-self` and an `auto` width fills the containing block less its left and right margins (CSS 2.1 §10.3.3), whatever `align_items` says (`LayoutStyle::child_align_items`). So `LayoutStyle { display: Some(Block) }` built directly (through `Stack::from_layout`, say) and `display: block` parsed by css_map give the same box. A container with no `display` is NanaUI's default flow (`Stack` semantics): its children still align by `align_items`, `start` by default, sized to their content.
+Block layout has no `align-items`. A container with no `display`, `display: block` or `flow-root` that stacks its children down the block axis (`LayoutStyle::stacks_as_block`) lays them out as CSS block layout does: a block-level child with no `align-self` and an `auto` width fills the containing block less its left and right margins (CSS 2.1 §10.3.3), whatever `align_items` says (`LayoutStyle::child_align_items`). So `LayoutStyle::default()`, `LayoutStyle { display: Some(Block) }` built directly (through `Stack::from_layout`, say) and `display: block` parsed by css_map give the same box. Some children keep their own width: one that names `align-self` (it still applies in the flow), one whose width is not `auto` (`Px`, a percentage, `Fill`, `Shrink`, `fit-content` and so on), replaced content with a natural size (an image, say; CSS 2.1 §10.3.4), and a child whose writing mode is orthogonal to the container's (what it has along that axis is its block size, which its content gives; CSS Writing Modes 3 §7.3). A flow laid along a row (`direction: Row`) and every flex, grid and layers container still align by `align_items`. To keep children at their content width, centred or at the end, make the container `display: Flex` (every `Stack` preset is), or give the child `align-self` or `width: Shrink`.
 
 `display: layers` is a NanaUI extension value; see `Layers` above. It does not write `stretch`: children of a stack align to the start by default, as with ZStack / Box; when `justify-items` is not written they align to the start too, not to grid's `stretch`.
 

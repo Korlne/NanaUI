@@ -418,13 +418,11 @@ fn replay_sequential_run(
             child_fonts,
         );
         let mut child_size = child_intrinsic;
-        if align == AlignSpec::Stretch
-            && !cross_axis_is_definite(
-                child_style,
-                direction,
-                has_natural_ratio(nodes.world, child),
-            )
-        {
+        if align == AlignSpec::Stretch && {
+            let natural_ratio = has_natural_ratio(nodes.world, child);
+            !cross_axis_is_definite(child_style, direction, natural_ratio)
+                && !block_keeps_content_size(&plan.style, writing, child_style, natural_ratio)
+        } {
             let cross_available = container_cross - cross_margin(margin, direction);
             set_cross_extent(&mut child_size, direction, cross_available.max(0.0));
         }
@@ -3043,14 +3041,11 @@ pub(super) fn arrange_flow<'a>(
             // An atom on a line of an ordinary block sits on the line's
             // baseline whatever `align-self` says, and is not stretched.
             let on_baseline_line = line_atom_baseline.is_some() && child_style.is_inline_level();
-            if align == AlignSpec::Stretch
-                && !on_baseline_line
-                && !cross_axis_is_definite(
-                    child_style,
-                    direction,
-                    has_natural_ratio(nodes.world, child),
-                )
-            {
+            if align == AlignSpec::Stretch && !on_baseline_line && {
+                let natural_ratio = has_natural_ratio(nodes.world, child);
+                !cross_axis_is_definite(child_style, direction, natural_ratio)
+                    && !block_keeps_content_size(style, writing, child_style, natural_ratio)
+            } {
                 set_cross_extent(&mut child_size, direction, cross_available.max(0.0));
             }
             fill_auto_height_from_aspect_ratio(

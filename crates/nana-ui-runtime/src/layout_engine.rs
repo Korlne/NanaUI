@@ -4557,6 +4557,30 @@ fn aspect_ratio_is_usable(style: &nana_ui_core::LayoutStyle) -> bool {
     style.aspect_ratio.is_some_and(|r| r.is_finite() && r > 0.0)
 }
 
+/// Whether `child`, which names no alignment of its own, keeps the size
+/// its content gives it across a block container that would otherwise
+/// stretch it. Block layout fills an `auto`-width block box along the
+/// container's inline axis, but not every child: a replaced element takes
+/// the width its natural size gives it (CSS 2.1 §10.3.4, §10.3.2), and a
+/// child in an orthogonal writing mode has its block size there, which its
+/// content gives (CSS Writing Modes 3 §7.3). Flex and grid stretch both.
+///
+/// `natural_ratio` is [`has_natural_ratio`] for `child`. A child inherits
+/// its container's writing mode unless it declares one.
+fn block_keeps_content_size(
+    container: &nana_ui_core::LayoutStyle,
+    container_writing: nana_ui_core::WritingContext,
+    child_style: &nana_ui_core::LayoutStyle,
+    natural_ratio: bool,
+) -> bool {
+    child_style.align_self.is_none()
+        && container.stacks_as_block()
+        && (natural_ratio
+            || child_style
+                .writing_mode
+                .is_some_and(|mode| mode.is_vertical() != container_writing.is_vertical()))
+}
+
 /// Whether `id` shows replaced content whose resource reported a natural
 /// size: a preferred aspect ratio of its own, which stretch alignment keeps
 /// as it keeps a declared `aspect-ratio` (Issue #202).

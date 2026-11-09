@@ -7776,6 +7776,7 @@ fn layout_style_invalidation(
     )
 }
 
+mod block_stretch;
 mod deep_walk_tests;
 mod float_containment;
 #[cfg(test)]

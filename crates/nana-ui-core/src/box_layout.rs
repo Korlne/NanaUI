@@ -4026,21 +4026,29 @@ impl LayoutStyle {
     /// The alignment this container's children take when they name none:
     /// what [`Self::resolved_align_self`] falls back to.
     ///
-    /// A `display: block` or `flow-root` container stacking its children
-    /// down the block axis lays them out as CSS block layout does, which has
-    /// no `align-items`: a block-level child whose width is `auto` fills the
-    /// containing block, less its margins (CSS 2.1 §10.3.3). Every other
-    /// container, the unset `display` NanaUI stacks by default among them,
-    /// aligns by its own `align_items`.
+    /// A block container stacking its children down the block axis lays
+    /// them out as CSS block layout does, which has no `align-items`: a
+    /// block-level child whose width is `auto` fills the containing block,
+    /// less its margins (CSS 2.1 §10.3.3). That is `display: block`,
+    /// `flow-root`, and an unset `display`, which is the same flow. A
+    /// container laid along a row, and every flex, grid and layers
+    /// container, aligns by its own `align_items`.
     pub fn child_align_items(&self) -> AlignSpec {
-        match self.display {
-            Some(DisplaySpec::Block | DisplaySpec::FlowRoot)
-                if self.direction != Some(FlexDirection::Row) =>
-            {
-                AlignSpec::Stretch
-            }
-            _ => self.align_items,
+        if self.stacks_as_block() {
+            AlignSpec::Stretch
+        } else {
+            self.align_items
         }
+    }
+
+    /// Whether this container stacks its children as CSS block layout does
+    /// (see [`Self::child_align_items`]): `display` unset, `block` or
+    /// `flow-root`, not laid along a row.
+    pub fn stacks_as_block(&self) -> bool {
+        matches!(
+            self.display,
+            None | Some(DisplaySpec::Block | DisplaySpec::FlowRoot)
+        ) && self.direction != Some(FlexDirection::Row)
     }
 
     pub fn gap_or(&self, default: f32) -> f32 {

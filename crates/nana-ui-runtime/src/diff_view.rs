@@ -439,10 +439,15 @@ fn mount_hunk(
     let mut hunk_style = NodeStyle::default().surface(SemanticColorRole::Subtle);
     {
         let style = Arc::make_mut(&mut hunk_style.layout);
+        // A flex column: the review buttons and the lines keep their own
+        // widths, which a block container would stretch across the hunk.
+        style.display = Some(nana_ui_core::DisplaySpec::Flex);
         style.direction = Some(FlexDirection::Column);
         style.gap = Some(LengthSpec::Px(2.0));
         style.padding = Some(LengthSpec::Px(8.0));
         style.border_radius = Some(6.0);
+        // As wide as its widest line, not stretched across the body.
+        style.align_self = Some(AlignSpec::Start);
     }
     ui.with_child(
         format!("hunk-{hunk_index}"),
@@ -514,6 +519,8 @@ fn mount_split_column(
     let mut column = NodeStyle::default();
     {
         let style = Arc::make_mut(&mut column.layout);
+        // A flex column, like the hunk: each line keeps its own width.
+        style.display = Some(nana_ui_core::DisplaySpec::Flex);
         style.direction = Some(FlexDirection::Column);
         style.flex_grow = Some(1.0);
         style.min_width = Some(LengthSpec::Px(0.0));

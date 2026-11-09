@@ -573,6 +573,10 @@ fn runtime_fixture(
     let mut root_style = NodeStyle::default();
     {
         let layout = Arc::make_mut(&mut root_style.layout);
+        // Each fixture stands at its own size, stacked from the start: a
+        // flex column aligned to the start, not a block that stretches it.
+        layout.display = Some(nana_ui_core::DisplaySpec::Flex);
+        layout.direction = Some(nana_ui_core::FlexDirection::Column);
         layout.width = Some(LengthSpec::Percent(100.0));
         layout.height = Some(LengthSpec::Percent(100.0));
         layout.padding_left = Some(LengthSpec::Px(20.0));

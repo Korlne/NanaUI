@@ -472,7 +472,7 @@ fn issue256_a_height_back_to_fill_under_an_auto_parent_lays_out_again() {
 /// settle there too.
 #[test]
 fn issue256_a_word_wider_than_its_row_keeps_its_width_after_a_reshape() {
-    use nana_ui_core::{LayoutStyle, LengthSpec, PositionSpec};
+    use nana_ui_core::{DisplaySpec, LayoutStyle, LengthSpec, PositionSpec};
     let document = DocumentId::new(1).unwrap();
     let viewport = LayoutViewport::new(320.0, 480.0);
     let label = |height: f32| {
@@ -490,6 +490,9 @@ fn issue256_a_word_wider_than_its_row_keeps_its_width_after_a_reshape() {
                 queue.set_style(
                     node(row),
                     styled(LayoutStyle {
+                        // A flex column keeps the label at its own width;
+                        // a block row would stretch it to the row's.
+                        display: Some(DisplaySpec::Flex),
                         position: PositionSpec::Absolute,
                         offset_top: Some(LengthSpec::Px(top)),
                         offset_left: Some(LengthSpec::Px(0.0)),
@@ -521,6 +524,8 @@ fn issue256_a_word_wider_than_its_row_keeps_its_width_after_a_reshape() {
                 2,
                 1,
                 LayoutStyle {
+                    // A flex column keeps the list at its own (empty) width.
+                    display: Some(DisplaySpec::Flex),
                     width: Some(LengthSpec::Px(320.0)),
                     ..LayoutStyle::default()
                 },
