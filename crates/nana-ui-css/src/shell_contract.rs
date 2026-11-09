@@ -63,6 +63,13 @@ pub fn apply_class_layout_hints(layout: &mut LayoutStyle, class_names: &[String]
                     layout.flex_grow = Some(1.0);
                 }
             }
+            // Tailwind's `flex`: the only utility that sets `display`. The
+            // direction, `items-*` and `justify-*` utilities set their one
+            // property, as in CSS: without `flex` (or `display: flex` in the
+            // stylesheet) a block has no `align-items` to read.
+            "flex" if layout.display.is_none() => {
+                layout.display = Some(DisplaySpec::Flex);
+            }
             "items-center" => layout.align_items = AlignSpec::Center,
             "items-start" => layout.align_items = AlignSpec::Start,
             "items-end" => layout.align_items = AlignSpec::End,

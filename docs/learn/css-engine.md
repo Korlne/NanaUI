@@ -78,7 +78,7 @@ title: CSS 引擎：nana-ui-css
 
 ### 4. 属性映射表：`LayoutStyleCss`（`css_map.rs`）
 
-`crates/nana-ui-css/src/css_map.rs`（约 9,100 行）将 CSS 属性键值对写入 `nana_ui_core::LayoutStyle`（通过 `LayoutStyleCss` trait，`:1862`）。颜色解析走 `CssPaintColor`（`style.rs:30`），保留 `Oklch` / `Hsv` / `Srgb` 精度并通过 `map_css_color_for_tokens`（`:635`）执行语义色令牌策略。宿主工具类（如 `gap-sm`、`p-*`、`w-full`、`flex-1`、`rounded*`）集中隔离在 `crates/nana-ui-css/src/shell_contract.rs` 中，与标准 CSS 语法解析保持清晰分界。
+`crates/nana-ui-css/src/css_map.rs`（约 9,100 行）将 CSS 属性键值对写入 `nana_ui_core::LayoutStyle`（通过 `LayoutStyleCss` trait，`:1862`）。颜色解析走 `CssPaintColor`（`style.rs:30`），保留 `Oklch` / `Hsv` / `Srgb` 精度并通过 `map_css_color_for_tokens`（`:635`）执行语义色令牌策略。宿主工具类（如 `gap-sm`、`p-*`、`w-full`、`flex-1`、`rounded*`）集中隔离在 `crates/nana-ui-css/src/shell_contract.rs` 中，与标准 CSS 语法解析保持清晰分界。工具类与 Tailwind 同义：只有 `flex` 设 `display: flex`（样式表已写 `display` 时不覆盖）；`flex-row` / `flex-col`、`items-*`、`justify-*` 各只设自己那一项。所以 `flex-col items-center` 不写 `flex` 时是块容器，块布局没有 `align-items`，子项不会居中，要写 `flex flex-col items-center`。
 
 ### 5. 各 `@` 规则与伪类的编译去向
 
