@@ -210,6 +210,27 @@ pub(super) fn collect_floated_children_into(
     Ok(())
 }
 
+/// Whether a box with `style`, taking part in its parent's `parent` context
+/// (`None` for a root), establishes a block formatting context of its own
+/// (CSS 2.1 §9.4.1, CSS Display 3 §2.1): a root, a float, an absolutely
+/// positioned box, an inline-block, a box whose `overflow` is not `visible`,
+/// `display: flow-root`, and every flex, grid, layer and overlay item. Such a
+/// box's `auto` height contains its floats (CSS 2.1 §10.6.7); any other block
+/// lets them hang out of its content box.
+pub(super) fn establishes_block_formatting_context(
+    style: &LayoutStyle,
+    parent: Option<Context>,
+) -> bool {
+    let own = style.is_floated()
+        || style.position.is_out_of_flow()
+        || style.overflow_x != nana_ui_core::OverflowSpec::Visible
+        || style.overflow_y != nana_ui_core::OverflowSpec::Visible
+        || style
+            .display
+            .is_some_and(|display| display == DisplaySpec::InlineBlock || display.is_flow_root());
+    own || !matches!(parent, Some(Context::Flow | Context::Inline))
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(super) struct PackedFloat {
     pub(super) id: StableNodeId,

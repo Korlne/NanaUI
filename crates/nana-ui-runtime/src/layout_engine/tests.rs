@@ -7734,3 +7734,60 @@ fn issue199_inline_span_keeps_atomic_descendants_and_unboxes_only_real_blocks() 
 fn a_pass_input_slot_stays_small() {
     assert!(std::mem::size_of::<Option<(StableNodeId, PassInput<'static>)>>() <= 56);
 }
+
+/// CSS block layout has no `align-items`: under `display: block` or
+/// `flow-root` a block-level child whose width is `auto` fills the
+/// containing block less its margins, as CSS 2.1 §10.3.3 and Taffy have it,
+/// though `align_items` is left at the Rust default `Start`. A container
+/// with no `display` keeps NanaUI's default stack, its children as wide as
+/// their content.
+#[test]
+fn block_children_with_auto_width_fill_the_containing_block() {
+    let parent = |id: &str, display: Option<DisplaySpec>| StyleLayoutNode {
+        id: id.into(),
+        style: LayoutStyle {
+            display,
+            width: Some(LengthSpec::Px(400.0)),
+            ..LayoutStyle::default()
+        },
+        children: vec![StyleLayoutNode {
+            id: format!("{id}-child"),
+            style: LayoutStyle {
+                display: Some(DisplaySpec::Block),
+                margin_left: Some(LengthSpec::Px(10.0)),
+                margin_right: Some(LengthSpec::Px(30.0)),
+                ..LayoutStyle::default()
+            },
+            children: vec![px_box(&format!("{id}-content"), 50.0, 10.0)],
+            text: None,
+        }],
+        text: None,
+    };
+    let tree = StyleLayoutNode {
+        id: "root".into(),
+        style: LayoutStyle {
+            display: Some(DisplaySpec::Flex),
+            direction: Some(FlexDirection::Column),
+            ..LayoutStyle::default()
+        },
+        children: vec![
+            parent("block", Some(DisplaySpec::Block)),
+            parent("flow-root", Some(DisplaySpec::FlowRoot)),
+            parent("unset", None),
+        ],
+        text: None,
+    };
+    let boxes = box_map(&tree, 800.0, 600.0);
+    for id in ["block", "flow-root"] {
+        let child = boxes[&format!("{id}-child")];
+        assert!(
+            (child.x - 10.0).abs() < 0.01 && (child.width - 360.0).abs() < 0.01,
+            "{id}: an auto-width block fills 400 less its margins, got {child:?}"
+        );
+    }
+    let child = boxes["unset-child"];
+    assert!(
+        (child.width - 50.0).abs() < 0.01,
+        "a container with no display stacks its children at their content width, got {child:?}"
+    );
+}

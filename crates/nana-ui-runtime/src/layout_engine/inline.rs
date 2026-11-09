@@ -1407,7 +1407,7 @@ fn fixed_inline_block(
         && style.max_width.is_none()
         && style.min_height.is_none()
         && style.max_height.is_none()
-        && style.align_self.unwrap_or(parent.align_items) != AlignSpec::Baseline
+        && style.resolved_align_self(parent.child_align_items()) != AlignSpec::Baseline
 }
 
 fn element_font_px(world: &UiWorld, id: StableNodeId) -> f32 {

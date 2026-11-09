@@ -23,7 +23,7 @@ impl LayoutStyleChange {
     pub const SIZING: Self = Self(1 << 2);
     /// Gaps, padding and margin, physical and logical.
     pub const SPACING: Self = Self(1 << 3);
-    /// Positioning scheme, insets, float and clear.
+    /// Positioning scheme and insets; with [`Self::FLOAT`], float and clear.
     pub const POSITION: Self = Self(1 << 4);
     /// Alignment and justification.
     pub const ALIGNMENT: Self = Self(1 << 5);
@@ -74,6 +74,9 @@ impl LayoutStyleChange {
     pub const FLEX_SIZING: Self = Self(Self::FLOW.0 | Self::FLEX_FACTOR.0);
     /// Display, order, wrapping, line direction, isolation.
     pub const FLOW_STRUCTURE: Self = Self(Self::FLOW.0 | Self::FLOW_SHAPE.0);
+    /// Float and clear: where the box sits, and what its parent's block
+    /// extent holds -- a float leaves the flow, a clear pushes it down.
+    pub const FLOAT: Self = Self(Self::FLOW_STRUCTURE.0 | Self::POSITION.0);
     /// Whether and by which names the box answers container-size queries.
     /// It moves no box; the rules that query a container find it again.
     pub const CONTAINER: Self = Self(1 << 22);
@@ -318,8 +321,8 @@ layout_style_fields! {
     overflow_wrap: TEXT_LAYOUT,
     aspect_ratio: SIZING_BOTH,
     text_align: TEXT_LAYOUT,
-    float: POSITION,
-    clear: POSITION,
+    float: FLOAT,
+    clear: FLOAT,
     font_size: FONT,
     font_weight: FONT,
     font_italic: TEXT_LAYOUT,

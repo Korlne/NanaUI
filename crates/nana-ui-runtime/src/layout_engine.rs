@@ -2172,6 +2172,14 @@ impl ContainerPlan {
                 !was_in_flow && !was_positioned
             } else if style.position.is_out_of_flow() {
                 was_positioned
+            } else if style.is_floated()
+                && !self.style.display.is_some_and(|display| {
+                    display.is_flex_container() || display.is_grid_container()
+                })
+            {
+                // A block with floats records no plan: a child that floats
+                // now leaves the flow this plan places.
+                false
             } else {
                 was_in_flow
             }

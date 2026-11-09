@@ -641,6 +641,22 @@ fn t_fl06_oversized_inline_drops_below_float() {
     assert_pass_case("T-FL06");
 }
 #[test]
+fn t_fl08_only_a_block_formatting_context_contains_its_floats() {
+    let case = load_fixture(&fixture_path("T-FL08")).unwrap();
+    let height = |id: &str| {
+        case.expected
+            .iter()
+            .find(|box_| box_.id == id)
+            .unwrap_or_else(|| panic!("T-FL08 {id}"))
+            .h
+    };
+    assert!(
+        height("plain") == 0.0 && height("root2") == 40.0 && height("hidden") == 30.0,
+        "T-FL08 must tell a plain block (0) from a BFC (the packed floats' height, not their sum)"
+    );
+    assert_pass_case("T-FL08");
+}
+#[test]
 fn t_v01_display_none() {
     assert_pass_case("T-V01");
 }

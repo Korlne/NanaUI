@@ -1992,7 +1992,13 @@ impl LayoutStyleCss for LayoutStyle {
             "display"
                 if val.eq_ignore_ascii_case("block") || val.eq_ignore_ascii_case("flow-root") =>
             {
-                self.display = Some(DisplaySpec::Block);
+                // `flow-root` is a block container that also establishes a
+                // block formatting context: its auto height contains floats.
+                self.display = Some(if val.eq_ignore_ascii_case("flow-root") {
+                    DisplaySpec::FlowRoot
+                } else {
+                    DisplaySpec::Block
+                });
                 if self.direction.is_none() {
                     self.direction = Some(FlexDirection::Column);
                 }
@@ -8860,6 +8866,16 @@ html[data-theme="dark"], [data-theme="dark"] { --bg: #181818; }
         let mut layout = LayoutStyle::default();
         layout.apply_css_text("display: block", None, None);
         assert_eq!(layout.display, Some(DisplaySpec::Block));
+        assert_eq!(layout.direction, Some(FlexDirection::Column));
+    }
+
+    /// `flow-root` keeps its own value: a block container that also
+    /// establishes a block formatting context, so its height holds floats.
+    #[test]
+    fn display_flow_root_is_its_own_block_container() {
+        let mut layout = LayoutStyle::default();
+        layout.apply_css_text("display: flow-root", None, None);
+        assert_eq!(layout.display, Some(DisplaySpec::FlowRoot));
         assert_eq!(layout.direction, Some(FlexDirection::Column));
     }
 

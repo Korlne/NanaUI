@@ -2065,7 +2065,7 @@ impl UiWorld {
         {
             let align = record
                 .resolved_layout
-                .resolved_align_self(parent_record.resolved_layout.align_items);
+                .resolved_align_self(parent_record.resolved_layout.child_align_items());
             if align == nana_ui_core::AlignSpec::Baseline {
                 return false;
             }
@@ -7777,6 +7777,7 @@ fn layout_style_invalidation(
 }
 
 mod deep_walk_tests;
+mod float_containment;
 #[cfg(test)]
 mod issue197;
 #[cfg(test)]

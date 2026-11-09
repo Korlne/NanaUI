@@ -154,7 +154,7 @@ fn check_plan_children(
                 && ((!plan.main_dependent && reads_main_extent(&current, plan.main_direction))
                     || (plan.cross_independent
                         && (!matches!(
-                            current.resolved_align_self(plan.style.align_items),
+                            current.resolved_align_self(plan.style.child_align_items()),
                             AlignSpec::Start | AlignSpec::Stretch
                         ) || reads_container_size(&current, plan.main_direction))))
         {
@@ -342,7 +342,7 @@ fn replay_sequential_run(
 ) -> Result<Option<Vec<PlannedChild>>, UiWorldError> {
     let direction = plan.main_direction;
     let writing = plan.writing;
-    let container_align = plan.style.align_items;
+    let container_align = plan.style.child_align_items();
     let container_cross = cross_extent(plan.content, direction);
     // The replay places against this pass's main extent: on a reversed main
     // axis that is where the far edge, and every origin, is measured from.
@@ -2269,7 +2269,7 @@ fn lay_out_children(
                 && cross_extent(plan.child_available, direction) == cross_extent(content, direction)
                 && !flow.iter().any(|child| {
                     nodes.style_ref(*child).is_some_and(|child| {
-                        child.resolved_align_self(style.align_items) == AlignSpec::Baseline
+                        child.resolved_align_self(style.child_align_items()) == AlignSpec::Baseline
                     })
                 })
         });
@@ -2452,7 +2452,7 @@ fn lay_out_children(
                 // data rather than from the style: if the used main size
                 // still equals the intrinsic, no free space was
                 // redistributed.
-                let align = child_style.resolved_align_self(style.align_items);
+                let align = child_style.resolved_align_self(style.child_align_items());
                 plan_sequential &= line_count == 1
                     && lines[item.line].auto_main == 0
                     && main_extent(child_size, direction) == main_extent(child_intrinsic, direction)
@@ -2972,10 +2972,10 @@ pub(super) fn arrange_flow<'a>(
                 justify_offsets(justify, line_main_available, occupied, gap, line_flow.len());
             (start, extra_gap, 0.0)
         };
-        let needs_baseline = style.align_items == AlignSpec::Baseline
+        let needs_baseline = style.child_align_items() == AlignSpec::Baseline
             || line_flow.iter().any(|id| {
                 nodes.style_ref(*id).is_some_and(|child| {
-                    child.resolved_align_self(style.align_items) == AlignSpec::Baseline
+                    child.resolved_align_self(style.child_align_items()) == AlignSpec::Baseline
                 })
             });
         if needs_baseline {
@@ -3038,7 +3038,7 @@ pub(super) fn arrange_flow<'a>(
                 line_box_cross,
                 child_size,
             );
-            let align = child_style.resolved_align_self(style.align_items);
+            let align = child_style.resolved_align_self(style.child_align_items());
             let cross_available = line_box_cross - cross_margin(margin, direction);
             // An atom on a line of an ordinary block sits on the line's
             // baseline whatever `align-self` says, and is not stretched.

@@ -884,6 +884,8 @@ Writing `subgrid` as a single token in a track list, such as `subgrid 80px`, sti
 
 When you build `LayoutStyle { display: Grid }` directly, without going through css_map, `align-items` defaults to `start`. Hand-written tests rely on this. `Default` cannot tell "not written" from an explicit `start` by display. Parsed through `display:grid`, it writes `stretch`.
 
+Block layout has no `align-items`. A container with an explicit `display: block` or `flow-root` that stacks its children down the block axis lays them out as CSS block layout does: a block-level child with no `align-self` and an `auto` width fills the containing block less its left and right margins (CSS 2.1 §10.3.3), whatever `align_items` says (`LayoutStyle::child_align_items`). So `LayoutStyle { display: Some(Block) }` built directly (through `Stack::from_layout`, say) and `display: block` parsed by css_map give the same box. A container with no `display` is NanaUI's default flow (`Stack` semantics): its children still align by `align_items`, `start` by default, sized to their content.
+
 `display: layers` is a NanaUI extension value; see `Layers` above. It does not write `stretch`: children of a stack align to the start by default, as with ZStack / Box; when `justify-items` is not written they align to the start too, not to grid's `stretch`.
 
 **Inline subset.** `display: inline` and `inline-block` inside a block container go through an inline formatting context, that is, an IFC.
@@ -909,6 +911,8 @@ A flex line's retained plan records the baseline each baseline-aligned child use
 An IFC line box narrows by the left and right insets where the current line intersects the margin boxes of **sibling** floats. That is shrink-to-avoid-float. An atomic inline item that does not fit in a line folds to the next line. If it still does not fit after narrowing, the line box moves down below the bottom edge of the nearest occupying float.
 
 An in-flow **block-level** border box does not narrow to avoid floats. That matches a non-BFC block in CSS.
+
+Floats do not take part in the height of normal flow (CSS 2.1 §10.6.3): a block container's `auto` height counts only its in-flow content, plus however far `clear` and line boxes shortened or pushed down by a float push that content. An ordinary block holding nothing but floats is 0 tall, and the floats hang out of its content box. When the container establishes a block formatting context (BFC) of its own, its height contains the packed floats (§10.6.7): one line of floats is one line tall, not the floats stacked and summed. A BFC is established by the document root, a float, `absolute` / `fixed`, `inline-block`, `overflow` other than `visible`, `display: flow-root` (`DisplaySpec::FlowRoot`), and flex, grid, layer and overlay items. Floats sit side by side inline-wise: they give the container a max-content width of their margin boxes' sum and a min-content width of the widest one. Gate: `world/float_containment.rs`, css-parity `T-FL08`.
 
 This is not full exclusion. An ancestor float does not intrude into a child block's IFC. There is no `shape-outside`.
 

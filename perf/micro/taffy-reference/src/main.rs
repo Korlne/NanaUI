@@ -290,13 +290,10 @@ fn nana_style(kind: Kind, role: Role) -> LayoutStyle {
         align_items: AlignSpec::Stretch,
         ..LayoutStyle::default()
     };
-    // A block's `auto` width fills its containing block in CSS and in
-    // Taffy. Through `Stack::from_layout` an unset or `Auto` width shrinks
-    // to the content, so the fill is written out as `Fill`; `check`
-    // confirms the boxes match.
+    // A block's `auto` width fills its containing block, as in CSS and in
+    // Taffy; `check` confirms the boxes match.
     let block = || LayoutStyle {
         display: Some(DisplaySpec::Block),
-        width: Some(LengthSpec::Fill),
         ..LayoutStyle::default()
     };
     let mut style = match (kind, role) {
@@ -1015,22 +1012,18 @@ fn floats(rows: usize, rounds: usize) {
             let mut queue = MutationQueue::new();
             for (index, &(_, role)) in spec.nodes.iter().enumerate() {
                 if role == Role::Row {
-                    // A row of floats, a line tall: its own block
-                    // formatting context (`overflow: hidden`) with a
-                    // fixed height, so the floats of one row stay in it.
+                    // A row of floats: its own block formatting context
+                    // (`overflow: hidden`), so its height contains them.
                     let mut style = cx.world().node_style(ids[index]).unwrap().clone();
                     let layout = Arc::make_mut(&mut style.layout);
                     layout.overflow_x = OverflowSpec::Hidden;
                     layout.overflow_y = OverflowSpec::Hidden;
-                    layout.height = Some(LengthSpec::Px(16.5));
                     queue.set_style(ids[index], style);
                 }
                 if role == Role::Cell {
                     let mut style = cx.world().node_style(ids[index]).unwrap().clone();
                     let layout = Arc::make_mut(&mut style.layout);
                     layout.float = FloatSpec::Left;
-                    // A float shrinks to fit its content.
-                    layout.width = None;
                     queue.set_style(ids[index], style);
                 }
             }

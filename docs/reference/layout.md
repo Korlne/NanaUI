@@ -912,6 +912,8 @@ grid 的列是 inline 轴上的轨道。行是 block 轴上的轨道。这是 CS
 
 直接构造 `LayoutStyle { display: Grid }`、不经 css_map 时，`align-items` 默认 `start`。手写测试依赖此项。Default 无法按 display 区分「未写」和显式 `start`。经 `display:grid` 解析，会写成 `stretch`。
 
+块布局没有 `align-items`。显式写了 `display: block` 或 `flow-root`、沿块轴排子项的容器，按 CSS 块布局排：没写 `align-self` 的块级子项 `auto` 宽撑满包含块，减去左右外边距（CSS 2.1 §10.3.3），不论 `align_items` 是什么（`LayoutStyle::child_align_items`）。所以直接构造 `LayoutStyle { display: Some(Block) }`（例如经 `Stack::from_layout`）和经 css_map 解析的 `display: block` 得到同一个盒子。不写 `display` 的容器是 NanaUI 默认的流（Stack 语义），子项仍按 `align_items` 对齐，缺省 `start`、按内容收缩。
+
 `display: layers` 是 NanaUI 的扩展值，见上文 `Layers`。它不写入 `stretch`：叠层的子项默认按起点对齐，和 ZStack / Box 一样；`justify-items` 没写时也按起点，不按网格的 `stretch`。
 
 **行内子集。** 块容器里的 `display: inline` 和 `inline-block` 走一行内格式化上下文，也就是 IFC。
@@ -944,6 +946,8 @@ flex 行的保留计划记下每个按基线对齐的子项当时用的基线。
 IFC 行盒按当前行与**兄弟**浮动外边距盒相交的左右 inset 缩窄。这是 shrink-to-avoid-float。一行里放不下的原子行内项折到下一行。缩短后仍放不下，就把行盒下移到最近那个占用浮动的底边之下。
 
 流内**块级**边框盒不会缩窄去绕开浮动。这和 CSS 里非 BFC 的块一致。
+
+浮动不参与普通流的高度（CSS 2.1 §10.6.3）：块容器 `auto` 高只算流内内容，`clear` 和被浮动缩短、下移的行盒把流内内容推多远就加多高。只含浮动的普通块高 0，浮动从内容盒下面伸出去。容器自己建立块格式化上下文（BFC）时，高度包住打包后的浮动（§10.6.7），一行浮动就是一行高，不是逐个竖排相加。建立 BFC 的有：文档根、浮动、`absolute` / `fixed`、`inline-block`、`overflow` 非 `visible`、`display: flow-root`（`DisplaySpec::FlowRoot`），以及 flex、grid、叠层和浮层的项目。浮动在行内方向并排，给容器的 max-content 宽是它们外边距盒宽之和、min-content 是最宽的那个。门禁 `world/float_containment.rs`，css-parity `T-FL08`。
 
 这不是完整排除。祖先浮动不侵入子块的 IFC。没有 `shape-outside`。
 

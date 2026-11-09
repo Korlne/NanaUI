@@ -1336,6 +1336,21 @@ fn measure_node_level(
     } else {
         collect_flow_children_reporting(child_ids, nodes, style)?
     };
+    // Floats leave the flow (CSS 2.1 §9.5): placement packs them beside it,
+    // so they are measured beside it too, never stacked as in-flow boxes.
+    // Flex and grid items are blockified instead.
+    let floated = if native_inline
+        || style
+            .display
+            .is_some_and(|display| display.is_flex_container() || display.is_grid_container())
+    {
+        Vec::new()
+    } else {
+        collect_floated_children(child_ids, nodes)?
+    };
+    if !floated.is_empty() {
+        flow_children.retain(|id| !floated.contains(id));
+    }
     let context = if native_inline {
         EstablishedContext {
             kind: crate::FormattingContextKind::Inline,
@@ -1618,6 +1633,29 @@ fn measure_node_level(
             FlexDirection::Column => Size::new(cross, main.max(0.0)),
         }
     };
+    let (children, widest_float) = if floated.is_empty() {
+        (children, 0.0)
+    } else {
+        measure_beside_floats(
+            id,
+            style,
+            writing,
+            children,
+            &flow_children,
+            &child_sizes,
+            &floated,
+            content_available,
+            child_edge_base,
+            (gap, cross_gap),
+            ifc,
+            direction,
+            viewport,
+            child_font_px,
+            nodes,
+            cache,
+            scope,
+        )?
+    };
     #[cfg(feature = "benchmark")]
     if let Some(clock) = child_phase.as_mut() {
         clock.lap(5);
@@ -1674,6 +1712,7 @@ fn measure_node_level(
     }
     if text_metrics.is_none()
         && flow_children.is_empty()
+        && floated.is_empty()
         && let Some(fs) = style.font_size.filter(|value| *value > 0.0)
     {
         content.height = content
@@ -1699,7 +1738,7 @@ fn measure_node_level(
             let margin = child_margin(*child, nodes);
             size.width + margin.left + margin.right
         })
-        .fold(lead_floor.width, f32::max)
+        .fold(lead_floor.width.max(widest_float), f32::max)
         + lead_inset.width
         + chrome.width;
     // nowrap row: min-content cannot be narrower than the packed sum.
@@ -1715,7 +1754,7 @@ fn measure_node_level(
         Some(LengthSpec::FitContent) => max_content_w.min(available.width).max(stacked_min_w),
         _ if parent_direction.is_none()
             && !style.width.is_some_and(LengthSpec::is_content_sized)
-            && !flow_children.is_empty() =>
+            && (!flow_children.is_empty() || !floated.is_empty()) =>
         {
             available.width
         }
@@ -1779,7 +1818,10 @@ fn measure_node_level(
             && text_metrics.is_none()
             && nodes.world.standard_visual_ref(id).is_none()
             && ifc_local_measure(style, writing, &flow_children, child_ids.as_slice(), nodes)?;
-        let cacheable = !style.equal_wrap && (!descendant_dependent_flow || ifc_local)
+        // Floats are measured outside the plan's children: no plan replays them.
+        let cacheable = !style.equal_wrap
+            && floated.is_empty()
+            && (!descendant_dependent_flow || ifc_local)
             && (!grid_measure || recorded_grid.is_some())
             && (!ifc || ifc_local)
             && grid_tracks.is_none_or(|tracks| tracks.is_empty())
@@ -2144,7 +2186,8 @@ fn sequential_measure_delta(
         return Ok(None);
     }
     // A sum of stacked children: an inline-level child arriving in an
-    // ordinary block's flow puts its children on lines instead.
+    // ordinary block's flow puts its children on lines instead, and a child
+    // that floats now leaves the sum (a block with floats records no plan).
     let flex_or_grid = plan
         .style
         .display
@@ -2153,9 +2196,8 @@ fn sequential_measure_delta(
         && scope.affected_children(id).iter().any(|&child| {
             nodes.world.parent_id(child) == Some(id)
                 && nodes.style_ref(child).is_some_and(|style| {
-                    style.is_inline_level()
-                        && !style.is_floated()
-                        && !style.position.is_out_of_flow()
+                    !style.position.is_out_of_flow()
+                        && (style.is_floated() || style.is_inline_level())
                 })
         })
     {
@@ -2823,4 +2865,128 @@ fn grid_measure_delta(
     }
     nodes.measure_plans.entry(id).or_default().insert(updated);
     Ok(Some(size))
+}
+
+/// The content size of a block container's children when some of them float:
+/// `in_flow` is what its in-flow children measured with the floats left out.
+/// Returns that size beside the floats, and the widest float's margin box
+/// (its share of the container's min-content width).
+///
+/// The floats pack as placement packs them (`pack_floated_children`), and the
+/// in-flow children are arranged beside them (`arrange_flow`): the in-flow
+/// extent grows by as far as `clear` and float-shortened line boxes push the
+/// last box down. The floats themselves add to the block extent only when the
+/// container establishes a block formatting context (CSS 2.1 §10.6.7):
+/// otherwise they hang out of it, and a container holding nothing but floats
+/// is 0 tall. Inline-wise they sit side by side, so the floats ask for their
+/// summed width, at most what is available and at least the widest one.
+#[allow(clippy::too_many_arguments)]
+fn measure_beside_floats(
+    id: StableNodeId,
+    style: &LayoutStyle,
+    writing: nana_ui_core::WritingContext,
+    in_flow: Size,
+    flow: &[StableNodeId],
+    child_sizes: &[Size],
+    floated: &[StableNodeId],
+    content_available: Size,
+    child_edge_base: f32,
+    (gap, cross_gap): (f32, f32),
+    ifc: bool,
+    direction: FlexDirection,
+    viewport: LayoutViewport,
+    child_font_px: f32,
+    nodes: &mut LayoutInputMap<'_>,
+    cache: &mut PassIntrinsicCache,
+    scope: Option<&ScopeContext<'_>>,
+) -> Result<(Size, f32), UiWorldError> {
+    let packed = pack_floated_children(
+        floated,
+        Point { x: 0.0, y: 0.0 },
+        content_available,
+        child_edge_base,
+        viewport,
+        child_font_px,
+        nodes,
+        cache,
+        scope,
+    )?;
+    let (widest, summed) = packed
+        .items
+        .iter()
+        .fold((0.0f32, 0.0f32), |(widest, summed), item| {
+            (widest.max(item.occupy_w), summed + item.occupy_w)
+        });
+    let width = in_flow
+        .width
+        .max(widest.max(summed.min(content_available.width)));
+    // The in-flow content ends lower by as much as the floats push its last
+    // box down: arranged beside them and without them, the same lines, struts
+    // and margins, only `clear` and float-shortened lines differ.
+    let mut block = in_flow.height;
+    if !flow.is_empty() && !writing.is_vertical() {
+        let content = Size::new(
+            if content_available.width.is_finite() {
+                content_available.width
+            } else {
+                width
+            },
+            in_flow.height,
+        );
+        let mut bottoms = [0.0f32; 2];
+        for (bottom, floats) in bottoms.iter_mut().zip([&packed, &PackedFloats::default()]) {
+            let arranged = arrange_flow(
+                id,
+                style,
+                writing,
+                flow,
+                child_sizes,
+                Point { x: 0.0, y: 0.0 },
+                content,
+                child_edge_base,
+                gap,
+                cross_gap,
+                ifc,
+                direction,
+                flow_axes_reversed(style, writing, direction, ifc, false),
+                floats,
+                viewport,
+                child_font_px,
+                nodes,
+                cache,
+                scope,
+                false,
+            )?;
+            for child in &arranged.children {
+                let margin = child.style.as_ref().resolved_margin_against_fonts(
+                    Some(child_edge_base),
+                    fonts_of(child.style.as_ref(), child_font_px),
+                );
+                *bottom = bottom.max(child.offset.y + child.size.height + margin.bottom);
+            }
+        }
+        block += (bottoms[0] - bottoms[1]).max(0.0);
+    }
+    // A float's box is in the parent's context; its own context is its
+    // parent's, past any `display: contents` box between them.
+    let world = nodes.world;
+    let mut parent = world.parent_id(id);
+    while let Some(ancestor) = parent
+        && nodes
+            .style_ref(ancestor)
+            .is_some_and(|ancestor| ancestor.display.is_some_and(DisplaySpec::is_contents))
+    {
+        parent = world.parent_id(ancestor);
+    }
+    let parent_context = parent.and_then(|parent| {
+        nodes
+            .contexts
+            .get(&parent)
+            .copied()
+            .or_else(|| world.established_layout_context(parent))
+    });
+    if establishes_block_formatting_context(style, parent_context) {
+        block = block.max(packed.left_bottom).max(packed.right_bottom);
+    }
+    Ok((Size::new(width, block), widest))
 }
