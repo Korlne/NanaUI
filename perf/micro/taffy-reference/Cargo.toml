@@ -1,0 +1,20 @@
+[package]
+name = "nana-taffy-reference"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "NanaUI layout beside its performance reference, Taffy 0.11: block, flex and grid on the same boxes, and what NanaUI does that Taffy has no counterpart for. An observation, not a gate."
+
+# Taffy is the reference this benchmark measures against. It is a dependency
+# of this benchmark only and never of a product crate.
+[dependencies]
+nana-text = { path = "../../../crates/nana-text" }
+nana-ui-core = { path = "../../../crates/nana-ui-core" }
+nana-ui-runtime = { path = "../../../crates/nana-ui-runtime" }
+nana-ui-scene = { path = "../../../crates/nana-ui-scene" }
+taffy = { version = "=0.11.0", default-features = false, features = ["std", "taffy_tree", "flexbox", "block_layout", "grid"] }
+
+[profile.release]
+debug = false
+
+[workspace]
