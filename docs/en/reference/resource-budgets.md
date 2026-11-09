@@ -814,6 +814,21 @@ On both builds the open-versus-closed difference is within noise (the difference
 
 Node space classes and in-place resizes (2026-11-05): the node space class `NodeSpace` (be0a703c8) is a refactor whose accessibility deltas and whole trees, hit grids, Scene primitives and draws, culling, and work counters exported over 81 + 13 representative frames are byte-identical to 1ab1855eb, with `stack-depth` flat over 8 interleaved rounds; treating in-place resizes of a box with its own transform as a traversal root (596930d22) is a correctness fix, with `stack-depth` flat over 8 interleaved rounds. Afterwards, splitting `world/accessibility/`, `world/hit_test/`, and `nana-ui-scene/src/scene/` (e443a2a1e, e41729572, 138c79333) only moved code, leaving the public API and snapshot output unchanged.
 
+A container that only moved skips its body (2026-11-09): when a parent's re-arrangement moves a container that did not itself change, `place_node_head` writes its new offset and `keeps_moved_subtree`, finding nothing the body reads changed, skips `place_node_body` (conditions in [Relative geometry · Translating a subtree](https://github.com/sena-nana/NanaUI/blob/main/docs/en/reference/relative-geometry.md#_3-2-translating-a-subtree)). Plain-box containers used to re-check their affected children against the plan, and containers without a plan — inline formatting contexts (paragraphs), floats, `display: contents` and the like — laid all their children out again: about 3.6 µs per moved paragraph in the Taffy reference benchmark, see [Taffy reference · Observations](/reference/taffy-reference#observations). In tests and `layout-verify` builds, every box under a kept subtree must equal the full layout's bit for bit (`verify::note_kept_subtree`); `world/line_box_memo/moved_paragraphs.rs` moves paragraphs holding every kind of out-of-flow child and compares each step with a cold layout, and turns red when the "no child in another frame" condition is removed. Against 0b60695fd, 8 interleaved rounds swapping the order each round, least of each (load 9–18, µs; instructions are the difference of two `time -l` runs at `RUNS=240` and `RUNS=40`, over 200):
+
+| Page | Edit | Stage | 0b60695fd | Now |
+| --- | --- | --- | ---: | ---: |
+| inline, 100 paragraphs | one run's text | layout / frame | 169 / 212 | 34 / 77 |
+| inline, 1 000 paragraphs | one run's text | layout / frame | 1 779 / 2 101 | 181 / 481 |
+| plain page, 42 001 boxes | height | layout / frame | 476 / 1 152 | 380 / 1 044 |
+| plain page, 42 001 boxes | height | instructions per edit | 21.9 M | 20.4 M |
+| plain page | width | layout / frame | 114.8 / 128.9 | 111.8 / 126.2 |
+| plain page | transform / scale | frame | 15.5 / 15.5 | 15.5 / 15.6 |
+| controls page, 62 001 nodes | text | layout / frame | 11.0 / 23.2 | 11.2 / 23.5 |
+| `insert` deep / wide / under-deep 400 | mount | frame after | 4 031 / 1 886 / 4 721 | 3 875 / 1 881 / 4 359 |
+
+In the row-height edit the 2 000 moved rows no longer re-check their plans' affected children, about 20% less layout. The controls page's 0.2 µs on a text edit is noise (`time -l` gives 0.46 M → 0.30 M instructions per edit, and a single measurement itself varies by about ±0.3 M). Cold layout (3.94 → 3.96 µs and 69.8k → 69.9k instructions per box on the inline page) and mounting are unchanged.
+
 Done (2026-11-02): in the publish stage, each result's four slices are built in a reused scratch table and allocated once at their final length, empty slices allocate nothing (`Arc::<[T]>::default()`), and the per-parent groups become one sorted table instead of a `Vec` per parent; the intrinsic cache key's environment hash moves from SipHash to a fixed-seed foldhash, and `seeded_intrinsic` moves to hashbrown; `ConstraintClass` equality and hashing read the normalized tag and value in one pass instead of normalizing twice; `RetainedIntrinsicMetrics` grows each content's variant table by one (the first push used to reserve 4, using 80 B of 320 B); `MeasurePlanSlots`' two slots are boxed (each container used to have 528 B inline in the table, and usually only one slot is used); the full-page pass reserves capacity for its tables by node and container counts; and the anchor memo table no longer allocates when the parent has already settled.
 
 ## To do

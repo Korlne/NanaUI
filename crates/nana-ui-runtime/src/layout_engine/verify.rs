@@ -11,6 +11,17 @@ use super::*;
 thread_local! {
     static SKIPPED: Cell<bool> = const { Cell::new(false) };
     static REFERENCE: Cell<bool> = const { Cell::new(false) };
+    static KEPT: std::cell::RefCell<Vec<StableNodeId>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// `id` only moved and kept its subtree this pass
+/// (`placement::keeps_moved_subtree`): the guard requires every box under
+/// it to be the full layout's to the bit, not just within its tolerance.
+pub(super) fn note_kept_subtree(id: StableNodeId) {
+    if !REFERENCE.with(Cell::get) {
+        KEPT.with(|kept| kept.borrow_mut().push(id));
+    }
 }
 
 /// Whether measurement may drop the offered block extent from the key of a
@@ -61,6 +72,7 @@ pub(super) fn retained_matches_full_layout(
     seeds: &[LayoutFrontierSeed],
     force_full: bool,
 ) {
+    let kept_subtrees = KEPT.with(|kept| std::mem::take(&mut *kept.borrow_mut()));
     if SKIPPED.with(Cell::get) {
         return;
     }
@@ -78,12 +90,42 @@ pub(super) fn retained_matches_full_layout(
     let Ok(full) = full else {
         return;
     };
+    // Under a box that kept its subtree, every box is the one the body would
+    // have written: the full layout's, bit for bit.
+    let mut exact = crate::NodeSet::default();
+    let mut stack = kept_subtrees;
+    while let Some(id) = stack.pop() {
+        if exact.insert(id) {
+            stack.extend(world.child_ids(id).iter().copied());
+        }
+    }
+    let bits = |b: LayoutBox| {
+        [
+            b.x.to_bits(),
+            b.y.to_bits(),
+            b.width.to_bits(),
+            b.height.to_bits(),
+        ]
+    };
     let mut wrong = Vec::new();
     for (id, expected, frame) in full {
+        let omitted = expected.width == 0.0 && expected.height == 0.0;
+        if exact.contains(&id)
+            && !omitted
+            && cache
+                .boxes
+                .get(&id)
+                .is_none_or(|kept| bits(*kept) != bits(expected))
+        {
+            let kept = cache.boxes.get(&id).copied().unwrap_or_default();
+            panic!(
+                "{id:?} under a moved subtree kept {kept:?}, full layout {expected:?}: \
+                 not the same to the bit"
+            );
+        }
         let kept = cache.boxes.get(&id).copied().unwrap_or_default();
         let kept_frame = cache.frames.get(&id).copied().unwrap_or_default();
         // A box with no extent has no frame that matters either.
-        let omitted = expected.width == 0.0 && expected.height == 0.0;
         if !same(kept, expected) || (kept_frame != frame && !omitted) {
             wrong.push((id, kept, expected));
         }

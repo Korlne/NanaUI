@@ -814,6 +814,21 @@ painter 段（`nana-text-paint-benchmark --workload reflow`，交替 8 轮读最
 
 节点空间分类与原地改尺寸（2026-11-05）：节点空间分类 `NodeSpace`（be0a703c8）是重构，与 1ab1855eb 在 81 + 13 帧代表性页面上导出的无障碍 delta 与全树、命中网格、Scene 图元与绘制、剔除和工作计数逐字节相同，`stack-depth` 交替 8 轮持平；自带变换的盒子原地改尺寸一律当遍历根（596930d22）是正确性修正，`stack-depth` 交替 8 轮持平。之后拆分 `world/accessibility/`、`world/hit_test/` 与 `nana-ui-scene/src/scene/`（e443a2a1e、e41729572、138c79333）只搬移代码，公开 API 与快照输出不变。
 
+只挪了位置的容器不进主体（2026-11-09）：父节点重排把一个容器挪到新位置、它自己没变时，`place_node_head` 写下新偏移，`keeps_moved_subtree` 判定主体读的东西都没变就不进 `place_node_body`（条件见 [相对几何 · 平移一棵子树](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/relative-geometry.md#_3-2-平移一棵子树)）。以前纯盒子容器靠计划逐个复查受影响的子项，没有计划的容器——行内格式化上下文（段落）、浮动、`display: contents` 等——整个重排一遍子节点：Taffy 对照基准里每个被挪动的段落约 3.6 µs，见 [Taffy 对照 · 观察](/reference/taffy-reference#观察)。测试与 `layout-verify` 构建里，保住子树的盒子下面每个盒子都要与全量布局逐位相同（`verify::note_kept_subtree`）；`world/line_box_memo/moved_paragraphs.rs` 把带各种逃逸定位子节点的段落挪动，每步与冷布局比对，去掉「子节点不在别的参照系」那一条它就变红。与 0b60695fd 交替 8 轮、每轮交换先后读最小值（负载 9–18，µs；指令是 `RUNS=240` 与 `RUNS=40` 两次 `time -l` 之差除以 200）：
+
+| 页面 | 编辑 | 阶段 | 0b60695fd | 本次 |
+| --- | --- | --- | ---: | ---: |
+| inline 100 段 | 改一个 run | 布局 / 整帧 | 169 / 212 | 34 / 77 |
+| inline 1 000 段 | 改一个 run | 布局 / 整帧 | 1 779 / 2 101 | 181 / 481 |
+| 简单页 42 001 盒 | height | 布局 / 整帧 | 476 / 1 152 | 380 / 1 044 |
+| 简单页 42 001 盒 | height | 每次编辑指令 | 21.9 M | 20.4 M |
+| 简单页 | width | 布局 / 整帧 | 114.8 / 128.9 | 111.8 / 126.2 |
+| 简单页 | transform / scale | 整帧 | 15.5 / 15.5 | 15.5 / 15.6 |
+| 控件页 62 001 节点 | text | 布局 / 整帧 | 11.0 / 23.2 | 11.2 / 23.5 |
+| `insert` deep / wide / under-deep 400 | 挂载 | 挂上后那一帧 | 4 031 / 1 886 / 4 721 | 3 875 / 1 881 / 4 359 |
+
+改行高时被挪动的 2 000 行不再逐个复查计划里受影响的子项，布局少约 20%。控件页改文字的 0.2 µs 在噪声内（`time -l` 每次编辑 46 万 → 30 万条指令，单次测量本身波动约 ±30 万）。冷布局（inline 页每盒 3.94 → 3.96 µs、69.8 k → 69.9 k 条指令）与挂载不变。
+
 已做的（2026-11-02）：发布阶段每个结果的四个切片在复用的暂存表里建好、按最终长度一次分配，空切片不分配（`Arc::<[T]>::default()`），按父分组的子集改为一张排序表，不再每个父节点一个 `Vec`；意图缓存键的环境哈希从 SipHash 换成固定种子的 foldhash，`seeded_intrinsic` 换成 hashbrown；`ConstraintClass` 的相等与哈希一趟读出归一化后的标签与值，不再各自归一化两遍；`RetainedIntrinsicMetrics` 每个内容的变体表按一增长（首个 push 原本预留 4 个，320 B 只用 80 B）；`MeasurePlanSlots` 的两个槽装箱（原本每个容器 528 B 内联在表里，通常只用一个槽）；整页 pass 按节点数和容器数预先给各表留好容量；锚点记忆表在父节点已结算时不再分配。
 
 ## 待办

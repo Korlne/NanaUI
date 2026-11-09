@@ -500,6 +500,7 @@ impl RuntimeLayoutEngine {
             AffectedChildren::new(world, &affected)
         };
         let scope = ScopeContext {
+            frontier: &frontier,
             affected: &affected,
             affected_children: &affected_children,
             measure: frontier.measure_nodes(),
@@ -3588,6 +3589,9 @@ fn collapse_omitted_boxes(
 }
 
 struct ScopeContext<'a> {
+    /// What reached each affected node: a seed of its own, or which kind of
+    /// dependency edge.
+    frontier: &'a LayoutFrontier,
     affected: &'a HashSet<StableNodeId>,
     /// `affected` by parent: what a container's plan re-checks or patches.
     affected_children: &'a AffectedChildren,
@@ -3884,6 +3888,9 @@ pub(crate) struct LayoutExecutionStats {
     pub measure_cache_misses: usize,
     pub placement_nodes: usize,
     pub origin_only_updates: usize,
+    /// Containers that only moved and kept their whole subtree: their own
+    /// box was written, their body did not run (`keeps_moved_subtree`).
+    pub moved_subtrees_kept: usize,
     /// Containers placed from their retained [`ContainerPlan`].
     pub placement_plans_reused: usize,
     /// Containers measured from a retained [`MeasurePlan`], without a walk of
@@ -4084,6 +4091,11 @@ impl PassIntrinsicCache {
     fn note_placement_node(&mut self) {
         self.execution_stats.placement_nodes =
             self.execution_stats.placement_nodes.saturating_add(1);
+    }
+
+    fn note_moved_subtree_kept(&mut self) {
+        self.execution_stats.moved_subtrees_kept =
+            self.execution_stats.moved_subtrees_kept.saturating_add(1);
     }
 
     fn note_origin_only(&mut self) {

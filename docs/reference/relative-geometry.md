@@ -126,7 +126,7 @@ abs(child) = abs(frame) + local(child)
 
 ### 3.2 平移一棵子树
 
-父节点重新排布时只写直接子节点的偏移：只挪了位置的容器在父节点那里 `subtree_unchanged` 不成立，进 `place_node_body` 后计划照旧成立，一个子节点也不碰；它的结果不变，发布时 `geometry_eq` 判为相同。提交只标写回的盒子本身（`settle_layout_moves`）：原点变了的根记 `DirtyMask::MOVED`，进 `SystemWork::layout_moved`；后代一个不标。
+父节点重新排布时只写直接子节点的偏移：只挪了位置的容器在父节点那里 `subtree_unchanged` 不成立，`place_node_head` 写下它的新偏移后，`keeps_moved_subtree` 判定它的主体读的东西都没变（自己不是种子、不在测量前沿里、书写模式与滚动没变，进受影响闭包只因父节点或同一格式化上下文里的兄弟把它挪了；下面没有受影响的节点；边框盒尺寸与用过的内边距同上一遍；不参与动态布局的行、不继承网格轨道、不是模态或触发式菜单、不在逃逸定位的复查表里、没有参照系不是它的子节点），就不进 `place_node_body`，一个子节点也不碰；它的结果不变，发布时 `geometry_eq` 判为相同。行内格式化上下文（段落）没有容器计划，以前每挪一次都要重新排一遍行盒，现在同样只写偏移。测试与 `layout-verify` 构建里，保住子树的盒子下面每个盒子都要与全量布局逐位相同。提交只标写回的盒子本身（`settle_layout_moves`）：原点变了的根记 `DirtyMask::MOVED`，进 `SystemWork::layout_moved`；后代一个不标。
 
 发布时（`publish_layout_results`）：
 

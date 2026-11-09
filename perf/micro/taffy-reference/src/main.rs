@@ -18,6 +18,8 @@
 //! SHOW=1 cargo run --release -- check       # the first boxes that differ, if any
 //! SHOW=1 cargo run --release -- features    # work counters and stages of the
 //!                                           # inline edit and the scroll frames
+//! SHOW=1 cargo run --release -- inline 100  # the inline text scene alone, at 100
+//!                                           # paragraphs (1000 by default)
 //! /usr/bin/time -l target/release/nana-taffy-reference reps flex nana 1000 5
 //!                                           # a fixed run, to read instructions retired
 //!                                           # from outside (build, layout and drop)
@@ -1471,6 +1473,7 @@ fn main() {
             compare(&rows, &kinds);
         }
         Some("features") => features(list(1, &[1000])[0]),
+        Some("inline") => inline_text(list(1, &[1000])[0], rounds()),
         Some("check") => check(list(1, &[100])[0]),
         Some("probe") => {
             let engine = args[1].clone();
