@@ -439,15 +439,10 @@ fn mount_hunk(
     let mut hunk_style = NodeStyle::default().surface(SemanticColorRole::Subtle);
     {
         let style = Arc::make_mut(&mut hunk_style.layout);
-        // A flex column: the review buttons and the lines keep their own
-        // widths, which a block container would stretch across the hunk.
-        style.display = Some(nana_ui_core::DisplaySpec::Flex);
         style.direction = Some(FlexDirection::Column);
         style.gap = Some(LengthSpec::Px(2.0));
         style.padding = Some(LengthSpec::Px(8.0));
         style.border_radius = Some(6.0);
-        // As wide as its widest line, not stretched across the body.
-        style.align_self = Some(AlignSpec::Start);
     }
     ui.with_child(
         format!("hunk-{hunk_index}"),
@@ -456,17 +451,21 @@ fn mount_hunk(
             if actions {
                 ui.child(
                     "accept",
-                    Button::new(hunk_label(&strings.diff_accept_hunk, hunk_index))
-                        .kind(ButtonKind::Subtle)
-                        .size(ControlSize::Small)
-                        .disabled(disabled),
+                    hunk_action(
+                        Button::new(hunk_label(&strings.diff_accept_hunk, hunk_index))
+                            .kind(ButtonKind::Subtle)
+                            .size(ControlSize::Small)
+                            .disabled(disabled),
+                    ),
                 )?;
                 ui.child(
                     "reject",
-                    Button::new(hunk_label(&strings.diff_reject_hunk, hunk_index))
-                        .kind(ButtonKind::Subtle)
-                        .size(ControlSize::Small)
-                        .disabled(disabled),
+                    hunk_action(
+                        Button::new(hunk_label(&strings.diff_reject_hunk, hunk_index))
+                            .kind(ButtonKind::Subtle)
+                            .size(ControlSize::Small)
+                            .disabled(disabled),
+                    ),
                 )?;
             }
             ui.child(
@@ -519,8 +518,6 @@ fn mount_split_column(
     let mut column = NodeStyle::default();
     {
         let style = Arc::make_mut(&mut column.layout);
-        // A flex column, like the hunk: each line keeps its own width.
-        style.display = Some(nana_ui_core::DisplaySpec::Flex);
         style.direction = Some(FlexDirection::Column);
         style.flex_grow = Some(1.0);
         style.min_width = Some(LengthSpec::Px(0.0));
@@ -618,6 +615,13 @@ fn mount_line(
     Ok(())
 }
 
+/// A hunk's review button keeps the width its label gives it at the start
+/// of the hunk, which as a block stretches the lines across its width.
+fn hunk_action(mut button: Button) -> Button {
+    Arc::make_mut(&mut button.style.layout).align_self = Some(AlignSpec::Start);
+    button
+}
+
 fn line_style(kind: DiffLineKind) -> NodeStyle {
     match kind {
         DiffLineKind::Added => NodeStyle::default().surface_mix(
@@ -713,6 +717,64 @@ mod tests {
                 DiffLine::added(2, "    let x = 2;"),
             ],
         )])
+    }
+
+    /// A hunk and the columns of a split hunk are blocks: every line row,
+    /// its highlight with it, fills the hunk (or its column) and the hunk
+    /// fills the body, while a review button stays as wide as its label at
+    /// the hunk's start.
+    #[test]
+    fn line_rows_fill_the_hunk_and_review_buttons_keep_their_width() {
+        for layout in [DiffLayout::Unified, DiffLayout::Split] {
+            let mut context = AppContext::new();
+            let diff = context
+                .create_component(document(), DiffView::new(sample_hunks()).layout(layout))
+                .unwrap();
+            assert!(context.assemble_diff_view(diff).unwrap());
+            context
+                .layout_document(document(), LayoutViewport::new(480.0, 240.0))
+                .unwrap();
+            let world = context.world();
+            let accept =
+                find_labeled_button(&context, diff.stable_id(), "接受块0").expect("hunk accept");
+            let hunk = world.parent_id(accept).expect("the hunk");
+            let body_content = world.parent_id(hunk).expect("the body");
+            let (accept, hunk, body_content) = (
+                world.layout_box(accept).unwrap(),
+                world.layout_box(hunk).unwrap(),
+                world.layout_box(body_content).unwrap(),
+            );
+            let inset = 8.0;
+            assert!(
+                (hunk.width - body_content.width).abs() < 0.01,
+                "{layout:?}: the hunk {hunk:?} fills the body {body_content:?}"
+            );
+            assert!(
+                (accept.x - hunk.x - inset).abs() < 0.01
+                    && accept.width < hunk.width / 2.0
+                    && accept.width > 0.0,
+                "{layout:?}: the review button {accept:?} keeps its width in {hunk:?}"
+            );
+            for label in ["接受行0.1", "接受行0.2"] {
+                let button =
+                    find_labeled_button(&context, diff.stable_id(), label).expect("line accept");
+                let row_id = world.parent_id(button).expect("the line row");
+                let row = world.layout_box(row_id).unwrap();
+                let column = world
+                    .layout_box(world.parent_id(row_id).expect("the line's block"))
+                    .unwrap();
+                let content = column.width
+                    - if layout == DiffLayout::Unified {
+                        2.0 * inset
+                    } else {
+                        0.0
+                    };
+                assert!(
+                    (row.width - content).abs() < 0.01 && row.width > hunk.width / 3.0,
+                    "{layout:?} {label}: the line {row:?} fills its block {column:?}"
+                );
+            }
+        }
     }
 
     #[test]
