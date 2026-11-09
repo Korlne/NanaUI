@@ -62,34 +62,43 @@ impl UiWorld {
         index.shifted = true;
         index.refresh_bounds(scroller);
         // Ordinary descendants share one lazy scroll shift. Sticky boxes
-        // additionally change their local placement: each is built again
-        // against current layout. What it holds is in its own box's
-        // coordinates and keeps its entries, so the sticky entry alone is
-        // replaced in place where it hands its children what it did
-        // ([`Self::rebuilt_hit_entry_in_place`]); a branch holding a pinned
-        // entry, or one that cannot be, is patched whole, as before.
+        // additionally change their offset: each is built again against
+        // current layout. Its offset is part of its origin, and what it
+        // holds is in its own box's coordinates, so the sticky entry alone
+        // is replaced in place ([`Self::rebuilt_hit_entry_in_place`]), all
+        // of them in one pass whose bounds refresh once; a branch holding a
+        // pinned entry, or one that cannot be (under a perspective the
+        // offset is in its transform), is patched whole, outermost first.
         let mut sticky = self.sticky_nodes.affected(scroller);
         sticky.sort_by_key(|id| {
             std::iter::successors(self.parent_id(*id), |id| self.parent_id(*id)).count()
         });
         let pinned = self.pinned_hit_entries_under(document, &sticky);
-        for id in sticky {
-            let mut skips = ShiftSkips::default();
-            let rebuilt = (!pinned
+        let mut skips = ShiftSkips::default();
+        let (mut rebuilt, mut patched) = (Vec::new(), Vec::new());
+        for &id in &sticky {
+            let entry = (!pinned
                 .iter()
                 .any(|&pin| self.is_descendant_or_self(pin, id)))
-            .then(|| self.rebuilt_hit_entry_in_place(document, id, &mut skips))
+            .then(|| self.rebuilt_hit_entry_in_place(document, id, true, &mut skips))
             .flatten();
-            if let Some(entry) = rebuilt {
-                let _replaced = self.replace_hit_entries_in_place(document, vec![(id, entry)]);
-                #[cfg(any(test, feature = "layout-verify"))]
-                self.check_moved_hit_entries(document, &_replaced);
-            } else if !self.patch_hit_subtree(document, id) {
-                self.rebuild_hit_test(document);
-                break;
+            match entry {
+                Some(entry) => rebuilt.push((id, entry)),
+                None => patched.push(id),
             }
-            self.settle_non_scroll_hit_dirty([id]);
         }
+        let _replaced = self.replace_hit_entries_in_place(document, rebuilt);
+        for id in patched {
+            if !self.patch_hit_subtree(document, id) {
+                self.rebuild_hit_test(document);
+                return;
+            }
+        }
+        // Once every patch is in: one may build again what an entry
+        // replaced in place holds.
+        #[cfg(any(test, feature = "layout-verify"))]
+        self.check_moved_hit_entries(document, &_replaced);
+        self.settle_non_scroll_hit_dirty(sticky);
     }
 }
 

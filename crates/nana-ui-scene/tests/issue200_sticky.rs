@@ -400,8 +400,9 @@ fn issue200_sticky_scroll_work_does_not_grow_with_unrelated_sticky_nodes() {
     }
     assert_eq!(
         costs,
-        [Some(2), Some(2)],
-        "only the sticky node and its child need a new hit projection"
+        [Some(1), Some(1)],
+        "only the sticky node needs a new hit projection: its offset is its entry's origin, and \
+         its child is held relative to it"
     );
 }
 

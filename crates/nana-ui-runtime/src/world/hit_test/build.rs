@@ -389,11 +389,23 @@ impl UiWorld {
                     (parent_hit, parent, parent_blocks_3d, false, hit_parent)
                 };
             let (offset, offset_pinned) = offset_from(hit_parent);
+            // A sticky box's offset is a translation before its own
+            // transform, as its layout offset is: without a perspective it
+            // is part of the origin, so sticking moves this entry alone and
+            // what it holds keeps theirs. Under a perspective the entry
+            // takes it into its transform below.
+            let flat_parent = parent_hit.1 == [0.0, 0.0];
+            let stuck = self.sticky_translation(id);
+            let sticky = (flat_parent && stuck != [0.0, 0.0]).then_some(stuck);
             // The offset is a translation of what the parent hands down, so
             // it moves the box as a shift of the space it lands in, which
             // the children then keep. Under a perspective it does not
             // commute: the entry takes it into its transform.
-            let (parent_hit, origin) = if parent_hit.1 == [0.0, 0.0] {
+            let (parent_hit, origin) = if flat_parent {
+                let offset = match sticky {
+                    Some([x, y]) => [offset[0] + x, offset[1] + y],
+                    None => offset,
+                };
                 (parent_hit, linear_offset(parent_hit.0, offset))
             } else {
                 (
@@ -421,7 +433,11 @@ impl UiWorld {
                     .world_scene_transform(layout.x, layout.y, layout.width, layout.height)
                     .unwrap_or((IDENTITY_AFFINE, [0.0, 0.0]))
             };
-            let local = self.with_sticky_translation(id, local);
+            let local = if flat_parent || stuck == [0.0, 0.0] {
+                local
+            } else {
+                then_hit(([1.0, 0.0, 0.0, 1.0, stuck[0], stuck[1]], [0.0; 2]), local)
+            };
             let (transform, persp) = then_hit(parent_hit, local);
             let child_blocks_3d = parent_blocks_3d || space.opens_3d_context();
             // A box that scales, rotates, skews or flips in 2D hands its
@@ -495,7 +511,15 @@ impl UiWorld {
                         self.component_geometry(parent_id)
                 {
                     reads_page = true;
-                    self_clips.push((own_space(body, page_origin()), parent_hit.0));
+                    // Tested past the origin, which holds the sticky offset
+                    // the parent's space does not: put it back.
+                    let mut to_parent = parent_hit.0;
+                    if let Some(sticky) = sticky {
+                        let [x, y] = linear_offset(parent_hit.0, sticky);
+                        to_parent[4] -= x;
+                        to_parent[5] -= y;
+                    }
+                    self_clips.push((own_space(body, page_origin()), to_parent));
                 }
             }
             let confirm_busy = self

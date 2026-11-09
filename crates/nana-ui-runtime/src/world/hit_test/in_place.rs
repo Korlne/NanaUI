@@ -20,10 +20,18 @@ impl UiWorld {
     ///
     /// `skips` carries the unshifted entries above deep parents from one
     /// entry to the next ([`HitIndex::inherited_shift_skipping`]).
+    ///
+    /// `scrolled`: nothing but a scroll changed since the entry was held
+    /// (a sticky box a scroll moves), so nothing above it changed in that
+    /// space either. The transform built against the live scroll and
+    /// brought back by the shifts is then the held one up to their
+    /// rounding: the held one stays, with the clips taken with it, so that
+    /// what the entry holds keeps the space it was built in.
     pub(super) fn rebuilt_hit_entry_in_place(
         &self,
         document: DocumentId,
         id: StableNodeId,
+        scrolled: bool,
         skips: &mut ShiftSkips,
     ) -> Option<HitEntry> {
         let index = self.hit_test_index.get(&document)?;
@@ -83,6 +91,23 @@ impl UiWorld {
         {
             transform[4] -= offset[0];
             transform[5] -= offset[1];
+        }
+        if scrolled && !held.local_children && fresh.transform[..4] == held.transform[..4] {
+            let back = [
+                held.transform[4] - fresh.transform[4],
+                held.transform[5] - fresh.transform[5],
+            ];
+            if back != [0.0, 0.0] {
+                fresh.transform = held.transform;
+                for (_, transform) in fresh
+                    .self_clips
+                    .iter_mut()
+                    .chain(fresh.child_clips.iter_mut())
+                {
+                    transform[4] += back[0];
+                    transform[5] += back[1];
+                }
+            }
         }
         // A box that turns fixed hangs from the viewport, and one whose
         // stacking moved takes another place among its siblings: both are
@@ -214,7 +239,7 @@ impl UiWorld {
         let mut rebuilt = Vec::new();
         let mut skips = ShiftSkips::default();
         for &id in dirty {
-            if let Some(entry) = self.rebuilt_hit_entry_in_place(document, id, &mut skips) {
+            if let Some(entry) = self.rebuilt_hit_entry_in_place(document, id, false, &mut skips) {
                 rebuilt.push((id, entry));
             } else {
                 rest.push(id);

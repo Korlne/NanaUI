@@ -278,3 +278,135 @@ fn rows_moved_in_a_scrolled_list_are_built_again_alone() {
         );
     }
 }
+
+/// A list whose sticky header holds a row of cells, and a modal frame in it
+/// whose body is sticky too. Scrolling sticks both: each sticky entry takes
+/// its offset into its origin and is built again alone -- what it holds
+/// keeps its entries -- and the body still takes the clip of the body the
+/// frame laid out, where the frame put it, not where the body stuck. The
+/// pointer finds what an index built from scratch finds, and what the
+/// collecting walk (which composes every transform afresh) finds.
+#[test]
+fn stuck_sticky_boxes_are_built_again_alone() {
+    let build = || {
+        let (mut b, root) = Builder::page(document(), 1, 400.0);
+        let scroller = b.element(
+            root,
+            LayoutStyle {
+                overflow_x: OverflowSpec::Auto,
+                overflow_y: OverflowSpec::Auto,
+                direction: Some(FlexDirection::Column),
+                flex_shrink: Some(0.0),
+                ..fixed(300.0, 120.0)
+            },
+        );
+        let sticky = |height: f32| LayoutStyle {
+            position: PositionSpec::Sticky,
+            offset_top: Some(LengthSpec::Px(0.0)),
+            flex_shrink: Some(0.0),
+            ..fixed(300.0, height)
+        };
+        let header = b.element(scroller, sticky(17.3));
+        for _ in 0..4 {
+            let cell = b.element(header, fixed(60.0, 12.0));
+            b.element(cell, fixed(30.0, 5.0));
+        }
+        let modal = b.element(
+            scroller,
+            LayoutStyle {
+                direction: Some(FlexDirection::Column),
+                flex_shrink: Some(0.0),
+                ..fixed(300.0, 400.0)
+            },
+        );
+        let body = b.element(modal, sticky(40.0));
+        b.element(body, fixed(200.0, 30.0));
+        b.queue.set_standard_visual(
+            modal,
+            Some(crate::StandardVisual::ModalFrame {
+                title: std::sync::Arc::from("Confirm"),
+                description: None,
+                body_text: None,
+                kind: crate::ModalSurfaceKind::Confirm(nana_ui_core::DialogSize::Compact),
+                busy: false,
+                danger: false,
+                slots: crate::ModalSlots {
+                    body: Some(body),
+                    ..crate::ModalSlots::default()
+                },
+                surface_painter: None,
+            }),
+        );
+        for _ in 0..20 {
+            b.element(
+                scroller,
+                LayoutStyle {
+                    flex_shrink: Some(0.0),
+                    ..fixed(300.0, 21.0)
+                },
+            );
+        }
+        let mut context = AppContext::new();
+        context.commit_mutations(b.queue).unwrap();
+        // The page's fields as this test reads them: the header in place
+        // of the spacer, the modal body in place of the inner scroller.
+        let mut page = Page {
+            context,
+            spacer: header,
+            scroller,
+            inner: body,
+            rows: Vec::new(),
+            entries: 0,
+        };
+        frame(&mut page, false);
+        page.context.rebuild_hit_test(document());
+        page.entries = page.context.world().len();
+        page
+    };
+    let (mut retained, mut cold) = (build(), build());
+    let (mut stuck, mut clipped) = (false, false);
+    for (step, y) in [3.7, 41.3, 97.9, 160.1, 233.3, 151.7, 12.9]
+        .into_iter()
+        .enumerate()
+    {
+        for page in [&mut retained, &mut cold] {
+            let scroller = page.scroller;
+            scroll(page, scroller, y);
+        }
+        let built = frame(&mut retained, false);
+        frame(&mut cold, true);
+        // The two sticky entries, nothing they hold.
+        assert!(built <= 2, "step {step}: {built} entries built again");
+        let world = retained.context.world();
+        stuck |= world.sticky_translation(retained.inner) != [0.0, 0.0];
+        // The body's clip is the box the frame laid it out in, where the
+        // scroll put it: of the stuck body only what overlaps that box takes
+        // the pointer.
+        let body = retained.inner;
+        let laid = world.component_layout_box(body).unwrap();
+        let shift = world.sticky_translation(body)[1];
+        let clip_bottom = laid.y - y + laid.height;
+        let x = laid.x + 50.0;
+        if shift != 0.0 && clip_bottom > 0.0 && clip_bottom + 2.0 < 120.0 {
+            let inside = |hit: Option<StableNodeId>| {
+                hit.is_some_and(|hit| world.is_descendant_or_self(hit, body))
+            };
+            assert!(
+                inside(world.hit_test(document(), x, clip_bottom - 1.0)),
+                "step {step}: the stuck body takes the pointer inside its clip"
+            );
+            assert!(
+                !inside(world.hit_test(document(), x, clip_bottom + 1.0)),
+                "step {step}: the stuck body's clip stays where the frame laid it out"
+            );
+            clipped = true;
+        }
+        let hits = grid(&retained);
+        assert_eq!(hits, grid(&cold), "step {step}");
+        for (hit, candidates) in hits {
+            assert_eq!(hit, candidates.first().copied(), "step {step}");
+        }
+    }
+    assert!(stuck, "the modal body stuck at some step");
+    assert!(clipped, "a step tested the stuck body's clip");
+}
