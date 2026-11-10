@@ -9239,6 +9239,108 @@ fn border_image_url_nine_slice_paints_corners_and_fill() {
     );
 }
 
+/// An opaque white nine-slice under `transform`, painted on black: the
+/// pixels of an 80x60 target.
+fn paint_white_nine_slice(transform: nana_ui_core::PaintTransform) -> Vec<u8> {
+    let fixture_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    std::fs::create_dir_all(&fixture_dir).expect("fixture dir");
+    let png_path = fixture_dir.join("nine-slice-white.png");
+    if !png_path.exists() {
+        image::RgbaImage::from_pixel(40, 40, image::Rgba([255; 4]))
+            .save(&png_path)
+            .expect("write white nine-slice png");
+    }
+    super::set_background_image_url_base(fixture_dir);
+    let surface = nana_ui_scene::QuadSurfacePaint {
+        border_image: Some(nana_ui_core::BorderImageSpec {
+            source: nana_ui_core::BackgroundImage::url("nine-slice-white.png".to_string()),
+            slice: [nana_ui_core::BorderImageSlice::Number(14.0); 4],
+            fill: true,
+        }),
+        ..Default::default()
+    };
+    let (device, queue) = test_device();
+    let format = wgpu::TextureFormat::Rgba8Unorm;
+    let mut painter = SceneWgpuPainter::for_test(format);
+    let mut scene = UiScene::new();
+    let mut node = paint_surface_quad_node(1, 10.3, 10.3, 60.0, 40.0, [0.0; 4], surface);
+    Arc::make_mut(&mut node.source_style.layout).transform = Some(transform);
+    scene.apply_delta([node], []);
+    let viewport = ScenePaintViewport {
+        logical_size: [80.0, 60.0],
+        physical_size: [80, 60],
+        scale_factor: 1.0,
+        scene_origin: [0.0, 0.0],
+        target_origin: [0.0, 0.0],
+        clear_color: [0.0, 0.0, 0.0, 1.0],
+        clear: true,
+    };
+    let (texture, view) = test_copy_target(&device, format, 80, 60);
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("nana-ui nine-slice seams"),
+    });
+    painter
+        .paint_encoder(&scene, &mut encoder, &view, viewport, None, None)
+        .unwrap();
+    let pixels = readback_rgba(&device, &queue, encoder, &texture, 80, 60);
+    super::image_url::reset_test_url_base();
+    pixels
+}
+
+/// The darkest pixel `inset` px inside the bounds of what `pixels` painted.
+fn darkest_inside(pixels: &[u8], inset: u32) -> (u8, [u32; 4]) {
+    let lit = |x: u32, y: u32| pixel(pixels, 80, x, y)[0] > 128;
+    let xs = (0..80).filter(|x| (0..60).any(|y| lit(*x, y)));
+    let ys = (0..60).filter(|y| (0..80).any(|x| lit(x, *y)));
+    let (x0, x1) = (xs.clone().min().unwrap(), xs.max().unwrap());
+    let (y0, y1) = (ys.clone().min().unwrap(), ys.max().unwrap());
+    let darkest = (y0 + inset..=y1 - inset)
+        .flat_map(|y| (x0 + inset..=x1 - inset).map(move |x| (x, y)))
+        .map(|(x, y)| pixel(pixels, 80, x, y)[0])
+        .min()
+        .unwrap();
+    (darkest, [x0, y0, x1, y1])
+}
+
+/// A scaled box is not snapped to the pixel grid, and its slice lines fall
+/// inside pixels: the tiles on either side must still cover them whole.
+#[test]
+fn border_image_nine_slice_has_no_seams_when_scaled() {
+    for scale in [0.37, 0.61, 0.83, 1.3] {
+        let pixels = paint_white_nine_slice(nana_ui_core::PaintTransform {
+            a: scale,
+            b: 0.0,
+            c: 0.0,
+            d: scale,
+            e: 0.4,
+            f: 0.7,
+        });
+        let (darkest, bounds) = darkest_inside(&pixels, 2);
+        assert!(
+            darkest >= 250,
+            "scale {scale}: a slice line shows the backdrop ({darkest}) inside {bounds:?}"
+        );
+    }
+}
+
+#[test]
+fn border_image_nine_slice_has_no_seams_when_rotated() {
+    let (sin, cos) = 5.0_f32.to_radians().sin_cos();
+    let pixels = paint_white_nine_slice(nana_ui_core::PaintTransform {
+        a: cos,
+        b: sin,
+        c: -sin,
+        d: cos,
+        e: 0.0,
+        f: 0.0,
+    });
+    let (darkest, bounds) = darkest_inside(&pixels, 9);
+    assert!(
+        darkest >= 250,
+        "a slice line shows the backdrop ({darkest}) inside {bounds:?}"
+    );
+}
+
 #[test]
 fn unsupported_border_image_does_not_paint_nine_slice() {
     let (fixture_dir, png_path) = nine_slice_fixture_png();

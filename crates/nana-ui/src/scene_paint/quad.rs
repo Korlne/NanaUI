@@ -739,7 +739,7 @@ impl QuadPipeline {
         } else {
             None
         };
-        let border_tiles = prepare_border_image_tiles(
+        let mut border_tiles = prepare_border_image_tiles(
             device,
             queue,
             url_cache,
@@ -748,8 +748,18 @@ impl QuadPipeline {
             bounds.height,
             work,
         );
-        if border_tiles.is_some() {
+        if let Some((_, tiles, _)) = border_tiles.as_mut() {
             edge_widths = zero_widths;
+            if pixel_snap == 0 {
+                seal_border_image_seams(
+                    tiles,
+                    position,
+                    [bounds.width, bounds.height],
+                    affine,
+                    persp,
+                    self.grid_scale,
+                );
+            }
         }
         if split_shadows {
             for layer in outsets.iter().rev() {
@@ -1775,6 +1785,87 @@ fn prepare_border_image_tiles(
     } else {
         Some((key, tiles, premultiplied))
     }
+}
+
+/// Closes the seams between the tiles of a nine-slice whose quads the vertex
+/// stage does not snap (a scaled, rotated or animated box).
+///
+/// Each tile is a quad of its own and ramps every edge over one device pixel.
+/// Where two tiles meet inside a pixel both cover it only in part, and the
+/// two partial covers leave up to a quarter of the backdrop showing: a hairline
+/// along every slice line.
+///
+/// Under a scale and a translation the slice lines move onto device pixel
+/// boundaries, at most half a pixel away, so no pixel is shared and each
+/// keeps exactly one tile. Under any other transform a slice line crosses
+/// pixels wherever it is put; there each tile grows half a device pixel past
+/// it instead, its image continuing, so the two together cover the line
+/// (twice for a translucent image, which is a fainter mark than the gap).
+fn seal_border_image_seams(
+    tiles: &mut Vec<BorderImageTile>,
+    origin: [f32; 2],
+    size: [f32; 2],
+    affine: [f32; 6],
+    persp: [f32; 2],
+    scale: f32,
+) {
+    const EDGE: f32 = 1.0e-3;
+    let [a, b, c, d, e, f] = affine;
+    let axis_aligned = b.abs() <= 1.0e-6
+        && c.abs() <= 1.0e-6
+        && persp[0].abs() <= 1.0e-8
+        && persp[1].abs() <= 1.0e-8
+        && a.abs() > 1.0e-6
+        && d.abs() > 1.0e-6
+        && scale > 0.0;
+    let device = image_device_scale(affine, scale);
+    for axis in 0..2 {
+        let (gain, shift) = if axis == 0 { (a, e) } else { (d, f) };
+        let extent = size[axis];
+        let interior = |at: f32| at > EDGE && at < extent - EDGE;
+        // A slice line, in the box, on the nearest device pixel boundary.
+        let on_grid = |at: f32| {
+            let pixel = ((gain * (origin[axis] + at) + shift) * scale).round();
+            ((pixel / scale - shift) / gain - origin[axis]).clamp(0.0, extent)
+        };
+        let overlap = 0.5 / device[axis];
+        for tile in tiles.iter_mut() {
+            let (start, length, uv0, uv1) = if axis == 0 {
+                (tile.dest_x, tile.dest_w, tile.u0, tile.u1)
+            } else {
+                (tile.dest_y, tile.dest_h, tile.v0, tile.v1)
+            };
+            let end = start + length;
+            let per_px = (uv1 - uv0) / length.max(1.0e-6);
+            let (mut new_start, mut new_end, mut new_uv0, mut new_uv1) = (start, end, uv0, uv1);
+            if interior(start) {
+                if axis_aligned {
+                    new_start = on_grid(start);
+                } else {
+                    new_start = start - overlap;
+                    new_uv0 = (uv0 - overlap * per_px).clamp(0.0, 1.0);
+                }
+            }
+            if interior(end) {
+                if axis_aligned {
+                    new_end = on_grid(end);
+                } else {
+                    new_end = end + overlap;
+                    new_uv1 = (uv1 + overlap * per_px).clamp(0.0, 1.0);
+                }
+            }
+            let new_length = (new_end - new_start).max(0.0);
+            if axis == 0 {
+                (tile.dest_x, tile.dest_w, tile.u0, tile.u1) =
+                    (new_start, new_length, new_uv0, new_uv1);
+            } else {
+                (tile.dest_y, tile.dest_h, tile.v0, tile.v1) =
+                    (new_start, new_length, new_uv0, new_uv1);
+            }
+        }
+    }
+    // A slice thinner than half a device pixel has no pixel left to paint.
+    tiles.retain(|tile| tile.dest_w > 1.0e-4 && tile.dest_h > 1.0e-4);
 }
 
 #[allow(clippy::too_many_arguments)]
