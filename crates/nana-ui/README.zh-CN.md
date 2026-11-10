@@ -33,13 +33,14 @@ cargo run -p nana-ui --example application-counter --features hosted,bundled-fon
 
 ## Features
 
-默认只开启 `wgpu-backends` 和 `icu`，桌面应用通常再加 `hosted`，或直接用 `full`。
+默认开启 `wgpu-backends`、`icu` 和 `snippet-transforms`，桌面应用通常再加 `hosted`，或直接用 `full`。用 `default-features = false` 的应用要自己点名用到的那几项。
 
 - `hosted`：桌面宿主，包括窗口、Surface、帧调度和平台无障碍适配，隐含 `gpu`。
 - `gpu`：`SceneWgpuPainter`、宿主纹理、帧交换和无窗口输出。
 - `wgpu-backends`（默认）：打开平台上的全部 WGPU 后端，只在 `gpu` 开启时生效。
 - `icu`（默认）：用 ICU4X 做数字、日期和复数格式化。
-- `full`：`bundled-fonts`、`components`、`hosted`、`syntax-highlighting` 和 `icu`。
+- `snippet-transforms`（默认）：snippet 里的正则变换（`${1/(.*)/${1:/upcase}/}`）。关闭后 snippet 照常展开和联动，变换原样返回，正则引擎（约 0.7 MiB）不进二进制。
+- `full`：`bundled-fonts`、`components`、`hosted`、`syntax-highlighting`、`icu` 和 `snippet-transforms`。
 - `bundled-fonts`：注册内置的 Noto Sans SC 并设为界面默认字体。
 - `components`：打开 `calendar`、`charts`、`controls`、`graph-canvas`、`image-viewer`、`rich-text` 六个控件族，也可以单独开启。
 - `syntax-highlighting`：代码块语法高亮。

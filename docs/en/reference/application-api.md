@@ -117,7 +117,7 @@ There is exactly one `ActionDescriptor`. It is defined in Runtime (`nana_ui::run
 
 ## Cargo features
 
-`nana-ui` enables `wgpu-backends` by default (effective only when `gpu` is enabled). Applications that choose their own graphics backends use `default-features = false` and enable features by responsibility:
+`nana-ui` enables `wgpu-backends` (effective only when `gpu` is enabled), `icu` and `snippet-transforms` by default. Applications that choose their own graphics backends use `default-features = false` and enable features by responsibility:
 
 | feature | Effect |
 | --- | --- |
@@ -125,7 +125,8 @@ There is exactly one `ActionDescriptor`. It is defined in Runtime (`nana_ui::run
 | `gpu` | `SceneWgpuPainter`, `HostTexture`, `GpuTextureView`, `GpuView` |
 | `bundled-fonts` | Embeds the Noto Sans SC variable font (`wght` 400–700) and registers it as the UI font |
 | `components` | Aggregate of the component families below |
-| `full` | fonts + components + hosted + syntax-highlighting |
+| `full` | fonts + components + hosted + syntax-highlighting + icu + snippet-transforms |
+| `snippet-transforms` | Regular-expression transforms in snippets (`${1/(.*)/${1:/upcase}/}`). When disabled, a snippet still parses, expands and links its placeholders, and a transform returns its value unchanged; the regular-expression engine (about 0.7 MiB) is not linked |
 | `calendar` / `charts` / `controls` / `graph-canvas` / `image-viewer` / `rich-text` | Enables the matching runtime/scene `cfg` and re-exports that family. When disabled, the family is not compiled. Historical no-op aliases (`overlays`, `selects`, `qr-code`, etc.) have been removed; use `components` / `full` |
 | `syntax-highlighting` | The `"highlight"` presenter for `TextArea` |
 | `no-default-app-icon` | The application always registers its own icon: the default icon marker is not linked, and windows without an icon keep the platform default. Enabled only by applications |

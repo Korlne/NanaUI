@@ -33,6 +33,7 @@ let view = cx.mount_view_root(document, counter).unwrap();
 
 - `icu`（默认）：用 ICU4X 和编译进来的 CLDR 数据格式化数字、日期和复数；关闭后用 `PlainFormatter`。
 - `calendar`、`charts`、`controls`、`graph-canvas`、`image-viewer`、`rich-text`：可选的控件族，`components` 一次打开全部。`rich-text` 包含 Markdown、Mermaid 图和数学公式。
+- `snippet-transforms`（默认）：snippet 里的正则变换；关闭后变换原样返回，不链接正则引擎。
 - `syntax-highlighting`：代码块语法高亮。
 - `view-macro`：`view!` 模板宏。
 - `reactive-trace`：记录响应式更新的因果链，回答“为什么更新”。

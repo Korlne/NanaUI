@@ -117,7 +117,7 @@ Android、XR 与 accessibility provider 的设备验收。
 
 ## Cargo feature
 
-`nana-ui` 默认打开 `wgpu-backends`（仅在启用 `gpu` 时生效）。需要自选图形后端的应用使用 `default-features = false`，再按职责打开：
+`nana-ui` 默认打开 `wgpu-backends`（仅在启用 `gpu` 时生效）、`icu` 和 `snippet-transforms`。需要自选图形后端的应用使用 `default-features = false`，再按职责打开：
 
 | feature | 作用 |
 | --- | --- |
@@ -125,7 +125,8 @@ Android、XR 与 accessibility provider 的设备验收。
 | `gpu` | `SceneWgpuPainter`、`HostTexture`、`GpuTextureView`、`GpuView` |
 | `bundled-fonts` | 嵌入 Noto Sans SC 可变字体（`wght` 400–700）并注册为界面字体 |
 | `components` | 下面组件族的聚合 |
-| `full` | fonts + components + hosted + syntax-highlighting |
+| `full` | fonts + components + hosted + syntax-highlighting + icu + snippet-transforms |
+| `snippet-transforms` | snippet 里的正则变换（`${1/(.*)/${1:/upcase}/}`）。关闭后 snippet 照常解析、展开、联动占位符，变换原样返回；正则引擎（约 0.7 MiB）不链接 |
 | `calendar` / `charts` / `controls` / `graph-canvas` / `image-viewer` / `rich-text` | 打开对应 runtime/scene `cfg` 并再导出该族。未启用则该族不参与编译。历史 no-op 别名（`overlays`、`selects`、`qr-code` 等）已删除，改用 `components` / `full` |
 | `syntax-highlighting` | `TextArea` 的 `"highlight"` presenter |
 | `no-default-app-icon` | 应用总是注册自己的图标：不链接默认图标标记，没有图标的窗口沿用平台默认。只由应用打开 |

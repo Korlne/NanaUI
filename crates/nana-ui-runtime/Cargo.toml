@@ -14,7 +14,7 @@ graph-canvas = []
 image-viewer = []
 rich-text = ["dep:pulldown-cmark", "dep:nana-ui-diagram", "dep:ratex-parser", "dep:ratex-layout", "dep:ratex-svg", "dep:ratex-types"]
 components = ["calendar", "charts", "controls", "graph-canvas", "image-viewer", "rich-text"]
-default = ["icu"]
+default = ["icu", "snippet-transforms"]
 # Locale-aware message formatting with ICU4X and its compiled CLDR data:
 # plural rules, numbers, dates and times. Without it messages format with
 # `PlainFormatter`.
@@ -29,6 +29,10 @@ icu = [
     "dep:fixed_decimal",
     "dep:writeable",
 ]
+# Regular-expression transforms in snippets (`${1/(.*)/${1:/upcase}/}`,
+# `${TM_FILENAME/\\..*//}`). Without it a snippet still parses, expands and
+# links its placeholders; a transform leaves its value as it is.
+snippet-transforms = ["dep:fancy-regex"]
 benchmark = []
 # Lay the document out again from nothing after every retained pass and
 # require the same boxes (always on in this crate's tests).
@@ -40,7 +44,9 @@ view-macro = ["dep:nana-ui-view-macros"]
 syntax-highlighting = ["dep:two-face"]
 
 [dependencies]
-fancy-regex = "0.16.2"
+# Snippet placeholder transforms only (`snippet-transforms`). The engine is
+# some 0.7 MiB of a hosted binary, and every text edit would otherwise link it.
+fancy-regex = { version = "0.16.2", optional = true }
 hashbrown = "0.17.1"
 # Fixed-seed hashing for cache identities (the intrinsic cache's environment).
 foldhash = "0.2.0"

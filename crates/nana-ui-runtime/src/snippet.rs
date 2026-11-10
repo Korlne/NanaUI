@@ -348,6 +348,15 @@ fn known_variable(name: &str) -> bool {
     ) || name.starts_with("CURRENT_")
 }
 impl SnippetTransform {
+    /// Without `snippet-transforms` there is no regular-expression engine:
+    /// the value comes through as it is, the same as for a pattern that
+    /// does not compile.
+    #[cfg(not(feature = "snippet-transforms"))]
+    fn apply(&self, value: &str) -> String {
+        value.into()
+    }
+
+    #[cfg(feature = "snippet-transforms")]
     fn apply(&self, value: &str) -> String {
         let flags = self
             .options
@@ -385,6 +394,7 @@ impl SnippetTransform {
         result
     }
 }
+#[cfg(feature = "snippet-transforms")]
 fn format_captures(format: &str, c: &fancy_regex::Captures<'_>) -> String {
     let mut out = String::new();
     let mut at = 0;
@@ -638,6 +648,21 @@ pub(crate) fn context_variables(
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// Without the engine a transform is the identity; the rest of the
+    /// snippet (variables, defaults, mirrors, the final stop) is unchanged.
+    #[cfg(not(feature = "snippet-transforms"))]
+    #[test]
+    fn a_transform_leaves_its_value_unchanged_without_the_engine() {
+        let variables = BTreeMap::from([("TM_FILENAME".into(), "hello-world.wgsl".into())]);
+        let e = expand_text_snippet_with_variables(
+            "${TM_FILENAME/(.*)\\..+$/${1:/pascalcase}/} ${1:foo} ${1/(.*)/${1:/upcase}/}$0",
+            &variables,
+        )
+        .unwrap();
+        assert_eq!(e.text, "hello-world.wgsl foo foo");
+    }
+
+    #[cfg(feature = "snippet-transforms")]
     #[test]
     fn snippet_variables_nested_defaults_and_transforms_expand_and_track_edits() {
         let variables = BTreeMap::from([("TM_FILENAME".into(), "hello-world.wgsl".into())]);
