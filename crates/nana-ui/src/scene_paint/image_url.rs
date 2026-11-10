@@ -323,8 +323,17 @@ impl PathExt<'_> {
     }
 }
 
+#[cfg(feature = "svg")]
 const MAX_SVG_EDGE: u32 = 2048;
 
+/// Without `svg` there is no SVG reader: the document is one more image
+/// that cannot be decoded.
+#[cfg(not(feature = "svg"))]
+fn decode_svg_rgba(_bytes: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
+    None
+}
+
+#[cfg(feature = "svg")]
 fn decode_svg_rgba(bytes: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
     #[cfg(any(feature = "rich-text", feature = "bundled-fonts"))]
     let font = Some(nana_svg_raster::SvgFont {
@@ -670,6 +679,16 @@ mod tests {
         );
     }
 
+    #[cfg(not(feature = "svg"))]
+    #[test]
+    fn an_svg_is_an_unreadable_image_without_its_reader() {
+        let svg = br##"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="2"><rect width="4" height="2" fill="#00ff00"/></svg>"##;
+        assert!(decode_image_bytes(svg).is_none());
+        let url = format!("data:image/svg+xml,{}", String::from_utf8_lossy(svg));
+        assert!(decode_url_rgba(&url).is_none());
+    }
+
+    #[cfg(feature = "svg")]
     #[test]
     fn svg_bytes_rasterize_straight_rgba() {
         let svg = br##"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="2"><rect width="4" height="2" fill="#00ff00"/></svg>"##;
@@ -678,6 +697,7 @@ mod tests {
         assert_eq!(&rgba[..4], &[0x00, 0xff, 0x00, 0xff]);
     }
 
+    #[cfg(feature = "svg")]
     #[test]
     fn svg_image_href_does_not_read_local_file() {
         let dir = std::env::temp_dir().join(format!("nanaui-svg-href-{}", std::process::id()));
@@ -700,6 +720,7 @@ mod tests {
         assert_eq!(red, 0, "usvg must not fs::read image href");
     }
 
+    #[cfg(feature = "svg")]
     #[test]
     fn svg_data_url_decodes() {
         let svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"2\" height=\"2\"><rect width=\"2\" height=\"2\" fill=\"#ff0000\"/></svg>";
@@ -709,6 +730,7 @@ mod tests {
         assert_eq!(&rgba[..4], &[0xff, 0x00, 0x00, 0xff]);
     }
 
+    #[cfg(feature = "svg")]
     #[test]
     fn inline_svg_path_rasterizes_via_resvg() {
         let svg = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><path d="M0 0 H10 V10 H0 Z" fill="#ff00ff"/></svg>"##;
@@ -723,6 +745,7 @@ mod tests {
         assert_eq!(&rgba[..4], &[0xff, 0x00, 0xff, 0xff]);
     }
 
+    #[cfg(feature = "svg")]
     #[test]
     fn svg_raster_size_is_capped_without_aspect_distortion() {
         let svg = br##"<svg xmlns="http://www.w3.org/2000/svg" width="8000" height="2000"><rect width="8000" height="2000" fill="#0000ff"/></svg>"##;
@@ -739,6 +762,7 @@ mod tests {
         assert!(!looks_like_svg_url("icons/mark.png"));
     }
 
+    #[cfg(feature = "svg")]
     #[test]
     fn svg_base64_data_url_decodes() {
         let svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"1\" height=\"1\"><rect width=\"1\" height=\"1\" fill=\"#010203\"/></svg>";
@@ -749,7 +773,7 @@ mod tests {
         assert_eq!((width, height), (1, 1));
         assert_eq!(&rgba[..4], &[0x01, 0x02, 0x03, 0xff]);
     }
-    #[cfg(any(feature = "rich-text", feature = "bundled-fonts"))]
+    #[cfg(all(feature = "svg", any(feature = "rich-text", feature = "bundled-fonts")))]
     #[test]
     fn svg_text_uses_the_existing_ui_font_for_latin_and_cjk() {
         for text in ["Mermaid", "流程图"] {
@@ -774,7 +798,7 @@ mod tests {
     /// The bundled face is variable: `font-weight` reaches its `wght` axis in
     /// the SVG rasterizer too, so bold SVG text is drawn heavier rather than
     /// with the Regular outlines.
-    #[cfg(any(feature = "rich-text", feature = "bundled-fonts"))]
+    #[cfg(all(feature = "svg", any(feature = "rich-text", feature = "bundled-fonts")))]
     #[test]
     fn svg_text_weight_drives_the_bundled_wght_axis() {
         let ink = |weight: u16, text: &str| -> u32 {

@@ -8788,6 +8788,7 @@ fn img_src_content_image_paints_fixture_png() {
     );
 }
 
+#[cfg(feature = "svg")]
 #[test]
 fn inline_svg_data_url_paints_through_content_image() {
     let svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"8\" height=\"8\"><path d=\"M0 0 H8 V8 H0 Z\" fill=\"#00ff00\"/></svg>";
@@ -11821,12 +11822,7 @@ fn a_dashed_stroke_paints_its_dashes_and_skips_its_gaps() {
 
 #[test]
 fn a_rotated_path_and_an_image_land_where_the_local_transform_puts_them() {
-    use base64::Engine as _;
-    let svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"8\" height=\"8\"><path d=\"M0 0 H8 V8 H0 Z\" fill=\"#00ff00\"/></svg>";
-    let url = format!(
-        "data:image/svg+xml;base64,{}",
-        base64::engine::general_purpose::STANDARD.encode(svg.as_bytes())
-    );
+    let url = green_image_url();
     let pixels = paint_one_painter(
         PaintFn(move |cx: &mut nana_ui_runtime::PaintContext<'_>| {
             cx.save();
@@ -11892,12 +11888,20 @@ fn a_conic_gradient_sweeps_clockwise_from_its_start_angle() {
     assert!(is_blue_slot(at(55, 27)), "{:?}", at(55, 27));
 }
 
-fn green_svg_url() -> String {
+/// An 8 by 8 opaque green image, as a format every build decodes.
+fn green_image_url() -> String {
+    let image = image::RgbaImage::from_pixel(8, 8, image::Rgba([0, 255, 0, 255]));
+    let mut bytes = Vec::new();
+    image
+        .write_to(
+            &mut std::io::Cursor::new(&mut bytes),
+            image::ImageFormat::Png,
+        )
+        .expect("encode green png");
     use base64::Engine as _;
-    let svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"8\" height=\"8\"><path d=\"M0 0 H8 V8 H0 Z\" fill=\"#00ff00\"/></svg>";
     format!(
-        "data:image/svg+xml;base64,{}",
-        base64::engine::general_purpose::STANDARD.encode(svg.as_bytes())
+        "data:image/png;base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(bytes)
     )
 }
 
@@ -12173,7 +12177,7 @@ fn a_gradient_colours_text_across_its_glyphs() {
 
 #[test]
 fn a_curved_clip_cuts_an_image_along_its_curve_and_an_image_can_fill_a_path() {
-    let url = green_svg_url();
+    let url = green_image_url();
     let pixels = paint_one_painter(
         PaintFn(move |cx: &mut nana_ui_runtime::PaintContext<'_>| {
             let mut disc = nana_ui_runtime::PaintPath::new();
@@ -12229,7 +12233,7 @@ fn a_curved_clip_cuts_an_image_along_its_curve_and_an_image_can_fill_a_path() {
 
 #[test]
 fn a_clipped_layer_off_the_target_is_skipped_whole_and_one_half_on_is_not() {
-    let url = green_svg_url();
+    let url = green_image_url();
     let pixels = paint_one_painter(
         PaintFn(move |cx: &mut nana_ui_runtime::PaintContext<'_>| {
             let disc = |x: f32| {
@@ -13608,12 +13612,7 @@ fn a_painted_shadow_takes_its_nodes_mask_and_keeps_the_end_value_past_the_box() 
 
 #[test]
 fn a_painted_image_on_a_masked_node_fades_as_a_painted_fill_does() {
-    use base64::Engine as _;
-    let svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"8\" height=\"8\"><path d=\"M0 0 H8 V8 H0 Z\" fill=\"#00ff00\"/></svg>";
-    let url = format!(
-        "data:image/svg+xml;base64,{}",
-        base64::engine::general_purpose::STANDARD.encode(svg.as_bytes())
-    );
+    let url = green_image_url();
     let mask = left_to_right_mask(&[(0.0, 0.0), (1.0, 1.0)]);
     let image = paint_styled_painter(
         PaintFn(move |cx: &mut nana_ui_runtime::PaintContext<'_>| {

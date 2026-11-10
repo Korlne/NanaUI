@@ -14,9 +14,17 @@ pub struct IconGeometry {
     pub shapes: &'static [IconShape],
 }
 
+/// One element of an icon, on its 24 × 24 grid. The painter draws these:
+/// every shape is an outline two units wide with round caps and joins,
+/// except where it says it is filled.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum IconShape {
+    /// An outline along the path.
     Path(&'static [IconPathCommand]),
+    /// The area the path encloses (non-zero), with no outline of its own.
+    /// An element that is both filled and outlined is this and a
+    /// [`Self::Path`] over the same commands.
+    Fill(&'static [IconPathCommand]),
     Circle {
         center: [f32; 2],
         radius: f32,
@@ -71,7 +79,9 @@ impl Icon {
         }
     }
 
-    /// Tabler 24×24 source. Painters rasterize this with `currentColor`.
+    /// The Tabler 24×24 source the shapes were generated from. Painters draw
+    /// [`Self::shapes`]; a host icon with no shapes is drawn from this, by an
+    /// application that reads SVG.
     pub fn svg(self) -> &'static str {
         self.0.svg
     }

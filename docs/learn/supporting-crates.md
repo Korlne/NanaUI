@@ -46,9 +46,9 @@ title: 外围支撑 crate 一览
 
 ### 3. `nana-svg-raster`、`nana-app-icon` 与 `nana-icons-tabler`
 
-- **`nana-svg-raster`（`crates/nana-svg-raster/src/lib.rs`，243 行）**：基于 `resvg 0.48.1` 将 SVG 栅格化为 `RasterizedSvg { width, height, rgba: Arc<[u8]> }`（`:7`），按消费场景提供四个入口：`rasterize_stretch`（`:21`，独立拉伸到目标宽高）、`rasterize_white_mask`（`:42`，图标图集白色遮罩，自动将 `currentColor` 替换为纯白）、`rasterize_document`（`:58`，按文档尺寸输出直通 alpha）与 `rasterize_document_capped`（`:71`，带最大边长限制的 URL SVG 解码）。
+- **`nana-svg-raster`（`crates/nana-svg-raster/src/lib.rs`，243 行）**：基于 `resvg 0.48.1` 将 SVG 栅格化为 `RasterizedSvg { width, height, rgba: Arc<[u8]> }`（`:7`），按消费场景提供四个入口：`rasterize_stretch`（`:21`，独立拉伸到目标宽高）、`rasterize_white_mask`（`:42`，图标图集白色遮罩，自动将 `currentColor` 替换为纯白）、`rasterize_document`（`:58`，按文档尺寸输出直通 alpha）与 `rasterize_document_capped`（`:71`，带最大边长限制的 URL SVG 解码）。它只在 `nana-ui` 的 `svg` feature 打开时链接：SVG 图片要用它，图标不用。`rasterize_white_mask` 只剩一个用处：宿主包了一个只有 SVG、没有 shapes 的图标。
 - **`nana-app-icon`（`crates/nana-app-icon/src/lib.rs`，140 行）**：提供 PNG / ICO / ICNS 编码、Windows PE 资源嵌入（`embed` feature）以及运行时默认图标与 macOS Dock `828 / 1024` 网格内缩适配（`runtime` feature，`with_system_grid:32`）。
-- **`nana-icons-tabler`（`crates/nana-icons-tabler/src/lib.rs`）**：由 `scripts/generate_tabler_catalog.py` 从 `@tabler/icons 3.46.0` 生成的静态常量表。每个图标导出为 `pub static *_ICON: IconData { name, shapes, svg }`；由于声明为独立静态常量，链接器会自动剔除所有未被应用引用的图标，不会膨胀最终二进制体积。
+- **`nana-icons-tabler`（`crates/nana-icons-tabler/src/lib.rs`）**：由 `scripts/generate_tabler_catalog.py` 从 `@tabler/icons 3.46.0` 生成的静态常量表。每个图标导出为 `pub static *_ICON: IconData { name, shapes, svg }`；图集画的是 `shapes`（`nana-ui/src/scene_paint/icon_raster.rs`）：每个形状是 2 个网格单位宽、圆头圆角的轮廓，`IconShape::Fill` 是填充，用的是给字形做栅格的同一个栅格器（`nana_text::raster::path_coverage`），`svg` 只是它们的来源；由于声明为独立静态常量，链接器会自动剔除所有未被应用引用的图标，不会膨胀最终二进制体积。
 
 ### 4. `nana-package` 与 `nana-packager`：打包契约的读侧与写侧
 

@@ -13,6 +13,7 @@ mod color;
 mod dest;
 mod host_texture;
 mod icon;
+mod icon_raster;
 mod image_resample;
 pub(crate) mod image_url;
 mod material;

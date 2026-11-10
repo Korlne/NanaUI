@@ -242,9 +242,10 @@ nana-ui = { git = "https://github.com/sena-nana/NanaUI", features = ["hosted", "
 | `components` | 日历、图表、节点图、图片查看器、富文本等控件族 |
 | `wgpu-interop` | 访问 `GpuContext` 背后的 WGPU 对象 |
 | `snippet-transforms` | snippet 里的正则变换 |
-| `full` | `hosted`、`bundled-fonts`、`components`、`syntax-highlighting`、`icu`、`snippet-transforms` |
+| `svg` | SVG 图片（图标按自己的几何绘制，不需要它） |
+| `full` | `hosted`、`bundled-fonts`、`components`、`syntax-highlighting`、`icu`、`snippet-transforms`、`svg` |
 
-默认开启 `wgpu-backends`、`icu` 和 `snippet-transforms`；用 `default-features = false` 的应用要自己点名用到的那几项。完整列表见 [`nana-ui`](crates/nana-ui)。
+默认开启 `wgpu-backends`、`icu`、`snippet-transforms` 和 `svg`；用 `default-features = false` 的应用要自己点名用到的那几项。完整列表见 [`nana-ui`](crates/nana-ui)。
 
 </details>
 

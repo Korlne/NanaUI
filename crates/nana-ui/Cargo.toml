@@ -14,7 +14,7 @@ path = "src/lib.rs"
 
 [features]
 
-default = ["wgpu-backends", "icu", "snippet-transforms"]
+default = ["wgpu-backends", "icu", "snippet-transforms", "svg"]
 # Every WGPU backend the platform has (DX12/Vulkan/GLES on Windows, Metal on
 # Apple, Vulkan/GLES on Linux). Only takes effect with `gpu`. An application
 # that ships a narrower set turns default features off and enables the
@@ -27,6 +27,7 @@ full = [
     "syntax-highlighting",
     "icu",
     "snippet-transforms",
+    "svg",
 ]
 # Locale-aware CLDR number/date/plural formatting. PlainFormatter remains
 # available when a host opts out of default features.
@@ -35,6 +36,12 @@ icu = ["nana-ui-runtime/icu", "nana-ui-scene/icu"]
 # Without it snippets still expand and link their placeholders; a transform
 # leaves its value unchanged, and the engine (about 0.7 MiB) is not linked.
 snippet-transforms = ["nana-ui-runtime/snippet-transforms"]
+# SVG images: `url()` textures and `Image` sources that are SVG documents,
+# and a host icon wrapped with an SVG and no shapes. Icons are drawn from
+# their own geometry and do not need it. Without it an SVG image fails to
+# decode like any unreadable file, and `usvg`, `resvg` and `tiny-skia`
+# (about 0.8 MiB) are not linked. Only takes effect with `gpu`.
+svg = ["dep:nana-svg-raster"]
 bundled-fonts = ["nana-ui-core/bundled-fonts"]
 # Compatibility flags must gate real code: every entry here either maps to a
 # `cfg(feature = …)` component module or pulls a runtime feature. No-op aliases
@@ -70,7 +77,7 @@ icons-tabler = ["dep:nana-icons-tabler"]
 # manifest, and answer `NANA_PACKAGE_VALIDATE` self-checks. Opt-in: embedded
 # hosts that do their own packaging never link `nana-package`.
 packaged-resources = ["dep:nana-package"]
-gpu = ["dep:naga", "dep:bytemuck", "dep:nana-frame-exchange", "dep:nana-gpu", "dep:base64", "dep:etagere", "dep:image", "dep:pollster", "dep:nana-svg-raster", "nana-text/raster", "nana-ui-platform/fetch", "dep:wgpu", "dep:windows"]
+gpu = ["dep:naga", "dep:bytemuck", "dep:nana-frame-exchange", "dep:nana-gpu", "dep:base64", "dep:etagere", "dep:image", "dep:pollster", "nana-text/raster", "nana-ui-platform/fetch", "dep:wgpu", "dep:windows"]
 # Explicit escape hatch to the WGPU objects behind the GPU contract
 # (`GpuContext::wgpu()`, `FrameContext::wgpu_encoder()`, `nana_ui::wgpu`, …).
 # Hosts that bring their own device and renderers that record their own

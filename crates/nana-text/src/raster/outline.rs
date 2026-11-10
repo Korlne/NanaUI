@@ -470,6 +470,77 @@ fn emboldened(
 
 /// The fractional pen offset a glyph is rendered at, snapped whole for a face
 /// that has nothing to shift.
+/// One step of a path handed to [`path_coverage`]. `MoveTo` and `LineTo`
+/// take one point, `CurveTo` (a cubic) three, `Close` none.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum PathStep {
+    MoveTo,
+    LineTo,
+    CurveTo,
+    Close,
+}
+
+/// How [`path_coverage`] paints a path.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum PathPaint {
+    /// The area the path encloses, by the non-zero rule.
+    Fill,
+    /// An outline `width` wide in the path's own units, with round caps and
+    /// joins.
+    Stroke { width: f32 },
+}
+
+/// The coverage of a path over a `size` × `size` square of pixels, one byte
+/// each, row by row from the top. The path is in its own units, `scale`
+/// pixels to one, with its origin at the square's top-left corner.
+///
+/// Glyphs are outlines scaled to coverage by this crate's rasterizer, and a
+/// renderer that has other small outlines to draw (icons) draws them with
+/// the same one rather than link a second. The path goes in as the points
+/// and verbs a glyph outline is, so it is also the same compiled code.
+pub fn path_coverage(
+    points: &[[f32; 2]],
+    steps: &[PathStep],
+    paint: PathPaint,
+    scale: f32,
+    size: u32,
+) -> Vec<u8> {
+    use swash::zeno::{Cap, Fill, Format, Join, Mask, Stroke, Style, Transform, Vector, Verb};
+    let mut coverage = vec![0; size as usize * size as usize];
+    if size == 0 || steps.is_empty() {
+        return coverage;
+    }
+    let points: Vec<Vector> = points
+        .iter()
+        .map(|point| Vector::new(point[0], point[1]))
+        .collect();
+    let verbs: Vec<Verb> = steps
+        .iter()
+        .map(|step| match step {
+            PathStep::MoveTo => Verb::MoveTo,
+            PathStep::LineTo => Verb::LineTo,
+            PathStep::CurveTo => Verb::CurveTo,
+            PathStep::Close => Verb::Close,
+        })
+        .collect();
+    let mut stroke;
+    let style = match paint {
+        PathPaint::Fill => Style::Fill(Fill::NonZero),
+        PathPaint::Stroke { width } => {
+            stroke = Stroke::new(width);
+            stroke.cap(Cap::Round).join(Join::Round);
+            Style::from(&stroke)
+        }
+    };
+    Mask::new((&points[..], &verbs[..]))
+        .style(style)
+        .transform(Some(Transform::scale(scale, scale)))
+        .format(Format::Alpha)
+        .size(size, size)
+        .render_into(&mut coverage, None);
+    coverage
+}
+
 fn subpixel_offset(key: &GlyphRasterKey, snap: bool) -> swash::zeno::Vector {
     let x = key.subpixel_x.as_float();
     let y = key.subpixel_y.as_float();

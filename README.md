@@ -242,9 +242,10 @@ nana-ui = { git = "https://github.com/sena-nana/NanaUI", features = ["hosted", "
 | `components` | Calendar, charts, node graph, image viewer, rich text and other control families |
 | `wgpu-interop` | Access to the WGPU objects behind `GpuContext` |
 | `snippet-transforms` | Regular-expression transforms in snippets |
-| `full` | `hosted`, `bundled-fonts`, `components`, `syntax-highlighting`, `icu`, `snippet-transforms` |
+| `svg` | SVG images (icons are drawn from their own geometry and do not need it) |
+| `full` | `hosted`, `bundled-fonts`, `components`, `syntax-highlighting`, `icu`, `snippet-transforms`, `svg` |
 
-`wgpu-backends`, `icu` and `snippet-transforms` are on by default; an application that sets `default-features = false` names the ones it uses. The full list is in [`nana-ui`](crates/nana-ui).
+`wgpu-backends`, `icu`, `snippet-transforms` and `svg` are on by default; an application that sets `default-features = false` names the ones it uses. The full list is in [`nana-ui`](crates/nana-ui).
 
 </details>
 
