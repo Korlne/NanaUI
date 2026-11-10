@@ -203,6 +203,20 @@ Five lines of mixed Chinese, English, Japanese, Korean and emoji text laid out w
 
 `nana-text/tests/system_font_memory.rs` (it reads the machine's fonts, so it is `#[ignore]`d and run by hand on the target platform) asks for the bytes of every installed face: 929 faces in 442 files, 2 194 MiB of font files, 0.04 MiB of heap. A file an application registers with `register_file` is still read at registration: a mapping needs the file not to be shortened in place while it is mapped, which the system font directories can be relied on for and an application's own file cannot. When mapping fails (a file system without it), the file is read instead.
 
+**What a running window holds (2026-11-11).** macOS arm64, `release`, 8 seconds after the window appears, `footprint` and `heap` / `malloc_history` (`MallocStackLogging=lite`): the minimal hosted window `examples/reactive-sfc` has a process footprint of 30 MB, 21 MB of it heap; the first page of `component-gallery` is 36 MB with 26 MB of heap. The minimal window's heap by the nearest frame of each allocation's call stack:
+
+| Source | Heap |
+| --- | ---: |
+| AppKit's own objects (the window, menus, allocations inside the event loop) | about 11 MiB |
+| ColorSync colour conversion lookup tables (27 of them, 272 KiB each) | 7.3 MiB |
+| naga's shader IR (the Metal backend writes MSL per pipeline, so modules are kept) | about 4.2 MiB |
+| Metal shader and pipeline objects | about 1.9 MiB |
+| The default application icon (the decoded 256 px image and the 4 lookup tables it brings in) | about 1.7 MiB |
+| System font metadata (names and weights of 929 faces) | 0.6 MiB |
+| Reserved queues (input, diagnostics, window requests) | 0.3 MiB |
+
+The first two rows are the system frameworks', and any AppKit window has them; the rest holds no waste of the kind the system fonts had. One thing was changed in this round: the window service's request queue reserves 1 024 places of the largest request, and the two requests that create and control a window were over three hundred bytes each, 400 KiB in all; their contents are now boxed and the queue is about 50 KiB. The shader IR follows the total WGSL joined into each module (`color.wgsl` goes into nine modules); reducing it would mean giving each module only the functions it uses, which was not done.
+
 ## CPU time
 
 The cost of incremental frames is governed by the performance contract in `perf/` (`perf/README.md`): an idle frame does no work, paint-only changes do not relayout, and one edit does not scan siblings. The criterion is `WorkCounters`, not wall-clock time.

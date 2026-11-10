@@ -203,6 +203,20 @@ cd perf/micro/stack-depth && cargo run --release -- report
 
 `nana-text/tests/system_font_memory.rs`（读本机字体，`#[ignore]`，在目标平台上手工跑）把本机每个字面的字节都要一遍：929 个字面、442 个文件、2 194 MiB 的字体文件，堆上 0.04 MiB。应用用 `register_file` 注册的文件仍是注册时读入：映射要求文件在映射期间不被就地截短，系统字体目录能指望这一点，应用自己的文件不能。映射失败（不支持映射的文件系统）时退回读入。
 
+**运行中的窗口占多少（2026-11-11）。** macOS arm64、`release`，窗口出来后静置 8 秒，`footprint` 与 `heap` / `malloc_history`（`MallocStackLogging=lite`）：最小托管窗口 `examples/reactive-sfc` 的进程占用 30 MB，其中堆 21 MB；`component-gallery` 首页 36 MB，堆 26 MB。最小窗口的堆按调用栈归到最近的一层：
+
+| 来源 | 堆 |
+| --- | ---: |
+| AppKit 自己的对象（窗口、菜单、事件循环里的分配） | 约 11 MiB |
+| ColorSync 的颜色转换查找表（27 张，每张 272 KiB） | 7.3 MiB |
+| naga 的着色器 IR（Metal 后端按管线生成 MSL，模块要留着） | 约 4.2 MiB |
+| Metal 的着色器与管线对象 | 约 1.9 MiB |
+| 默认应用图标（解码后的 256 px 图与它引出的 4 张查找表） | 约 1.7 MiB |
+| 系统字体的元数据（929 个字面的名字与字重） | 0.6 MiB |
+| 预留的队列（输入、诊断、窗口请求） | 0.3 MiB |
+
+前两行是系统框架的，任何 AppKit 窗口都有；其余没有像系统字体那样成倍的浪费。这一轮只改了一处：窗口服务的请求队列按最大的请求预留 1 024 个位置，创建窗口与窗口控制两种请求各有三百多字节，一共 400 KiB；这两种请求的内容改为装箱，队列降到约 50 KiB。着色器 IR 随拼进每个模块的 WGSL 总量走（`color.wgsl` 进了九个模块），要减得让每个模块只带它用到的函数，没有做。
+
 ## CPU 时间
 
 增量帧的成本由 `perf/` 的性能合同管（`perf/README.md`）：静止帧不做功、paint-only 不重排、一处编辑不扫兄弟，判据是 `WorkCounters`，不是墙钟。

@@ -718,6 +718,7 @@ impl<P: RuntimeProgram> HeadlessRuntime<P> {
                     "a headless window has no native handle".into(),
                 ))),
                 Request::Create(descriptor, reply) => {
+                    let descriptor = *descriptor;
                     let id = loop {
                         let id = WindowId(self.next_window_id);
                         self.next_window_id += 1;
@@ -732,6 +733,7 @@ impl<P: RuntimeProgram> HeadlessRuntime<P> {
                     reply.finish(result);
                 }
                 Request::Control(id, generation, control, reply) => {
+                    let control = *control;
                     if !self.service.is_current(id, generation) {
                         reply.finish(Err(WindowError::WindowClosed));
                         continue;

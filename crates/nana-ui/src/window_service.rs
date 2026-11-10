@@ -216,8 +216,11 @@ pub(crate) enum Request {
     ),
     Displays(Reply<Vec<DisplayInfo>>),
     SurfaceInfo(WindowId, u64, Reply<WindowSurfaceInfo>),
-    Create(WindowDescriptor, Reply<WindowHandle>),
-    Control(WindowId, u64, Control, Reply<()>),
+    // Boxed, like `Control` below: each is several hundred bytes, and the
+    // queue reserves room for a thousand of whichever request is largest
+    // (400 KiB before, for a queue that rarely holds two).
+    Create(Box<WindowDescriptor>, Reply<WindowHandle>),
+    Control(WindowId, u64, Box<Control>, Reply<()>),
     Native(WindowId, u64, NativeCallback),
 }
 impl Request {
@@ -269,7 +272,7 @@ impl WindowService {
             reply.finish(Err(error));
             return request;
         }
-        self.submit(Request::Create(descriptor, reply));
+        self.submit(Request::Create(Box::new(descriptor), reply));
         request
     }
     /// Displays connected now, enumerated on the window thread.
@@ -387,8 +390,12 @@ impl WindowHandle {
     }
     fn control(&self, control: Control) -> WindowRequest<()> {
         let (request, reply) = WindowRequest::pair(self.service.host_thread);
-        self.service
-            .submit(Request::Control(self.id, self.generation, control, reply));
+        self.service.submit(Request::Control(
+            self.id,
+            self.generation,
+            Box::new(control),
+            reply,
+        ));
         request
     }
     pub fn set_title(&self, title: impl Into<String>) -> WindowRequest<()> {
@@ -708,10 +715,11 @@ mod tests {
         let (service, rx) = WindowService::channel(Arc::new(|| {}));
         let handle = service.handle(WindowId(7));
         let worker = std::thread::spawn(move || handle.set_title("worker").wait());
-        let Request::Control(id, _, Control::Command(WindowCommand::SetTitle { title, .. }), reply) =
-            rx.recv().unwrap()
-        else {
+        let Request::Control(id, _, control, reply) = rx.recv().unwrap() else {
             panic!("unexpected request")
+        };
+        let Control::Command(WindowCommand::SetTitle { title, .. }) = *control else {
+            panic!("unexpected control")
         };
         assert_eq!(id, WindowId(7));
         assert_eq!(title, "worker");
@@ -726,17 +734,15 @@ mod tests {
             ..Default::default()
         };
         let mut fullscreen = service.handle(WindowId(2)).set_fullscreen(Some(target));
-        let Request::Control(
-            _,
-            _,
-            Control::Command(WindowCommand::SetFullscreen {
-                fullscreen: Some(queued),
-                ..
-            }),
-            reply,
-        ) = rx.try_recv().unwrap()
-        else {
+        let Request::Control(_, _, control, reply) = rx.try_recv().unwrap() else {
             panic!("unexpected request")
+        };
+        let Control::Command(WindowCommand::SetFullscreen {
+            fullscreen: Some(queued),
+            ..
+        }) = *control
+        else {
+            panic!("unexpected control")
         };
         assert_eq!(queued, target);
         reply.finish(Err(WindowError::InvalidParameter(

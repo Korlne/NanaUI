@@ -2456,6 +2456,7 @@ impl<Program: RuntimeProgram> WindowManager<Program> {
                         }
                     }
                     Request::Create(settings, reply) => {
+                        let settings = *settings;
                         reply.finish(self.create_service_window(event_loop, settings));
                     }
                     Request::Native(id, generation, callback) => {
@@ -2474,6 +2475,7 @@ impl<Program: RuntimeProgram> WindowManager<Program> {
                         }
                     }
                     Request::Control(id, generation, control, reply) => {
+                        let control = *control;
                         if !self.windows.is_current(id, generation) {
                             reply.finish(Err(crate::WindowError::WindowClosed));
                             return true;
