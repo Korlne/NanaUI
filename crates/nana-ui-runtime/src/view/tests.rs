@@ -1895,8 +1895,13 @@ fn a_store_with_history_undoes_one_handler_at_a_time() {
     assert!(!board.can_redo());
 }
 
-static CARD: StylePatch = StylePatch::new(r#"{"opacity":0.8,"padding":{"Px":12.0}}"#);
-static DIM: StylePatch = StylePatch::new(r#"{"opacity":0.4}"#);
+static CARD: StylePatch = StylePatch::new(|layout| {
+    layout.opacity = crate::view::__style_value(r#"0.8"#);
+    layout.padding = crate::view::__style_value(r#"{"Px":12.0}"#);
+});
+static DIM: StylePatch = StylePatch::new(|layout| {
+    layout.opacity = crate::view::__style_value(r#"0.4"#);
+});
 static CARD_SHEET: Sheet = Sheet::new(
     &[
         SheetRule {
@@ -1956,9 +1961,15 @@ fn compiled_styles_compose_once_per_class_set_and_follow_conditional_classes() {
     assert_eq!(dimmed.padding, Some(LengthSpec::Px(12.0)));
 }
 
-static QUERY_ROW: StylePatch = StylePatch::new(r#"{"height":{"Px":20.0}}"#);
-static QUERY_NARROW: StylePatch = StylePatch::new(r#"{"height":{"Px":40.0}}"#);
-static QUERY_DIM: StylePatch = StylePatch::new(r#"{"opacity":0.5}"#);
+static QUERY_ROW: StylePatch = StylePatch::new(|layout| {
+    layout.height = crate::view::__style_value(r#"{"Px":20.0}"#);
+});
+static QUERY_NARROW: StylePatch = StylePatch::new(|layout| {
+    layout.height = crate::view::__style_value(r#"{"Px":40.0}"#);
+});
+static QUERY_DIM: StylePatch = StylePatch::new(|layout| {
+    layout.opacity = crate::view::__style_value(r#"0.5"#);
+});
 /// `@container card (width < 300px)`.
 static NARROW_CARD: SheetQuery = SheetQuery::new(
     Some("card"),

@@ -451,6 +451,117 @@ fn leaf_mut<'a>(value: &'a mut Value, path: &str) -> &'a mut Value {
 mod tests {
     use super::*;
 
+    /// The merge `LayoutStyle::overlaid` replaced: both layouts as JSON,
+    /// `over`'s non-default fields written into `base`'s, struct by struct.
+    fn overlaid_through_json(base: &LayoutStyle, over: &LayoutStyle) -> LayoutStyle {
+        fn overlay(base: &mut Value, default: &Value, over: Value) {
+            let Value::Object(over) = over else {
+                *base = over;
+                return;
+            };
+            for (key, field) in over {
+                let default = default.get(&key).unwrap_or(&Value::Null);
+                if *default == field {
+                    continue;
+                }
+                let slot = base
+                    .as_object_mut()
+                    .expect("a struct")
+                    .entry(key)
+                    .or_insert(Value::Null);
+                let same_shape = match (&*slot, default, &field) {
+                    (Value::Object(slot), Value::Object(default), Value::Object(field)) => {
+                        slot.keys().eq(default.keys()) && field.keys().eq(default.keys())
+                    }
+                    _ => false,
+                };
+                if same_shape {
+                    overlay(slot, default, field);
+                } else {
+                    *slot = field;
+                }
+            }
+        }
+        let mut value = layout_json(base);
+        overlay(&mut value, &reference().0, layout_json(over));
+        serde_json::from_value(value).expect("an overlaid layout deserializes")
+    }
+
+    /// The typed overlay names fields in Rust; the Style Model's leaves are
+    /// read off a serialized layout. They are the same fields, bar the two
+    /// a group leaves out of its JSON while unset.
+    #[test]
+    fn the_typed_overlay_names_every_leaf_of_a_serialized_layout() {
+        let serialized: std::collections::BTreeSet<String> =
+            leaf_paths(&reference().0).into_iter().collect();
+        let named: std::collections::BTreeSet<String> =
+            LayoutStyle::overlay_leaf_paths().into_iter().collect();
+        let only_named: Vec<&String> = named.difference(&serialized).collect();
+        let only_serialized: Vec<&String> = serialized.difference(&named).collect();
+        assert_eq!(
+            only_named,
+            ["paint.scroll_edge_fade", "theme.scrollbar_room"],
+            "a field the overlay names is not a leaf of the serialized layout"
+        );
+        assert!(
+            only_serialized.is_empty(),
+            "the overlay leaves out {only_serialized:?}"
+        );
+    }
+
+    /// One leaf at a time, taken from the witness (where every leaf is away
+    /// from its default): the typed overlay gives what the JSON merge gave,
+    /// over a default layout and over one where every field is set.
+    ///
+    /// Compared as JSON: a material's instance id is not serialized, so the
+    /// JSON merge handed out a new one on every overlay, where the typed one
+    /// keeps the instance it was given.
+    #[test]
+    fn the_typed_overlay_matches_the_json_merge_leaf_by_leaf() {
+        let (default_json, witness_json) = reference();
+        let default = LayoutStyle::default();
+        let full = witness();
+        let same = |base: &LayoutStyle, over: &LayoutStyle| {
+            layout_json(&base.overlaid(over)) == layout_json(&overlaid_through_json(base, over))
+        };
+        assert!(same(&default, &full), "every field over the default");
+        assert!(same(&full, &default), "nothing over every field");
+        let mut moved = 0;
+        for path in leaf_paths(default_json) {
+            if leaf(witness_json, &path) == leaf(default_json, &path) {
+                continue;
+            }
+            moved += 1;
+            let mut over = default_json.clone();
+            *leaf_mut(&mut over, &path) = leaf(witness_json, &path).clone();
+            let over: LayoutStyle = serde_json::from_value(over).expect("one leaf moved");
+            assert!(same(&default, &over), "`{path}` over the default");
+            assert!(same(&full, &over), "`{path}` over every field");
+        }
+        assert_eq!(
+            moved,
+            leaf_paths(default_json).len(),
+            "the witness moves every leaf, so every leaf was compared"
+        );
+    }
+
+    /// A compiled patch assigns `layout.<path> = …` for each path a rule
+    /// writes: every such path has to be a field path in Rust, which the
+    /// typed overlay's exhaustive lists are.
+    #[test]
+    fn every_path_a_declaration_writes_is_a_field_the_overlay_names() {
+        let named: std::collections::BTreeSet<String> =
+            LayoutStyle::overlay_leaf_paths().into_iter().collect();
+        for (property, value) in WITNESS_DECLARATIONS {
+            for path in written(&[(property, value)]) {
+                assert!(
+                    named.contains(&path),
+                    "`{property}: {value}` writes `{path}`"
+                );
+            }
+        }
+    }
+
     fn written(declarations: &[(&str, &str)]) -> Vec<String> {
         written_layout(|layout| {
             for (property, value) in declarations {

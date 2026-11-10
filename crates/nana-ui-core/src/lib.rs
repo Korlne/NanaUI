@@ -25,6 +25,7 @@ mod icon_data;
 pub mod layout;
 pub mod layout_authority;
 pub mod layout_frontier;
+mod layout_overlay;
 mod layout_style_api;
 pub mod layout_style_change;
 pub mod material;

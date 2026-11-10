@@ -94,7 +94,7 @@ Note: **writing direction (`direction` / `dir`) and writing mode (`writing-mode`
 
 ### 6. Consumption timing: build time only
 
-- **Build time (`crates/nana-ui-view-codegen/src/style.rs:239`)**: calls `parse_stylesheet_full` to parse `<style>`, `stylesheet!` or `css!`, applies the declarations onto an empty `LayoutStyle` and diffs out the modified fields, producing static `StylePatch` values carrying a cascade-priority `Rank` (`@container` rules carry a bucket index alongside). Rust L3 views therefore combine patches by bit at runtime, with **zero CSS parsing cost**.
+- **Build time (`crates/nana-ui-view-codegen/src/style.rs:239`)**: calls `parse_stylesheet_full` to parse `<style>`, `stylesheet!` or `css!`, applies the declarations onto an empty `LayoutStyle` and diffs out the modified fields, producing static `StylePatch` values carrying a cascade-priority `Rank` (`@container` rules carry a bucket index alongside). Rust L3 views therefore combine patches by bit at runtime, with **zero CSS parsing cost**. A patch is generated assignment code: one statement per written field (`layout.paint.outline.width = …`), whose value is that field's own JSON, read as the field's type. An application links the decoding of only the field types its styles write. The `LayoutStyle` as a whole is never serialized: a patch, and the overlay of one `NodeStyle` layer on another (`LayoutStyle::overlaid`), both write field by field.
 
 ## Parity verification with `tools/css-parity`
 

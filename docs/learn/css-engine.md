@@ -94,7 +94,7 @@ title: CSS 引擎：nana-ui-css
 
 ### 6. 消费时机：只在构建时
 
-- **构建时（`crates/nana-ui-view-codegen/src/style.rs:239`）**：调用 `parse_stylesheet_full` 解析 `<style>`、`stylesheet!` 或 `css!`，在空 `LayoutStyle` 上应用声明并 diff 出被修改的字段，生成携带级联优先级 `Rank` 的静态 `StylePatch`（`@container` 规则同步附带桶索引）。因此 Rust L3 视图在运行期直接按位组合补丁，**零 CSS 解析开销**。
+- **构建时（`crates/nana-ui-view-codegen/src/style.rs:239`）**：调用 `parse_stylesheet_full` 解析 `<style>`、`stylesheet!` 或 `css!`，在空 `LayoutStyle` 上应用声明并 diff 出被修改的字段，生成携带级联优先级 `Rank` 的静态 `StylePatch`（`@container` 规则同步附带桶索引）。因此 Rust L3 视图在运行期直接按位组合补丁，**零 CSS 解析开销**。补丁是生成的赋值代码：每个被写的字段一条（`layout.paint.outline.width = …`），值是该字段自己的 JSON，按字段类型读出。应用只链接它的样式写到的那些字段类型的解码。整个 `LayoutStyle` 不经过序列化：补丁、以及 `NodeStyle` 各层之间的叠加（`LayoutStyle::overlaid`）都是逐字段写。
 
 ## 与 `tools/css-parity` 的一致性验证
 

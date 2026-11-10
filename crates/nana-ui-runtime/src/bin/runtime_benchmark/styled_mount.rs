@@ -13,8 +13,8 @@ use super::*;
 use nana_ui_runtime::AppContext;
 use nana_ui_runtime::ResponsiveAxis;
 use nana_ui_runtime::view::{
-    Class, IntoView, Sheet, SheetQuery, SheetRule, Signal, StylePatch, button, column, row, signal,
-    text,
+    __style_value, Class, IntoView, Sheet, SheetQuery, SheetRule, Signal, StylePatch, button,
+    column, row, signal, text,
 };
 
 const ROWS: usize = 4_000;
@@ -83,11 +83,19 @@ struct Styled {
 }
 
 fn sheet(rules: usize, shape: Shape) -> Styled {
+    // A patch is compiled code, so the eight paddings the rules cycle
+    // through are spelled out.
+    macro_rules! padding {
+        ($($px:literal),*) => {
+            [$(|layout: &mut nana_ui_runtime::LayoutStyle| {
+                layout.padding = __style_value(concat!(r#"{"Px":"#, $px, "}"));
+            }),*]
+        };
+    }
+    const PADDINGS: [fn(&mut nana_ui_runtime::LayoutStyle); 8] =
+        padding!("0.0", "1.0", "2.0", "3.0", "4.0", "5.0", "6.0", "7.0");
     let patches: &'static [StylePatch] = (0..rules)
-        .map(|rule| {
-            let json = format!(r#"{{"padding":{{"Px":{}.0}}}}"#, rule % 8);
-            StylePatch::new(Box::leak(json.into_boxed_str()))
-        })
+        .map(|rule| StylePatch::new(PADDINGS[rule % 8]))
         .collect::<Vec<_>>()
         .leak();
     let classes: &'static [&'static [u16]] = (0..rules)

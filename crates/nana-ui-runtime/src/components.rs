@@ -32,53 +32,6 @@ pub use nana_text::Affinity as TextAffinity;
 static DEFAULT_LAYOUT_STYLE: LazyLock<Arc<LayoutStyle>> =
     LazyLock::new(|| Arc::new(LayoutStyle::default()));
 
-/// `base` with each field `over` sets written over it: every field whose
-/// value differs from the default layout's. A nested struct is written field
-/// by field; anything else (a value, an `Option`, an enum, a map) whole.
-fn overlay_layout(base: &LayoutStyle, over: &LayoutStyle) -> LayoutStyle {
-    use serde_json::Value;
-
-    fn overlay(base: &mut Value, default: &Value, over: Value) {
-        let Value::Object(over) = over else {
-            *base = over;
-            return;
-        };
-        for (key, field) in over {
-            let default = default.get(&key).unwrap_or(&Value::Null);
-            if *default == field {
-                continue;
-            }
-            let Some(slot) = base
-                .as_object_mut()
-                .map(|base| base.entry(key).or_insert(Value::Null))
-            else {
-                return;
-            };
-            // A struct has the same fields in all three; an enum variant or a
-            // map need not, and is replaced whole.
-            let same_shape = |value: &Value| match (value, default, &field) {
-                (Value::Object(value), Value::Object(default), Value::Object(field)) => {
-                    value.keys().eq(default.keys()) && field.keys().eq(default.keys())
-                }
-                _ => false,
-            };
-            if same_shape(slot) {
-                overlay(slot, default, field);
-            } else {
-                *slot = field;
-            }
-        }
-    }
-
-    static DEFAULT: LazyLock<Value> = LazyLock::new(|| {
-        serde_json::to_value(LayoutStyle::default()).expect("a layout serializes")
-    });
-    let mut value = serde_json::to_value(base).expect("a layout serializes");
-    let over = serde_json::to_value(over).expect("a layout serializes");
-    overlay(&mut value, &DEFAULT, over);
-    serde_json::from_value(value).expect("an overlaid layout deserializes")
-}
-
 pub(crate) fn layout_style_is_default(style: &Arc<LayoutStyle>) -> bool {
     Arc::ptr_eq(style, &DEFAULT_LAYOUT_STYLE)
 }
@@ -2381,7 +2334,7 @@ impl NodeStyle {
             layout: if layout_style_is_default(layout) {
                 self.layout
             } else {
-                Arc::new(overlay_layout(&self.layout, layout))
+                Arc::new(self.layout.overlaid(layout))
             },
             foreground: over.foreground.or(self.foreground),
             background: over.background.or(self.background),
