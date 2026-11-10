@@ -52,6 +52,10 @@ pub struct OutlineRasterizer {
     /// answer* lives in the caller's cache (the renderer keeps
     /// one keyed by [`GlyphRasterKey`]); this is only the machinery that produces them.
     context: swash::scale::ScaleContext,
+    /// The outline being drawn and the rasterizer's working memory, kept
+    /// between glyphs so a glyph that misses allocates only its image.
+    outline: swash::scale::outline::Outline,
+    scratch: swash::zeno::Scratch,
     faces: Vec<crate::FontId>,
     index: HashMap<crate::FontId, GlyphFontId>,
     /// Axis coordinates behind each [`GlyphVariationId`] a run interned (zero
@@ -80,6 +84,8 @@ impl OutlineRasterizer {
         Self {
             engine,
             context: swash::scale::ScaleContext::new(),
+            outline: swash::scale::outline::Outline::new(),
+            scratch: swash::zeno::Scratch::new(),
             faces: Vec::new(),
             index: HashMap::new(),
             variations: HashMap::new(),
@@ -266,22 +272,6 @@ impl OutlineRasterizer {
         // property of the face, not of what the caller wanted.
         let snap_to_pixel =
             !scaler.has_outlines() || key.synthesis.contains(GlyphSynthesis::PIXEL_FONT);
-        // A color outline with the first palette, then a color strike, then
-        // the plain outline. Order matters: an emoji face can have all three,
-        // and the first is the one with the palette applied.
-        const FACE_SOURCES: &[swash::scale::Source] = &[
-            swash::scale::Source::ColorOutline(0),
-            swash::scale::Source::ColorBitmap(swash::scale::StrikeWith::BestFit),
-            swash::scale::Source::Outline,
-        ];
-        // A stroke or a shadow is coverage of the outline itself, whatever
-        // colours the face would paint it in.
-        const OUTLINE_ONLY: &[swash::scale::Source] = &[swash::scale::Source::Outline];
-        let mut render = swash::scale::Render::new(if key.mode.is_derived() {
-            OUTLINE_ONLY
-        } else {
-            FACE_SOURCES
-        });
         let format = match key.mode {
             GlyphRenderMode::SubpixelRgb | GlyphRenderMode::SubpixelBgr => {
                 swash::zeno::Format::Subpixel
@@ -291,12 +281,6 @@ impl OutlineRasterizer {
             | GlyphRenderMode::Blur { .. } => swash::zeno::Format::Alpha,
         };
         let offset = subpixel_offset(key, snap_to_pixel);
-        render.format(format).offset(offset);
-        if let GlyphRenderMode::Stroke { width_q, join } = key.mode {
-            let mut stroke = swash::zeno::Stroke::new(f32::from(width_q) * 0.25);
-            stroke.join(zeno_join(join));
-            render.style(stroke);
-        }
         let mut transform = None;
         if key.synthesis.contains(GlyphSynthesis::FAKE_ITALIC) {
             transform = Some(swash::zeno::Transform::skew(
@@ -317,7 +301,6 @@ impl OutlineRasterizer {
                 None => quarter_turn,
             });
         }
-        render.transform(transform);
         let mut embolden = 0.0;
         if key.synthesis.contains(GlyphSynthesis::FAKE_BOLD) {
             embolden += size * EMBOLDEN_RATIO;
@@ -331,20 +314,23 @@ impl OutlineRasterizer {
         // Colour sources take no embolden (swash skips it for them too).
         let plain =
             key.mode.is_derived() || !(scaler.has_color_outlines() || scaler.has_color_bitmaps());
+        let how = Outlining {
+            format,
+            offset,
+            transform,
+            mode: key.mode,
+        };
         let image = if embolden > 0.0 && plain && scaler.has_outlines() {
-            emboldened(
-                &mut scaler,
-                glyph_id,
-                embolden,
-                &Outlining {
-                    format,
-                    offset,
-                    transform,
-                    mode: key.mode,
-                },
-            )?
+            emboldened(&mut scaler, glyph_id, embolden, &how)?
         } else {
-            render.render(&mut scaler, glyph_id)?
+            drawn(
+                &mut scaler,
+                &font,
+                glyph_id,
+                &how,
+                &mut self.outline,
+                &mut self.scratch,
+            )?
         };
         let width = image.placement.width;
         let height = image.placement.height;
@@ -382,13 +368,189 @@ impl OutlineRasterizer {
     }
 }
 
-/// How [`emboldened`] draws the outline: what `swash::scale::Render` was
-/// configured with.
+/// How [`drawn`] and [`emboldened`] draw the outline.
 struct Outlining {
     format: swash::zeno::Format,
     offset: swash::zeno::Vector,
     transform: Option<swash::zeno::Transform>,
     mode: GlyphRenderMode,
+}
+
+/// The glyph from the first source that has it: a colour outline in the
+/// face's first palette, then a colour strike, then the plain outline. Order
+/// matters: an emoji face can have all three, and the first is the one with
+/// the palette applied. A stroke or a shadow is coverage of the outline
+/// itself, whatever colours the face would paint it in.
+///
+/// This is `swash::scale::Render::render`, written here because that one
+/// compiles the mask rasterizer a second time inside swash: [`emboldened`]
+/// and [`path_coverage`] already compile it in this crate, the two copies
+/// are not merged, and each is about 130 KiB.
+fn drawn(
+    scaler: &mut swash::scale::Scaler,
+    font: &swash::FontRef,
+    glyph_id: u16,
+    how: &Outlining,
+    outline: &mut swash::scale::outline::Outline,
+    scratch: &mut swash::zeno::Scratch,
+) -> Option<swash::scale::image::Image> {
+    use swash::scale::image::{Content, Image};
+    use swash::zeno::{Format, Mask, Origin, Stroke, Style};
+    if !how.mode.is_derived() {
+        if scaler.has_color_outlines()
+            && scaler.scale_color_outline_into(glyph_id, outline)
+            && let Some(image) = color_layers(font, how, outline, scratch)
+        {
+            return Some(image);
+        }
+        if scaler.has_color_bitmaps() {
+            let mut image = Image::new();
+            let strike = swash::scale::StrikeWith::BestFit;
+            if scaler.scale_color_bitmap_into(glyph_id, strike, &mut image) {
+                return Some(image);
+            }
+        }
+    }
+    if !scaler.has_outlines() || !scaler.scale_outline_into(glyph_id, outline) {
+        return None;
+    }
+    if let Some(transform) = &how.transform {
+        outline.transform(transform);
+    }
+    let style = match how.mode {
+        GlyphRenderMode::Stroke { width_q, join } => {
+            let mut stroke = Stroke::new(f32::from(width_q) * 0.25);
+            stroke.join(zeno_join(join));
+            Style::Stroke(stroke)
+        }
+        _ => Style::default(),
+    };
+    let mut image = Image::new();
+    let mut data = Vec::new();
+    image.placement = Mask::with_scratch(outline.path(), scratch)
+        .format(how.format)
+        .origin(Origin::BottomLeft)
+        .style(style)
+        .offset(how.offset)
+        .render_offset(how.offset)
+        .inspect(|format, width, height| data.resize(format.buffer_size(width, height), 0))
+        .render_into(&mut data[..], None);
+    image.data = data;
+    image.source = swash::scale::Source::Outline;
+    image.content = if how.format == Format::Alpha {
+        Content::Mask
+    } else {
+        Content::SubpixelMask
+    };
+    Some(image)
+}
+
+/// What a colour layer is painted in when the face's palette has no entry
+/// for it.
+const LAYER_FOREGROUND: [u8; 4] = [128, 128, 128, 255];
+
+/// A scaled colour outline's layers, each filled in its palette colour and
+/// laid over the ones before it. `None` when a layer cannot be read.
+fn color_layers(
+    font: &swash::FontRef,
+    how: &Outlining,
+    outline: &mut swash::scale::outline::Outline,
+    scratch: &mut swash::zeno::Scratch,
+) -> Option<swash::scale::image::Image> {
+    use swash::zeno::{Mask, Origin};
+    if let Some(transform) = &how.transform {
+        outline.transform(transform);
+    }
+    let palette = font.color_palettes().next();
+    let bounds = outline.bounds();
+    // The image is the whole glyph's box; a layer's mask is placed in it by
+    // where the two boxes sit on the same pixel grid.
+    let left = (bounds.min.x + how.offset.x).floor() as i32;
+    let bottom = (bounds.min.y + how.offset.y).ceil() as i32;
+    let width = bounds.width().ceil() as u32;
+    let height = bounds.height().ceil() as u32;
+    let top = height as i32 + bottom;
+    let mut image = swash::scale::image::Image::new();
+    image.data = vec![0; width as usize * height as usize * 4];
+    image.placement.left = left;
+    image.placement.top = top;
+    image.placement.width = width;
+    image.placement.height = height;
+    let mut coverage = Vec::new();
+    for index in 0..outline.len() {
+        let layer = outline.get(index)?;
+        coverage.clear();
+        let placement = Mask::with_scratch(layer.path(), scratch)
+            .origin(Origin::BottomLeft)
+            .offset(how.offset)
+            .render_offset(how.offset)
+            .inspect(|format, width, height| coverage.resize(format.buffer_size(width, height), 0))
+            .render_into(&mut coverage[..], None);
+        let color = layer
+            .color_index()
+            .and_then(|entry| palette.map(|palette| palette.get(entry)))
+            .unwrap_or(LAYER_FOREGROUND);
+        tint_over(
+            &coverage,
+            [placement.width, placement.height],
+            [
+                placement.left.wrapping_sub(left),
+                top.wrapping_sub(placement.top),
+            ],
+            color,
+            &mut image.data,
+            [width, height],
+        );
+    }
+    image.source = swash::scale::Source::ColorOutline(0);
+    image.content = swash::scale::image::Content::Color;
+    Some(image)
+}
+
+/// Lays `color` over an RGBA `target` through a coverage `mask` whose
+/// top-left pixel goes at `at`; what falls outside the target is dropped.
+///
+/// The arithmetic is swash's, shift for shift, so a colour glyph keeps the
+/// pixels it had: coverage times the colour's alpha, divided by 256 rather
+/// than 255, which leaves a fully covered opaque pixel at 254.
+fn tint_over(
+    mask: &[u8],
+    mask_size: [u32; 2],
+    at: [i32; 2],
+    color: [u8; 4],
+    target: &mut [u8],
+    target_size: [u32; 2],
+) {
+    let [mask_width, mask_height] = mask_size.map(|side| side as usize);
+    let [target_width, target_height] = target_size.map(i64::from);
+    for (row, line) in mask
+        .chunks_exact(mask_width.max(1))
+        .take(mask_height)
+        .enumerate()
+    {
+        let y = i64::from(at[1]) + row as i64;
+        if y < 0 || y >= target_height {
+            continue;
+        }
+        for (column, coverage) in line.iter().enumerate() {
+            let x = i64::from(at[0]) + column as i64;
+            if x < 0 || x >= target_width {
+                continue;
+            }
+            let alpha = (u32::from(*coverage) * u32::from(color[3])) >> 8;
+            if alpha == 0 {
+                continue;
+            }
+            let start = (y * target_width + x) as usize * 4;
+            let Some(pixel) = target.get_mut(start..start + 4) else {
+                continue;
+            };
+            let under = 255 - alpha;
+            for (channel, tint) in pixel.iter_mut().zip([color[0], color[1], color[2], 255]) {
+                *channel = ((under * u32::from(*channel) + alpha * u32::from(tint)) >> 8) as u8;
+            }
+        }
+    }
 }
 
 /// `glyph_id`'s plain outline with every edge moved out by `amount` raster
@@ -549,5 +711,166 @@ fn subpixel_offset(key: &GlyphRasterKey, snap: bool) -> swash::zeno::Vector {
         swash::zeno::Vector::new(x.round(), y.round())
     } else {
         swash::zeno::Vector::new(x, y)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use swash::zeno::{Angle, Format, Transform, Vector};
+
+    const COLOR: &[u8] = include_bytes!("../../fonts/nana-test-color.ttf");
+    const EMOJI: &[u8] = include_bytes!("../../fonts/noto-emoji.ttf");
+    const AXES: &[u8] = include_bytes!("../../fonts/nana-test-axes.ttf");
+    const KOREAN: &[u8] = include_bytes!("../../fonts/noto-sans-kr.ttf");
+
+    /// What this file drew glyphs with before [`drawn`]: swash's own
+    /// renderer, configured the way `rasterize` configured it.
+    fn reference(
+        scaler: &mut swash::scale::Scaler,
+        glyph_id: u16,
+        how: &Outlining,
+    ) -> Option<swash::scale::image::Image> {
+        use swash::scale::{Render, Source, StrikeWith};
+        const FACE_SOURCES: &[Source] = &[
+            Source::ColorOutline(0),
+            Source::ColorBitmap(StrikeWith::BestFit),
+            Source::Outline,
+        ];
+        const OUTLINE_ONLY: &[Source] = &[Source::Outline];
+        let mut render = Render::new(if how.mode.is_derived() {
+            OUTLINE_ONLY
+        } else {
+            FACE_SOURCES
+        });
+        render.format(how.format).offset(how.offset);
+        if let GlyphRenderMode::Stroke { width_q, join } = how.mode {
+            let mut stroke = swash::zeno::Stroke::new(f32::from(width_q) * 0.25);
+            stroke.join(zeno_join(join));
+            render.style(stroke);
+        }
+        render.transform(how.transform);
+        render.render(scaler, glyph_id)
+    }
+
+    /// Every glyph of `bytes` the charmap reaches from `text`, at each size,
+    /// offset, transform and mode `rasterize` can ask for. Answers how many
+    /// images were compared.
+    fn compare_with_swash(bytes: &[u8], text: &str) -> usize {
+        let font = swash::FontRef::from_index(bytes, 0).expect("a font");
+        let charmap = font.charmap();
+        let mut context = swash::scale::ScaleContext::new();
+        let mut outline = swash::scale::outline::Outline::new();
+        let mut scratch = swash::zeno::Scratch::new();
+        let skew = Transform::skew(
+            Angle::from_degrees(OBLIQUE_DEGREES),
+            Angle::from_degrees(0.0),
+        );
+        let quarter_turn = Transform::new(0.0, -1.0, 1.0, 0.0, 0.0, 0.0);
+        let modes = [
+            (GlyphRenderMode::Mask, Format::Alpha),
+            (GlyphRenderMode::SubpixelRgb, Format::Subpixel),
+            (
+                GlyphRenderMode::Stroke {
+                    width_q: 6,
+                    join: StrokeJoin::Round,
+                },
+                Format::Alpha,
+            ),
+            (
+                GlyphRenderMode::Stroke {
+                    width_q: 9,
+                    join: StrokeJoin::Miter,
+                },
+                Format::Alpha,
+            ),
+        ];
+        let mut compared = 0;
+        for character in text.chars() {
+            let glyph_id = charmap.map(character);
+            for size in [9.0, 14.0, 31.5, 96.0] {
+                for offset in [Vector::new(0.0, 0.0), Vector::new(0.25, 0.75)] {
+                    for transform in [None, Some(skew), Some(skew.then(&quarter_turn))] {
+                        for (mode, format) in modes {
+                            let how = Outlining {
+                                format,
+                                offset,
+                                transform,
+                                mode,
+                            };
+                            let mut scaler = context.builder(font).size(size).hint(true).build();
+                            let expected = reference(&mut scaler, glyph_id, &how);
+                            let actual = drawn(
+                                &mut scaler,
+                                &font,
+                                glyph_id,
+                                &how,
+                                &mut outline,
+                                &mut scratch,
+                            );
+                            let label =
+                                format!("{character:?} at {size} px, {mode:?}, {transform:?}");
+                            match (expected, actual) {
+                                (None, None) => {}
+                                (Some(expected), Some(actual)) => {
+                                    let placed = |image: &swash::scale::image::Image| {
+                                        let at = image.placement;
+                                        (at.left, at.top, at.width, at.height)
+                                    };
+                                    assert_eq!(placed(&actual), placed(&expected), "{label}");
+                                    assert!(actual.content == expected.content, "{label}");
+                                    assert!(actual.data == expected.data, "pixels of {label}");
+                                    compared += 1;
+                                }
+                                (expected, actual) => panic!(
+                                    "{label}: swash drew {}, this drew {}",
+                                    expected.is_some(),
+                                    actual.is_some()
+                                ),
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        compared
+    }
+
+    #[test]
+    fn outlines_are_drawn_as_swash_renders_them() {
+        assert!(compare_with_swash(AXES, "AbgQ@&") > 0);
+        assert!(compare_with_swash(KOREAN, "\u{d55c}\u{ae00}A8") > 0);
+        assert!(compare_with_swash(EMOJI, "\u{1f600}\u{2764}") > 0);
+    }
+
+    #[test]
+    fn colour_layers_are_drawn_as_swash_renders_them() {
+        let font = swash::FontRef::from_index(COLOR, 0).expect("a font");
+        let mut context = swash::scale::ScaleContext::new();
+        let scaler = context.builder(font).size(32.0).build();
+        assert!(scaler.has_color_outlines(), "the fixture is a COLR face");
+        let covered: String = (0x20u32..0x250)
+            .chain(0x1f300..0x1f700)
+            .filter_map(char::from_u32)
+            .filter(|character| font.charmap().map(*character) != 0)
+            .collect();
+        assert!(!covered.is_empty());
+        assert!(compare_with_swash(COLOR, &covered) > 0);
+    }
+
+    #[test]
+    fn a_tint_is_clipped_to_the_target_on_every_side() {
+        let mask = [255u8; 9];
+        for at in [[-2, -2], [-1, 0], [0, 0], [1, 1], [2, -1], [5, 5]] {
+            let mut target = vec![0u8; 3 * 3 * 4];
+            tint_over(&mask, [3, 3], at, [10, 20, 30, 255], &mut target, [3, 3]);
+            for y in 0..3i32 {
+                for x in 0..3i32 {
+                    let inside = (0..3).contains(&(x - at[0])) && (0..3).contains(&(y - at[1]));
+                    let pixel = &target[(y * 3 + x) as usize * 4..][..4];
+                    assert_eq!(pixel[3] != 0, inside, "({x}, {y}) with the mask at {at:?}");
+                }
+            }
+        }
     }
 }

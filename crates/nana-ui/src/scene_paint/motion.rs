@@ -617,9 +617,7 @@ fn create_eval_pipeline(
 ) -> Option<wgpu::RenderPipeline> {
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("nana-ui.scene.motion.eval.shader"),
-        source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!(
-            "shader/motion.wgsl"
-        ))),
+        source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(super::wgsl::MOTION)),
     });
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("nana-ui.scene.motion.eval.pipeline"),

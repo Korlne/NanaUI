@@ -664,15 +664,12 @@ impl MeshPipeline {
     ) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("nana-ui.scene.triangle.solid.shader"),
-            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(concat!(
-                include_str!("shader/triangle.wgsl"),
-                "\n",
-                include_str!("shader/triangle_solid.wgsl"),
-                "\n",
-                include_str!("shader/path.wgsl"),
-                "\n",
-                include_str!("shader/color.wgsl"),
-            ))),
+            source: super::wgsl::source(&[
+                super::wgsl::TRIANGLE,
+                super::wgsl::TRIANGLE_SOLID,
+                super::wgsl::PATH,
+                super::wgsl::COLOR,
+            ]),
         });
         let bind_layout = if let Some(policy) = policy {
             let table = ResourceTable::new(vec![

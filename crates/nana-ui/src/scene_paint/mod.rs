@@ -20,6 +20,9 @@ mod material;
 mod mesh;
 mod motion;
 mod natural_sizes;
+// Only a Windows build loads the stages. The others compile the module for
+// its freshness checks, which run wherever the tests do.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code, unused_imports))]
 mod precompiled;
 mod presentation_color;
 mod quad;
@@ -31,6 +34,7 @@ pub use self::text::SubpixelOrder;
 pub use self::text::TextGlyphCounters;
 pub(crate) mod url_texture_cache;
 mod validate;
+mod wgsl;
 
 /// What a painter's image caches hold, beside the glyph atlas that
 /// [`TextGlyphCounters`] reports. Bytes are texels as allocated by the

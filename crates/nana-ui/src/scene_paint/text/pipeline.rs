@@ -72,15 +72,9 @@ const INITIAL_INSTANCES: usize = 512;
 const INITIAL_RUNS: usize = 64;
 const INITIAL_PRESENTATIONS: usize = 8;
 
-/// The text program: `$prelude`, the shared vertex stage and `shade`, then
-/// `$fragment`'s entry point.
-macro_rules! text_shader {
-    ($prelude:literal, $fragment:literal) => {
-        concat!(
-            $prelude,
-            include_str!("../shader/color.wgsl"),
-            include_str!("../shader/text_atlas.wgsl"),
-            r#"
+/// The vertex stage and `shade` every text program shares; the colour maths
+/// and the atlas sampling go before them.
+const TEXT_STAGES: &str = r#"
 // One glyph, as `GlyphInstance` lays it out: 48 bytes.
 struct GlyphInstance {
     origin: vec2<i32>,
@@ -334,32 +328,41 @@ fn shade(input: VsOut) -> TextShade {
     out.alpha = vec4<f32>(sampled.a * input.color.a * clip_cover);
     return out;
 }
-"#,
-            $fragment,
-        )
+"#;
+
+/// The text program: the shared stages, then the entry point for targets
+/// that blend one output or, with `dual_source`, the one for subpixel text.
+fn text_shader(dual_source: bool) -> String {
+    let (prelude, fragment) = if dual_source {
+        ("enable dual_source_blending;\n", TEXT_FRAGMENT_DUAL_SOURCE)
+    } else {
+        ("", TEXT_FRAGMENT)
     };
+    [
+        prelude,
+        super::super::wgsl::COLOR,
+        super::super::wgsl::TEXT_ATLAS,
+        TEXT_STAGES,
+        fragment,
+    ]
+    .concat()
 }
 
 /// The program for targets that blend one output. Subpixel glyphs are never
 /// resolved for it; were one drawn, it would paint as grayscale.
-const TEXT_SHADER: &str = text_shader!(
-    "",
-    r#"
+const TEXT_FRAGMENT: &str = r#"
 @fragment
 fn fs_main(input: VsOut) -> @location(0) vec4<f32> {
     let shaded = shade(input);
     return vec4<f32>(shaded.color, shaded.alpha.a);
 }
-"#
-);
+"#;
 
 /// The program for subpixel text: the second blend source carries a coverage
 /// per color channel, so the blend unit mixes each subpixel on its own.
 /// Every other glyph gives the same alpha to all four, which is exactly
 /// straight alpha blending.
-const TEXT_SHADER_DUAL_SOURCE: &str = text_shader!(
-    "enable dual_source_blending;\n",
-    r#"
+const TEXT_FRAGMENT_DUAL_SOURCE: &str = r#"
 struct DualOut {
     @location(0) @blend_src(0) color: vec4<f32>,
     @location(0) @blend_src(1) alpha: vec4<f32>,
@@ -373,8 +376,7 @@ fn fs_main(input: VsOut) -> DualOut {
     out.alpha = shaded.alpha;
     return out;
 }
-"#
-);
+"#;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
@@ -726,7 +728,7 @@ impl TextGpu {
                 device,
                 &layout,
                 format,
-                TEXT_SHADER,
+                &text_shader(false),
                 wgpu::BlendState::ALPHA_BLENDING,
             )
         };
@@ -880,7 +882,7 @@ impl TextGpu {
             let (worker, format, owned) = (device.clone(), self.format, sources.clone());
             let built = self.material_device.pipeline((if dual{13}else{12},format,1,{use std::hash::{Hash,Hasher};let mut hash=std::collections::hash_map::DefaultHasher::new();programs.hash(&mut hash);hash.finish()},0),&sources.iter().collect::<Vec<_>>(),device,self.material_waker.as_ref(),move || {
                 let device = worker;
-                let native=if dual {TEXT_SHADER_DUAL_SOURCE}else{TEXT_SHADER};
+                let native=text_shader(dual);
                 let mut source=native.replace("if duration > 0.0 {", "if duration > 0.0 && text_glyph_fx[fx+12u]==0u {");
                 for (i,m) in owned.iter().enumerate() {
                     source.push_str(&super::super::material::program_source_at(m, ["nm_text_","nm_enter_","nm_exit_"][i],2,i as u32*4)?);
@@ -993,7 +995,7 @@ fn shade(input:VsOut)->TextShade {
                 device,
                 &self.layout,
                 self.format,
-                TEXT_SHADER_DUAL_SOURCE,
+                &text_shader(true),
                 wgpu::BlendState {
                     color: per_channel,
                     alpha: per_channel,

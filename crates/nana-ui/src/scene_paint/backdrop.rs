@@ -308,25 +308,23 @@ impl BackdropPipeline {
         };
         let copy_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("nana-ui.scene.backdrop.copy.shader"),
-            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!(
-                "shader/backdrop_copy.wgsl"
-            ))),
+            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(
+                super::wgsl::BACKDROP_COPY,
+            )),
         });
         let blur_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("nana-ui.scene.backdrop.blur.shader"),
-            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!(
-                "shader/backdrop_blur.wgsl"
-            ))),
+            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(
+                super::wgsl::BACKDROP_BLUR,
+            )),
         });
         let composite_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("nana-ui.scene.backdrop.composite.shader"),
-            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(concat!(
-                include_str!("shader/color.wgsl"),
-                "\n",
-                include_str!("shader/quad_paint_data.wgsl"),
-                "\n",
-                include_str!("shader/backdrop_composite.wgsl"),
-            ))),
+            source: super::wgsl::source(&[
+                super::wgsl::COLOR,
+                super::wgsl::QUAD_PAINT_DATA,
+                super::wgsl::BACKDROP_COMPOSITE,
+            ]),
         });
         let copy_pipeline = cached_fullscreen_pipeline(policy, format, 1, || {
             Self::fullscreen_pipeline(

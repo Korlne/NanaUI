@@ -16,21 +16,18 @@ use super::{
 };
 use crate::{PhysicalRect, gpu_work::ManagedBuffer};
 
-const QUAD_SHADER: &str = concat!(
-    include_str!("shader/motion.wgsl"),
-    "\n",
-    include_str!("shader/color.wgsl"),
-    "\n",
-    include_str!("shader/quad.wgsl"),
-    "\n",
-    include_str!("shader/vertex.wgsl"),
-    "\n",
-    include_str!("shader/quad_paint_data.wgsl"),
-    "\n",
-    include_str!("shader/quad_paint.wgsl"),
-    "\n",
-    include_str!("shader/quad_solid.wgsl"),
-);
+/// The quad program, joined from its files.
+fn quad_shader() -> String {
+    super::wgsl::joined(&[
+        super::wgsl::MOTION,
+        super::wgsl::COLOR,
+        super::wgsl::QUAD,
+        super::wgsl::VERTEX,
+        super::wgsl::QUAD_PAINT_DATA,
+        super::wgsl::QUAD_PAINT,
+        super::wgsl::QUAD_SOLID,
+    ])
+}
 
 const INITIAL_INSTANCES: usize = 256;
 const PAINT_GRADIENT: u32 = 1;
@@ -54,8 +51,8 @@ const QUAD_FRAGMENT: &[ShaderStage] = &[ShaderStage::Fragment];
 /// What the precompiled quad stages must have been compiled from: the WGSL,
 /// its resource layout key, and the instance attributes its vertex stage reads.
 #[cfg(test)]
-pub(super) fn precompiled_inputs() -> (&'static str, u64, usize) {
-    (QUAD_SHADER, quad_layout_key(), SOLID_ATTRIBUTES.len())
+pub(super) fn precompiled_inputs() -> (String, u64, usize) {
+    (quad_shader(), quad_layout_key(), SOLID_ATTRIBUTES.len())
 }
 
 fn quad_layout_key() -> u64 {
@@ -230,18 +227,23 @@ impl QuadPipeline {
         policy: Option<&nana_gpu::GpuDeviceState>,
         precompiled: bool,
     ) -> Self {
-        // The platform test is what removes the DXIL from other targets'
-        // binaries: `precompiled` alone is only known at run time.
-        let precompiled = cfg!(target_os = "windows")
-            && precompiled
-            && super::precompiled::QUAD.fresh(QUAD_SHADER, quad_layout_key());
+        // Only a Windows build names the stages, which is what keeps their
+        // DXIL out of other targets' binaries. A `cfg!` in this condition did
+        // not: `precompiled` is read again inside the closures below, where
+        // the optimizer no longer knows it is false, and the stages stayed
+        // linked (61 KiB on macOS).
+        #[cfg(target_os = "windows")]
+        let precompiled =
+            precompiled && super::precompiled::QUAD.fresh(&quad_shader(), quad_layout_key());
+        #[cfg(not(target_os = "windows"))]
+        let _ = precompiled;
         // Parsed only when a pipeline compiles from WGSL after all.
         let shader = std::cell::OnceCell::new();
         let wgsl = || {
             shader.get_or_init(|| {
                 device.create_shader_module(wgpu::ShaderModuleDescriptor {
                     label: Some("nana-ui.scene.quad.solid.shader"),
-                    source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(QUAD_SHADER)),
+                    source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Owned(quad_shader())),
                 })
             })
         };
@@ -413,14 +415,16 @@ impl QuadPipeline {
             immediate_size: 0,
         });
         let solid = |samples| {
-            precompiled
-                .then(|| {
+            #[cfg(target_os = "windows")]
+            if precompiled
+                && let Some(pipeline) =
                     super::precompiled::pipeline(device, &super::precompiled::QUAD, |vs, fs| {
                         solid_pipeline_from(device, vs, fs, &layout, format, samples)
                     })
-                })
-                .flatten()
-                .unwrap_or_else(|| solid_pipeline(device, wgsl(), &layout, format, samples))
+            {
+                return pipeline;
+            }
+            solid_pipeline(device, wgsl(), &layout, format, samples)
         };
         let pipeline = cached_solid_pipeline(policy, format, 1, 1, || solid(1));
         let pipeline_msaa = cached_solid_pipeline(policy, format, 4, 2, || solid(4));
@@ -497,7 +501,7 @@ impl QuadPipeline {
             let built = self.material_device.pipeline((if masked{21}else{1}, format, samples, bg, br), &programs, device, self.material_waker.as_ref(), move || {
                 let device = worker;
                 if background.as_ref().is_some_and(|m| m.source.len()>65536) || border.as_ref().is_some_and(|m| m.source.len()>65536) { return None; }
-                let mut source = QUAD_SHADER.to_owned();
+                let mut source = quad_shader();
                 if let Some(material) = background.as_ref().filter(|_|!masked) {
                     let author = super::material::program_source(material, "nm_bg_", 2)?;
                     source.push_str(&author);

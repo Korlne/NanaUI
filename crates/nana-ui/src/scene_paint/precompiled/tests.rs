@@ -10,7 +10,7 @@ pub(in crate::scene_paint) static LOADED: std::sync::atomic::AtomicUsize =
 fn precompiled_stages_are_current_with_the_wgsl_and_layout() {
     let (wgsl, layout, _) = crate::scene_paint::quad::precompiled_inputs();
     assert!(
-        QUAD.fresh(wgsl, layout),
+        QUAD.fresh(&wgsl, layout),
         "the quad family changed: regenerate its DXIL (see generated.rs)"
     );
 }

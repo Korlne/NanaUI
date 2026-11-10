@@ -350,13 +350,11 @@ fn reading_blend_pipeline(
     });
     let group_blend_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("nana-ui.scene.group.blend.shader"),
-        source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(concat!(
-            include_str!("shader/color.wgsl"),
-            "\n",
-            include_str!("shader/layer.wgsl"),
-            "\n",
-            include_str!("shader/layer_blend.wgsl"),
-        ))),
+        source: super::wgsl::source(&[
+            super::wgsl::COLOR,
+            super::wgsl::LAYER,
+            super::wgsl::LAYER_BLEND,
+        ]),
     });
     let group_blend_pipeline_layout =
         device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -613,9 +611,7 @@ impl DestPipelines {
             let (shader, pipeline_layout) = blit_program.get_or_init(|| {
                 let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                     label: Some("nana-ui.scene.dest.blit.shader"),
-                    source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!(
-                        "shader/blit.wgsl"
-                    ))),
+                    source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(super::wgsl::BLIT)),
                 });
                 let pipeline_layout =
                     device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -745,11 +741,7 @@ impl DestPipelines {
             let (shader, layout) = group_program.get_or_init(|| {
                 let group_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                     label: Some("nana-ui.scene.group.shader"),
-                    source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(concat!(
-                        include_str!("shader/color.wgsl"),
-                        "\n",
-                        include_str!("shader/layer.wgsl"),
-                    ))),
+                    source: super::wgsl::source(&[super::wgsl::COLOR, super::wgsl::LAYER]),
                 });
                 let group_pipeline_layout =
                     device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {

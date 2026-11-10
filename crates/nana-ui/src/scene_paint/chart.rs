@@ -119,11 +119,7 @@ impl ChartPipeline {
     ) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("nana-ui.scene.chart.shader"),
-            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(concat!(
-                include_str!("shader/chart.wgsl"),
-                "\n",
-                include_str!("shader/color.wgsl"),
-            ))),
+            source: super::wgsl::source(&[super::wgsl::CHART, super::wgsl::COLOR]),
         });
         let both = wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT;
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
