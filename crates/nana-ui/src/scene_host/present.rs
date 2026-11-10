@@ -34,6 +34,7 @@ impl<Program: RuntimeProgram> WindowManager<Program> {
         if !self.window_contexts.contains_key(&id) {
             return false;
         }
+        self.sync_compositor_clock(id);
         self.program.prepare_window_frame(id, &self.context_for(id));
         let output = self.sync_window_output(id)
             && self
@@ -162,6 +163,9 @@ impl<Program: RuntimeProgram> WindowManager<Program> {
         if self.defer_native_live_resize(id) {
             return;
         }
+        // Before the program's messages and frame hook, which may start a
+        // reveal or a motion; once more below, just ahead of the flush.
+        self.sync_compositor_clock(id);
         let queued = self.drain_program_messages(id);
         self.apply_update(event_loop, queued, Some(id));
         if event_loop.exiting() || self.render_suspended || !self.can_present(id) {
