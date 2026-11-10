@@ -16,6 +16,37 @@ use super::{
 };
 use crate::{PhysicalRect, gpu_work::ManagedBuffer};
 
+/// The quad program as its files spell it, comments included. The
+/// precompiled stages record a hash of this text (`precompiled/generated.rs`),
+/// so it stays the identity of what they were compiled from whatever the
+/// build strips out of the copy it embeds.
+#[cfg(any(test, target_os = "windows"))]
+macro_rules! quad_source {
+    () => {
+        concat!(
+            include_str!("shader/motion.wgsl"),
+            "\n",
+            include_str!("shader/color.wgsl"),
+            "\n",
+            include_str!("shader/quad.wgsl"),
+            "\n",
+            include_str!("shader/vertex.wgsl"),
+            "\n",
+            include_str!("shader/quad_paint_data.wgsl"),
+            "\n",
+            include_str!("shader/quad_paint.wgsl"),
+            "\n",
+            include_str!("shader/quad_solid.wgsl"),
+        )
+    };
+}
+
+/// [`quad_source`]'s hash, worked out when this crate is compiled: the text
+/// itself is not in the binary.
+#[cfg(target_os = "windows")]
+#[allow(long_running_const_eval)]
+const QUAD_SOURCE_HASH: u64 = super::precompiled::fnv1a(quad_source!().as_bytes());
+
 /// The quad program, joined from its files.
 fn quad_shader() -> String {
     super::wgsl::joined(&[
@@ -52,7 +83,23 @@ const QUAD_FRAGMENT: &[ShaderStage] = &[ShaderStage::Fragment];
 /// its resource layout key, and the instance attributes its vertex stage reads.
 #[cfg(test)]
 pub(super) fn precompiled_inputs() -> (String, u64, usize) {
-    (quad_shader(), quad_layout_key(), SOLID_ATTRIBUTES.len())
+    (
+        quad_source!().to_owned(),
+        quad_layout_key(),
+        SOLID_ATTRIBUTES.len(),
+    )
+}
+
+/// The program a device compiles is the source the precompiled stages
+/// answer for, less its comments: the two lists of files are the same.
+#[cfg(test)]
+#[test]
+fn the_embedded_quad_program_is_its_source_without_comments() {
+    let source = quad_source!();
+    let len = super::wgsl::strip::<0>(source.as_bytes()).1;
+    let (bytes, written) = super::wgsl::strip::<{ 128 * 1024 }>(source.as_bytes());
+    assert_eq!(written, len);
+    assert_eq!(std::str::from_utf8(&bytes[..len]).unwrap(), quad_shader());
 }
 
 fn quad_layout_key() -> u64 {
@@ -234,7 +281,7 @@ impl QuadPipeline {
         // linked (61 KiB on macOS).
         #[cfg(target_os = "windows")]
         let precompiled =
-            precompiled && super::precompiled::QUAD.fresh(&quad_shader(), quad_layout_key());
+            precompiled && super::precompiled::QUAD.fresh_hash(QUAD_SOURCE_HASH, quad_layout_key());
         #[cfg(not(target_os = "windows"))]
         let _ = precompiled;
         // Parsed only when a pipeline compiles from WGSL after all.

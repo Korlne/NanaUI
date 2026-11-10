@@ -41,10 +41,16 @@ pub(super) struct Family {
 
 impl Family {
     /// Whether the stages were compiled from `wgsl` laid out as `layout`.
+    #[cfg(test)]
     pub(super) fn fresh(&self, wgsl: &str, layout: u64) -> bool {
+        self.fresh_hash(fnv1a(wgsl.as_bytes()), layout)
+    }
+
+    /// [`Self::fresh`] for a source whose [`fnv1a`] is known already.
+    pub(super) fn fresh_hash(&self, wgsl: u64, layout: u64) -> bool {
         !self.vertex.dxil.is_empty()
             && !self.fragment.dxil.is_empty()
-            && self.wgsl == fnv1a(wgsl.as_bytes())
+            && self.wgsl == wgsl
             && self.layout == layout
     }
 }

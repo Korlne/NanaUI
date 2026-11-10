@@ -72,7 +72,8 @@ const CORNER_UV: [[f32; 2]; 6] = [
 ];
 
 /// The icon program's own stages; the colour maths goes before them.
-const ICON_STAGES: &str = r#"
+const ICON_STAGES: &str = super::wgsl::stripped!(
+    r#"
 struct Globals {
     transform: mat4x4<f32>,
     // The scene's corner curve exponent: 2 is a circular arc (`corner_norm`).
@@ -177,7 +178,8 @@ fn fs_main(input: VsOut) -> @location(0) vec4<f32> {
     let sampled = icon_sample(input.uv, uv_dx, uv_dy, input.cell);
     return vec4<f32>(sampled.rgb * input.color.rgb, sampled.a * input.color.a * clip_cover);
 }
-"#;
+"#
+);
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]

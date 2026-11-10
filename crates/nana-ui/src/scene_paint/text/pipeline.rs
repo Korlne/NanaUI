@@ -74,7 +74,8 @@ const INITIAL_PRESENTATIONS: usize = 8;
 
 /// The vertex stage and `shade` every text program shares; the colour maths
 /// and the atlas sampling go before them.
-const TEXT_STAGES: &str = r#"
+const TEXT_STAGES: &str = super::super::wgsl::stripped!(
+    r#"
 // One glyph, as `GlyphInstance` lays it out: 48 bytes.
 struct GlyphInstance {
     origin: vec2<i32>,
@@ -328,7 +329,8 @@ fn shade(input: VsOut) -> TextShade {
     out.alpha = vec4<f32>(sampled.a * input.color.a * clip_cover);
     return out;
 }
-"#;
+"#
+);
 
 /// The text program: the shared stages, then the entry point for targets
 /// that blend one output or, with `dual_source`, the one for subpixel text.
@@ -350,19 +352,22 @@ fn text_shader(dual_source: bool) -> String {
 
 /// The program for targets that blend one output. Subpixel glyphs are never
 /// resolved for it; were one drawn, it would paint as grayscale.
-const TEXT_FRAGMENT: &str = r#"
+const TEXT_FRAGMENT: &str = super::super::wgsl::stripped!(
+    r#"
 @fragment
 fn fs_main(input: VsOut) -> @location(0) vec4<f32> {
     let shaded = shade(input);
     return vec4<f32>(shaded.color, shaded.alpha.a);
 }
-"#;
+"#
+);
 
 /// The program for subpixel text: the second blend source carries a coverage
 /// per color channel, so the blend unit mixes each subpixel on its own.
 /// Every other glyph gives the same alpha to all four, which is exactly
 /// straight alpha blending.
-const TEXT_FRAGMENT_DUAL_SOURCE: &str = r#"
+const TEXT_FRAGMENT_DUAL_SOURCE: &str = super::super::wgsl::stripped!(
+    r#"
 struct DualOut {
     @location(0) @blend_src(0) color: vec4<f32>,
     @location(0) @blend_src(1) alpha: vec4<f32>,
@@ -376,7 +381,8 @@ fn fs_main(input: VsOut) -> DualOut {
     out.alpha = shaded.alpha;
     return out;
 }
-"#;
+"#
+);
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
