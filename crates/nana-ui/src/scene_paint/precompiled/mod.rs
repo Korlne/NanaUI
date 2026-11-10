@@ -66,8 +66,11 @@ pub(super) const fn fnv1a(bytes: &[u8]) -> u64 {
 }
 
 /// Whether `device` runs precompiled stages: DX12 with passthrough shaders.
+/// Only Windows has DX12; the platform test lets every other target drop the
+/// DXIL from its binary.
 pub(super) fn runs_on(gpu: &nana_gpu::GpuContext, device: &wgpu::Device) -> bool {
-    gpu.capabilities().backend() == nana_gpu::GpuBackend::Dx12
+    cfg!(target_os = "windows")
+        && gpu.capabilities().backend() == nana_gpu::GpuBackend::Dx12
         && device
             .features()
             .contains(wgpu::Features::PASSTHROUGH_SHADERS)

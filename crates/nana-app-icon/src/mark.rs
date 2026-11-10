@@ -51,9 +51,58 @@ pub fn rasterize(size: u32) -> Vec<u8> {
     canvas.into_raw()
 }
 
+/// Side of the mark a window shows without an icon of its own.
+#[cfg(any(test, feature = "runtime"))]
+pub const RUNTIME_SIZE: u32 = 256;
+
+/// The mark at [`RUNTIME_SIZE`], unpremultiplied RGBA: `rasterize` run ahead
+/// of time (`tests::regenerate_runtime_mark`).
+///
+/// An application links this instead of the source artwork. The source is
+/// about 0.9 MB and only [`rasterize`] reads it, which leaves it to the
+/// packaging paths (ICO, ICNS) that run at build time.
+#[cfg(any(test, feature = "runtime"))]
+pub fn runtime_mark() -> Vec<u8> {
+    let mark = image::load_from_memory(include_bytes!("../assets/nana-256.png"))
+        .expect("bundled runtime mark must be a valid PNG")
+        .into_rgba8();
+    debug_assert_eq!((mark.width(), mark.height()), (RUNTIME_SIZE, RUNTIME_SIZE));
+    mark.into_raw()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Resampling is floating point, so another target may round a channel
+    /// the other way; anything past that means the source artwork changed
+    /// and the runtime mark was not regenerated.
+    #[test]
+    fn runtime_mark_is_the_source_rasterized_at_its_size() {
+        let ahead = runtime_mark();
+        let now = rasterize(RUNTIME_SIZE);
+        assert_eq!(ahead.len(), now.len());
+        let drift = ahead
+            .iter()
+            .zip(&now)
+            .map(|(a, b)| a.abs_diff(*b))
+            .max()
+            .unwrap_or(0);
+        assert!(
+            drift <= 2,
+            "assets/nana-256.png is stale (channel drift {drift}); run \
+             `cargo test -p nana-app-icon -- --ignored regenerate_runtime_mark`"
+        );
+    }
+
+    #[test]
+    #[ignore = "rewrites assets/nana-256.png from assets/nana.png"]
+    fn regenerate_runtime_mark() {
+        let png = crate::encode::png(RUNTIME_SIZE, RUNTIME_SIZE, &rasterize(RUNTIME_SIZE))
+            .expect("runtime mark encodes");
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/nana-256.png");
+        std::fs::write(path, png).expect("runtime mark is written");
+    }
 
     #[test]
     fn mark_preserves_transparency_at_runtime_and_package_sizes() {

@@ -230,8 +230,11 @@ impl QuadPipeline {
         policy: Option<&nana_gpu::GpuDeviceState>,
         precompiled: bool,
     ) -> Self {
-        let precompiled =
-            precompiled && super::precompiled::QUAD.fresh(QUAD_SHADER, quad_layout_key());
+        // The platform test is what removes the DXIL from other targets'
+        // binaries: `precompiled` alone is only known at run time.
+        let precompiled = cfg!(target_os = "windows")
+            && precompiled
+            && super::precompiled::QUAD.fresh(QUAD_SHADER, quad_layout_key());
         // Parsed only when a pipeline compiles from WGSL after all.
         let shader = std::cell::OnceCell::new();
         let wgsl = || {

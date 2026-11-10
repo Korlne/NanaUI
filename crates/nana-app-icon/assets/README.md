@@ -11,6 +11,15 @@
 Runtime、Windows ICO 和 macOS ICNS 共用 `src/mark.rs`，从同一张源图按比例
 缩放并添加系统图标留边。不要把概念稿中的棋盘格当作透明背景导入。
 
+`nana-256.png` 是 `mark::rasterize(256)` 的输出，窗口的默认图标用它。应用二进制
+只链接这一张（约 45 KB），不链接 945 KB 的源图；源图只有构建期的 ICO / ICNS
+路径读取。改了 `nana.png` 之后要重新生成，否则
+`runtime_mark_is_the_source_rasterized_at_its_size` 会失败：
+
+```bash
+cargo test -p nana-app-icon --all-features -- --ignored regenerate_runtime_mark
+```
+
 ## 接入验证（2026-09-03）
 
 - `cargo test -p nana-app-icon --all-features --locked -- --test-threads=1`：7 项通过。

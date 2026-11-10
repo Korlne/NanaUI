@@ -3,7 +3,8 @@
 //! The constant lives here rather than in `nana-ui` because more than one
 //! crate needs it (the theme in `nana-ui`, `nana-ui-scene`, and `nana-text`'s
 //! tests). Each used to `include_bytes!` the file itself, and the linker does
-//! not merge identical constant data across crates.
+//! not merge identical constant data across crates. For the same reason the
+//! bytes sit in one `static` here and the public constant refers to it.
 //!
 //! It is one variable font: Noto Sans SC with its `wght` axis narrowed to
 //! 400..700 and its default instance at Regular (400), named instances
@@ -22,13 +23,28 @@
 //!   the text engine. Implies the above and embeds nothing more. The Android
 //!   host deliberately draws interface text with system fonts instead.
 
+#[cfg(feature = "bundled-font-regular")]
+macro_rules! ui_font_file {
+    () => {
+        include_bytes!("../../nana-ui/assets/fonts/NotoSansSC-Variable.ttf")
+    };
+}
+
 /// LiliaUI's Noto Sans SC variable face (`wght` 400..700, default Regular).
 ///
 /// The name predates the variable face: it is still the face to hand a
 /// reader that wants Regular, because Regular is the default instance.
+///
+/// The constant only points at one `static`. A constant holding the bytes
+/// themselves is copied into every crate that names it, and without LTO the
+/// linker keeps each copy: an ordinary `release` build of a hosted
+/// application carried the face twice.
 #[cfg(feature = "bundled-font-regular")]
-pub const UI_FONT_REGULAR: &[u8] =
-    include_bytes!("../../nana-ui/assets/fonts/NotoSansSC-Variable.ttf").as_slice();
+pub const UI_FONT_REGULAR: &[u8] = &UI_FONT_BYTES;
+
+/// The one copy of the face in the final artifact.
+#[cfg(feature = "bundled-font-regular")]
+static UI_FONT_BYTES: [u8; ui_font_file!().len()] = *ui_font_file!();
 
 /// The family name the bundled face registers under.
 #[cfg(feature = "bundled-font-regular")]
