@@ -418,7 +418,8 @@ impl<'a> ViewBuilder<'_, 'a, '_> {
                 .map(|keys| (keys.container, key.clone()));
             let entity = self.ui.child(key, component);
             if let Some((container, key)) = root_key {
-                self.ui.key_parked_root(container, key, entity);
+                self.ui
+                    .key_parked_root(container, key, entity.stable_id(), TypeId::of::<C>());
             }
             entity
         };
