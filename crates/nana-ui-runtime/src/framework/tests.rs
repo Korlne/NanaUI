@@ -10225,8 +10225,23 @@ fn a_range_caution_zone_is_measured_along_the_track_in_the_warning_colour() {
         .color(nana_ui_core::SemanticColorRole::Warning)
         .as_rgba_array();
     assert_eq!(zone.fill, warning);
-    assert_eq!(zone.track[..3], warning[..3]);
-    assert!(zone.track[3] < zone.fill[3], "thinner on the rail");
+    assert_eq!(zone.track, warning, "whole on the rail too");
+    assert_eq!(zone.thumb, None, "the value is short of the zone");
+    let inside = caution(
+        &mut context,
+        RangeField::new(250.0, 0.0, 400.0, 1.0)
+            .value_thumb(true)
+            .caution_from(100.0),
+    )
+    .expect("a caution zone");
+    assert_eq!(inside.thumb, Some(warning), "inside it the thumb warns");
+    let mut off = RangeField::new(250.0, 0.0, 400.0, 1.0).caution_from(100.0);
+    off.disabled = true;
+    assert_eq!(
+        caution(&mut context, off).expect("a caution zone").thumb,
+        None,
+        "a disabled range keeps its disabled thumb"
+    );
 
     for field in [
         RangeField::new(50.0, 0.0, 100.0, 1.0).caution_from(100.0),

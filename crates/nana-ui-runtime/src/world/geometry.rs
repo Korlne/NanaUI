@@ -1605,6 +1605,21 @@ impl UiWorld {
                     width: (lane.width - travel).max(0.0),
                     height: thumb.min(content.height),
                 };
+                // The value inside the caution zone turns the thumb of an
+                // enabled range the warning colour.
+                let warning = self
+                    .style_model
+                    .color(SemanticColorRole::Warning)
+                    .as_rgba_array();
+                let caution_thumb = caution
+                    .filter(|from| track_gradient.is_none() && *ratio >= *from)
+                    .filter(|_| {
+                        !self
+                            .nodes
+                            .get(id)
+                            .is_some_and(|node| node.accessibility.disabled)
+                    })
+                    .map(|_| warning);
                 let value_thumb = value_thumb
                     .as_ref()
                     .zip(capsule_width)
@@ -1627,12 +1642,28 @@ impl UiWorld {
                         );
                         // On the accent fill; a disabled capsule loses the accent
                         // and its text takes the range's own disabled colour.
+                        // Inside the caution zone the capsule is the warning
+                        // colour: its text is whichever of the accent's and
+                        // the body's reads better on it.
                         if !disabled {
-                            text.color = Some(
-                                self.style_model
-                                    .color(SemanticColorRole::AccentText)
-                                    .as_rgba_array(),
-                            );
+                            let on_accent = self
+                                .style_model
+                                .color(SemanticColorRole::AccentText)
+                                .as_rgba_array();
+                            text.color = Some(match caution_thumb {
+                                Some(warning) => {
+                                    let body = self
+                                        .style_model
+                                        .color(SemanticColorRole::Text)
+                                        .as_rgba_array();
+                                    if contrast(body, warning) > contrast(on_accent, warning) {
+                                        body
+                                    } else {
+                                        on_accent
+                                    }
+                                }
+                                None => on_accent,
+                            });
                         }
                         crate::RangeValueThumb {
                             capsule,
@@ -1641,18 +1672,17 @@ impl UiWorld {
                             editing: *editing,
                         }
                     });
-                // The caution zone in the theme's warning colour: whole on
-                // the fill, thinned on the rail past the value so the two
-                // still read apart.
+                // The caution zone in the theme's warning colour, whole on
+                // the rail as on the fill: a wash of it over a surface reads
+                // as a tan, not as a warning, and the thumb already says
+                // where the value is.
                 let caution = caution.filter(|_| track_gradient.is_none()).map(|from| {
-                    let fill = self
-                        .style_model
-                        .color(SemanticColorRole::Warning)
-                        .as_rgba_array();
+                    let fill = warning;
                     crate::RangeCaution {
                         from,
-                        track: [fill[0], fill[1], fill[2], fill[3] * 0.7],
+                        track: fill,
                         fill,
+                        thumb: caution_thumb,
                     }
                 });
                 Some(crate::ComponentGeometry::Range {
@@ -2983,4 +3013,20 @@ pub(crate) fn range_value_thumb_height(
         _ => typography.line,
     };
     line + spacing.sm
+}
+
+/// The WCAG contrast ratio between two sRGB colours, their alpha ignored.
+fn contrast(a: [f32; 4], b: [f32; 4]) -> f32 {
+    fn luminance(color: [f32; 4]) -> f32 {
+        let linear = |channel: f32| {
+            if channel <= 0.04045 {
+                channel / 12.92
+            } else {
+                ((channel + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * linear(color[0]) + 0.7152 * linear(color[1]) + 0.0722 * linear(color[2])
+    }
+    let (a, b) = (luminance(a), luminance(b));
+    (a.max(b) + 0.05) / (a.min(b) + 0.05)
 }

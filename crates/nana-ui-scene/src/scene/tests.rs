@@ -6213,6 +6213,7 @@ fn a_ranges_caution_zone_repaints_the_rail_and_the_fill_past_where_it_begins() {
                 from: 0.25,
                 track: [0.9, 0.7, 0.1, 0.5],
                 fill: [0.9, 0.7, 0.1, 1.0],
+                thumb: (ratio >= 0.25).then_some([0.9, 0.7, 0.1, 1.0]),
             }),
             label: None,
             value: nana_ui_runtime::ComponentTextRegion {
@@ -6267,11 +6268,19 @@ fn a_ranges_caution_zone_repaints_the_rail_and_the_fill_past_where_it_begins() {
     assert!(span(&scene, 7).is_some(), "the marker, two slots on");
     assert!(span(&scene, 8).is_some(), "and the thumb after it");
     assert!(span(&scene, 9).is_none());
+    let thumb_fill = |scene: &UiScene| quad_parts(scene, 1, 8).expect("the thumb").1;
+    let in_zone = thumb_fill(&scene);
+    assert_eq!(
+        in_zone,
+        quad_parts(&scene, 1, 6).unwrap().1,
+        "inside the zone the thumb is the zone's fill colour"
+    );
 
     // The value short of the zone: only the rail is in it.
     let scene = range_at(0.1);
     assert_eq!(span(&scene, 5), Some((50.0, 150.0)));
     assert!(span(&scene, 6).is_none(), "the fill ends before the zone");
+    assert_ne!(thumb_fill(&scene), in_zone, "short of it, the accent");
 }
 
 /// A quad's bounds, fill, border colour, border width and surface paint.

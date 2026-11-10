@@ -2173,6 +2173,14 @@ impl UiScene {
                         ));
                     }
                     let thumb_slot = 5 + marker_count;
+                    // Inside the caution zone the thumb is the warning
+                    // colour in place of the accent.
+                    let caution_thumb = caution.and_then(|caution| caution.thumb);
+                    let thumb_paint = if caution_thumb.is_some() {
+                        None
+                    } else {
+                        node.style.paint_colors.background
+                    };
                     let thumb_rect = match value_thumb {
                         Some(thumb) => scene_rect(thumb.capsule),
                         None => SceneRect {
@@ -2191,12 +2199,12 @@ impl UiScene {
                                 thumb_slot,
                                 thumb_rect,
                                 VisualQuadStyle {
-                                    background: node.style.background,
+                                    background: caution_thumb.or(node.style.background),
                                     border_color: None,
                                     border_width: 0.0,
                                     corner_radius: corner_radii(thumb_rect.height / 2.0),
                                 },
-                                node.style.paint_colors.background,
+                                thumb_paint,
                                 None,
                             ));
                         }
@@ -2215,12 +2223,12 @@ impl UiScene {
                                 thumb_slot,
                                 thumb_rect,
                                 VisualQuadStyle {
-                                    background: node.style.background,
+                                    background: caution_thumb.or(node.style.background),
                                     border_color: node.style.border_color,
                                     border_width,
                                     corner_radius: corner_radii(thumb_extent / 2.0),
                                 },
-                                node.style.paint_colors.background,
+                                thumb_paint,
                                 node.style.paint_colors.border,
                             ));
                         }
