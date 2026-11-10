@@ -6199,7 +6199,7 @@ fn a_ranges_caution_zone_repaints_the_rail_and_the_fill_past_where_it_begins() {
             unit: None,
             size: nana_ui_core::ControlSize::Small,
             ratio,
-            markers: Arc::from([0.25]),
+            markers: Arc::from([0.1, 0.25]),
             invalid: false,
             rail: None,
             track_gradient: None,
@@ -6265,10 +6265,21 @@ fn a_ranges_caution_zone_repaints_the_rail_and_the_fill_past_where_it_begins() {
         "as thick as the rail"
     );
     assert!(background.is_some());
-    assert!(span(&scene, 7).is_some(), "the marker, two slots on");
-    assert!(span(&scene, 8).is_some(), "and the thumb after it");
-    assert!(span(&scene, 9).is_none());
-    let thumb_fill = |scene: &UiScene| quad_parts(scene, 1, 8).expect("the thumb").1;
+    assert!(span(&scene, 7).is_some(), "the markers, two slots on");
+    assert!(span(&scene, 9).is_some(), "and the thumb after them");
+    assert!(span(&scene, 10).is_none());
+    let fill_of = |scene: &UiScene, slot| quad_parts(scene, 1, slot).expect("a quad").1;
+    assert_eq!(
+        fill_of(&scene, 8),
+        fill_of(&scene, 6),
+        "the marker where the zone begins is the zone's colour"
+    );
+    assert_ne!(
+        fill_of(&scene, 7),
+        fill_of(&scene, 6),
+        "the one short of it is not"
+    );
+    let thumb_fill = |scene: &UiScene| quad_parts(scene, 1, 9).expect("the thumb").1;
     let in_zone = thumb_fill(&scene);
     assert_eq!(
         in_zone,

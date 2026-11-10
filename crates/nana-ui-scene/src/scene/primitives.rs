@@ -2158,17 +2158,26 @@ impl UiScene {
                             width: girth * 0.75,
                             height: rail.height + girth,
                         };
+                        // A marker inside the caution zone, the one where it
+                        // begins among them, is the zone's colour.
+                        let zone_fill = caution
+                            .filter(|caution| marker >= caution.from)
+                            .map(|caution| caution.fill);
                         self.insert_primitive(visual_quad_with_paint(
                             &visual_context,
                             5 + caution_slots + index as u64,
                             tick,
                             VisualQuadStyle {
-                                background: node.style.background,
+                                background: zone_fill.or(node.style.background),
                                 border_color: node.style.border_color,
                                 border_width,
                                 corner_radius: corner_radii(border_width),
                             },
-                            node.style.paint_colors.background,
+                            if zone_fill.is_some() {
+                                None
+                            } else {
+                                node.style.paint_colors.background
+                            },
                             node.style.paint_colors.border,
                         ));
                     }
