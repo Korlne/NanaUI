@@ -1024,6 +1024,12 @@ impl ComponentView for Button {
             );
         }
         let mut effective_style = self.style.clone();
+        // Retained children are a flex line: they keep their own widths and
+        // are aligned across it, which a block container would not do.
+        if effective_style.layout.display.is_none() {
+            Arc::make_mut(&mut effective_style.layout).display =
+                Some(nana_ui_core::DisplaySpec::Flex);
+        }
         // Retained children share the label's content box, so they sit where
         // the label does: centred vertically and placed across by
         // `content_align`. An author style that already aligns them wins;
@@ -2524,6 +2530,60 @@ pub struct SecondaryPress {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PointerHoverChanged {
     pub hovered: bool,
+}
+
+/// The pointer moved over this node's subtree, at `x` / `y` in the node's
+/// own layout px (its border box's top-left is `0, 0`).
+///
+/// Only nodes with a handler for it receive it, innermost first, the same
+/// nodes [`PointerHoverChanged`] calls hovered; leaving is told by that event
+/// alone. While a node holds the pointer's capture (a drag), the nodes
+/// enclosing it keep hearing moves, and the point may lie outside them.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PointerMoved {
+    pub x: f32,
+    pub y: f32,
+}
+
+/// Where a [`PointerDragged`] gesture is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PointerDragPhase {
+    /// The press moved past the slop: the node holds the pointer's capture
+    /// (or, when the node takes no pointer itself, the control the press
+    /// landed on does), and that control is no longer pressed and will not
+    /// activate. Carries the press point, with no delta.
+    Started,
+    /// The pointer moved while the drag holds it.
+    Moved,
+    /// The button was released.
+    Ended,
+    /// The press was cancelled or the node lost the capture; nothing the
+    /// drag did should be kept as if it were finished.
+    Cancelled,
+}
+
+/// A primary-button drag that began in this node's subtree.
+///
+/// Only the innermost node with a handler for it under the press hears it. A
+/// press that never travels past the slop is an ordinary press: it focuses,
+/// activates and opens what it always did, and raises nothing. One that does
+/// becomes this node's drag: `Started`, a `Moved` per sample (the crossing
+/// sample included), then `Ended` on release or `Cancelled`. A press another
+/// control already took for a gesture of its own (a slider, a text caret, a
+/// scrollbar) does not become a drag.
+///
+/// `x` / `y` are in the node's own layout px and may lie outside it while the
+/// drag holds the pointer; `dx` / `dy` are the travel from the press point
+/// in logical px as the window measures it, so a node that moves while it is
+/// dragged (a handle following its value) does not change them.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PointerDragged {
+    pub phase: PointerDragPhase,
+    pub x: f32,
+    pub y: f32,
+    pub dx: f32,
+    pub dy: f32,
+    pub modifiers: nana_ui_input::InputModifiers,
 }
 
 /// Keyboard focus entered (`focused`) or left this node's subtree.
@@ -5492,6 +5552,9 @@ pub struct RangeField {
     /// `Some(stops)` paints the track as this gradient; see
     /// [`Self::track_gradient`].
     pub track_gradient: Option<Arc<[nana_ui_core::GradientStop]>>,
+    /// `Some(value)`: the track from this value to the maximum is a caution
+    /// zone; see [`Self::caution_from`].
+    pub caution_from: Option<f64>,
     /// Draw the value inside a wide capsule thumb instead of beside the
     /// track; see [`Self::value_thumb`].
     pub value_thumb: bool,
@@ -5634,6 +5697,7 @@ impl RangeField {
             size: nana_ui_core::ControlSize::Medium,
             rail: None,
             track_gradient: None,
+            caution_from: None,
             value_thumb: false,
             show_bounds: false,
             default_value: None,
@@ -5713,6 +5777,18 @@ impl RangeField {
     pub fn track_gradient(mut self, stops: impl Into<Arc<[nana_ui_core::GradientStop]>>) -> Self {
         let stops: Arc<[nana_ui_core::GradientStop]> = stops.into();
         self.track_gradient = (stops.len() >= 2).then_some(stops);
+        self
+    }
+    /// Mark the track from `value` up to the maximum as a caution zone: a
+    /// stretch the value may enter but is past what is usual (gain over
+    /// 100%). That stretch of the rail and of the fill is painted in the
+    /// theme's warning colour; the thumb, the value, the steps and the
+    /// slider semantics are unchanged, and nothing stops the value at its
+    /// edge (pair it with a marker there for a stop). A value outside the
+    /// range marks nothing. A rail ([`Self::rail`]) or a gradient track
+    /// ([`Self::track_gradient`]) wins over it.
+    pub fn caution_from(mut self, value: f64) -> Self {
+        self.caution_from = Some(value);
         self
     }
     /// Draw the value inside the thumb: a wide accent capsule as wide as
@@ -5808,6 +5884,21 @@ impl RangeField {
         best.map_or(proportional, |(_, value)| value)
     }
 
+    /// Where the caution zone begins along the track, `0.0..1.0`; none
+    /// without one, on a rail or a gradient track, or when it would begin
+    /// outside the range or at its very end.
+    fn caution_ratio(&self) -> Option<f32> {
+        if self.rail.is_some() || self.track_gradient.is_some() {
+            return None;
+        }
+        let from = self.caution_from.filter(|from| from.is_finite())?;
+        let span = self.maximum - self.minimum;
+        if !(span.is_finite() && span > 0.0) || from < self.minimum || from >= self.maximum {
+            return None;
+        }
+        Some(((from - self.minimum) / span) as f32)
+    }
+
     fn marker_ratios(&self) -> Arc<[f32]> {
         let span = self.maximum - self.minimum;
         if !(span.is_finite() && span > 0.0) {
@@ -5890,6 +5981,7 @@ impl ComponentView for RangeField {
             size: self.size,
             ratio: self.ratio(),
             markers: self.marker_ratios(),
+            caution: self.caution_ratio(),
             invalid: self.invalid,
             rail,
             track_gradient: track_gradient.clone(),

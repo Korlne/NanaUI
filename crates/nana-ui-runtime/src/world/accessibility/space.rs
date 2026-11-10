@@ -108,6 +108,16 @@ pub(super) fn upright(a: f32, b: f32, c: f32, d: f32) -> bool {
     b == 0.0 && c == 0.0 && a > 0.0 && d > 0.0
 }
 
+/// `map` after the move by `-scroll`: the map from the space a node's
+/// children are placed in, given its own space's.
+pub(super) fn scrolled_map(map: [f32; 6], [sx, sy]: [f32; 2]) -> [f32; 6] {
+    if sx == 0.0 && sy == 0.0 {
+        return map;
+    }
+    let [a, b, c, d, e, f] = map;
+    [a, b, c, d, e - (a * sx + c * sy), f - (b * sx + d * sy)]
+}
+
 /// The inverse of the affine `[a, b, c, d, e, f]` (`x' = a·x + c·y + e`),
 /// unless it is singular.
 pub(super) fn invert_affine([a, b, c, d, e, f]: [f32; 6]) -> Option<[f32; 6]> {
@@ -283,9 +293,9 @@ impl UiWorld {
     /// `id`'s, is placed by its offset
     /// ([`NodeSpace::places_by_offset`]) and its parent's
     /// space holds its own box upright at a positive scale `(a, d)`
-    /// ([`AccessibleSpace::unit`]). Then its bounds are `(a·(x − sx), d·(y −
-    /// sy), a·w, d·h)` -- its local box less the parent's scroll offset,
-    /// scaled -- with its own transform, if any, folded in or handed on
+    /// ([`AccessibleSpace::unit`]). Then its bounds are `(a·x, d·y, a·w,
+    /// d·h)` -- its local box, scaled, in the space its parent's scroll
+    /// ([`AccessibilityNode::scroll`]) moves -- with its own transform, if any, folded in or handed on
     /// ([`Self::local_placement`]), whatever the boxes above stand at, and
     /// however they turn. Nothing in that reads a page position, so a box
     /// that moved with its parent keeps them to the bit.
@@ -475,10 +485,34 @@ impl UiWorld {
             .map(|(matrix, _)| matrix)
     }
 
-    /// `id`'s bounds and transform in `parent`'s space, from its local box,
-    /// its parent's scroll and its own transform, where `id` is placed by
-    /// its offset ([`Self::offset_placed`]) and `unit` is its parent's
-    /// ([`AccessibleSpace::unit`]). A transform of its own that only moves
+    /// How far `id` scrolls what it holds in its accessible space
+    /// ([`AccessibilityNode::scroll`]): its scroll offset scaled by its
+    /// space's unit, where its box stands upright there; nothing where it
+    /// does not scroll or its children are placed from their viewport boxes.
+    pub(super) fn accessible_scroll(
+        &self,
+        id: StableNodeId,
+        memo: &mut ProjectionMemo,
+    ) -> [f32; 2] {
+        let Some(record) = self.nodes.get(id) else {
+            return [0.0, 0.0];
+        };
+        let scroll = record.scroll_offset;
+        if scroll == ScrollOffset::default() {
+            return [0.0, 0.0];
+        }
+        match self.accessible_space(id, memo).and_then(|space| space.unit) {
+            Some([ua, ud]) => [ua * scroll.x, ud * scroll.y],
+            None => [0.0, 0.0],
+        }
+    }
+
+    /// `id`'s bounds and transform in `parent`'s children's space, from its
+    /// local box and its own transform, where `id` is placed by its offset
+    /// ([`Self::offset_placed`]) and `unit` is its parent's
+    /// ([`AccessibleSpace::unit`]). The parent's scroll is its own
+    /// ([`AccessibilityNode::scroll`]): what it scrolls keeps its bounds. A
+    /// transform of its own that only moves
     /// it is folded into the offset; any other -- a scale, a rotation, a
     /// skew, a flip -- is handed on, scaled by `unit`, with the box's own
     /// size, so that what it holds is placed by offsets inside it. An
@@ -488,13 +522,11 @@ impl UiWorld {
         &self,
         id: StableNodeId,
         record: &NodeRecord,
-        parent: StableNodeId,
         [ua, ud]: [f32; 2],
-    ) -> Option<(LayoutBox, Option<nana_ui_core::PaintTransform>)> {
-        let scroll = self.nodes.get(parent)?.scroll_offset;
+    ) -> (LayoutBox, Option<nana_ui_core::PaintTransform>) {
         let local = record.local_layout;
-        let (x, y) = (local.x - scroll.x, local.y - scroll.y);
-        Some(match self.own_accessible_transform(id, record) {
+        let (x, y) = (local.x, local.y);
+        match self.own_accessible_transform(id, record) {
             None => (
                 LayoutBox {
                     x: ua * x,
@@ -545,7 +577,19 @@ impl UiWorld {
                     f: ud * f,
                 }),
             ),
-        })
+        }
+    }
+
+    /// The map from the space `id`'s children are placed in to the
+    /// viewport: [`Self::accessible_space_to_viewport`] after the move by
+    /// its scroll ([`Self::accessible_scroll`]).
+    pub(super) fn children_space_to_viewport(
+        &self,
+        id: StableNodeId,
+        memo: &mut ProjectionMemo,
+    ) -> Option<[f32; 6]> {
+        let map = self.accessible_space_to_viewport(id, memo)?;
+        Some(scrolled_map(map, self.accessible_scroll(id, memo)))
     }
 
     /// The map from `id`'s accessible space to the viewport, where its box

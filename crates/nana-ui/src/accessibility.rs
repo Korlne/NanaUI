@@ -1055,19 +1055,26 @@ fn project_node(
         .collect::<Vec<_>>();
     children.extend(text_run_id);
     projected.set_children(children);
-    // Runtime bounds are relative to the parent's space: the offset, after
-    // the node's own turn when it has one, is this node's transform, so its
-    // children's offsets start from its origin, and the size is its local
-    // bounds. A box that moved with its parent keeps both and is not sent
-    // again. Physical px scale every length: the turn's linear part stays,
-    // its move scales.
+    // Runtime bounds are relative to the parent's children's space: the
+    // offset, after the node's own turn when it has one, then the move by
+    // its scroll, is this node's transform, so its children's offsets start
+    // from where its content scrolled to, and its own box is its local
+    // bounds moved back by the scroll. A box that moved with its parent, or
+    // that its parent scrolled, keeps both and is not sent again. Physical
+    // px scale every length: the turn's linear part stays, its move scales.
     let (x, y) = (
         f64::from(node.bounds.x * scale_factor),
         f64::from(node.bounds.y * scale_factor),
     );
+    let (sx, sy) = (
+        f64::from(node.scroll[0] * scale_factor),
+        f64::from(node.scroll[1] * scale_factor),
+    );
+    let scrolled = sx != 0.0 || sy != 0.0;
+    let scroll = Affine::translate((-sx, -sy));
     match node.transform {
-        Some(turn) => projected.set_transform(
-            Affine::translate((x, y))
+        Some(turn) => {
+            let placed = Affine::translate((x, y))
                 * Affine::new([
                     f64::from(turn.a),
                     f64::from(turn.b),
@@ -1075,16 +1082,20 @@ fn project_node(
                     f64::from(turn.d),
                     f64::from(turn.e * scale_factor),
                     f64::from(turn.f * scale_factor),
-                ]),
-        ),
+                ]);
+            projected.set_transform(if scrolled { placed * scroll } else { placed });
+        }
+        None if scrolled => {
+            projected.set_transform(Affine::translate((x, y)) * scroll);
+        }
         None if x != 0.0 || y != 0.0 => projected.set_transform(Affine::translate((x, y))),
         None => {}
     }
     projected.set_bounds(Rect {
-        x0: 0.0,
-        y0: 0.0,
-        x1: f64::from(node.bounds.width * scale_factor),
-        y1: f64::from(node.bounds.height * scale_factor),
+        x0: sx,
+        y0: sy,
+        x1: sx + f64::from(node.bounds.width * scale_factor),
+        y1: sy + f64::from(node.bounds.height * scale_factor),
     });
     if node.disabled {
         projected.set_disabled();
@@ -1582,6 +1593,7 @@ mod tests {
             focused: false,
             bounds: LayoutBox::default(),
             transform: None,
+            scroll: [0.0, 0.0],
             clip: None,
             writing: Default::default(),
         }
@@ -1804,6 +1816,50 @@ mod tests {
             [1.0, 0.0, 0.0, 1.0, 20.0, 40.0]
         );
         assert_eq!(placed(child), accesskit::Rect::new(20.0, 40.0, 80.0, 120.0));
+    }
+
+    /// A scrolled node's transform is its offset after the move by its
+    /// scroll, so its children's offsets start from where its content
+    /// scrolled to; its own box is its bounds moved back by the scroll, and
+    /// stands where it did. A scroll changes the scroller's node alone.
+    #[test]
+    fn a_scrolled_node_moves_its_children_by_its_transform() {
+        let mut root = node(1, None, &[2]);
+        root.bounds = LayoutBox {
+            x: 5.0,
+            y: 7.0,
+            width: 200.0,
+            height: 100.0,
+        };
+        root.scroll = [3.0, 40.0];
+        let mut child = node(2, Some(1), &[]);
+        child.bounds = LayoutBox {
+            x: 10.0,
+            y: 60.0,
+            width: 30.0,
+            height: 40.0,
+        };
+        let (_, update) = AccessibilityProjector::new(vec![root, child], false, 2.0);
+        let projected = |id| &update.nodes.iter().find(|(node, _)| *node == id).unwrap().1;
+        let root = projected(NodeId(1));
+        let child = projected(NodeId(2));
+        assert_eq!(
+            root.transform().unwrap().as_coeffs(),
+            [1.0, 0.0, 0.0, 1.0, 4.0, -66.0]
+        );
+        assert_eq!(
+            root.bounds().unwrap(),
+            accesskit::Rect::new(6.0, 80.0, 406.0, 280.0)
+        );
+        // Its own box stands at its offset, as an unscrolled one does.
+        assert_eq!(placed(root), accesskit::Rect::new(10.0, 14.0, 410.0, 214.0));
+        // The child, 60 px down its content scrolled by 40, stands 20 px
+        // below the root's top: through both transforms.
+        let through = *root.transform().unwrap() * *child.transform().unwrap();
+        assert_eq!(
+            through.transform_rect_bbox(child.bounds().unwrap()),
+            accesskit::Rect::new(24.0, 54.0, 84.0, 134.0)
+        );
     }
 
     /// A turned node's transform is its offset after its own turn, in

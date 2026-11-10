@@ -263,6 +263,11 @@ impl InteractiveCard {
         {
             let layout = Arc::make_mut(&mut style.layout);
             layout.width = Some(LengthSpec::Fill);
+            // A flex column: the content sits centred both ways, which a
+            // block container's `auto`-width children would not.
+            layout
+                .display
+                .get_or_insert(nana_ui_core::DisplaySpec::Flex);
             layout.direction = Some(FlexDirection::Column);
             layout.align_items = AlignSpec::Center;
             layout.justify_content = JustifySpec::Center;

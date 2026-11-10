@@ -37,8 +37,8 @@ impl UiWorld {
     /// `placed`, what [`Self::offset_placed`] makes of `entry` from its
     /// offset, puts its box where its layout box's turned corners stand in
     /// the viewport, up to the rounding of the page and viewport sums the
-    /// offset leaves out: its parent's space taken to the viewport
-    /// ([`Self::accessible_space_to_viewport`]), then its bounds' move and
+    /// offset leaves out: its parent's children's space taken to the
+    /// viewport ([`Self::children_space_to_viewport`]), then its bounds' move and
     /// its transform, take the corners of its own box to the corners its
     /// whole chain of transforms takes its page box to.
     pub(super) fn check_offset_bounds(
@@ -49,7 +49,7 @@ impl UiWorld {
         memo: &mut ProjectionMemo,
     ) {
         let above = self
-            .accessible_space_to_viewport(parent, memo)
+            .children_space_to_viewport(parent, memo)
             .expect("a placed box's parent space reaches the viewport");
         let mut own = transform.unwrap_or_default();
         own.e += bounds.x;

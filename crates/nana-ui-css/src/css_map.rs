@@ -1992,7 +1992,13 @@ impl LayoutStyleCss for LayoutStyle {
             "display"
                 if val.eq_ignore_ascii_case("block") || val.eq_ignore_ascii_case("flow-root") =>
             {
-                self.display = Some(DisplaySpec::Block);
+                // `flow-root` is a block container that also establishes a
+                // block formatting context: its auto height contains floats.
+                self.display = Some(if val.eq_ignore_ascii_case("flow-root") {
+                    DisplaySpec::FlowRoot
+                } else {
+                    DisplaySpec::Block
+                });
                 if self.direction.is_none() {
                     self.direction = Some(FlexDirection::Column);
                 }
@@ -7119,6 +7125,31 @@ mod tests {
         assert!(layout.grid_rows.as_ref().is_some_and(|r| r.len() == 2));
     }
 
+    /// The utilities follow Tailwind: `flex-col` sets the direction alone
+    /// and `items-center` the alignment alone, so without `flex` the box is
+    /// a block, which has no `align-items` to read. `flex` sets `display`,
+    /// and only where the stylesheet left it unset.
+    #[test]
+    fn flex_utility_alone_sets_display() {
+        let classes = |names: &[&str]| names.iter().map(|n| (*n).to_owned()).collect::<Vec<_>>();
+        let mut block = LayoutStyle::default();
+        block.apply_class_layout_hints(&classes(&["flex-col", "items-center"]));
+        assert_eq!(block.display, None);
+        assert_eq!(block.direction, Some(FlexDirection::Column));
+        assert_eq!(block.align_items, AlignSpec::Center);
+        assert!(block.stacks_as_block());
+
+        let mut flex = LayoutStyle::default();
+        flex.apply_class_layout_hints(&classes(&["flex", "flex-col", "items-center"]));
+        assert_eq!(flex.display, Some(DisplaySpec::Flex));
+        assert_eq!(flex.child_align_items(), AlignSpec::Center);
+
+        let mut grid = LayoutStyle::default();
+        grid.apply_css_text("display: grid", None, None);
+        grid.apply_class_layout_hints(&classes(&["flex"]));
+        assert_eq!(grid.display, Some(DisplaySpec::Grid));
+    }
+
     #[test]
     fn viewport_units_and_min_max_clamp_parse() {
         assert_eq!(
@@ -8860,6 +8891,16 @@ html[data-theme="dark"], [data-theme="dark"] { --bg: #181818; }
         let mut layout = LayoutStyle::default();
         layout.apply_css_text("display: block", None, None);
         assert_eq!(layout.display, Some(DisplaySpec::Block));
+        assert_eq!(layout.direction, Some(FlexDirection::Column));
+    }
+
+    /// `flow-root` keeps its own value: a block container that also
+    /// establishes a block formatting context, so its height holds floats.
+    #[test]
+    fn display_flow_root_is_its_own_block_container() {
+        let mut layout = LayoutStyle::default();
+        layout.apply_css_text("display: flow-root", None, None);
+        assert_eq!(layout.display, Some(DisplaySpec::FlowRoot));
         assert_eq!(layout.direction, Some(FlexDirection::Column));
     }
 

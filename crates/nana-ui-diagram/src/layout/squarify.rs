@@ -3,6 +3,7 @@
 //! closes as soon as one more item would make its worst aspect ratio worse.
 
 use crate::ir::Rect;
+use nana_ui_core::sort::CompactSort as _;
 
 /// One rectangle per value inside `rect`, in the input order, with areas
 /// proportional to the values. Values that are not positive and finite get
@@ -16,7 +17,7 @@ pub fn squarify(values: &[f64], rect: Rect) -> Vec<Rect> {
     if order.is_empty() || !(total.is_finite() && total > 0.0) || rect.w <= 0.0 || rect.h <= 0.0 {
         return out;
     }
-    order.sort_by(|&a, &b| values[b].total_cmp(&values[a]).then(a.cmp(&b)));
+    order.compact_sort_by(|&a, &b| values[b].total_cmp(&values[a]).then(a.cmp(&b)));
     let scale = f64::from(rect.w) * f64::from(rect.h) / total;
     let areas: Vec<f64> = order.iter().map(|&i| values[i] * scale).collect();
 

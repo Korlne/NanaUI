@@ -195,6 +195,9 @@ impl AppContext {
             self.sync_scrollbar_hot(document, *pointer_id, lane)?;
         }
         self.update_text_diagnostic_hover_hit(document, *x, *y, target)?;
+        if *phase == PointerPhase::Move {
+            self.emit_pointer_moved(target, *x, *y)?;
+        }
         let terminal_phase = match phase {
             PointerPhase::Down if *is_primary && *button == 0 => Some(0),
             PointerPhase::Move => Some(1),
@@ -232,6 +235,9 @@ impl AppContext {
         };
         let component_handled = match phase {
             PointerPhase::Move => {
+                if self.move_view_drag(document, *pointer_id, *x, *y, *modifiers, now)? {
+                    return Ok(CONSUMED);
+                }
                 if self.update_text_area_resize(document, *pointer_id, *x, *y)? {
                     return Ok(CONSUMED);
                 }
@@ -606,6 +612,9 @@ impl AppContext {
                 }
             }
             PointerPhase::Up if (*is_primary && *button == 0) || *button == 1 => {
+                if self.end_view_drag(document, *pointer_id, *x, *y, *modifiers, false)? {
+                    return Ok(CONSUMED);
+                }
                 if self.end_text_area_resize(document, *pointer_id, false)? {
                     return Ok(CONSUMED);
                 }
@@ -753,6 +762,8 @@ impl AppContext {
                     *y,
                     true
                 ))?;
+                let view_drag =
+                    self.end_view_drag(document, *pointer_id, *x, *y, *modifiers, true)?;
                 let pressed = self.release_pointer(document, *pointer_id).is_some();
                 // Before the hover clears, so the hooked node hears it leave.
                 let hooked = self.cancel_pointer_hook(document, *pointer_id)?;
@@ -776,9 +787,14 @@ impl AppContext {
                     || split_hover
                     || pressed
                     || hooked
+                    || view_drag
             }
             _ => false,
         };
+        // Reached only by a press no control took for itself.
+        if *phase == PointerPhase::Down && *is_primary && *button == 0 && !activation_click {
+            self.arm_view_drag(document, *pointer_id, pointer.pointer_type, *x, *y);
+        }
         let handled = overlay.prevent_default || component_handled;
         Ok(InputDisposition {
             handled,

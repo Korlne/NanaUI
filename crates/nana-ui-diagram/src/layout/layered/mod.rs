@@ -14,6 +14,7 @@ mod order;
 mod position;
 mod rank;
 
+use nana_ui_core::sort::CompactSort as _;
 use std::collections::HashMap;
 
 use super::graph::{Direction, End, Graph, GraphLayout, Route, RouteKind, Spacing};
@@ -600,7 +601,7 @@ fn level_geometry(
     // Initial order: depth-first from items by rank.
     {
         let mut starts: Vec<usize> = (0..ni).collect();
-        starts.sort_by_key(|&i| (vrank[i], i));
+        starts.compact_sort_by_key(|&i| (vrank[i], i));
         let mut seen = vec![false; nv];
         for s in starts {
             if seen[s] {
@@ -684,7 +685,7 @@ fn level_geometry(
             if side.is_empty() {
                 continue;
             }
-            side.sort_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)));
+            side.compact_sort_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)));
             let n = side.len();
             let gap = if n > 1 {
                 sp.port_gap.min(2.0 * limit / (n - 1) as f32)
@@ -770,7 +771,7 @@ fn level_geometry(
         // Rightward runs: the one starting further right takes the higher
         // track; leftward runs mirror that. This avoids the crossings two
         // overlapping runs would otherwise make with each other's verticals.
-        list.sort_by(|a, b| {
+        list.compact_sort_by(|a, b| {
             let ka = if a.to > a.from {
                 (0, -a.from)
             } else {

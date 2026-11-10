@@ -304,6 +304,9 @@ fn childless_text_leaf_resolves_to_its_metrics() {
         id(1),
         NodeStyle {
             layout: Arc::new(LayoutStyle {
+                // A flex column keeps each leaf at its own width; a block
+                // would stretch them across.
+                display: Some(DisplaySpec::Flex),
                 direction: Some(FlexDirection::Column),
                 ..LayoutStyle::default()
             }),
@@ -804,6 +807,8 @@ fn lays_out_shaped_controls_without_application_geometry() {
         id(1),
         NodeStyle {
             layout: Arc::new(LayoutStyle {
+                // A flex column keeps the button at its own width.
+                display: Some(DisplaySpec::Flex),
                 width: Some(LengthSpec::Fill),
                 direction: Some(FlexDirection::Column),
                 padding: Some(LengthSpec::Px(12.0)),
@@ -2050,6 +2055,9 @@ fn child_em_padding_uses_parent_computed_font_size() {
     let tree = StyleLayoutNode {
         id: "parent".into(),
         style: LayoutStyle {
+            // A flex column keeps the child at its own width.
+            display: Some(DisplaySpec::Flex),
+            direction: Some(FlexDirection::Column),
             font_size: Some(32.0),
             width: Some(LengthSpec::Px(200.0)),
             height: Some(LengthSpec::Px(200.0)),
@@ -7733,4 +7741,63 @@ fn issue199_inline_span_keeps_atomic_descendants_and_unboxes_only_real_blocks() 
 #[test]
 fn a_pass_input_slot_stays_small() {
     assert!(std::mem::size_of::<Option<(StableNodeId, PassInput<'static>)>>() <= 56);
+}
+
+/// CSS block layout has no `align-items`: under `display: block`,
+/// `flow-root` or an unset `display` a block-level child whose width is
+/// `auto` fills the containing block less its margins, as CSS 2.1 §10.3.3
+/// and Taffy have it, though `align_items` is left at the Rust default
+/// `Start`. A flex column aligns by `align_items` and keeps the child at its
+/// content width.
+#[test]
+fn block_children_with_auto_width_fill_the_containing_block() {
+    let parent = |id: &str, display: Option<DisplaySpec>| StyleLayoutNode {
+        id: id.into(),
+        style: LayoutStyle {
+            display,
+            direction: Some(FlexDirection::Column),
+            width: Some(LengthSpec::Px(400.0)),
+            ..LayoutStyle::default()
+        },
+        children: vec![StyleLayoutNode {
+            id: format!("{id}-child"),
+            style: LayoutStyle {
+                display: Some(DisplaySpec::Block),
+                margin_left: Some(LengthSpec::Px(10.0)),
+                margin_right: Some(LengthSpec::Px(30.0)),
+                ..LayoutStyle::default()
+            },
+            children: vec![px_box(&format!("{id}-content"), 50.0, 10.0)],
+            text: None,
+        }],
+        text: None,
+    };
+    let tree = StyleLayoutNode {
+        id: "root".into(),
+        style: LayoutStyle {
+            display: Some(DisplaySpec::Flex),
+            direction: Some(FlexDirection::Column),
+            ..LayoutStyle::default()
+        },
+        children: vec![
+            parent("block", Some(DisplaySpec::Block)),
+            parent("flow-root", Some(DisplaySpec::FlowRoot)),
+            parent("unset", None),
+            parent("flex", Some(DisplaySpec::Flex)),
+        ],
+        text: None,
+    };
+    let boxes = box_map(&tree, 800.0, 600.0);
+    for id in ["block", "flow-root", "unset"] {
+        let child = boxes[&format!("{id}-child")];
+        assert!(
+            (child.x - 10.0).abs() < 0.01 && (child.width - 360.0).abs() < 0.01,
+            "{id}: an auto-width block fills 400 less its margins, got {child:?}"
+        );
+    }
+    let child = boxes["flex-child"];
+    assert!(
+        (child.width - 50.0).abs() < 0.01,
+        "a flex column aligned to the start keeps its child at its content width, got {child:?}"
+    );
 }

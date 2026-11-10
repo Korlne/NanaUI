@@ -2,6 +2,7 @@
 //! along the flow, rounded elbows for branch-offs, merges and
 //! cherry-picks.
 
+use nana_ui_core::sort::CompactSort as _;
 use nana_ui_core::{RadiusTier, SemanticColorMix, SemanticColorRole as R};
 
 use super::{CommitKind, Flow, Model};
@@ -40,7 +41,7 @@ pub(super) fn layout(model: &Model, cx: &mut LayoutCx<'_>) -> Result<DiagramScen
 
     // Lanes: branches sorted by order, ties by creation.
     let mut lanes: Vec<usize> = (0..model.branches.len()).collect();
-    lanes.sort_by(|&a, &b| {
+    lanes.compact_sort_by(|&a, &b| {
         model.branches[a]
             .order
             .total_cmp(&model.branches[b].order)

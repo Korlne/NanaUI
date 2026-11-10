@@ -500,6 +500,7 @@ impl RuntimeLayoutEngine {
             AffectedChildren::new(world, &affected)
         };
         let scope = ScopeContext {
+            frontier: &frontier,
             affected: &affected,
             affected_children: &affected_children,
             measure: frontier.measure_nodes(),
@@ -2172,6 +2173,14 @@ impl ContainerPlan {
                 !was_in_flow && !was_positioned
             } else if style.position.is_out_of_flow() {
                 was_positioned
+            } else if style.is_floated()
+                && !self.style.display.is_some_and(|display| {
+                    display.is_flex_container() || display.is_grid_container()
+                })
+            {
+                // A block with floats records no plan: a child that floats
+                // now leaves the flow this plan places.
+                false
             } else {
                 was_in_flow
             }
@@ -3580,6 +3589,9 @@ fn collapse_omitted_boxes(
 }
 
 struct ScopeContext<'a> {
+    /// What reached each affected node: a seed of its own, or which kind of
+    /// dependency edge.
+    frontier: &'a LayoutFrontier,
     affected: &'a HashSet<StableNodeId>,
     /// `affected` by parent: what a container's plan re-checks or patches.
     affected_children: &'a AffectedChildren,
@@ -3876,6 +3888,9 @@ pub(crate) struct LayoutExecutionStats {
     pub measure_cache_misses: usize,
     pub placement_nodes: usize,
     pub origin_only_updates: usize,
+    /// Containers that only moved and kept their whole subtree: their own
+    /// box was written, their body did not run (`keeps_moved_subtree`).
+    pub moved_subtrees_kept: usize,
     /// Containers placed from their retained [`ContainerPlan`].
     pub placement_plans_reused: usize,
     /// Containers measured from a retained [`MeasurePlan`], without a walk of
@@ -4076,6 +4091,11 @@ impl PassIntrinsicCache {
     fn note_placement_node(&mut self) {
         self.execution_stats.placement_nodes =
             self.execution_stats.placement_nodes.saturating_add(1);
+    }
+
+    fn note_moved_subtree_kept(&mut self) {
+        self.execution_stats.moved_subtrees_kept =
+            self.execution_stats.moved_subtrees_kept.saturating_add(1);
     }
 
     fn note_origin_only(&mut self) {
@@ -4547,6 +4567,30 @@ fn demote_fill_spec_if_indefinite(spec: Option<LengthSpec>, base: f32) -> Option
 
 fn aspect_ratio_is_usable(style: &nana_ui_core::LayoutStyle) -> bool {
     style.aspect_ratio.is_some_and(|r| r.is_finite() && r > 0.0)
+}
+
+/// Whether `child`, which names no alignment of its own, keeps the size
+/// its content gives it across a block container that would otherwise
+/// stretch it. Block layout fills an `auto`-width block box along the
+/// container's inline axis, but not every child: a replaced element takes
+/// the width its natural size gives it (CSS 2.1 §10.3.4, §10.3.2), and a
+/// child in an orthogonal writing mode has its block size there, which its
+/// content gives (CSS Writing Modes 3 §7.3). Flex and grid stretch both.
+///
+/// `natural_ratio` is [`has_natural_ratio`] for `child`. A child inherits
+/// its container's writing mode unless it declares one.
+fn block_keeps_content_size(
+    container: &nana_ui_core::LayoutStyle,
+    container_writing: nana_ui_core::WritingContext,
+    child_style: &nana_ui_core::LayoutStyle,
+    natural_ratio: bool,
+) -> bool {
+    child_style.align_self.is_none()
+        && container.stacks_as_block()
+        && (natural_ratio
+            || child_style
+                .writing_mode
+                .is_some_and(|mode| mode.is_vertical() != container_writing.is_vertical()))
 }
 
 /// Whether `id` shows replaced content whose resource reported a natural

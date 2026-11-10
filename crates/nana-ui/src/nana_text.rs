@@ -376,6 +376,74 @@ pub fn shaped_face_families(family: &str, text: &str) -> Vec<String> {
     names
 }
 
+/// One face the font set resolved, with the bytes it is read from.
+///
+/// The bytes are the font set's own: cloning this, or holding
+/// [`data`](Self::data), shares them rather than copying a file that may be
+/// a system collection of tens of megabytes.
+#[derive(Clone)]
+pub struct ResolvedFontFace {
+    family: String,
+    data: nana_text::font::FontData,
+}
+
+impl ResolvedFontFace {
+    /// The first family name the face answers to.
+    pub fn family(&self) -> &str {
+        &self.family
+    }
+
+    /// The font file the face is in.
+    pub fn bytes(&self) -> &[u8] {
+        self.data.bytes()
+    }
+
+    /// The face's index in [`bytes`](Self::bytes): 0 unless they are a
+    /// collection (`.ttc`).
+    pub fn index(&self) -> u32 {
+        self.data.index()
+    }
+
+    /// The shared bytes, for a reader that keeps them alive.
+    pub fn data(&self) -> std::sync::Arc<dyn AsRef<[u8]> + Send + Sync> {
+        self.data.blob()
+    }
+}
+
+impl std::fmt::Debug for ResolvedFontFace {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ResolvedFontFace")
+            .field("family", &self.family)
+            .field("index", &self.index())
+            .field("len", &self.bytes().len())
+            .finish()
+    }
+}
+
+/// The faces interface text would be drawn with: what `family` (a CSS family
+/// list) resolves to at `weight`, then every fallback face a character of
+/// `text` needs, each once.
+///
+/// This is the one place to ask which font draws something. Whatever is in
+/// the font set answers: the platform's fonts, the bundled face when
+/// `bundled-fonts` registered it, and the faces the application registered,
+/// under the same generic families and script fallback interface text uses.
+/// SVG `<text>` is drawn with what this returns, and an application that
+/// rasterizes or exports text itself should ask here rather than embed a
+/// face of its own.
+///
+/// Empty when nothing in the font set matches, which only a hermetic engine
+/// without faces, or a system with no fonts, produces.
+pub fn resolve_font_faces(family: &str, weight: u16, text: &str) -> Vec<ResolvedFontFace> {
+    crate::text_engine::resolve_faces(family, weight, text)
+        .into_iter()
+        .map(|face| ResolvedFontFace {
+            family: face.family.to_string(),
+            data: face.data,
+        })
+        .collect()
+}
+
 /// Product text shaper for Runtime flush on the Nana WGPU host path.
 ///
 /// Since #99 this is the `nana-text` engine and nothing else: the name is what
@@ -578,6 +646,42 @@ mod tests {
             unregister_host_font(&registration),
             Err(HostFontError::NotRegistered),
             "a withdrawn registration cannot be withdrawn twice"
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "bundled-fonts")]
+    fn resolved_faces_are_the_ones_that_shape_and_their_bytes_are_shared() {
+        let _font_test = FONT_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+        let mut scope = HostFontScope::new();
+        scope
+            .add_face(
+                "NanaResolvedFace",
+                crate::UI_FONT_REGULAR.to_vec(),
+                Some(400),
+                None,
+                None,
+            )
+            .expect("the bundled face loads");
+        let faces = resolve_font_faces("NanaResolvedFace", 400, "H流");
+        assert_eq!(
+            faces.first().map(ResolvedFontFace::family),
+            Some("NanaResolvedFace"),
+            "the family that shapes is the one resolved first: {faces:?}"
+        );
+        assert_eq!(faces[0].index(), 0);
+        assert_eq!(faces[0].bytes(), crate::UI_FONT_REGULAR);
+        let again = resolve_font_faces("NanaResolvedFace", 400, "H");
+        assert!(
+            std::ptr::eq(faces[0].bytes().as_ptr(), again[0].bytes().as_ptr()),
+            "asking twice hands out the font set's bytes, not two copies"
+        );
+        drop(scope);
+        assert!(
+            resolve_font_faces("NanaResolvedFace", 400, "H")
+                .iter()
+                .all(|face| face.family() != "NanaResolvedFace"),
+            "a withdrawn face is no longer resolved"
         );
     }
 

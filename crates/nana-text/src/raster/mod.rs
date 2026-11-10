@@ -16,7 +16,7 @@
 mod outline;
 mod paragraph;
 
-pub use outline::OutlineRasterizer;
+pub use outline::{OutlineRasterizer, PathPaint, PathStep, path_coverage};
 pub use paragraph::{RasterizedGlyph, rasterize_layout};
 
 /// How a stroked glyph's outline turns its corners.

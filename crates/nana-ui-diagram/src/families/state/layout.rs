@@ -3,6 +3,7 @@
 //! states as groups with dashed lines between concurrent regions, notes.
 
 use nana_ui_core::RadiusTier;
+use nana_ui_core::sort::CompactSort as _;
 
 use super::{Kind, Model, Scope, State};
 use crate::families::LayoutCx;
@@ -384,13 +385,13 @@ fn region_lines(out: &mut SceneBuilder, rects: &[Rect], outer: Rect) {
         .map(|r| r.bottom())
         .fold(f32::NEG_INFINITY, f32::max);
     if side_by_side {
-        sorted.sort_by(|a, b| a.x.total_cmp(&b.x));
+        sorted.compact_sort_by(|a, b| a.x.total_cmp(&b.x));
         for w in sorted.windows(2) {
             let x = (w[0].right() + w[1].x) / 2.0;
             graphkit::line(out, [x, top], [x, bottom], stroke);
         }
     } else {
-        sorted.sort_by(|a, b| a.y.total_cmp(&b.y));
+        sorted.compact_sort_by(|a, b| a.y.total_cmp(&b.y));
         for w in sorted.windows(2) {
             let y = (w[0].bottom() + w[1].y) / 2.0;
             graphkit::line(out, [outer.x, y], [outer.right(), y], stroke);

@@ -1,6 +1,7 @@
 //! Selection and IME composition: editor state that is not text.
 
 use crate::edit::Affinity;
+use nana_ui_core::sort::CompactSort as _;
 use std::borrow::Cow;
 use std::ops::Range;
 
@@ -86,7 +87,7 @@ pub fn normalize_selections(
     if flagged.len() == 1 {
         return (primary, Vec::new());
     }
-    flagged.sort_by_key(|(selection, _)| {
+    flagged.compact_sort_by_key(|(selection, _)| {
         let range = selection.range();
         (range.start, range.end)
     });

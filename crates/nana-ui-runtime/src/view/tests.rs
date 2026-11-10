@@ -1299,6 +1299,41 @@ fn translate_y_at(cx: &AppContext, id: StableNodeId, now: std::time::Duration) -
 }
 
 #[test]
+fn a_leaving_branch_never_reads_its_own_signals_again() {
+    // The change that takes the branch away also changes what its nodes
+    // read: their patches are queued in the same round as the branch, run
+    // first, and dispose the scope that owns the signals they read, while
+    // the nodes stay to play their leave.
+    use std::time::Duration;
+    let (mut cx, _document, parent) = setup();
+    cx.advance_animations(Duration::from_secs(10));
+    let shared = signal(0);
+    let flag = std::cell::Cell::new(None);
+    let view = cx
+        .mount_view(parent, || {
+            let open = signal(true);
+            flag.set(Some(open));
+            when(open, move || {
+                let own = signal(1);
+                text(move || format!("{}", own.get() + shared.get()))
+            })
+            .transition(Transition::fade(Duration::from_millis(200)))
+        })
+        .unwrap();
+    let container = view.roots()[0];
+    let label = children(&cx, container)[0];
+
+    flag.get().unwrap().set(false);
+    shared.set(5);
+    cx.flush_reactive().unwrap();
+    assert!(cx.world().contains(label), "it stays while it leaves");
+    shared.set(6);
+    cx.flush_reactive().unwrap();
+    cx.advance_animations(Duration::from_secs(11));
+    assert!(!cx.world().contains(label), "despawned once the leave ends");
+}
+
+#[test]
 fn a_transitioned_branch_leaves_before_it_is_despawned_and_the_next_one_enters() {
     use std::time::Duration;
     let (mut cx, document, parent) = setup();
@@ -1860,8 +1895,13 @@ fn a_store_with_history_undoes_one_handler_at_a_time() {
     assert!(!board.can_redo());
 }
 
-static CARD: StylePatch = StylePatch::new(r#"{"opacity":0.8,"padding":{"Px":12.0}}"#);
-static DIM: StylePatch = StylePatch::new(r#"{"opacity":0.4}"#);
+static CARD: StylePatch = StylePatch::new(|layout| {
+    layout.opacity = crate::view::__style_value(r#"0.8"#);
+    layout.padding = crate::view::__style_value(r#"{"Px":12.0}"#);
+});
+static DIM: StylePatch = StylePatch::new(|layout| {
+    layout.opacity = crate::view::__style_value(r#"0.4"#);
+});
 static CARD_SHEET: Sheet = Sheet::new(
     &[
         SheetRule {
@@ -1921,9 +1961,15 @@ fn compiled_styles_compose_once_per_class_set_and_follow_conditional_classes() {
     assert_eq!(dimmed.padding, Some(LengthSpec::Px(12.0)));
 }
 
-static QUERY_ROW: StylePatch = StylePatch::new(r#"{"height":{"Px":20.0}}"#);
-static QUERY_NARROW: StylePatch = StylePatch::new(r#"{"height":{"Px":40.0}}"#);
-static QUERY_DIM: StylePatch = StylePatch::new(r#"{"opacity":0.5}"#);
+static QUERY_ROW: StylePatch = StylePatch::new(|layout| {
+    layout.height = crate::view::__style_value(r#"{"Px":20.0}"#);
+});
+static QUERY_NARROW: StylePatch = StylePatch::new(|layout| {
+    layout.height = crate::view::__style_value(r#"{"Px":40.0}"#);
+});
+static QUERY_DIM: StylePatch = StylePatch::new(|layout| {
+    layout.opacity = crate::view::__style_value(r#"0.5"#);
+});
 /// `@container card (width < 300px)`.
 static NARROW_CARD: SheetQuery = SheetQuery::new(
     Some("card"),

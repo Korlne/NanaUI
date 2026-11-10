@@ -468,7 +468,7 @@ impl AppContext {
         let Some(mut entry) = self.reactive.structural.remove(&node) else {
             return Ok(());
         };
-        if entry.effect != effect || !self.world.contains(node) {
+        if entry.effect != effect || !self.world.contains(node) || !rx::effect_alive(effect) {
             self.keep_structural(node, entry);
             return Ok(());
         }
@@ -517,6 +517,11 @@ impl AppContext {
                 if self.world.contains(node) {
                     self.reactive.nodes.insert(node, entry);
                 }
+                continue;
+            }
+            // Disposed earlier in this round: its scope is gone (a removed
+            // branch playing its leave), and so are the signals it reads.
+            if !rx::effect_alive(effect) {
                 continue;
             }
             let result = rx::run_tracked(effect, || entry.patch.stage(self, node, &mut mutations));

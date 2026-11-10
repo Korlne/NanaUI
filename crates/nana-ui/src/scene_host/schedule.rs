@@ -517,6 +517,11 @@ impl<Program: RuntimeProgram> WindowManager<Program> {
         update
     }
     pub(super) fn wake(&mut self, event_loop: &dyn ActiveEventLoop, now: Instant) {
+        // The program may start a reveal or a motion from a message or its
+        // own wake, between frames; that is stamped with the clock too.
+        for id in self.known_window_ids() {
+            self.sync_compositor_clock(id);
+        }
         let mut update = self.drain_all_program_messages();
         update = update.merge(self.program.wake(now, &self.context()));
         for id in self.known_window_ids() {
@@ -574,12 +579,17 @@ impl<Program: RuntimeProgram> WindowManager<Program> {
         )
     }
 
+    /// Bring the document's clock to this frame before it is flushed. A
+    /// reveal or motion the flush starts is stamped with that clock, so it
+    /// must be this frame's even when nothing was live: stamped with the
+    /// instant the compositor last ran, the next frame's clock would be an
+    /// idle period ahead of it and the motion would skip that much.
+    /// Setting the clock marks nothing dirty; a resting scene keeps the time
+    /// it was last presented at.
     pub(super) fn sync_compositor_clock(&mut self, id: WindowId) {
         let now = self.animation_clock.runtime_time(Instant::now());
         let _ = self.program.write_document(id, |document| {
-            if document.compositor_needs_tick() {
-                document.sync_presentation_clock(now);
-            }
+            document.sync_presentation_clock(now);
         });
     }
 

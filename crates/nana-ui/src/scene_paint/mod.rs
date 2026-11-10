@@ -13,6 +13,7 @@ mod color;
 mod dest;
 mod host_texture;
 mod icon;
+mod icon_raster;
 mod image_resample;
 pub(crate) mod image_url;
 mod material;
@@ -1783,6 +1784,7 @@ impl SceneWgpuPainter {
                     batching.close_all();
                 }
                 let command_start = commands.len();
+                let painted_start = batching.painted.len();
                 match &primitive.kind {
                     ScenePrimitiveKind::Quad {
                         background,
@@ -2461,6 +2463,12 @@ impl SceneWgpuPainter {
                         }
                     }
                 }
+                let clip_dests = clip_dests_cutting(
+                    clip_dests,
+                    &commands[command_start..],
+                    &batching.painted[painted_start..],
+                    scale,
+                );
                 if !clip_dests.is_empty()
                     && wrap_drawn_with_clip_dests(
                         &mut commands,
@@ -2901,6 +2909,42 @@ fn clip_dests_for(
     } else {
         extra_fragment_clips(clips, origin)
     }
+}
+
+/// The clip dests that still cut into what a primitive drew. `drawn` are the
+/// commands it emitted and `painted` their dest-pixel bounds: every batched
+/// command records one, and those bounds never under-cover what the GPU
+/// paints. A rounded clip the drawing stays clear of the corners of keeps all
+/// of it, so it needs no group; a nested rounded clip around content well
+/// inside it (an input's text inside a rounded card) is the common case.
+/// Anything else drawn — GPU nodes, masks, groups — keeps every clip.
+fn clip_dests_cutting(
+    mut clip_dests: Vec<FragmentClip>,
+    drawn: &[DrawCommand],
+    painted: &[PhysicalRect],
+    scale: f32,
+) -> Vec<FragmentClip> {
+    if clip_dests.is_empty() || drawn.len() != painted.len() {
+        return clip_dests;
+    }
+    let all_batched = drawn.iter().all(|command| {
+        matches!(
+            command,
+            DrawCommand::Quads { .. }
+                | DrawCommand::Mesh { .. }
+                | DrawCommand::Path { .. }
+                | DrawCommand::Chart { .. }
+                | DrawCommand::Text { .. }
+                | DrawCommand::Icon { .. }
+        )
+    });
+    let Some(area) = painted.iter().copied().reduce(union_physical) else {
+        return clip_dests;
+    };
+    if all_batched {
+        clip_dests.retain(|clip| !clip::keeps_all_of(clip.for_physical_pixels(scale), area));
+    }
+    clip_dests
 }
 
 #[allow(clippy::too_many_arguments)]

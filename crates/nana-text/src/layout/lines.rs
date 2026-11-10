@@ -12,6 +12,7 @@ use crate::metrics::{LineMetrics, RunMetrics};
 use crate::shape::GlyphFlags;
 use crate::shape::{RunDirection, ShapedRun};
 use crate::shaping::{PARAGRAPH_SEPARATORS, ShapedParagraph, ShapedText, bidi_visual_order};
+use nana_ui_core::sort::CompactSort as _;
 use nana_ui_core::{
     DirSpec, LineBreakSpec, TextAlignSpec, TextAutospaceSpec, TextJustifySpec, TextSpacingTrimSpec,
     TextWrapBreak, TextWrapStyleSpec, WordBreakSpec,
@@ -862,9 +863,9 @@ impl<'a> Builder<'a> {
                 }
             }
             // Dedupe by end, keep the K cheapest; ties keep the later end.
-            next.sort_by_key(|(cost, node)| (arena[*node].0, *cost));
+            next.compact_sort_by_key(|(cost, node)| (arena[*node].0, *cost));
             next.dedup_by_key(|(_, node)| arena[*node].0);
-            next.sort_by_key(|(cost, node)| (*cost, std::cmp::Reverse(arena[*node].0)));
+            next.compact_sort_by_key(|(cost, node)| (*cost, std::cmp::Reverse(arena[*node].0)));
             next.truncate(K);
             if let Some((held, _)) = done {
                 next.retain(|(cost, _)| *cost < held);

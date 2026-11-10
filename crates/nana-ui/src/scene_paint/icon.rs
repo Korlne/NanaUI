@@ -1,3 +1,4 @@
+use nana_ui_core::sort::CompactSort as _;
 use std::collections::{HashMap, HashSet};
 
 use bytemuck::{Pod, Zeroable};
@@ -214,7 +215,7 @@ struct AtlasEntry {
     px: u32,
     /// Kept so a repack can re-rasterize without the caller handing the icon
     /// back. `Icon` geometry is `'static`, so this borrows nothing per frame.
-    svg: &'static str,
+    icon: Icon,
 }
 
 /// A row of equal-sized cells. Glyphs are square, so a shelf that only takes
@@ -578,8 +579,8 @@ impl IconPipeline {
             px,
         };
         if !self.entries.contains_key(&key) {
-            let rgba = rasterize_icon(icon.svg(), px)?;
-            if !self.insert_with_work(device, queue, key, px, icon.svg(), &rgba, work) {
+            let rgba = rasterize_icon(icon, px)?;
+            if !self.insert_with_work(device, queue, key, px, icon, &rgba, work) {
                 return None;
             }
         }
@@ -729,10 +730,10 @@ impl IconPipeline {
         queue: &wgpu::Queue,
         key: AtlasKey,
         px: u32,
-        svg: &'static str,
+        icon: Icon,
         rgba: &[u8],
     ) -> bool {
-        self.insert_with_work(device, queue, key, px, svg, rgba, None)
+        self.insert_with_work(device, queue, key, px, icon, rgba, None)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -742,7 +743,7 @@ impl IconPipeline {
         queue: &wgpu::Queue,
         key: AtlasKey,
         px: u32,
-        svg: &'static str,
+        icon: Icon,
         rgba: &[u8],
         work: Option<&crate::gpu_work::GpuWorkSink>,
     ) -> bool {
@@ -764,7 +765,7 @@ impl IconPipeline {
                 AtlasEntry {
                     origin: [cell[0] + CELL_GUTTER, cell[1] + CELL_GUTTER],
                     px,
-                    svg,
+                    icon,
                 },
             );
             return true;
@@ -772,7 +773,7 @@ impl IconPipeline {
         // Full for this cell size. Rebuilding the atlas around exactly this
         // frame's glyphs both reclaims every idle entry and compacts the
         // shelves, so it is the eviction policy as well as the growth path.
-        self.repack(device, queue, (key, svg, rgba), work)
+        self.repack(device, queue, (key, icon, rgba), work)
     }
 
     /// Reserve a `cell`-sized square. Shelves are homogeneous, so a glyph
@@ -809,30 +810,30 @@ impl IconPipeline {
     ///
     /// The new texture is sized to leave room for another working set's worth
     /// of glyphs, so a frame that alternates icon sets does not repack every
-    /// frame. Every kept glyph is re-rasterized from its own SVG — the atlas
+    /// frame. Every kept glyph is re-rasterized from its own geometry — the atlas
     /// is the only copy of the pixels, and re-rasterizing is bounded by the
     /// frame's glyph count.
     fn repack(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        extra: (AtlasKey, &'static str, &[u8]),
+        extra: (AtlasKey, Icon, &[u8]),
         work: Option<&crate::gpu_work::GpuWorkSink>,
     ) -> bool {
-        let (extra_key, extra_svg, extra_rgba) = extra;
+        let (extra_key, extra_icon, extra_rgba) = extra;
         // `frame_keys` gains the caller's key only after `prepare` has placed
         // it, so the glyph that triggered this repack arrives as `extra`.
-        let mut keep: Vec<(AtlasKey, &'static str)> = self
+        let mut keep: Vec<(AtlasKey, Icon)> = self
             .frame_keys
             .iter()
-            .filter_map(|key| Some((*key, self.entries.get(key)?.svg)))
+            .filter_map(|key| Some((*key, self.entries.get(key)?.icon)))
             .collect();
-        keep.push((extra_key, extra_svg));
+        keep.push((extra_key, extra_icon));
         // Biggest cells first: a shelf is only reused by its own size, so
         // placing large cells while the sheet is empty avoids stranding them.
         // The glyph order behind that is `frame_keys` iteration order, which
         // is a hash set's — pin it so one frame packs the same way twice.
-        keep.sort_unstable_by(|left, right| {
+        keep.compact_sort_by(|left, right| {
             right
                 .0
                 .px
@@ -858,7 +859,7 @@ impl IconPipeline {
         loop {
             self.atlas = Some(new_atlas(device, &self.atlas_layout, &self.sampler, edge));
             self.entries.clear();
-            let placed = keep.iter().all(|(key, svg)| {
+            let placed = keep.iter().all(|(key, icon)| {
                 let Some(cell) = self.allocate(key.px + CELL_GUTTER * 2) else {
                     return false;
                 };
@@ -867,7 +868,7 @@ impl IconPipeline {
                     AtlasEntry {
                         origin: [cell[0] + CELL_GUTTER, cell[1] + CELL_GUTTER],
                         px: key.px,
-                        svg,
+                        icon: *icon,
                     },
                 );
                 true
@@ -882,7 +883,7 @@ impl IconPipeline {
             }
             edge = (edge * 2).min(max_edge);
         }
-        for (key, svg) in &keep {
+        for (key, icon) in &keep {
             let Some(entry) = self.entries.get(key) else {
                 continue;
             };
@@ -891,7 +892,7 @@ impl IconPipeline {
                 self.write_cell(queue, cell, key.px, extra_rgba, work);
                 continue;
             }
-            let Some(rgba) = rasterize_icon(svg, key.px) else {
+            let Some(rgba) = rasterize_icon(*icon, key.px) else {
                 continue;
             };
             self.write_cell(queue, cell, key.px, &rgba, work);
@@ -1090,8 +1091,8 @@ fn raster_factor(affine: [f32; 6]) -> f32 {
     2f32.powf((2.0 * scale.log2()).round().clamp(-4.0, 4.0) * 0.5)
 }
 
-fn rasterize_icon(svg: &str, pixel_size: u32) -> Option<Vec<u8>> {
-    nana_svg_raster::rasterize_white_mask(svg, pixel_size, MAX_ATLAS_PX)
+fn rasterize_icon(icon: Icon, pixel_size: u32) -> Option<Vec<u8>> {
+    super::icon_raster::white_mask(icon, pixel_size.min(MAX_ATLAS_PX))
 }
 
 #[cfg(test)]
@@ -1125,8 +1126,8 @@ mod tests {
     }
 
     #[test]
-    fn icon_svg_rasterizes_coverage() {
-        let rgba = rasterize_icon(Icon::Search.svg(), 28).expect("search svg");
+    fn icon_geometry_rasterizes_coverage() {
+        let rgba = rasterize_icon(Icon::Search, 28).expect("search icon");
         assert_eq!(rgba.len(), 28 * 28 * 4);
         let coverage = rgba.chunks(4).filter(|pixel| pixel[3] > 16).count();
         assert!(
@@ -1196,19 +1197,19 @@ mod tests {
         let mut pipeline = IconPipeline::new(&device, wgpu::TextureFormat::Rgba8Unorm);
         const PX: u32 = 64;
         let rgba = vec![255u8; (PX * PX * 4) as usize];
-        let svg = Icon::Close.svg();
+        let glyph = Icon::Close;
         let key = |icon: usize| AtlasKey { icon, px: PX };
 
         pipeline.begin_frame([64; 2]);
         for icon in 0..3 {
-            assert!(pipeline.insert(&device, &queue, key(icon), PX, svg, &rgba));
+            assert!(pipeline.insert(&device, &queue, key(icon), PX, glyph, &rgba));
             pipeline.frame_keys.insert(key(icon));
         }
         // Then fill the sheet with glyphs nothing is using this frame.
         let mut idle = 100usize;
         let mut before = pipeline.entries.len();
         loop {
-            assert!(pipeline.insert(&device, &queue, key(idle), PX, svg, &rgba));
+            assert!(pipeline.insert(&device, &queue, key(idle), PX, glyph, &rgba));
             idle += 1;
             if pipeline.entries.len() < before {
                 break;
@@ -1245,13 +1246,13 @@ mod tests {
         let mut pipeline = IconPipeline::new(&device, wgpu::TextureFormat::Rgba8Unorm);
         const PX: u32 = 128;
         let rgba = vec![255u8; (PX * PX * 4) as usize];
-        let svg = Icon::Close.svg();
+        let glyph = Icon::Close;
         let key = |icon: usize| AtlasKey { icon, px: PX };
 
         pipeline.begin_frame([64; 2]);
         for icon in 0..16 {
             assert!(
-                pipeline.insert(&device, &queue, key(icon), PX, svg, &rgba),
+                pipeline.insert(&device, &queue, key(icon), PX, glyph, &rgba),
                 "glyph {icon} must find room"
             );
             pipeline.frame_keys.insert(key(icon));
@@ -1272,7 +1273,7 @@ mod tests {
     fn symmetric_icons_are_centered_in_the_atlas() {
         let px = 48;
         for icon in [Icon::Add, Icon::Settings, Icon::Close] {
-            let rgba = rasterize_icon(icon.svg(), px).expect("svg");
+            let rgba = rasterize_icon(icon, px).expect("icon");
             let (min_x, min_y, max_x, max_y) = ink_bbox(&rgba, px);
             let cx = (min_x + max_x) as f32 / 2.0;
             let cy = (min_y + max_y) as f32 / 2.0;

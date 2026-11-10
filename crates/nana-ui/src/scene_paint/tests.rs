@@ -8788,6 +8788,7 @@ fn img_src_content_image_paints_fixture_png() {
     );
 }
 
+#[cfg(feature = "svg")]
 #[test]
 fn inline_svg_data_url_paints_through_content_image() {
     let svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"8\" height=\"8\"><path d=\"M0 0 H8 V8 H0 Z\" fill=\"#00ff00\"/></svg>";
@@ -9236,6 +9237,108 @@ fn border_image_url_nine_slice_paints_corners_and_fill() {
     assert!(
         br[0] > 80 && br[0] < 180 && br[1] > 80 && br[1] < 180,
         "br slice must be gray, got {br:?}"
+    );
+}
+
+/// An opaque white nine-slice under `transform`, painted on black: the
+/// pixels of an 80x60 target.
+fn paint_white_nine_slice(transform: nana_ui_core::PaintTransform) -> Vec<u8> {
+    let fixture_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    std::fs::create_dir_all(&fixture_dir).expect("fixture dir");
+    let png_path = fixture_dir.join("nine-slice-white.png");
+    if !png_path.exists() {
+        image::RgbaImage::from_pixel(40, 40, image::Rgba([255; 4]))
+            .save(&png_path)
+            .expect("write white nine-slice png");
+    }
+    super::set_background_image_url_base(fixture_dir);
+    let surface = nana_ui_scene::QuadSurfacePaint {
+        border_image: Some(nana_ui_core::BorderImageSpec {
+            source: nana_ui_core::BackgroundImage::url("nine-slice-white.png".to_string()),
+            slice: [nana_ui_core::BorderImageSlice::Number(14.0); 4],
+            fill: true,
+        }),
+        ..Default::default()
+    };
+    let (device, queue) = test_device();
+    let format = wgpu::TextureFormat::Rgba8Unorm;
+    let mut painter = SceneWgpuPainter::for_test(format);
+    let mut scene = UiScene::new();
+    let mut node = paint_surface_quad_node(1, 10.3, 10.3, 60.0, 40.0, [0.0; 4], surface);
+    Arc::make_mut(&mut node.source_style.layout).transform = Some(transform);
+    scene.apply_delta([node], []);
+    let viewport = ScenePaintViewport {
+        logical_size: [80.0, 60.0],
+        physical_size: [80, 60],
+        scale_factor: 1.0,
+        scene_origin: [0.0, 0.0],
+        target_origin: [0.0, 0.0],
+        clear_color: [0.0, 0.0, 0.0, 1.0],
+        clear: true,
+    };
+    let (texture, view) = test_copy_target(&device, format, 80, 60);
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("nana-ui nine-slice seams"),
+    });
+    painter
+        .paint_encoder(&scene, &mut encoder, &view, viewport, None, None)
+        .unwrap();
+    let pixels = readback_rgba(&device, &queue, encoder, &texture, 80, 60);
+    super::image_url::reset_test_url_base();
+    pixels
+}
+
+/// The darkest pixel `inset` px inside the bounds of what `pixels` painted.
+fn darkest_inside(pixels: &[u8], inset: u32) -> (u8, [u32; 4]) {
+    let lit = |x: u32, y: u32| pixel(pixels, 80, x, y)[0] > 128;
+    let xs = (0..80).filter(|x| (0..60).any(|y| lit(*x, y)));
+    let ys = (0..60).filter(|y| (0..80).any(|x| lit(x, *y)));
+    let (x0, x1) = (xs.clone().min().unwrap(), xs.max().unwrap());
+    let (y0, y1) = (ys.clone().min().unwrap(), ys.max().unwrap());
+    let darkest = (y0 + inset..=y1 - inset)
+        .flat_map(|y| (x0 + inset..=x1 - inset).map(move |x| (x, y)))
+        .map(|(x, y)| pixel(pixels, 80, x, y)[0])
+        .min()
+        .unwrap();
+    (darkest, [x0, y0, x1, y1])
+}
+
+/// A scaled box is not snapped to the pixel grid, and its slice lines fall
+/// inside pixels: the tiles on either side must still cover them whole.
+#[test]
+fn border_image_nine_slice_has_no_seams_when_scaled() {
+    for scale in [0.37, 0.61, 0.83, 1.3] {
+        let pixels = paint_white_nine_slice(nana_ui_core::PaintTransform {
+            a: scale,
+            b: 0.0,
+            c: 0.0,
+            d: scale,
+            e: 0.4,
+            f: 0.7,
+        });
+        let (darkest, bounds) = darkest_inside(&pixels, 2);
+        assert!(
+            darkest >= 250,
+            "scale {scale}: a slice line shows the backdrop ({darkest}) inside {bounds:?}"
+        );
+    }
+}
+
+#[test]
+fn border_image_nine_slice_has_no_seams_when_rotated() {
+    let (sin, cos) = 5.0_f32.to_radians().sin_cos();
+    let pixels = paint_white_nine_slice(nana_ui_core::PaintTransform {
+        a: cos,
+        b: sin,
+        c: -sin,
+        d: cos,
+        e: 0.0,
+        f: 0.0,
+    });
+    let (darkest, bounds) = darkest_inside(&pixels, 9);
+    assert!(
+        darkest >= 250,
+        "a slice line shows the backdrop ({darkest}) inside {bounds:?}"
     );
 }
 
@@ -11719,12 +11822,7 @@ fn a_dashed_stroke_paints_its_dashes_and_skips_its_gaps() {
 
 #[test]
 fn a_rotated_path_and_an_image_land_where_the_local_transform_puts_them() {
-    use base64::Engine as _;
-    let svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"8\" height=\"8\"><path d=\"M0 0 H8 V8 H0 Z\" fill=\"#00ff00\"/></svg>";
-    let url = format!(
-        "data:image/svg+xml;base64,{}",
-        base64::engine::general_purpose::STANDARD.encode(svg.as_bytes())
-    );
+    let url = green_image_url();
     let pixels = paint_one_painter(
         PaintFn(move |cx: &mut nana_ui_runtime::PaintContext<'_>| {
             cx.save();
@@ -11790,12 +11888,20 @@ fn a_conic_gradient_sweeps_clockwise_from_its_start_angle() {
     assert!(is_blue_slot(at(55, 27)), "{:?}", at(55, 27));
 }
 
-fn green_svg_url() -> String {
+/// An 8 by 8 opaque green image, as a format every build decodes.
+fn green_image_url() -> String {
+    let image = image::RgbaImage::from_pixel(8, 8, image::Rgba([0, 255, 0, 255]));
+    let mut bytes = Vec::new();
+    image
+        .write_to(
+            &mut std::io::Cursor::new(&mut bytes),
+            image::ImageFormat::Png,
+        )
+        .expect("encode green png");
     use base64::Engine as _;
-    let svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"8\" height=\"8\"><path d=\"M0 0 H8 V8 H0 Z\" fill=\"#00ff00\"/></svg>";
     format!(
-        "data:image/svg+xml;base64,{}",
-        base64::engine::general_purpose::STANDARD.encode(svg.as_bytes())
+        "data:image/png;base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(bytes)
     )
 }
 
@@ -12071,7 +12177,7 @@ fn a_gradient_colours_text_across_its_glyphs() {
 
 #[test]
 fn a_curved_clip_cuts_an_image_along_its_curve_and_an_image_can_fill_a_path() {
-    let url = green_svg_url();
+    let url = green_image_url();
     let pixels = paint_one_painter(
         PaintFn(move |cx: &mut nana_ui_runtime::PaintContext<'_>| {
             let mut disc = nana_ui_runtime::PaintPath::new();
@@ -12127,7 +12233,7 @@ fn a_curved_clip_cuts_an_image_along_its_curve_and_an_image_can_fill_a_path() {
 
 #[test]
 fn a_clipped_layer_off_the_target_is_skipped_whole_and_one_half_on_is_not() {
-    let url = green_svg_url();
+    let url = green_image_url();
     let pixels = paint_one_painter(
         PaintFn(move |cx: &mut nana_ui_runtime::PaintContext<'_>| {
             let disc = |x: f32| {
@@ -13506,12 +13612,7 @@ fn a_painted_shadow_takes_its_nodes_mask_and_keeps_the_end_value_past_the_box() 
 
 #[test]
 fn a_painted_image_on_a_masked_node_fades_as_a_painted_fill_does() {
-    use base64::Engine as _;
-    let svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"8\" height=\"8\"><path d=\"M0 0 H8 V8 H0 Z\" fill=\"#00ff00\"/></svg>";
-    let url = format!(
-        "data:image/svg+xml;base64,{}",
-        base64::engine::general_purpose::STANDARD.encode(svg.as_bytes())
-    );
+    let url = green_image_url();
     let mask = left_to_right_mask(&[(0.0, 0.0), (1.0, 1.0)]);
     let image = paint_styled_painter(
         PaintFn(move |cx: &mut nana_ui_runtime::PaintContext<'_>| {

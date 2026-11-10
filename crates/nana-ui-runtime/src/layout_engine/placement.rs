@@ -154,7 +154,7 @@ fn check_plan_children(
                 && ((!plan.main_dependent && reads_main_extent(&current, plan.main_direction))
                     || (plan.cross_independent
                         && (!matches!(
-                            current.resolved_align_self(plan.style.align_items),
+                            current.resolved_align_self(plan.style.child_align_items()),
                             AlignSpec::Start | AlignSpec::Stretch
                         ) || reads_container_size(&current, plan.main_direction))))
         {
@@ -342,7 +342,7 @@ fn replay_sequential_run(
 ) -> Result<Option<Vec<PlannedChild>>, UiWorldError> {
     let direction = plan.main_direction;
     let writing = plan.writing;
-    let container_align = plan.style.align_items;
+    let container_align = plan.style.child_align_items();
     let container_cross = cross_extent(plan.content, direction);
     // The replay places against this pass's main extent: on a reversed main
     // axis that is where the far edge, and every origin, is measured from.
@@ -418,13 +418,11 @@ fn replay_sequential_run(
             child_fonts,
         );
         let mut child_size = child_intrinsic;
-        if align == AlignSpec::Stretch
-            && !cross_axis_is_definite(
-                child_style,
-                direction,
-                has_natural_ratio(nodes.world, child),
-            )
-        {
+        if align == AlignSpec::Stretch && {
+            let natural_ratio = has_natural_ratio(nodes.world, child);
+            !cross_axis_is_definite(child_style, direction, natural_ratio)
+                && !block_keeps_content_size(&plan.style, writing, child_style, natural_ratio)
+        } {
             let cross_available = container_cross - cross_margin(margin, direction);
             set_cross_extent(&mut child_size, direction, cross_available.max(0.0));
         }
@@ -1295,6 +1293,21 @@ fn place_level(
             else {
                 return Ok(());
             };
+            if keeps_moved_subtree(
+                id,
+                &head.facts,
+                size,
+                containing,
+                parent_font_px,
+                nodes,
+                scope,
+                inherited_grid,
+            ) {
+                intrinsic.note_moved_subtree_kept();
+                #[cfg(any(test, feature = "layout-verify"))]
+                super::verify::note_kept_subtree(id);
+                return Ok(());
+            }
             // A leaf has no subtree to wait: placing it here descends no
             // further.
             let leaf = head.facts.children.is_empty() && head.facts.modal.is_none();
@@ -1326,6 +1339,99 @@ fn place_level(
             )
         },
     )
+}
+
+/// Whether `id`, whose own box the head just wrote, keeps everything under
+/// it: a box that only moved.
+///
+/// Its children are measured from its own origin (see `crate::LayoutFrame`),
+/// so its body lays them out exactly as last pass whenever what the body
+/// reads is unchanged: its border box's size and used padding, its style and
+/// child list (it is no seed and is not measured again, and nothing under it
+/// is affected), no line its parent solves for it (Dynamic Layout), no grid
+/// tracks it inherits. Then every table the body would write (boxes, padding,
+/// contexts, plans) already holds that answer, and the retained cache keeps
+/// what a pass does not write. Without this a moved container walks its
+/// children again: an inline formatting context packs its line boxes again,
+/// a few microseconds a paragraph, for every paragraph below an edit.
+///
+/// The body also places what hangs from a frame other than this box's: an
+/// out-of-flow child whose static position reads where this box stands on
+/// the page or in an ancestor, the items of a triggered menu, a modal's
+/// slots and the absolute children the remote-overlay sweep reaches. Any of
+/// those keeps the body.
+#[allow(clippy::too_many_arguments)]
+#[inline(never)]
+fn keeps_moved_subtree(
+    id: StableNodeId,
+    facts: &NodeFacts<'_>,
+    size: Size,
+    containing: Size,
+    parent_font_px: f32,
+    nodes: &LayoutInputMap<'_>,
+    scope: Option<&ScopeContext<'_>>,
+    inherited_grid: Option<&InheritedGridTracks>,
+) -> bool {
+    let Some(scope) = scope else {
+        return false;
+    };
+    if facts.children.is_empty() || facts.modal.is_some() || inherited_grid.is_some() {
+        return false;
+    }
+    // Affected only to be placed again: reached by an edge from its parent
+    // or from a sibling in the parent's formatting context, which moves it
+    // or resizes it (checked below) but changes nothing it establishes. Not
+    // a seed of its own, nor measured, nor in a writing mode or scroll that
+    // changed; nothing under it is affected.
+    let frontier = scope.frontier;
+    if scope.affected.contains(&id)
+        && (frontier.is_seed(id)
+            || frontier.writing_nodes().contains(&id)
+            || frontier.scroll_nodes().contains(&id))
+    {
+        return false;
+    }
+    if scope.measure.contains(&id)
+        || !scope.reach.children(id).is_empty()
+        || !scope.affected_children(id).is_empty()
+    {
+        return false;
+    }
+    let Some(previous) = scope.retained.boxes.get(&id) else {
+        return false;
+    };
+    if previous.width.to_bits() != size.width.to_bits()
+        || previous.height.to_bits() != size.height.to_bits()
+    {
+        return false;
+    }
+    let style = facts.style.as_ref();
+    if style.adaptation.is_some() {
+        return false;
+    }
+    let fonts = fonts_of(style, parent_font_px);
+    let padding = style.resolved_padding_against_fonts(
+        Some(
+            facts
+                .containing_writing
+                .inline_size(containing.width, containing.height),
+        ),
+        fonts,
+    );
+    if scope.retained.used_padding.get(&id).copied() != Some(padding) {
+        return false;
+    }
+    if scope.retained.remote_overlays.contains(&id)
+        || triggered_menu_overlay(nodes.world, id).is_some()
+    {
+        return false;
+    }
+    // A child placed in another frame than this box's (an absolute box hung
+    // from an ancestor or the page, a fixed one) is placed by this body.
+    !facts
+        .children
+        .iter()
+        .any(|child| scope.retained.frames.contains_key(child))
 }
 
 /// Queues a subtree for the outermost call: taken once per span, so out of
@@ -2269,7 +2375,7 @@ fn lay_out_children(
                 && cross_extent(plan.child_available, direction) == cross_extent(content, direction)
                 && !flow.iter().any(|child| {
                     nodes.style_ref(*child).is_some_and(|child| {
-                        child.resolved_align_self(style.align_items) == AlignSpec::Baseline
+                        child.resolved_align_self(style.child_align_items()) == AlignSpec::Baseline
                     })
                 })
         });
@@ -2452,7 +2558,7 @@ fn lay_out_children(
                 // data rather than from the style: if the used main size
                 // still equals the intrinsic, no free space was
                 // redistributed.
-                let align = child_style.resolved_align_self(style.align_items);
+                let align = child_style.resolved_align_self(style.child_align_items());
                 plan_sequential &= line_count == 1
                     && lines[item.line].auto_main == 0
                     && main_extent(child_size, direction) == main_extent(child_intrinsic, direction)
@@ -2972,10 +3078,10 @@ pub(super) fn arrange_flow<'a>(
                 justify_offsets(justify, line_main_available, occupied, gap, line_flow.len());
             (start, extra_gap, 0.0)
         };
-        let needs_baseline = style.align_items == AlignSpec::Baseline
+        let needs_baseline = style.child_align_items() == AlignSpec::Baseline
             || line_flow.iter().any(|id| {
                 nodes.style_ref(*id).is_some_and(|child| {
-                    child.resolved_align_self(style.align_items) == AlignSpec::Baseline
+                    child.resolved_align_self(style.child_align_items()) == AlignSpec::Baseline
                 })
             });
         if needs_baseline {
@@ -3038,19 +3144,16 @@ pub(super) fn arrange_flow<'a>(
                 line_box_cross,
                 child_size,
             );
-            let align = child_style.resolved_align_self(style.align_items);
+            let align = child_style.resolved_align_self(style.child_align_items());
             let cross_available = line_box_cross - cross_margin(margin, direction);
             // An atom on a line of an ordinary block sits on the line's
             // baseline whatever `align-self` says, and is not stretched.
             let on_baseline_line = line_atom_baseline.is_some() && child_style.is_inline_level();
-            if align == AlignSpec::Stretch
-                && !on_baseline_line
-                && !cross_axis_is_definite(
-                    child_style,
-                    direction,
-                    has_natural_ratio(nodes.world, child),
-                )
-            {
+            if align == AlignSpec::Stretch && !on_baseline_line && {
+                let natural_ratio = has_natural_ratio(nodes.world, child);
+                !cross_axis_is_definite(child_style, direction, natural_ratio)
+                    && !block_keeps_content_size(style, writing, child_style, natural_ratio)
+            } {
                 set_cross_extent(&mut child_size, direction, cross_available.max(0.0));
             }
             fill_auto_height_from_aspect_ratio(

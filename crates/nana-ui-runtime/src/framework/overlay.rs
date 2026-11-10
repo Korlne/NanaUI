@@ -1,3 +1,4 @@
+use nana_ui_core::sort::CompactSort as _;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 
@@ -583,7 +584,7 @@ impl AppContext {
             .collect::<HashMap<_, _>>();
         // Document order, so the stable sort below breaks ties the way it did
         // when this iterated the document directly.
-        hosts.sort_by_key(|host| order_index.get(host).copied().unwrap_or(usize::MAX));
+        hosts.compact_sort_by_key(|host| order_index.get(host).copied().unwrap_or(usize::MAX));
         let mut overlays = hosts
             .iter()
             .filter_map(|host| {
@@ -620,7 +621,7 @@ impl AppContext {
                 ))
             })
             .collect::<Vec<_>>();
-        overlays.sort_by(|left, right| match right.0.cmp(&left.0) {
+        overlays.compact_sort_by(|left, right| match right.0.cmp(&left.0) {
             Ordering::Equal => right.1.cmp(&left.1),
             ordering => ordering,
         });

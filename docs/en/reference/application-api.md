@@ -117,15 +117,17 @@ There is exactly one `ActionDescriptor`. It is defined in Runtime (`nana_ui::run
 
 ## Cargo features
 
-`nana-ui` enables `wgpu-backends` by default (effective only when `gpu` is enabled). Applications that choose their own graphics backends use `default-features = false` and enable features by responsibility:
+`nana-ui` enables `wgpu-backends` (effective only when `gpu` is enabled), `icu`, `snippet-transforms` and `svg` by default. Applications that choose their own graphics backends use `default-features = false` and enable features by responsibility:
 
 | feature | Effect |
 | --- | --- |
 | `hosted` | `run_runtime`, winit 0.31-line (workspace git pin, not crates.io 0.31.0), AccessKit; implies `gpu` |
 | `gpu` | `SceneWgpuPainter`, `HostTexture`, `GpuTextureView`, `GpuView` |
-| `bundled-fonts` | Embeds the Noto Sans SC variable font (`wght` 400–700) and registers it as the UI font |
+| `bundled-fonts` | Embeds the Noto Sans SC variable font (`wght` 400–700, about 4.2 MiB) and registers it as the UI font. Without it interface text and SVG text use system fonts; see [Look](look.md#bundled-font-or-system-fonts) for what is traded |
 | `components` | Aggregate of the component families below |
-| `full` | fonts + components + hosted + syntax-highlighting |
+| `full` | fonts + components + hosted + syntax-highlighting + icu + snippet-transforms + svg |
+| `svg` | SVG images: SVG documents in `url()` textures and `Image`, and a host icon wrapped with an SVG and no shapes. Icons are drawn from their own geometry and do not need it. When disabled, an SVG image is handled like any unreadable file, and `usvg`, `resvg` and `tiny-skia` (about 0.8 MiB) are not linked. Effective only with `gpu` |
+| `snippet-transforms` | Regular-expression transforms in snippets (`${1/(.*)/${1:/upcase}/}`). When disabled, a snippet still parses, expands and links its placeholders, and a transform returns its value unchanged; the regular-expression engine (about 0.7 MiB) is not linked |
 | `calendar` / `charts` / `controls` / `graph-canvas` / `image-viewer` / `rich-text` | Enables the matching runtime/scene `cfg` and re-exports that family. When disabled, the family is not compiled. Historical no-op aliases (`overlays`, `selects`, `qr-code`, etc.) have been removed; use `components` / `full` |
 | `syntax-highlighting` | The `"highlight"` presenter for `TextArea` |
 | `no-default-app-icon` | The application always registers its own icon: the default icon marker is not linked, and windows without an icon keep the platform default. Enabled only by applications |

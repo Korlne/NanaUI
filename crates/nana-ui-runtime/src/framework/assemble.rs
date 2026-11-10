@@ -108,6 +108,14 @@ impl AppContext {
     }
 }
 
+/// What [`AssemblyScope::upsert`] found under its key.
+enum Claim {
+    /// The node the key named, of the same type.
+    Reuse(StableNodeId),
+    /// No such node: create one and record it under this key.
+    Create(String),
+}
+
 impl AssemblyScope<'_> {
     /// What the framework's own controls say, for a composite assembling
     /// one of them.
@@ -148,6 +156,29 @@ impl AssemblyScope<'_> {
         key: String,
         component: C,
     ) -> Result<Entity<C>, FrameworkError> {
+        let type_id = TypeId::of::<C>();
+        match self.claim(key, type_id)? {
+            Claim::Reuse(id) => {
+                let entity = Entity::from_stable_id(id);
+                self.context
+                    .update_component(entity, |view: &mut C, _| view.reconcile(component))?;
+                Ok(entity)
+            }
+            Claim::Create(key) => {
+                let entity = self
+                    .context
+                    .create_detached_component(self.document, component)?;
+                self.record(key, entity.id, type_id)?;
+                Ok(entity)
+            }
+        }
+    }
+
+    /// The keyed half of [`Self::upsert`] before the component is used: the
+    /// key is checked and marked seen, and the node it named is reused or
+    /// removed. Not generic, so it is compiled once.
+    #[inline(never)]
+    fn claim(&mut self, key: String, type_id: TypeId) -> Result<Claim, FrameworkError> {
         if !super::valid_assembly_key(&key) {
             return Err(FrameworkError::InvalidInput);
         }
@@ -158,7 +189,6 @@ impl AssemblyScope<'_> {
             });
         }
         self.seen.push(key.clone());
-        let type_id = TypeId::of::<C>();
         if let Some(existing) = self
             .context
             .assembled
@@ -167,32 +197,32 @@ impl AssemblyScope<'_> {
             .copied()
         {
             if existing.type_id == type_id {
-                let entity = Entity::from_stable_id(existing.id);
-                self.context
-                    .update_component(entity, |view: &mut C, _| view.reconcile(component))?;
-                return Ok(entity);
+                return Ok(Claim::Reuse(existing.id));
             }
             self.context.despawn_node(existing.id)?;
         }
-        let entity = self
-            .context
-            .create_detached_component(self.document, component)?;
-        self.context.attach_child(self.parent, entity.id)?;
+        Ok(Claim::Create(key))
+    }
+
+    /// The keyed half of [`Self::upsert`] after a new node: it goes under
+    /// the parent and into the parent's key table.
+    #[inline(never)]
+    fn record(
+        &mut self,
+        key: String,
+        id: StableNodeId,
+        type_id: TypeId,
+    ) -> Result<(), FrameworkError> {
+        self.context.attach_child(self.parent, id)?;
         let mut slots = self
             .context
             .assembled
             .get(&self.parent)
             .cloned()
             .unwrap_or_default();
-        slots.insert(
-            key,
-            AssembledChild {
-                id: entity.id,
-                type_id,
-            },
-        );
+        slots.insert(key, AssembledChild { id, type_id });
         self.context.store_assembled(self.parent, slots);
-        Ok(entity)
+        Ok(())
     }
 
     fn finish(self) -> Result<(), FrameworkError> {

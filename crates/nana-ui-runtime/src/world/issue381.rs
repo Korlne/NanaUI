@@ -9,7 +9,8 @@
 //! - `scroll_content_extent_recomputes`: content index entries recomputed.
 //!   Pure scrolling recomputes none.
 //! - `scroll_clip_updates`: hit entries, clips with them, the scroll path
-//!   rewrote. A list's sticky branch is three; its rows share the list's
+//!   rewrote. A list's sticky header is one: its children are held in its
+//!   own coordinates and keep their entries; its rows share the list's
 //!   shift and the other list is not reached.
 //! - Pure scrolling lays nothing out: measure, placement and shaping stay 0.
 //! - A virtual list maps onto `virtual_rows_materialized_from_layout`,
@@ -29,8 +30,9 @@ use crate::{
 
 /// Rows under each list's header.
 const ROWS: usize = 50;
-/// A sticky header and its two children: the branch a list's scroll moves.
-const STICKY_BRANCH: usize = 3;
+/// A list's scroll rewrites its sticky header alone: the header's two
+/// children are held relative to it, so they keep their entries.
+const STICKY_ENTRY: usize = 1;
 
 fn document() -> DocumentId {
     DocumentId::new(1).unwrap()
@@ -160,25 +162,25 @@ fn lays_nothing_out(work: &WorkCounters) -> bool {
 }
 
 /// A scroll-only frame stores no viewport, recomputes no extent, and
-/// rewrites the clips of the sticky branch it moves: three entries per list
+/// rewrites the entry of the sticky header it moves: one entry per list
 /// scrolled, not the list's rows and not the other list's header.
 #[test]
-fn issue381_a_scroll_only_frame_rewrites_the_clips_of_the_branch_it_moves() {
+fn issue381_a_scroll_only_frame_rewrites_the_sticky_entry_it_moves() {
     let mut page = Page::new();
     let (list, other, outer) = (page.list, page.other, page.page);
     let generation = page.cx.world().layout_generation();
-    // One list: its sticky branch.
+    // One list: its sticky header.
     let work = page.scroll(&[(list, 100.0)]);
     assert!(lays_nothing_out(&work), "{work:?}");
-    assert_eq!(scroll_counters(&work), (0, 0, STICKY_BRANCH));
-    // The other list: its own branch only.
+    assert_eq!(scroll_counters(&work), (0, 0, STICKY_ENTRY));
+    // The other list: its own header only.
     let work = page.scroll(&[(other, 40.0)]);
     assert!(lays_nothing_out(&work), "{work:?}");
-    assert_eq!(scroll_counters(&work), (0, 0, STICKY_BRANCH));
-    // Both: a branch each.
+    assert_eq!(scroll_counters(&work), (0, 0, STICKY_ENTRY));
+    // Both: a header each.
     let work = page.scroll(&[(list, 20.0), (other, 300.0)]);
     assert!(lays_nothing_out(&work), "{work:?}");
-    assert_eq!(scroll_counters(&work), (0, 0, 2 * STICKY_BRANCH));
+    assert_eq!(scroll_counters(&work), (0, 0, 2 * STICKY_ENTRY));
     // The page: no sticky box hangs from it, so it moves every entry under
     // it by one shift and rewrites none.
     let work = page.scroll(&[(outer, 120.0)]);

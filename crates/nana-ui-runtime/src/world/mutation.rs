@@ -2698,7 +2698,7 @@ impl UiWorld {
                     .copied()
                     .filter(|fold| offered.contains(fold))
                     .collect();
-                collapsed.sort_by_key(|fold| (fold.start, fold.end));
+                collapsed.compact_sort_by_key(|fold| (fold.start, fold.end));
                 collapsed.dedup();
                 let changed = self
                     .nodes
@@ -3333,7 +3333,7 @@ impl UiWorld {
             // Descendants keep LayoutBox; paint uses scroll_offset.
             self.scroll_hit_updates
                 .push((id, [previous.x - offset.x, previous.y - offset.y]));
-            self.mark_scroll_compatible(id, DirtyMask::INPUT | DirtyMask::RENDER);
+            self.mark_scrolled(id);
         }
     }
 
@@ -3353,7 +3353,7 @@ impl UiWorld {
         self.record_mut(id).scroll_offset = clamped;
         self.scroll_hit_updates
             .push((id, [current.x - clamped.x, current.y - clamped.y]));
-        self.mark_scroll_compatible(id, DirtyMask::INPUT | DirtyMask::RENDER);
+        self.mark_scrolled(id);
         true
     }
 
@@ -3597,7 +3597,7 @@ impl UiWorld {
             .into_iter()
             .map(|(id, layout)| (depth(self, id), id, layout))
             .collect();
-        ordered.sort_by_key(|&(depth, id, _)| (depth, id));
+        ordered.compact_sort_by_key(|&(depth, id, _)| (depth, id));
         for (_, id, layout) in ordered {
             let frame = self.layout_frame_from_styles(id);
             let [x, y] = self.frame_origin_of(self.record(id), frame);

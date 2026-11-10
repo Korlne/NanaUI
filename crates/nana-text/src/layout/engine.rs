@@ -14,6 +14,7 @@ use crate::shaping::ShapedText;
 use crate::source::{ObjectFlow, SnappedSpans, TextSource};
 use crate::style::{TextKind, TextStyle};
 use nana_ui_core::DirSpec;
+use nana_ui_core::sort::CompactSort as _;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -986,7 +987,7 @@ fn placed_objects(
             });
         }
     }
-    placed.sort_by_key(|object| object.offset);
+    placed.compact_sort_by_key(|object| object.offset);
     placed
 }
 

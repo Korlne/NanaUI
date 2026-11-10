@@ -3976,6 +3976,7 @@ fn native_toggle_and_slider_state_share_events_visuals_and_accessibility() {
     assert_eq!(
         context.world().standard_visual(slider.stable_id()),
         Some(StandardVisual::Range {
+            caution: None,
             label: Some(Arc::from("Volume")),
             value: Arc::from("100"),
             limits: Some([Arc::from("0"), Arc::from("100")]),
@@ -10189,6 +10190,72 @@ fn a_press_near_a_range_marker_lands_on_that_marker() {
     );
 }
 
+/// A caution zone reaches the geometry as where it begins along the track
+/// and the theme's warning colour; one that begins outside the range, a
+/// rail or a gradient track has none.
+#[test]
+fn a_range_caution_zone_is_measured_along_the_track_in_the_warning_colour() {
+    let mut context = AppContext::new();
+    let document = DocumentId::new(1).unwrap();
+    let caution = |context: &mut AppContext, field: RangeField| {
+        let range = context.create_component(document, field).unwrap();
+        context
+            .layout_document(document, crate::LayoutViewport::new(640.0, 480.0))
+            .unwrap();
+        let crate::ComponentGeometry::Range { caution, .. } = context
+            .world()
+            .component_geometry(range.stable_id())
+            .unwrap()
+        else {
+            panic!("range geometry expected");
+        };
+        caution
+    };
+    let zone = caution(
+        &mut context,
+        RangeField::new(50.0, 0.0, 400.0, 1.0)
+            .value_thumb(true)
+            .caution_from(100.0),
+    )
+    .expect("a caution zone");
+    assert_eq!(zone.from, 0.25);
+    let warning = context
+        .world()
+        .style_model()
+        .color(nana_ui_core::SemanticColorRole::Warning)
+        .as_rgba_array();
+    assert_eq!(zone.color, warning);
+    assert!(!zone.thumb, "the value is short of the zone");
+    let inside = caution(
+        &mut context,
+        RangeField::new(250.0, 0.0, 400.0, 1.0)
+            .value_thumb(true)
+            .caution_from(100.0),
+    )
+    .expect("a caution zone");
+    assert!(inside.thumb, "inside it the thumb warns");
+    let mut off = RangeField::new(250.0, 0.0, 400.0, 1.0).caution_from(100.0);
+    off.disabled = true;
+    assert!(
+        !caution(&mut context, off).expect("a caution zone").thumb,
+        "a disabled range keeps its disabled thumb"
+    );
+
+    for field in [
+        RangeField::new(50.0, 0.0, 100.0, 1.0).caution_from(100.0),
+        RangeField::new(50.0, 0.0, 100.0, 1.0).caution_from(-1.0),
+        RangeField::new(50.0, 0.0, 100.0, 1.0).caution_from(f64::NAN),
+        RangeField::new(50.0, 0.0, 400.0, 1.0)
+            .rail(2.0)
+            .caution_from(100.0),
+        RangeField::new(50.0, 0.0, 400.0, 1.0)
+            .track_gradient(crate::hue_spectrum())
+            .caution_from(100.0),
+    ] {
+        assert_eq!(caution(&mut context, field), None);
+    }
+}
+
 #[test]
 fn a_cancelled_or_disabled_range_drag_restores_without_committing() {
     let mut context = AppContext::new();
@@ -10378,6 +10445,7 @@ fn component_size_kind_and_fallback_geometry_preserve_design_contracts() {
         assert_eq!(
             context.world().standard_visual(range.stable_id()),
             Some(StandardVisual::Range {
+                caution: None,
                 label: Some(Arc::from("Opacity")),
                 value: Arc::from("0.7"),
                 limits: Some([Arc::from("0.0"), Arc::from("1.0")]),
@@ -10557,6 +10625,7 @@ fn range_field_can_hide_the_value_readout_and_still_expose_the_numeric_value() {
     assert_eq!(
         context.world().standard_visual(range.stable_id()),
         Some(StandardVisual::Range {
+            caution: None,
             label: Some(Arc::from("Seek")),
             value: Arc::from(""),
             limits: None,

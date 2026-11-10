@@ -9,7 +9,8 @@
 //! A new row or branch plays its enter from the given opacity and transform
 //! to its own. A removed one stays where it was, out of hit testing and
 //! focus, plays its leave, and is despawned when the leave finishes; its
-//! scope is disposed at once, so it no longer follows data. With `moves`,
+//! scope is disposed at once, so it no longer follows data, not even a
+//! patch already queued by the change that removed it. With `moves`,
 //! rows that change place slide from where they were (FLIP, on the
 //! compositor), including when a leaving row is finally removed.
 //!

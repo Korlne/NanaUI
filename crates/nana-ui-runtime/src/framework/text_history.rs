@@ -389,8 +389,9 @@ impl crate::AppContext {
         origin: TextEditOrigin,
         apply: impl FnOnce(&mut C, &mut crate::ViewContext<'_, C>) -> bool,
     ) -> Result<bool, crate::FrameworkError> {
-        self.journal_editor_edit(entity, origin, |editable, cx| {
-            if !apply(editable, cx) {
+        let mut apply = Some(apply);
+        self.journal_editor_edit_staged(entity, origin, &mut |editable, cx| {
+            if !apply.take().is_some_and(|apply| apply(editable, cx)) {
                 return false;
             }
             cx.emit(editable.change());
@@ -409,11 +410,27 @@ impl crate::AppContext {
         origin: TextEditOrigin,
         apply: impl FnOnce(&mut C, &mut crate::ViewContext<'_, C>) -> bool,
     ) -> Result<bool, crate::FrameworkError> {
+        let mut apply = Some(apply);
+        self.journal_editor_edit_staged(entity, origin, &mut |editable, cx| {
+            apply.take().is_some_and(|apply| apply(editable, cx))
+        })
+    }
+
+    /// The journaled write itself, once per editor type: every editing hook
+    /// reaches it with its closure as one dynamic call rather than copying
+    /// this body (see `AppContext::update_component_staged`).
+    #[inline(never)]
+    fn journal_editor_edit_staged<C: super::EditableText>(
+        &mut self,
+        entity: crate::Entity<C>,
+        origin: TextEditOrigin,
+        apply: &mut dyn FnMut(&mut C, &mut crate::ViewContext<'_, C>) -> bool,
+    ) -> Result<bool, crate::FrameworkError> {
         // A program write is not the user's edit: whatever it changed (a
         // `NumberInput` can take a new number under a draft that already reads
         // it), the history starts afresh. Nothing to snapshot for that.
         if origin == TextEditOrigin::Program {
-            let changed = self.update_component(entity, apply)?;
+            let changed = self.update_component(entity, |editable, cx| apply(editable, cx))?;
             if changed {
                 self.text_histories.forget(entity.stable_id());
             }
@@ -425,7 +442,7 @@ impl crate::AppContext {
         };
         let before = self.read(entity, snapshot)?;
         self.text_histories.begin_writing(entity.stable_id());
-        let changed = self.update_component(entity, apply);
+        let changed = self.update_component(entity, |editable, cx| apply(editable, cx));
         self.text_histories.finish_writing(entity.stable_id());
         let changed = changed?;
         if !changed {

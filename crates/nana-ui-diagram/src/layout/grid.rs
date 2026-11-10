@@ -7,6 +7,7 @@
 //! over the tracks it covers. A grid given a minimum size grows every
 //! track evenly, so a nested grid can fill the cell its parent gave it.
 
+use nana_ui_core::sort::CompactSort as _;
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::ir::Rect;
@@ -90,7 +91,7 @@ fn tracks(cells: &[(usize, usize, f32)], gap: f32, min_total: f32) -> Vec<(f32, 
         }
     }
     let mut spanning: Vec<&(usize, usize, f32)> = cells.iter().filter(|c| c.1 > 1).collect();
-    spanning.sort_by_key(|c| c.1);
+    spanning.compact_sort_by_key(|c| c.1);
     for &&(start, span, size) in &spanning {
         let end = (start + span).min(count);
         if start >= end {
@@ -488,7 +489,7 @@ pub fn connect_all(
     // Each end sits in exactly one group, so the group order does not matter.
     let mut ends = vec![[0.5f32; 2]; links.len()];
     for list in groups.values_mut() {
-        list.sort_by(|a, b| a.2.total_cmp(&b.2).then(a.0.cmp(&b.0)));
+        list.compact_sort_by(|a, b| a.2.total_cmp(&b.2).then(a.0.cmp(&b.0)));
         for (k, &(i, end, _)) in list.iter().enumerate() {
             ends[i][end] = spread(k, list.len());
         }
@@ -699,11 +700,11 @@ pub fn route_around(
         ys.extend([r.y, r.bottom()]);
     }
     let lines = |v: &mut Vec<f32>| {
-        v.sort_by(f32::total_cmp);
+        v.compact_sort_by(f32::total_cmp);
         v.dedup_by(|a, b| (*a - *b).abs() < 0.25);
         let mids: Vec<f32> = v.windows(2).map(|w| (w[0] + w[1]) / 2.0).collect();
         v.extend(mids);
-        v.sort_by(f32::total_cmp);
+        v.compact_sort_by(f32::total_cmp);
         v.dedup_by(|a, b| (*a - *b).abs() < 0.25);
     };
     lines(&mut xs);

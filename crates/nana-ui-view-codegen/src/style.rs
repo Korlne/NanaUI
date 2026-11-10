@@ -741,6 +741,29 @@ fn check_block(
     }
 }
 
+/// A patch (its JSON: each written field's dotted path to the field's value)
+/// as the code that applies it: one assignment per field. The value stays
+/// the field's own JSON and is read as the field's type where it is
+/// assigned, so the generated code names no Style Model type and the
+/// application links the decoding of only the field types its styles write.
+fn patch_tokens(json: &str, runtime: &TokenStream) -> TokenStream {
+    let Ok(Value::Object(fields)) = serde_json::from_str::<Value>(json) else {
+        unreachable!("a patch is a JSON object");
+    };
+    let writes = fields.iter().map(|(path, value)| {
+        let field = path.split('.').map(|segment| {
+            syn::parse_str::<syn::Ident>(segment).unwrap_or_else(|_| {
+                proc_macro2::Ident::new_raw(segment, proc_macro2::Span::call_site())
+            })
+        });
+        let value = value.to_string();
+        quote!(__nana_layout.#(#field).* = #runtime::view::__style_value(#value);)
+    });
+    quote! {
+        |__nana_layout: &mut #runtime::LayoutStyle| { #(#writes)* }
+    }
+}
+
 fn easing_tokens(easing: Easing, runtime: &TokenStream) -> TokenStream {
     match easing {
         Easing::Linear => quote!(#runtime::Easing::Linear),
@@ -791,10 +814,10 @@ impl Sheet {
             let index = *patches.entry(&rule.patch).or_insert(next);
             let patch = format_ident!("{name}_PATCH_{index}");
             if index == next {
-                let json = &rule.patch;
+                let apply = patch_tokens(&rule.patch, runtime);
                 items.push(quote! {
                     static #patch: #runtime::view::StylePatch =
-                        #runtime::view::StylePatch::new(#json);
+                        #runtime::view::StylePatch::new(#apply);
                 });
             }
             let query = match rule.query {
@@ -1265,9 +1288,9 @@ pub fn compile_inline(
     rules.sort_by_key(|rule| rule.rank);
     let patches = rules.iter().enumerate().map(|(index, rule)| {
         let name = format_ident!("__NANA_PATCH_{index}");
-        let json = &rule.patch;
+        let apply = patch_tokens(&rule.patch, runtime);
         quote! {
-            static #name: #runtime::view::StylePatch = #runtime::view::StylePatch::new(#json);
+            static #name: #runtime::view::StylePatch = #runtime::view::StylePatch::new(#apply);
         }
     });
     let entries = (0..rules.len()).map(|index| {
@@ -1655,9 +1678,20 @@ mod tests {
                 .1
                 .contains("`@container` is not compiled in `css!`")
         );
-        let tokens = tokens.to_string();
-        assert!(tokens.contains(r#"\"opacity\":0.5"#), "{tokens}");
-        assert!(tokens.contains(r#"{\"Px\":4.0}"#), "{tokens}");
+        // Each written field is one assignment, its value the field's JSON.
+        let tokens: String = tokens
+            .to_string()
+            .chars()
+            .filter(|character| !character.is_whitespace())
+            .collect();
+        assert!(
+            tokens.contains(r#"__nana_layout.opacity=x::view::__style_value("0.5");"#),
+            "{tokens}"
+        );
+        assert!(
+            tokens.contains(r#"__nana_layout.padding=x::view::__style_value("{\"Px\":4.0}");"#),
+            "{tokens}"
+        );
         assert!(!tokens.contains(r#"{\"Px\":2.0}"#), "{tokens}");
         assert!(!tokens.contains("SheetQuery"), "{tokens}");
     }

@@ -20,10 +20,18 @@ impl UiWorld {
     ///
     /// `skips` carries the unshifted entries above deep parents from one
     /// entry to the next ([`HitIndex::inherited_shift_skipping`]).
-    fn rebuilt_hit_entry_in_place(
+    ///
+    /// `scrolled`: nothing but a scroll changed since the entry was held
+    /// (a sticky box a scroll moves), so nothing above it changed in that
+    /// space either. The transform built against the live scroll and
+    /// brought back by the shifts is then the held one up to their
+    /// rounding: the held one stays, with the clips taken with it, so that
+    /// what the entry holds keeps the space it was built in.
+    pub(super) fn rebuilt_hit_entry_in_place(
         &self,
         document: DocumentId,
         id: StableNodeId,
+        scrolled: bool,
         skips: &mut ShiftSkips,
     ) -> Option<HitEntry> {
         let index = self.hit_test_index.get(&document)?;
@@ -84,6 +92,23 @@ impl UiWorld {
             transform[4] -= offset[0];
             transform[5] -= offset[1];
         }
+        if scrolled && !held.local_children && fresh.transform[..4] == held.transform[..4] {
+            let back = [
+                held.transform[4] - fresh.transform[4],
+                held.transform[5] - fresh.transform[5],
+            ];
+            if back != [0.0, 0.0] {
+                fresh.transform = held.transform;
+                for (_, transform) in fresh
+                    .self_clips
+                    .iter_mut()
+                    .chain(fresh.child_clips.iter_mut())
+                {
+                    transform[4] += back[0];
+                    transform[5] += back[1];
+                }
+            }
+        }
         // A box that turns fixed hangs from the viewport, and one whose
         // stacking moved takes another place among its siblings: both are
         // structural, for the subtree patch.
@@ -108,7 +133,7 @@ impl UiWorld {
     /// [`Self::rebuilt_hit_entry_in_place`]) in place over their children, and
     /// refresh the bounds above them once each. An entry that only moved
     /// takes a new origin this way; what hangs below it keeps its own.
-    fn replace_hit_entries_in_place(
+    pub(super) fn replace_hit_entries_in_place(
         &mut self,
         document: DocumentId,
         rebuilt: Vec<(StableNodeId, HitEntry)>,
@@ -146,7 +171,7 @@ impl UiWorld {
     /// The pinned entries ([`HitEntry::pinned`]) below a node of `dirty`
     /// and not in it: they read geometry a change above them can move,
     /// so they are built again although nothing marked them.
-    fn pinned_hit_entries_under(
+    pub(super) fn pinned_hit_entries_under(
         &mut self,
         document: DocumentId,
         dirty: &[StableNodeId],
@@ -214,7 +239,7 @@ impl UiWorld {
         let mut rebuilt = Vec::new();
         let mut skips = ShiftSkips::default();
         for &id in dirty {
-            if let Some(entry) = self.rebuilt_hit_entry_in_place(document, id, &mut skips) {
+            if let Some(entry) = self.rebuilt_hit_entry_in_place(document, id, false, &mut skips) {
                 rebuilt.push((id, entry));
             } else {
                 rest.push(id);
@@ -236,9 +261,12 @@ impl UiWorld {
         // the patches after it build again.
         // The checks walk every entry in full; the walks the rebuild took
         // are what `deep_walk_tests` counts.
+        // The eligibility audit exists under `debug_assertions` alone, as at
+        // its other sites: a release test build checks the moved entries.
         #[cfg(test)]
         crate::world::page_origins::steps::uncounted(|| {
             self.check_moved_hit_entries(document, &_replaced);
+            #[cfg(debug_assertions)]
             self.audit_hit_eligibility("scoped rebuild");
         });
         #[cfg(all(not(test), feature = "layout-verify"))]

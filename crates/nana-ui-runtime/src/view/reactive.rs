@@ -14,6 +14,7 @@
 //! date and runs only if one of them produced a different value, so a
 //! computed whose result did not change stops the update there.
 
+use nana_ui_core::sort::CompactSort as _;
 use std::any::{Any, TypeId};
 use std::cell::RefCell;
 use std::fmt;
@@ -495,7 +496,7 @@ impl Runtime {
         if stale.is_empty() {
             return;
         }
-        stale.sort_unstable_by_key(|key| (key.index, key.generation));
+        stale.compact_sort_by_key(|key| (key.index, key.generation));
         let mut at = 0;
         while at < stale.len() {
             let key = stale[at];
@@ -947,6 +948,13 @@ pub(crate) fn set_effect_target(key: EffectKey, target: EffectTarget) {
 
 pub(crate) fn effect_site(key: EffectKey) -> Option<&'static Location<'static>> {
     with_rt(|rt| rt.effect_mut(key).map(|node| node.site))
+}
+
+/// Whether `key` is still an effect: one queued in a flush round can be
+/// disposed by an earlier effect of the same round, such as a branch taken
+/// away whose nodes stay in the world to play their leave.
+pub(crate) fn effect_alive(key: EffectKey) -> bool {
+    with_rt(|rt| rt.effect_mut(key).is_some())
 }
 
 pub(crate) fn dispose_effect(key: EffectKey) {

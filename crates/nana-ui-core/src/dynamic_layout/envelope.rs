@@ -4,6 +4,7 @@ use super::{
     AdjustmentKind, AdjustmentSegment, ExecutionClass, LayoutUnits, MAX_ENVELOPE_SEGMENTS,
     SegmentList, TotalCost,
 };
+use crate::sort::CompactSort as _;
 
 /// A box's elasticity, independent of the size it is offered: segments in
 /// consumption order and the capacity each class holds. A parent reads only
@@ -44,7 +45,7 @@ impl EnvelopeShape {
         segments.retain(|segment| {
             segment.capacity.is_positive() && !segment.marginal_cost.is_forbidden()
         });
-        segments.sort_by_key(AdjustmentSegment::order_key);
+        segments.compact_sort_by_key(AdjustmentSegment::order_key);
         let mut merged: Vec<AdjustmentSegment> = Vec::with_capacity(segments.len());
         for segment in segments.drain(..) {
             match merged.last_mut() {

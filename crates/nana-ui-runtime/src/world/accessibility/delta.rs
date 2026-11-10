@@ -63,10 +63,28 @@ impl UiWorld {
         // its own box upright in its space, cuts nothing and nothing else
         // marked it. Any other projects its subtree again.
         let kept_turn = |id: &StableNodeId| work.transform_kept.binary_search(id).is_ok();
-        let (moved_seeds, mut pending): (Vec<StableNodeId>, Vec<StableNodeId>) = work
-            .input_hit_test
-            .iter()
-            .partition(|id| carries(id) && !kept_turn(id));
+        // A box only its own scroll marked (layout neither moved nor
+        // reshaped it, its transform is as it was): what it holds is placed
+        // in its space moved by its scroll, so only it, and what does not
+        // scroll with it to the bit, projects again.
+        let scrolled = |id: &StableNodeId| {
+            work.accessibility_scrolled.binary_search(id).is_ok()
+                && !kept_turn(id)
+                && work.layout_moved.binary_search(id).is_err()
+                && work.layout_reshaped.binary_search(id).is_err()
+                && !work.transform.contains(id)
+        };
+        let (mut moved_seeds, mut scroll_seeds, mut pending) = (Vec::new(), Vec::new(), Vec::new());
+        for &id in &work.input_hit_test {
+            if carries(&id) && !kept_turn(&id) {
+                moved_seeds.push(id);
+            } else if scrolled(&id) {
+                scroll_seeds.push(id);
+            } else {
+                pending.push(id);
+            }
+        }
+        let moved_seeds = moved_seeds;
         pending.extend(work.transform.iter().filter(|id| !kept_turn(id)));
         let mut memo = ProjectionMemo::default();
         let mut turn_roots = Vec::new();
@@ -87,10 +105,58 @@ impl UiWorld {
             affected.extend(&turn_roots);
             self.reach_turned_pins(&turn_roots, &mut pending);
         }
+        // A scrolled box projects again: its scroll and scroll axes changed.
+        affected.extend(&scroll_seeds);
         // A plain tree places every box in flow, from its parent, and has
         // no clip, transform or scroll: what a moved box holds keeps its
         // bounds.
+        let mut scroll_roots = Vec::new();
         if !tree_plain {
+            // What a scroll carries keeps its bounds where its box stands
+            // upright in its space (its children's offsets are then in its
+            // space moved by its scroll), but for the pins under it: found
+            // from those, as under a box layout moved -- the boxes a scroll
+            // leaves where they stood (`fixed`, an absolute box escaping it),
+            // `sticky` ones and what they hold, the clips under it. Any
+            // other box's children are placed from their viewport boxes: its
+            // subtree projects again.
+            for &id in &scroll_seeds {
+                if self.moved_root_hands_offsets(id, &mut memo) {
+                    scroll_roots.push(id);
+                } else {
+                    pending.push(id);
+                }
+            }
+            if !scroll_roots.is_empty() {
+                scroll_roots.sort_unstable();
+                // A scroller inside another one that scrolled moved on the
+                // viewport, where the clips of what it holds are: its subtree
+                // projects again.
+                if scroll_roots.len() > 1 {
+                    let nested = scroll_roots
+                        .iter()
+                        .copied()
+                        .filter(|&id| {
+                            std::iter::successors(self.parent_id(id), |&at| self.parent_id(at))
+                                .any(|at| scroll_roots.binary_search(&at).is_ok())
+                        })
+                        .collect::<Vec<_>>();
+                    scroll_roots.retain(|id| !nested.contains(id));
+                    pending.extend(nested);
+                }
+                let (mut pinned, mut pinned_subtrees) = (Vec::new(), Vec::new());
+                self.reach_moved_pins(
+                    &scroll_roots,
+                    &scroll_roots,
+                    &mut pinned,
+                    &mut pinned_subtrees,
+                    &mut memo,
+                );
+                #[cfg(any(test, feature = "layout-verify"))]
+                self.check_moved_pins(&scroll_roots, &scroll_roots, &pinned, &pinned_subtrees);
+                affected.extend(pinned);
+                pending.extend(pinned_subtrees);
+            }
             // Moved boxes whose subtree places its boxes by their offsets
             // all the way down, but where something pins them: those are
             // found from the pins, not by walking what the box holds.
@@ -225,6 +291,7 @@ impl UiWorld {
         {
             let mut seeds = moved_seeds.clone();
             seeds.extend(&turn_roots);
+            seeds.extend(&scroll_roots);
             self.check_kept_accessibility(&seeds, &affected);
         }
         let mut removed = work.accessibility_removals.clone();

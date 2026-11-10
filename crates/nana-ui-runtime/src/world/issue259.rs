@@ -1511,7 +1511,15 @@ fn issue259_a_longer_label_moves_nothing_below_it() {
     let build = |nodes: u64, wraps: bool, value: &str| {
         let document = DocumentId::new(1).unwrap();
         let (mut b, page) = Builder::page(document, 1, 1200.0);
-        let head = b.element(page, reflow_oracle::column(Some(1200.0)));
+        // A flex column: the label keeps the width of its string, which a
+        // block column would stretch to 1200.
+        let head = b.element(
+            page,
+            LayoutStyle {
+                display: Some(nana_ui_core::DisplaySpec::Flex),
+                ..reflow_oracle::column(Some(1200.0))
+            },
+        );
         let label = b.label(head, value);
         if !wraps {
             b.queue.set_style(
@@ -1594,7 +1602,15 @@ fn issue259_a_label_costs_its_column_not_the_groups_after_it() {
     let build = |nodes: u64, width: f32, wraps: bool, value: &str| {
         let document = DocumentId::new(1).unwrap();
         let (mut b, page) = Builder::page(document, 1, 1200.0);
-        let head = b.element(page, reflow_oracle::column(Some(width)));
+        // A flex column: the label keeps the width of its string, which a
+        // block column would stretch to the column's.
+        let head = b.element(
+            page,
+            LayoutStyle {
+                display: Some(nana_ui_core::DisplaySpec::Flex),
+                ..reflow_oracle::column(Some(width))
+            },
+        );
         let label = b.label(head, value);
         if !wraps {
             b.queue.set_style(

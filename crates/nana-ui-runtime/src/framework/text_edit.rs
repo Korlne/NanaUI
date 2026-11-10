@@ -25,6 +25,7 @@ use crate::{
     CodeEditing, MutationQueue, ScrollOffset, TextAtomSpan, TextCodeFold, TextContent,
     TextShapeConstraints, TextSnippet,
 };
+use nana_ui_core::sort::CompactSort as _;
 use std::sync::Arc;
 
 /// Delete semantics for [`AppContext::delete_focused_text`].
@@ -3094,7 +3095,7 @@ fn expand_snippet_body(body: &str, base: usize) -> (String, Vec<usize>, usize) {
         }
         text.push(character);
     }
-    stops.sort_by_key(|(number, _)| *number);
+    stops.compact_sort_by_key(|(number, _)| *number);
     let caret = final_caret.unwrap_or(base + text.len());
     (
         text,
@@ -3246,7 +3247,7 @@ impl AppContext {
             }
             let mut replacements = edit.additional.clone();
             replacements.push((edit.range.clone(), edit.text.clone()));
-            replacements.sort_by_key(|(range, _)| (range.start, range.end));
+            replacements.compact_sort_by_key(|(range, _)| (range.start, range.end));
             if replacements.iter().any(|(range, _)| {
                 range.start > range.end
                     || range.end > current.value.len()
@@ -3596,7 +3597,9 @@ impl AppContext {
                 false
             } else {
                 state.collapsed.push(fold);
-                state.collapsed.sort_by_key(|fold| (fold.start, fold.end));
+                state
+                    .collapsed
+                    .compact_sort_by_key(|fold| (fold.start, fold.end));
                 true
             }
         } else {

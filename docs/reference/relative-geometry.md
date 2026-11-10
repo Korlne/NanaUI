@@ -126,7 +126,7 @@ abs(child) = abs(frame) + local(child)
 
 ### 3.2 平移一棵子树
 
-父节点重新排布时只写直接子节点的偏移：只挪了位置的容器在父节点那里 `subtree_unchanged` 不成立，进 `place_node_body` 后计划照旧成立，一个子节点也不碰；它的结果不变，发布时 `geometry_eq` 判为相同。提交只标写回的盒子本身（`settle_layout_moves`）：原点变了的根记 `DirtyMask::MOVED`，进 `SystemWork::layout_moved`；后代一个不标。
+父节点重新排布时只写直接子节点的偏移：只挪了位置的容器在父节点那里 `subtree_unchanged` 不成立，`place_node_head` 写下它的新偏移后，`keeps_moved_subtree` 判定它的主体读的东西都没变（自己不是种子、不在测量前沿里、书写模式与滚动没变，进受影响闭包只因父节点或同一格式化上下文里的兄弟把它挪了；下面没有受影响的节点；边框盒尺寸与用过的内边距同上一遍；不参与动态布局的行、不继承网格轨道、不是模态或触发式菜单、不在逃逸定位的复查表里、没有参照系不是它的子节点），就不进 `place_node_body`，一个子节点也不碰；它的结果不变，发布时 `geometry_eq` 判为相同。行内格式化上下文（段落）没有容器计划，以前每挪一次都要重新排一遍行盒，现在同样只写偏移。测试与 `layout-verify` 构建里，保住子树的盒子下面每个盒子都要与全量布局逐位相同。提交只标写回的盒子本身（`settle_layout_moves`）：原点变了的根记 `DirtyMask::MOVED`，进 `SystemWork::layout_moved`；后代一个不标。
 
 发布时（`publish_layout_results`）：
 
@@ -156,6 +156,7 @@ abs(child) = abs(frame) + local(child)
 - 查询（`open_hit`，`query.rs`）先减 `origin` 进入条目自己的空间，交出本地坐标的条目再过一次逆变换（`transformed_point`，奇异时子节点不可达），再减 `shift` 进入子节点的空间。
 - 父节点边界树里的包围盒是「自身 ∪ 子节点（加 `shift`）」再加 `origin`（`entry_bounds`；交出本地坐标的条目用 `turned_bounds`，子节点包围盒过自己的变换取外接框）。冷建与增量刷新同一个公式，逐位一致。
 - 父节点的变换带透视时偏移不能在外层做：偏移并进条目自己的变换，`origin` 为零。
+- **粘性偏移**（`sticky_translation`）和布局偏移一样是条目自身变换之前的平移，父节点没有透视时加进 `origin`，不进 `transform`：贴住或滑动只改这一个条目的 `origin`，子条目相对它存放，不继承它。模态框 body 的自身裁剪（`self_clips`）按父节点空间存，因此存的变换减去换算后的粘性偏移，查询减掉 `origin` 后裁剪仍在框架排出的位置。父节点有透视时粘性偏移连同布局偏移一起进条目的变换。
 - **交出本地坐标**（`HitEntry::local_children`）：自身 2D 变换有缩放、旋转、斜切或翻转（`hit_frames_itself`）、一路没有透视、子节点不在 3D 上下文里的条目，交给子节点的只有「减滚动」（`scroll_seed`），子节点在它的本地布局坐标里建，不含它和它上面的任何变换。于是转过的子树里一切都是正立的。跟着改的读取：`inherited_shift`、`child_shift` 往上累加滚动到最近的这种条目为止；补丁与原地重建的种子统一走 `live_child_seed`；从窗口进出条目的地方（`pointer_layout_position`、`layout_pointer_position`、`menu_region_contains`、`escaped_hit_at`）走 `entry_space`。
 - **钉住的条目**（`HitEntry::pinned`，集合 `HitIndex::pinned`）：读了自身偏移以外的几何——跨参照系求差的偏移、#201 逃逸的桥接变换（`clip_bridge_transform_from`）、组件几何（Select 菜单、悬停卡连接线、模态框的 surface / body 裁剪）、粘性定位。打补丁时脏节点下面的钉住条目即使没标脏也重建（`pinned_hit_entries_under`，O(钉住数 × 深度)）。
 
@@ -177,7 +178,7 @@ abs(child) = abs(frame) + local(child)
 
 - 转过的盒子自己被撑高或平移：变换原点（默认中心）跟着动，但子孙在它的本地坐标里，只重建它自己的条目。
 - 改变换（`TRANSFORM` 或 `TRANSFORM_KEPT` 只标盒子自己）：前后都交出本地坐标时只重建它自己，脏节点下面的钉住条目照旧重建；其余情况（纯平移、变成或不再是这种条目、透视、3D）原地重建不成立，走 `patch_hit_subtree` 整棵修补它的分支。
-- 滚动：`shift_hit_test_scroll` 只改 `shift` 并刷新祖先包围盒，O(深度)；在交出本地坐标的条目上按恒等线性部分换算。驱动在同一帧既有滚动又有别的脏节点时丢掉滚动增量、交给补丁处理；这时滚动容器的 `scroll` 与现在的值不同，走子树补丁。快路径（`hit_test_work_is_scroll_only`）要求 INPUT 脏节点全是本帧滚过的容器，且都不在 `non_scroll_hit_dirty` 里：这个集合由 `mark` / `mark_moved` / `mark_ancestors` 记下滚动以外的 INPUT 标记（滚动只走 `mark_scroll_compatible`），容器自己改了盒子又同帧滚动时据此走补丁；它在条目按现在几何建好时删去——整树重建删掉本文档的、按范围重建删掉传入的脏节点与钉住条目、滚动里修补的粘性分支删掉自己——取走工作后又被标 INPUT 的节点保留到下一帧。
+- 滚动：`shift_hit_test_scroll` 只改 `shift` 并刷新祖先包围盒，O(深度)；在交出本地坐标的条目上按恒等线性部分换算。驱动在同一帧既有滚动又有别的脏节点时丢掉滚动增量、交给补丁处理；这时滚动容器的 `scroll` 与现在的值不同，走子树补丁。快路径（`hit_test_work_is_scroll_only`）要求 INPUT 脏节点全是本帧滚过的容器，且都不在 `non_scroll_hit_dirty` 里：这个集合由 `mark` / `mark_moved` / `mark_ancestors` 记下滚动以外的 INPUT 标记（滚动只走 `mark_scroll_compatible`），容器自己改了盒子又同帧滚动时据此走补丁；它在条目按现在几何建好时删去——整树重建删掉本文档的、按范围重建删掉传入的脏节点与钉住条目、滚动里重建的粘性条目删掉自己——取走工作后又被标 INPUT 的节点保留到下一帧。粘性盒子（`sticky_nodes.affected`）随滚动改自己的偏移：粘性偏移在 `origin` 里，下面的条目在它的坐标里，所以每个粘性盒子只按 `rebuilt_hit_entry_in_place` 原地重建自己这一条（贴住与否都一样），全部建好后一次替换、祖先包围盒只刷新一次；只有下面有钉住条目、或父节点有透视（偏移在变换里）时才整枝 `patch_hit_subtree`，由外向内。纯滚动下条目上面在索引空间里什么都没变，按现在的滚动建出、再减去 `shift` 的变换与存着的只差舍入，于是保留存着的变换（`scrolled` 参数），裁剪的变换平移同样的量，原地重建不因末位差退回整枝。所以一次滚动的命中成本是每个粘性盒子一个条目，与它装着多少盒子、滚动容器里有多少盒子都无关。
 
 ### 4.4 仍整棵修补的
 
@@ -229,11 +230,11 @@ abs(child) = abs(frame) + local(child)
 
 ### 7.1 语义
 
-`AccessibilityNode::bounds` 相对父节点的无障碍空间，`transform: Option<PaintTransform>` 对应 AccessKit `Node` 的 `transform`；节点自己的盒子在自己的空间里是 `(0, 0, width, height)`。`clip` 仍是视口坐标。自动化与测试要视口坐标用 `project_accessibility_in_viewport` / `project_accessibility_nodes_in_viewport`，或用 `AccessibilityPlacements` 沿链累积。
+`AccessibilityNode::bounds` 相对父节点的**子节点空间**，`transform: Option<PaintTransform>` 对应 AccessKit `Node` 的 `transform`；节点自己的盒子在自己的空间里是 `(0, 0, width, height)`。`AccessibilityNode::scroll` 是节点滚动内容的量（滚动偏移乘以它空间的 `unit`）：子节点空间是它自己的空间平移 `-scroll`（`children_to_parent`），所以滚动只改滚动容器这一个节点，它装着的盒子 bounds 不变。不滚动的节点、子节点从视口盒放置的节点（3D、模态框、动画叠加下面，`unit` 为 `None`，滚动仍在子节点的 bounds 里）以及视口投影里 `scroll` 都是 `[0, 0]`。AccessKit 宿主把 `to_parent · translate(-scroll)` 设成节点的 `transform`、把本地盒子平移 `scroll` 设成 `bounds`（自己的盒子仍在原处），与 Chromium「滚动容器带滚动偏移、子节点相对它」是同一种表示。`clip` 仍是视口坐标。自动化与测试要视口坐标用 `project_accessibility_in_viewport` / `project_accessibility_nodes_in_viewport`，或用 `AccessibilityPlacements` 沿链累积。
 
 每个节点的空间（`AccessibleSpace`，见 2.4）：
 
-- **按偏移放置**（`offset_placed`，`local_placement`，`frames.rs` 的 `offset_bounds_in_parent`）：`places_by_offset()`、父节点空间让它正立（`unit` 有值）、全局没有动画叠加和裁剪 visual 时，bounds 由本地盒子算出：`(a·(x − sx), d·(y − sy), a·w, d·h)`，`(sx, sy)` 是父节点滚动，`(a, d)` 是父节点空间的缩放。自己的变换只是平移时并进偏移、`transform` 为 `None`；正缩放发出 `diag(a·a', d·d')`；旋转、斜切、翻转发出 `diag(a, d) · L`。后两种叫自带框架（`framed`）：它的空间就是它的本地布局坐标，下面按未乘系数的偏移放置。全都与页面位置无关。
+- **按偏移放置**（`offset_placed`，`local_placement`，`frames.rs` 的 `offset_bounds_in_parent`）：`places_by_offset()`、父节点空间让它正立（`unit` 有值）、全局没有动画叠加和裁剪 visual 时，bounds 由本地盒子算出：`(a·x, d·y, a·w, d·h)`，`(a, d)` 是父节点空间的缩放；父节点的滚动在父节点自己的 `scroll` 里，不进子节点。自己的变换只是平移时并进偏移、`transform` 为 `None`；正缩放发出 `diag(a·a', d·d')`；旋转、斜切、翻转发出 `diag(a, d) · L`。后两种叫自带框架（`framed`）：它的空间就是它的本地布局坐标，下面按未乘系数的偏移放置。全都与页面位置无关。
 - **从视口来、自带框架**（`frames_from_viewport`，`viewport_frame_in_parent`）：不按偏移放置的盒子（页面根、`fixed`、`sticky`、逃逸的绝对定位）在 2D 链上、父节点空间到视口的映射可逆，而且被转过或缩放过时，`to_parent = V_P⁻¹ · M · translate(origin)`（`M` 是 `accessibility_ancestor_transform` 的整条链，`V_P` 是 `accessible_space_to_viewport`）。平移来自视口，线性部分交给子孙，下面按偏移放置的盒子与页面位置无关。
 - **其余从视口外接框来**：3D、模态框的 surface、动画叠加或裁剪 visual 下的一切，以及父节点空间不可逆时。父节点空间有框架时发出它的逆的线性部分（`turned_space_inverse`），让它的空间与视口对齐。3D 上下文只退回外接框，不发透视：平台只有 2D 仿射。
 
@@ -244,6 +245,8 @@ abs(child) = abs(frame) + local(child)
 - **从钉子找**：`moved_root_hands_offsets` 成立时，根不整棵走，而是 `reach_moved_pins`（`pins.rs`）对 `space_pins` 里每个钉子往上找最近的平移根。路上碰到参照系是页面的盒子就停（它没跟着动）；参照系是某个块的盒子记下那个块，到根之前经过了它才算跟着根动；仍交偏移的钉子（缩放、`sticky`、从随根平移的块量起的绝对定位）不挡路。找到的钉子从它起按 `reach_moved_subtree` 的规则走：没跟着动的进受影响集合，裁剪的整棵重投影，不按偏移放置的逐个 `keeps_relative_bounds`。O(钉子数 × 深度)。
 - **逐个走**：`moved_root_hands_offsets` 不成立（根的空间不正立、根是模态框、有动画叠加、长度动画或裁剪 visual）时 `reach_moved_subtree` 从根往下逐个精确判定，停在别的平移根处。
 - 平移根自己的相对偏移确实变了，要重投影。布局标了 INPUT、却没进受影响集合的盒子（相对偏移没变），再问一次 `keeps_relative_bounds`，保不住的重投影。
+
+**滚动**：滚动只标滚动容器的 INPUT，并记 `DirtyMask::INPUT_SCROLLED`（不带 `INPUT_ELSEWHERE`），drain 时进 `SystemWork::accessibility_scrolled`；同帧还被别的东西标了 INPUT、被布局移动或改形、改了变换的不算。`project_accessibility_delta` 投影容器自己（`scroll` 与滚动轴变了）；`moved_root_hands_offsets` 成立时，它装着的东西当作「内容平移了」交给 `reach_moved_pins`，以滚过的容器为根和停止点：滚动带不走的（`fixed`、包含块在容器外的绝对定位）、从视口盒放置的（`sticky`、量自别的块的绝对定位；父节点是滚动容器（裁剪溢出，或滚动偏移不为零）时 `keeps_relative_bounds` 不再按「两边的视口盒都是布局盒」保留——只看偏移不为零的话，滚回原点那一帧贴住过的 `sticky` 会被漏掉）与裁剪的整棵（子孙的 `clip` 在视口坐标里，嵌套的滚动容器也是）重投影，其余一个不碰。另一个滚过的容器里的滚动容器整棵重投影（它的裁剪在视口上动了）；`moved_root_hands_offsets` 不成立时整棵重投影，与以前相同。代价 O(钉子数 × 深度) 加容器自己的子节点列表。
 
 **裁剪盒**：裁剪的种子原则上整棵重投影（视口坐标的 `clip` 从它来），但不在 `layout_reshaped` 里（原地不动、只是滚动范围变了的滚动容器）时按原来的盒子裁剪，只投影它自己。
 
@@ -368,8 +371,8 @@ abs(child) = abs(frame) + local(child)
 - `crates/nana-ui-scene/tests/viewport_frames.rs`：页面根、`fixed`、`sticky`、逃逸的绝对定位连续转与缩放，`AccessibilityPlacements` 核对外接框。
 - `crates/nana-ui-scene/tests/child_placement_records.rs`：只有子节点放置变了的结果，Scene 的每条记录与新提取比。
 - `crates/nana-ui-scene/tests/select_popup_hit.rs`：图元放到页面上（`place_rect`）再与页面几何比。
-- `crates/nana-ui-runtime/src/world/hit_test/moved_turned_tests.rs`：九种转过的祖先下平移，60 × 36 指针网格与孪生页及合成层遍历（`visit_presentation_roots`）比；`boxes_moved_under_a_planar_3d_turn_answer_as_a_fresh_index`。`moved_scroll_tests.rs`：滚动列表里的平移。
-- `crates/nana-ui-runtime/src/world/accessibility/relative_tests.rs`：不整齐步长、滚动、缩放、转过、钉子、Select、原地改尺寸；`placed_corners_are_the_turned_corners_of_a_cold_projection` 是等价性测试。
+- `crates/nana-ui-runtime/src/world/hit_test/moved_turned_tests.rs`：九种转过的祖先下平移，60 × 36 指针网格与孪生页及合成层遍历（`visit_presentation_roots`）比；`boxes_moved_under_a_planar_3d_turn_answer_as_a_fresh_index`。`moved_scroll_tests.rs`：滚动列表里的平移；`stuck_sticky_boxes_are_built_again_alone`：带一行格子的粘性页眉与 body 为粘性的模态框，不整齐步长滚动，每步只重建两个粘性条目，指针网格与冷建一致，贴住的 body 只在框架排出的 body 盒子里接指针。
+- `crates/nana-ui-runtime/src/world/accessibility/relative_tests.rs`：不整齐步长、滚动、缩放、转过、钉子、Select、原地改尺寸；`placed_corners_are_the_turned_corners_of_a_cold_projection` 是等价性测试；`a_scroll_projects_the_scroller_and_its_pins_alone`：滚动列表里的粘性页眉、`fixed`、绝对定位与嵌套滚动容器，不整齐步长连续滚动、两个容器同帧滚动、滚动夹着平移、最后滚回原点，每帧增量与全量投影逐位相同，只投影容器与钉子。
 - `crates/nana-ui-runtime/src/world/line_box_memo.rs`：行盒记忆按种子类别清。
 - `crates/nana-ui/src/scene_paint/tests.rs` 的 `rows_a_reflow_moves_by_a_fraction_paint_what_a_cold_scene_does`：1、1.1、1.2、1.75 倍下行一帧挪 0.37 px，逐像素对比冷场景。
 
@@ -409,6 +412,7 @@ cargo run --release -p component-gallery --bin ui-snapshots --features snapshots
 - **从视口来、自带框架的盒子跟着父节点平移**（转过空间里的 `sticky`、从移动的行量起的绝对定位、自己转的 `fixed`）：它自己重投影（`keeps_relative_bounds` 对 `framed` 答「不保留」），bounds 是页面位置过映射得来，末位随平移变；它下面按偏移放置的盒子不动。
 - **改变换时仍整棵的**：自带框架与只是平移之间切换（空间换了）；盒子自己裁剪（子孙的 `clip` 在视口坐标里）；3D 上下文下面的缩放（`style_frames_its_space` 不成立）；命中上不交出本地坐标的条目整棵修补分支；剔除索引对祖先投影变了的子树 `refresh_subtree`，转过以后边界不是平移能得到的（成本没有单独量过）。
 - **滚动容器里的平移剩下 O(移动行数) 的常数**：内容范围每个移动的行一次叶子写入（惰性区间平移做不到逐位：叶子是 `fl(子节点范围 + 偏移)`，「旧叶子 + 位移」在末位不同）；无障碍每个移动的行自己的视口盒判定、裁剪查表和变换记忆（子节点「有没有视口盒」要看子节点自己的页面盒子过映射是否有限，父节点一次判定不了）。
+- **滚动的剩余成本**：滚动容器自己要重新投影，它的子节点列表随投影重建一次（O(直接子节点)，21 001 盒的页上约 0.2 M 条指令）；每个粘性盒子在命中索引里重建自己一个条目、在无障碍里投影自己一个节点（不管贴没贴住，都要算一遍粘性偏移才知道变没变；节点的子节点列表要随节点一起发，见上一条）；嵌套在滚过的容器里的滚动容器、以及滚动容器里任何裁剪的盒子，无障碍上整棵重投影（`clip` 在视口坐标里）。都跟着钉子走，每个钉子的成本不随它装着的盒子增长，也不随盒子总数增长。
 - **平移的根本身**：它的相对偏移确实变了，无障碍、命中、提取都要处理每个平移根，这是下限。
 
 ## 11. 新增功能时的检查清单
@@ -441,6 +445,8 @@ cargo run --release -p component-gallery --bin ui-snapshots --features snapshots
 | be0a703c8 | 节点空间分类 `NodeSpace` 与 `space_pins` / `page_bound` 索引 |
 | 596930d22 | 自带变换的盒子原地改尺寸一律当遍历根 |
 | e443a2a1e、e41729572、138c79333 | 拆分 `world/accessibility/`、`world/hit_test/`、`nana-ui-scene/src/scene/` |
+| a2b52d862 | 滚动只改滚动容器：`AccessibilityNode::scroll` 与 `SystemWork::accessibility_scrolled`，滚过的容器只投影自己与钉子；命中里粘性条目原地重建 |
 | 2572617f5 | 接回合并 3fab98a65 丢掉的 `non_scroll_hit_dirty` 判定与清空：滚动容器同帧改盒子不再走滚动快路径 |
+| 36c731159、62a76afe6 | 滚回原点时贴住过的粘性节点重新投影；粘性偏移进命中条目的 `origin`：贴住的粘性盒子只重建自己一个条目，一次滚动的命中成本不随粘性分支里的盒子数增长 |
 
 各阶段的基准见 [资源预算 · CPU 时间](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/resource-budgets.md#cpu-时间)。逐项的做法与变异实验记录在各提交的提交信息里，以及当时版本的本文（`git show <提交>:docs/reference/relative-geometry.md`）。

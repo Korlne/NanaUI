@@ -10,11 +10,24 @@ pub struct RasterizedSvg {
     pub rgba: Arc<[u8]>,
 }
 
-/// Embedded font for SVG `<text>`.
-#[derive(Debug, Clone, Copy)]
-pub struct SvgFont<'a> {
-    pub bytes: &'a [u8],
-    pub family: &'a str,
+/// One font file's bytes, shared with whoever owns them.
+pub type SvgFontData = Arc<dyn AsRef<[u8]> + Send + Sync>;
+
+/// The faces SVG `<text>` may be drawn with.
+///
+/// This crate finds no fonts itself: the caller's font system says which
+/// files to read and what the generic families are called, so SVG text
+/// follows the same sources and fallback as the rest of the application.
+/// The files are shared, never copied. A family the document names that is
+/// not among `faces` is drawn in the sans-serif one.
+#[derive(Clone, Default)]
+pub struct SvgFonts {
+    /// Font files. Every face of a collection is available.
+    pub faces: Vec<SvgFontData>,
+    /// What `sans-serif` is called, and the default for unnamed text.
+    pub sans_serif: Option<String>,
+    pub serif: Option<String>,
+    pub monospace: Option<String>,
 }
 
 /// Generic `<svg>`: stretch independently to `width`×`height`.
@@ -22,7 +35,7 @@ pub fn rasterize_stretch(
     markup: &str,
     width: u32,
     height: u32,
-    font: Option<SvgFont<'_>>,
+    fonts: Option<&SvgFonts>,
     max_edge: u32,
 ) -> Option<RasterizedSvg> {
     let width = width.clamp(1, max_edge.max(1));
@@ -30,7 +43,7 @@ pub fn rasterize_stretch(
     render(
         Source::Str(markup),
         Some((width as f32, height as f32)),
-        font,
+        fonts,
         None,
         Fit::Stretch { width, height },
         None,
@@ -69,20 +82,20 @@ pub fn rasterize_document(bytes: &[u8]) -> Option<RasterizedSvg> {
 
 /// URL image decode: document size, straight alpha, contained within `max_edge`.
 pub fn rasterize_document_capped(bytes: &[u8], max_edge: u32) -> Option<RasterizedSvg> {
-    rasterize_document_capped_with_font(bytes, max_edge, None)
+    rasterize_document_capped_with_fonts(bytes, max_edge, None)
 }
 
-/// URL SVG decode using the host's existing UI font for SVG text.
-/// Embedded glyph paths do not require a font.
-pub fn rasterize_document_capped_with_font(
+/// URL SVG decode with the faces SVG text is drawn with. Without them text
+/// is not drawn; glyphs embedded as paths need no font.
+pub fn rasterize_document_capped_with_fonts(
     bytes: &[u8],
     max_edge: u32,
-    font: Option<SvgFont<'_>>,
+    fonts: Option<&SvgFonts>,
 ) -> Option<RasterizedSvg> {
     render(
         Source::Bytes(bytes),
         None,
-        font,
+        fonts,
         None,
         Fit::DocumentCapped { max_edge },
         None,
@@ -105,7 +118,7 @@ enum Fit {
 fn render(
     source: Source<'_>,
     default_size: Option<(f32, f32)>,
-    font: Option<SvgFont<'_>>,
+    fonts: Option<&SvgFonts>,
     replace_current_color: Option<&str>,
     fit: Fit,
     force_rgb: Option<[u8; 3]>,
@@ -117,11 +130,21 @@ fn render(
     if let Some((width, height)) = default_size {
         options.default_size = resvg::usvg::Size::from_wh(width, height)?;
     }
-    if let Some(font) = font {
+    if let Some(fonts) = fonts.filter(|fonts| !fonts.faces.is_empty()) {
         let mut fontdb = resvg::usvg::fontdb::Database::new();
-        fontdb.load_font_data(font.bytes.to_vec());
-        fontdb.set_sans_serif_family(font.family);
-        options.font_family = font.family.into();
+        for face in &fonts.faces {
+            fontdb.load_font_source(resvg::usvg::fontdb::Source::Binary(Arc::clone(face)));
+        }
+        if let Some(family) = &fonts.sans_serif {
+            fontdb.set_sans_serif_family(family);
+            options.font_family = family.clone();
+        }
+        if let Some(family) = &fonts.serif {
+            fontdb.set_serif_family(family);
+        }
+        if let Some(family) = &fonts.monospace {
+            fontdb.set_monospace_family(family);
+        }
         options.fontdb = Arc::new(fontdb);
     }
     let tree = match (source, replace_current_color) {

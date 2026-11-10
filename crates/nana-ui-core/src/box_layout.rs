@@ -9,6 +9,7 @@
 //! `resolved_padding_against` / `resolved_margin_against` / gap helpers.
 //! Prefer extending these over duplicating box math in adapters.
 
+use crate::sort::CompactSort as _;
 use serde::{Deserialize, Serialize};
 
 use crate::scrollbar::ScrollbarSkin;
@@ -197,6 +198,9 @@ pub enum DisplaySpec {
     /// 同一格的单格网格。它按网格排版：轨道固定为一行一列 `auto`，放置时这一格
     /// 撑满容器内容盒；子项自己的网格位置不起作用。
     Layers,
+    /// `display: flow-root`：与 [`Self::Block`] 同为块级块容器，另外自己建立
+    /// 块格式化上下文（BFC），自动高度包住浮动子项。
+    FlowRoot,
 }
 
 /// The one track each axis of a [`DisplaySpec::Layers`] container has: as
@@ -223,6 +227,11 @@ impl DisplaySpec {
     /// `display: contents`。
     pub fn is_contents(self) -> bool {
         matches!(self, Self::Contents)
+    }
+
+    /// `display: flow-root`：自己建立块格式化上下文的块容器。
+    pub fn is_flow_root(self) -> bool {
+        matches!(self, Self::FlowRoot)
     }
 
     /// 行内级（`inline` / `inline-block`）。flex/grid 项会被块化。
@@ -964,7 +973,7 @@ pub fn resolve_grid_track_sizes(
             break;
         }
 
-        freeze.sort_by_key(|(idx, _)| *idx);
+        freeze.compact_sort_by_key(|(idx, _)| *idx);
         for (idx, frozen_w) in freeze.into_iter().rev() {
             let (i, _, _, _) = active.remove(idx);
             widths[i] = frozen_w;
@@ -4013,6 +4022,34 @@ impl LayoutStyle {
     /// `align-self: auto` → 容器 `align-items`；否则用自身值。
     pub fn resolved_align_self(&self, parent_align_items: AlignSpec) -> AlignSpec {
         self.align_self.unwrap_or(parent_align_items)
+    }
+
+    /// The alignment this container's children take when they name none:
+    /// what [`Self::resolved_align_self`] falls back to.
+    ///
+    /// A block container stacking its children down the block axis lays
+    /// them out as CSS block layout does, which has no `align-items`: a
+    /// block-level child whose width is `auto` fills the containing block,
+    /// less its margins (CSS 2.1 §10.3.3). That is `display: block`,
+    /// `flow-root`, and an unset `display`, which is the same flow. A
+    /// container laid along a row, and every flex, grid and layers
+    /// container, aligns by its own `align_items`.
+    pub fn child_align_items(&self) -> AlignSpec {
+        if self.stacks_as_block() {
+            AlignSpec::Stretch
+        } else {
+            self.align_items
+        }
+    }
+
+    /// Whether this container stacks its children as CSS block layout does
+    /// (see [`Self::child_align_items`]): `display` unset, `block` or
+    /// `flow-root`, not laid along a row.
+    pub fn stacks_as_block(&self) -> bool {
+        matches!(
+            self.display,
+            None | Some(DisplaySpec::Block | DisplaySpec::FlowRoot)
+        ) && self.direction != Some(FlexDirection::Row)
     }
 
     pub fn gap_or(&self, default: f32) -> f32 {

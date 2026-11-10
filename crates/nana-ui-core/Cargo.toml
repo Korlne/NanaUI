@@ -13,8 +13,9 @@ path = "src/lib.rs"
 [features]
 default = []
 # The bundled Noto Sans SC variable face (~4.4 MB, `wght` 400..700, default
-# Regular). Every consumer of the SVG rasterizer or Canvas2D text needs it;
-# those paths have no other fallback.
+# Regular), as bytes: for tests and benchmarks that build a font set of their
+# own. No drawing path reads it directly; what is drawn with is whatever the
+# host's font set holds.
 bundled-font-regular = []
 # The same face as the theme's UI font set (`ui_font_sources`), which desktop
 # theme hosts register with the text engine; embeds nothing more. The Android

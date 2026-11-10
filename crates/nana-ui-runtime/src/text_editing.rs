@@ -11,6 +11,7 @@
 //! stand serves the Runtime editors and the editable text path alike.
 
 use nana_text::editable::navigation;
+use nana_ui_core::sort::CompactSort as _;
 use unicode_segmentation::UnicodeSegmentation;
 
 /// Move `offset` to the next grapheme boundary. `None` at the end of value.
@@ -115,7 +116,7 @@ pub(crate) fn atoms_in(value: &str, atoms: &[crate::TextAtomSpan]) -> Vec<crate:
         })
         .cloned()
         .collect();
-    spans.sort_by_key(|atom| (atom.start, atom.end));
+    spans.compact_sort_by_key(|atom| (atom.start, atom.end));
     let mut cleaned = Vec::with_capacity(spans.len());
     let mut cursor = 0usize;
     for atom in spans {
@@ -1338,7 +1339,7 @@ pub fn sort_lines(
         .map(|&(start, end)| &value[start..end])
         .collect();
     if descending {
-        rows.sort_unstable_by(|left, right| right.cmp(left));
+        rows.compact_sort_by(|left, right| right.cmp(left));
     } else {
         rows.sort_unstable();
     }
@@ -1521,7 +1522,7 @@ pub fn bracket_pair_colorization(value: &str) -> (Vec<(usize, usize, usize)>, Ve
         }
     }
     unmatched.extend(stack.into_iter().map(|open| open.offset));
-    pairs.sort_unstable_by_key(|&(start, _, _)| start);
+    pairs.compact_sort_by_key(|&(start, _, _)| start);
     unmatched.sort_unstable();
     (pairs, unmatched)
 }
@@ -2050,7 +2051,7 @@ pub fn apply_cursor_edits(
     if accepted.is_empty() {
         return None;
     }
-    accepted.sort_by_key(|(span, _)| (span.range.start, span.range.end));
+    accepted.compact_sort_by_key(|(span, _)| (span.range.start, span.range.end));
     let inserted_bytes: usize = accepted.iter().map(|(span, _)| span.insert.len()).sum();
     let mut next = String::with_capacity(value.len() + inserted_bytes);
     let mut cursor = 0usize;

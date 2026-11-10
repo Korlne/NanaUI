@@ -237,13 +237,15 @@ nana-ui = { git = "https://github.com/sena-nana/NanaUI", features = ["hosted", "
 | Feature | Purpose |
 | --- | --- |
 | `hosted` | Desktop host: windows, event loop, platform accessibility; implies `gpu` |
-| `bundled-fonts` | Ships Noto Sans SC as the default UI font |
+| `bundled-fonts` | Ships Noto Sans SC as the default UI font (about 4.2 MiB); without it text uses system fonts |
 | `view-macro` | The `view!`, `css!` and `stylesheet!` macros |
 | `components` | Calendar, charts, node graph, image viewer, rich text and other control families |
 | `wgpu-interop` | Access to the WGPU objects behind `GpuContext` |
-| `full` | `hosted`, `bundled-fonts`, `components`, `syntax-highlighting`, `icu` |
+| `snippet-transforms` | Regular-expression transforms in snippets |
+| `svg` | SVG images (icons are drawn from their own geometry and do not need it) |
+| `full` | `hosted`, `bundled-fonts`, `components`, `syntax-highlighting`, `icu`, `snippet-transforms`, `svg` |
 
-`wgpu-backends` and `icu` are on by default. The full list is in [`nana-ui`](crates/nana-ui).
+`wgpu-backends`, `icu`, `snippet-transforms` and `svg` are on by default; an application that sets `default-features = false` names the ones it uses. The full list is in [`nana-ui`](crates/nana-ui).
 
 </details>
 

@@ -612,6 +612,50 @@ fn push_unique_clip(extras: &mut Vec<FragmentClip>, clip: FragmentClip) {
     extras.push(clip);
 }
 
+/// Whether `clip`, in dest physical pixels, keeps every pixel of `painted`
+/// whole: an axis-aligned rounded rectangle that `painted` lies inside and
+/// whose corner squares it does not reach. Its coverage there is exactly one
+/// (every pixel centre sits at least half a pixel inside a straight edge), so
+/// a dest group for it would composite what was drawn unchanged.
+pub(super) fn keeps_all_of(clip: FragmentClip, painted: PhysicalRect) -> bool {
+    if painted.width == 0 || painted.height == 0 {
+        return true;
+    }
+    let [a, b, c, d] = clip.inv_abcd;
+    if clip.polygon_count != 0 || b != 0.0 || c != 0.0 {
+        return false;
+    }
+    if !(a.is_finite() && d.is_finite() && a != 0.0 && d != 0.0) {
+        return false;
+    }
+    let [x, y, width, height] = clip.rect;
+    let [e, f] = clip.inv_ef;
+    // The inverse takes dest to clip-local: `local = a * dest + e`.
+    let span = |start: f32, length: f32, scale: f32, offset: f32| {
+        let one = (start - offset) / scale;
+        let other = (start + length - offset) / scale;
+        (one.min(other), one.max(other))
+    };
+    let (left, right) = span(x, width, a, e);
+    let (top, bottom) = span(y, height, d, f);
+    let radius = clip
+        .corner_radius
+        .min(width * 0.5)
+        .min(height * 0.5)
+        .max(0.0);
+    let (corner_x, corner_y) = (radius / a.abs(), radius / d.abs());
+    let x0 = painted.x as f32;
+    let y0 = painted.y as f32;
+    let x1 = (painted.x + painted.width) as f32;
+    let y1 = (painted.y + painted.height) as f32;
+    if !(x0 >= left && x1 <= right && y0 >= top && y1 <= bottom) {
+        return false;
+    }
+    let beside_corner_column = x0 < left + corner_x || x1 > right - corner_x;
+    let beside_corner_row = y0 < top + corner_y || y1 > bottom - corner_y;
+    !(beside_corner_column && beside_corner_row)
+}
+
 /// Mesh GpuClip and text own the innermost polygon or ellipse; drop it from
 /// dest extras, or an ellipse's edge ramp would fade twice.
 pub(super) fn mesh_extra_fragment_clips(

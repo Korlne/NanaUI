@@ -109,7 +109,7 @@ pub use store::{Paths, StoreKey};
 pub use structural::{Dynamic, Each, EachExt, EachIn, When, WhenExt, dynamic, each, when};
 #[doc(hidden)]
 pub use style::ComposedLayout;
-pub use style::{Class, InlineStyle, Sheet, StylePatch, StyleSite};
+pub use style::{__style_value, Class, InlineStyle, Sheet, StylePatch, StyleSite};
 #[doc(hidden)]
 pub use style::{SheetQuery, SheetRule, SheetTransition};
 pub use task::{

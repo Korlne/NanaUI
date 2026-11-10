@@ -25,6 +25,7 @@
 //! editor's rich session can keep its own attribute type over the same
 //! operations.
 
+use crate::sort::CompactSort as _;
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -137,7 +138,7 @@ impl<A: Clone + PartialEq> AttributedRanges<A> {
         {
             out.push((cursor..range.end, new));
         }
-        out.sort_by_key(|(range, _)| range.start);
+        out.compact_sort_by_key(|(range, _)| range.start);
         self.runs = out;
         self.normalize();
     }
@@ -192,7 +193,7 @@ impl<A: Clone + PartialEq> AttributedRanges<A> {
             }
             if let Some(attribute) = inherited {
                 opened.push((at..at + inserted, attribute));
-                opened.sort_by_key(|(range, _)| range.start);
+                opened.compact_sort_by_key(|(range, _)| range.start);
             }
             self.runs = opened;
         }

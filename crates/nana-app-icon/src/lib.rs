@@ -25,7 +25,7 @@ mod runtime_api {
     use image::imageops::FilterType;
     use nana_ui_platform::{WindowIcon, resolve_window_icon};
 
-    use crate::mark::rasterize;
+    use crate::mark::{RUNTIME_SIZE, runtime_mark};
 
     /// macOS Dock 按系统格子展示图标：全幅品牌图默认收进格子（内容占画布
     /// 828/1024，居中于透明底）。已声明 `exact_pixels` 的素材原样返回。
@@ -65,7 +65,7 @@ mod runtime_api {
     pub fn default_window_icon() -> WindowIcon {
         static ICON: std::sync::OnceLock<WindowIcon> = std::sync::OnceLock::new();
         ICON.get_or_init(|| {
-            WindowIcon::from_rgba(rasterize(256), 256, 256)
+            WindowIcon::from_rgba(runtime_mark(), RUNTIME_SIZE, RUNTIME_SIZE)
                 .expect("default mark is valid RGBA")
                 .exact_pixels(true)
         })

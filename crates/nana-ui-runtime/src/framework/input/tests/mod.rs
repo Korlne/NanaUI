@@ -41,6 +41,7 @@ mod dispatch;
 mod hover_card;
 mod menu_keys;
 mod modal_handles;
+mod pointer_gestures;
 mod popover_trigger;
 mod rich_editor;
 mod router;

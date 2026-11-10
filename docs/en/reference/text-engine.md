@@ -68,7 +68,7 @@ Product text **measurement** goes through `crates/nana-ui/src/nana_text.rs`, whi
 | Glyph outline rasterization | **Mature crate** (swash, only behind `raster/outline.rs` in `nana-text`) | #97 explicitly lists rewriting a TrueType rasterizer as a non-goal |
 | Rectangle packing | **Mature crate** (etagere, only behind `scene_paint/text/atlas.rs`) | Same; Nana owns the atlas policy, not the packing algorithm |
 
-`nana-text` may import only these `nana_ui_core` items: `DirSpec`, `FontFeatureSetting`, `FontKerningSpec`, `FontVariationSetting`, `LineBreakSpec`, `LineHeightSpec`, `TextAlignSpec`, `TextWrapBreak`, `WordBreakSpec`, `WritingModeSpec`.
+`nana-text` may import only these `nana_ui_core` items: `DirSpec`, `FontFeatureSetting`, `FontKerningSpec`, `FontVariationSetting`, `LineBreakSpec`, `LineHeightSpec`, `TextAlignSpec`, `TextWrapBreak`, `WordBreakSpec`, `WritingModeSpec`. The full list is `NANA_TEXT_CORE_ALLOWLIST` in `scripts/check-engine-boundary.py`. One entry, `nana_ui_core::sort`, is not vocabulary: it is the one sorting routine the framework's call sites share, and a second copy here would bring back the 6 KiB per call site it removes.
 
 Anything else is a boundary violation, for example `LayoutStyle`, `ComputedStyle`, semantic colors, or geometry. See "How the boundary is enforced by machine".
 

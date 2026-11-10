@@ -22,6 +22,16 @@ struct Level {
     autos: HashMap<&'static str, usize>,
 }
 
+/// What [`UiBuilder::child`] found under its key.
+enum ChildClaim {
+    /// The build already failed, or the key is invalid or taken.
+    Failed,
+    /// The node the key named last time, of the same type.
+    Reuse(StableNodeId),
+    /// No such node: create one and attach it by this key.
+    Create(String),
+}
+
 /// Nested tree builder that commits one mutation batch, then installs handlers.
 pub(crate) struct UiBuilder<'a> {
     context: &'a mut AppContext,
@@ -162,10 +172,28 @@ impl<'a> UiBuilder<'a> {
         let id = self.context.allocate_id();
         self.queue.create(id, self.document, component.node_kind());
         component.project(id, &self.context.world, &mut self.queue);
-        self.context.stamp_component_type::<C>(id, &mut self.queue);
-        self.pending_views.insert(id, Box::new(component));
-        self.lifecycle.push(id);
+        self.install_view(
+            id,
+            &super::registry::ViewType::of::<C>(),
+            Box::new(component),
+        );
         Entity::from_stable_id(id)
+    }
+
+    /// Stamp the type of the node `id` and keep its projected view for the
+    /// commit. Takes the view erased: what a component type costs a build
+    /// is its own projection, not a copy of this bookkeeping.
+    #[inline(never)]
+    fn install_view(
+        &mut self,
+        id: StableNodeId,
+        view: &super::registry::ViewType,
+        component: Box<dyn Any + Send>,
+    ) {
+        self.context
+            .stamp_component_type_erased(id, &mut self.queue, view);
+        self.pending_views.insert(id, component);
+        self.lifecycle.push(id);
     }
 
     fn slots(&mut self, parent: StableNodeId) -> &mut HashMap<String, AssembledChild> {
@@ -186,22 +214,18 @@ impl<'a> UiBuilder<'a> {
     /// Key `root`, a top-level node of this detached build, under `parent`,
     /// the existing node it will be placed in: what [`Self::child`] records
     /// for a node built under its parent. `parent`'s other keys stay.
-    pub(crate) fn key_parked_root<C: ComponentView>(
+    pub(crate) fn key_parked_root(
         &mut self,
         parent: StableNodeId,
         key: String,
-        root: Entity<C>,
+        root: StableNodeId,
+        type_id: TypeId,
     ) {
         if self.error.is_some() || self.stack.len() != 1 || self.current().parent.is_some() {
             return;
         }
-        self.slots(parent).insert(
-            key,
-            AssembledChild {
-                id: root.id,
-                type_id: TypeId::of::<C>(),
-            },
-        );
+        self.slots(parent)
+            .insert(key, AssembledChild { id: root, type_id });
     }
 
     /// Create or reuse a keyed component under the current parent.
@@ -210,47 +234,67 @@ impl<'a> UiBuilder<'a> {
         key: impl Into<String>,
         component: C,
     ) -> Entity<C> {
-        if self.error.is_some() {
-            return Entity::from_stable_id(DUMMY_NODE);
+        let type_id = TypeId::of::<C>();
+        match self.claim_child(key.into(), type_id) {
+            ChildClaim::Failed => Entity::from_stable_id(DUMMY_NODE),
+            ChildClaim::Reuse(id) => {
+                component.project(id, &self.context.world, &mut self.queue);
+                self.install_view(
+                    id,
+                    &super::registry::ViewType::of::<C>(),
+                    Box::new(component),
+                );
+                Entity::from_stable_id(id)
+            }
+            ChildClaim::Create(key) => {
+                let entity = self.spawn(component);
+                self.attach_child(key, entity.id, type_id);
+                entity
+            }
         }
-        let key = key.into();
+    }
+
+    /// The keyed half of [`Self::child`] that comes before the component is
+    /// projected: the key is checked and marked seen, and the node it named
+    /// in the last build is either reused or queued for removal.
+    #[inline(never)]
+    fn claim_child(&mut self, key: String, type_id: TypeId) -> ChildClaim {
+        if self.error.is_some() {
+            return ChildClaim::Failed;
+        }
         if !super::valid_assembly_key(&key) {
-            return self.fail(FrameworkError::InvalidInput);
+            self.fail::<Stack>(FrameworkError::InvalidInput);
+            return ChildClaim::Failed;
         }
         if !self.current_mut().seen_keys.insert(key.clone()) {
             let parent = self.current().parent.unwrap_or(DUMMY_NODE);
-            return self.fail(FrameworkError::DuplicateAssemblyKey { parent, key });
+            self.fail::<Stack>(FrameworkError::DuplicateAssemblyKey { parent, key });
+            return ChildClaim::Failed;
         }
         self.current_mut().seen.push(key.clone());
-        let type_id = TypeId::of::<C>();
         if let Some(parent) = self.current().parent
             && let Some(existing) = self.slots(parent).get(&key).copied()
         {
             if existing.type_id == type_id {
-                component.project(existing.id, &self.context.world, &mut self.queue);
-                self.context
-                    .stamp_component_type::<C>(existing.id, &mut self.queue);
-                self.pending_views.insert(existing.id, Box::new(component));
-                self.lifecycle.push(existing.id);
-                return Entity::from_stable_id(existing.id);
+                return ChildClaim::Reuse(existing.id);
             }
             self.queue_despawn(existing.id);
         }
-        let entity = self.spawn(component);
+        ChildClaim::Create(key)
+    }
+
+    /// The keyed half of [`Self::child`] that follows a new node: it goes
+    /// under the current parent by `key`, or is parked as a detached root.
+    #[inline(never)]
+    fn attach_child(&mut self, key: String, id: StableNodeId, type_id: TypeId) {
         if let Some(parent) = self.current().parent {
-            self.queue.insert(parent, entity.id, None);
-            self.appended.entry(parent).or_default().push(entity.id);
-            self.slots(parent).insert(
-                key,
-                AssembledChild {
-                    id: entity.id,
-                    type_id,
-                },
-            );
+            self.queue.insert(parent, id, None);
+            self.appended.entry(parent).or_default().push(id);
+            self.slots(parent)
+                .insert(key, AssembledChild { id, type_id });
         } else if self.park_roots {
-            self.queue.park_subtree(entity.id);
+            self.queue.park_subtree(id);
         }
-        entity
     }
 
     /// Register an event handler after the tree batch commits.

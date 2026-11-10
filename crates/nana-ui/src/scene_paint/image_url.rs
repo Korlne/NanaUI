@@ -323,18 +323,89 @@ impl PathExt<'_> {
     }
 }
 
+#[cfg(feature = "svg")]
 const MAX_SVG_EDGE: u32 = 2048;
 
+/// Without `svg` there is no SVG reader: the document is one more image
+/// that cannot be decoded.
+#[cfg(not(feature = "svg"))]
+fn decode_svg_rgba(_bytes: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
+    None
+}
+
+#[cfg(feature = "svg")]
 fn decode_svg_rgba(bytes: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
-    #[cfg(any(feature = "rich-text", feature = "bundled-fonts"))]
-    let font = Some(nana_svg_raster::SvgFont {
-        bytes: nana_ui_core::fonts::UI_FONT_REGULAR,
-        family: nana_ui_core::fonts::UI_FONT_FAMILY,
-    });
-    #[cfg(not(any(feature = "rich-text", feature = "bundled-fonts")))]
-    let font = None;
-    let raster = nana_svg_raster::rasterize_document_capped_with_font(bytes, MAX_SVG_EDGE, font)?;
+    let fonts = svg_text_fonts(bytes);
+    let raster =
+        nana_svg_raster::rasterize_document_capped_with_fonts(bytes, MAX_SVG_EDGE, fonts.as_ref())?;
     Some((raster.width, raster.height, raster.rgba.to_vec()))
+}
+
+/// The faces a document's `<text>` is drawn with: what the one font set
+/// resolves for the characters the document holds. SVG text therefore has
+/// the sources, the generic families and the fallback interface text has,
+/// with or without the bundled face, and the files are the font set's own
+/// bytes.
+///
+/// `None` for a document without text, which is most of them: nothing is
+/// asked of the font set. Otherwise it is asked for as little as the markup
+/// can need, because a face it resolves is a file the font set then holds,
+/// and a platform's CJK collection is tens of megabytes: `sans-serif`
+/// always (it is also what an unknown family falls back to), `serif` and
+/// `monospace` only when the markup names them, bold only when it mentions
+/// a weight. A compressed document cannot be searched, so it gets regular
+/// `sans-serif` alone.
+#[cfg(feature = "svg")]
+fn svg_text_fonts(bytes: &[u8]) -> Option<nana_svg_raster::SvgFonts> {
+    let markup = std::str::from_utf8(bytes).ok();
+    if markup.is_some_and(|markup| !markup.contains("<text")) {
+        return None;
+    }
+    let mentions = |word: &str| markup.is_some_and(|markup| markup.contains(word));
+    let characters: String = markup
+        .unwrap_or_default()
+        .chars()
+        .filter(|character| !character.is_control())
+        .collect::<std::collections::BTreeSet<char>>()
+        .into_iter()
+        .collect();
+    let weights: &[u16] = if mentions("font-weight") || mentions("bold") {
+        &[400, 700]
+    } else {
+        &[400]
+    };
+    // One entry per file: the faces of a collection share their bytes, and
+    // the reader takes every face of a file it is handed.
+    let mut files: Vec<*const u8> = Vec::new();
+    let mut faces = Vec::new();
+    let mut family_of = |generic: &str| {
+        let mut name = None;
+        for weight in weights {
+            for face in crate::text_engine::resolve_faces(generic, *weight, &characters) {
+                name.get_or_insert_with(|| face.family.to_string());
+                let file = face.data.bytes().as_ptr();
+                if !files.contains(&file) {
+                    files.push(file);
+                    faces.push(face.data.blob());
+                }
+            }
+        }
+        name
+    };
+    let sans_serif = family_of("sans-serif");
+    let serif = markup
+        .is_some_and(|markup| markup.replace("sans-serif", "").contains("serif"))
+        .then(|| family_of("serif"))
+        .flatten();
+    let monospace = mentions("monospace")
+        .then(|| family_of("monospace"))
+        .flatten();
+    Some(nana_svg_raster::SvgFonts {
+        faces,
+        sans_serif,
+        serif,
+        monospace,
+    })
 }
 
 #[cfg(test)]
@@ -670,6 +741,16 @@ mod tests {
         );
     }
 
+    #[cfg(not(feature = "svg"))]
+    #[test]
+    fn an_svg_is_an_unreadable_image_without_its_reader() {
+        let svg = br##"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="2"><rect width="4" height="2" fill="#00ff00"/></svg>"##;
+        assert!(decode_image_bytes(svg).is_none());
+        let url = format!("data:image/svg+xml,{}", String::from_utf8_lossy(svg));
+        assert!(decode_url_rgba(&url).is_none());
+    }
+
+    #[cfg(feature = "svg")]
     #[test]
     fn svg_bytes_rasterize_straight_rgba() {
         let svg = br##"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="2"><rect width="4" height="2" fill="#00ff00"/></svg>"##;
@@ -678,6 +759,7 @@ mod tests {
         assert_eq!(&rgba[..4], &[0x00, 0xff, 0x00, 0xff]);
     }
 
+    #[cfg(feature = "svg")]
     #[test]
     fn svg_image_href_does_not_read_local_file() {
         let dir = std::env::temp_dir().join(format!("nanaui-svg-href-{}", std::process::id()));
@@ -700,6 +782,7 @@ mod tests {
         assert_eq!(red, 0, "usvg must not fs::read image href");
     }
 
+    #[cfg(feature = "svg")]
     #[test]
     fn svg_data_url_decodes() {
         let svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"2\" height=\"2\"><rect width=\"2\" height=\"2\" fill=\"#ff0000\"/></svg>";
@@ -709,6 +792,7 @@ mod tests {
         assert_eq!(&rgba[..4], &[0xff, 0x00, 0x00, 0xff]);
     }
 
+    #[cfg(feature = "svg")]
     #[test]
     fn inline_svg_path_rasterizes_via_resvg() {
         let svg = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><path d="M0 0 H10 V10 H0 Z" fill="#ff00ff"/></svg>"##;
@@ -723,6 +807,7 @@ mod tests {
         assert_eq!(&rgba[..4], &[0xff, 0x00, 0xff, 0xff]);
     }
 
+    #[cfg(feature = "svg")]
     #[test]
     fn svg_raster_size_is_capped_without_aspect_distortion() {
         let svg = br##"<svg xmlns="http://www.w3.org/2000/svg" width="8000" height="2000"><rect width="8000" height="2000" fill="#0000ff"/></svg>"##;
@@ -739,6 +824,7 @@ mod tests {
         assert!(!looks_like_svg_url("icons/mark.png"));
     }
 
+    #[cfg(feature = "svg")]
     #[test]
     fn svg_base64_data_url_decodes() {
         let svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"1\" height=\"1\"><rect width=\"1\" height=\"1\" fill=\"#010203\"/></svg>";
@@ -749,7 +835,64 @@ mod tests {
         assert_eq!((width, height), (1, 1));
         assert_eq!(&rgba[..4], &[0x01, 0x02, 0x03, 0xff]);
     }
-    #[cfg(any(feature = "rich-text", feature = "bundled-fonts"))]
+
+    #[cfg(feature = "svg")]
+    fn inked(pixels: &[u8]) -> usize {
+        pixels
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .filter(|pixel| pixel[3] > 0)
+            .count()
+    }
+
+    /// SVG text asks the one font set, whatever it holds: the platform's
+    /// fonts here when the bundled face is not compiled in.
+    #[cfg(feature = "svg")]
+    #[test]
+    fn svg_text_is_drawn_with_the_faces_the_font_set_resolves() {
+        let svg = br#"<svg xmlns="http://www.w3.org/2000/svg" width="180" height="40"><text x="2" y="30" font-family="sans-serif" font-size="24" fill="red">Mermaid</text></svg>"#;
+        let fonts = svg_text_fonts(svg).expect("a document with text asks for fonts");
+        if fonts.faces.is_empty() {
+            // A machine with no fonts and no bundled face has nothing to draw with.
+            return;
+        }
+        assert!(fonts.sans_serif.is_some(), "sans-serif has a name");
+        let (width, height, pixels) = decode_svg_rgba(svg).unwrap();
+        assert_eq!((width, height), (180, 40));
+        assert!(inked(&pixels) > 50, "SVG text must produce glyph pixels");
+    }
+
+    #[cfg(feature = "svg")]
+    #[test]
+    fn a_document_without_text_asks_the_font_set_for_nothing() {
+        let svg = br##"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="2"><rect width="4" height="2" fill="#00ff00"/></svg>"##;
+        assert!(svg_text_fonts(svg).is_none());
+    }
+
+    /// A face the font set resolves is a file it then holds, so a family the
+    /// markup never names is not asked for.
+    #[cfg(feature = "svg")]
+    #[test]
+    fn svg_text_asks_only_for_the_generic_families_its_markup_names() {
+        let document = |family: &str| {
+            format!(
+                r#"<svg xmlns="http://www.w3.org/2000/svg" width="80" height="20"><text font-family="{family}">a</text></svg>"#
+            )
+        };
+        let plain = svg_text_fonts(document("sans-serif").as_bytes()).unwrap();
+        assert_eq!((plain.serif, plain.monospace), (None, None));
+        if plain.faces.is_empty() {
+            // A machine with no fonts and no bundled face resolves nothing.
+            return;
+        }
+        let serif = svg_text_fonts(document("serif").as_bytes()).unwrap();
+        assert!(serif.serif.is_some() && serif.monospace.is_none());
+        let mono = svg_text_fonts(document("monospace").as_bytes()).unwrap();
+        assert!(mono.monospace.is_some() && mono.serif.is_none());
+    }
+
+    #[cfg(all(feature = "svg", feature = "bundled-fonts"))]
     #[test]
     fn svg_text_uses_the_existing_ui_font_for_latin_and_cjk() {
         for text in ["Mermaid", "流程图"] {
@@ -758,23 +901,14 @@ mod tests {
             );
             let (width, height, pixels) = decode_svg_rgba(svg.as_bytes()).unwrap();
             assert_eq!((width, height), (180, 40));
-            assert!(
-                pixels
-                    .as_chunks::<4>()
-                    .0
-                    .iter()
-                    .filter(|pixel| pixel[3] > 0)
-                    .count()
-                    > 50,
-                "SVG text must produce glyph pixels"
-            );
+            assert!(inked(&pixels) > 50, "SVG text must produce glyph pixels");
         }
     }
 
     /// The bundled face is variable: `font-weight` reaches its `wght` axis in
     /// the SVG rasterizer too, so bold SVG text is drawn heavier rather than
     /// with the Regular outlines.
-    #[cfg(any(feature = "rich-text", feature = "bundled-fonts"))]
+    #[cfg(all(feature = "svg", feature = "bundled-fonts"))]
     #[test]
     fn svg_text_weight_drives_the_bundled_wght_axis() {
         let ink = |weight: u16, text: &str| -> u32 {

@@ -279,10 +279,10 @@ pub use nana_icons_tabler as icons_tabler;
 pub use nana_text::use_hermetic_fonts;
 pub use nana_text::{
     HostFontError, HostFontRegistration, HostFontScope, HostFontStyle, NanaTextShaper,
-    alias_host_font_face_local, register_host_font_bytes, register_host_font_face,
-    register_host_font_face_source, register_host_font_face_styled, register_host_font_file,
-    register_host_font_source, register_host_font_source_file, set_sans_serif_family,
-    shaped_face_families, unregister_host_font,
+    ResolvedFontFace, alias_host_font_face_local, register_host_font_bytes,
+    register_host_font_face, register_host_font_face_source, register_host_font_face_styled,
+    register_host_font_file, register_host_font_source, register_host_font_source_file,
+    resolve_font_faces, set_sans_serif_family, shaped_face_families, unregister_host_font,
 };
 pub use nana_ui_core::ContentFit;
 pub use nana_ui_core::ControlSize;

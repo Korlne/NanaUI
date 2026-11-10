@@ -9,6 +9,7 @@
 //! `text-justify` and `text-wrap-style: pretty` are applied by `nana-text`'s
 //! line decision (Issue #211).
 
+use crate::sort::CompactSort as _;
 use serde::{Deserialize, Serialize};
 use std::hash::{Hash, Hasher};
 
@@ -351,7 +352,7 @@ impl FontVariationSetting {
                 out.push(*axis);
             }
         }
-        out.sort_by_key(|axis| axis.tag);
+        out.compact_sort_by_key(|axis| axis.tag);
         out
     }
 

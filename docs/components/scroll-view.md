@@ -79,6 +79,8 @@ cx.set_wheel_target(header.stable_id(), Some(list));
 - 传 `None` 恢复成往 `node` 自己的祖先冒泡。两个节点都还存在就一直有效，所以可以在子树挂上之前设好；任一个被销毁，转交就自动失效。
 - 转交按节点生效，`node` 的子孙没有自己的转交时，滚轮冒泡到 `node` 就转到 `scroll`。
 
+滚动区里的节点挂了 `PointerDragged`（见 [控件](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/components.md) 的「拖动」）时，滚轮照常滚动；手指先由滚动区判断，在这个方向上能滚就滚动，拖动不开始。
+
 ## 边缘渐隐
 
 `.edge_fade(top, bottom)` 让内容在滚动口的上下边缘渐隐，长度是逻辑像素。滚动区连同它装的所有内容合成成一层，这一层的 alpha 在每条渐隐带里线性降到边缘处的 0：背后是什么就透出什么，透明背景、舞台上的浮动卡片之间的空隙都一样，不画任何表面色。滚动区的滚动条不跟着渐隐。

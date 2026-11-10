@@ -6,6 +6,7 @@
 //! [`nana_ui_input::KeyInput`]; stored chords copy that event's logical key
 //! and modifier bits. This file stays free of platform types.
 
+use nana_ui_core::sort::CompactSort as _;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::Arc;
@@ -340,7 +341,7 @@ impl ActionRegistry {
             .values()
             .filter(|action| action.descriptor.enabled && action.descriptor.when.matches(context))
             .collect::<Vec<_>>();
-        actions.sort_by_key(|action| action.order);
+        actions.compact_sort_by_key(|action| action.order);
         actions
             .into_iter()
             .map(|action| &action.descriptor)
@@ -363,7 +364,7 @@ impl ActionRegistry {
                 })
             })
             .collect::<Vec<_>>();
-        matches.sort_by_key(|matched| (matched.score, matched.order));
+        matches.compact_sort_by_key(|matched| (matched.score, matched.order));
         matches
     }
 }

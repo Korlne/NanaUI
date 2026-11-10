@@ -1,5 +1,6 @@
 //! Series around a centre: pie (and ring, rose), radar and gauge.
 
+use nana_ui_core::sort::CompactSort as _;
 use std::f32::consts::TAU;
 use std::sync::Arc;
 
@@ -294,7 +295,7 @@ fn place_pie_labels(
         for label in &mut side {
             label.y = polar(center, label.radius + LINE_REACH * 0.5, label.mid)[1];
         }
-        side.sort_by(|a, b| a.y.total_cmp(&b.y));
+        side.compact_sort_by(|a, b| a.y.total_cmp(&b.y));
         // Push down where neighbours overlap, then back up from the bottom.
         let mut floor = frame[1];
         for label in &mut side {

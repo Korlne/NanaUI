@@ -1,3 +1,4 @@
+use nana_ui_core::sort::CompactSort as _;
 use std::{
     collections::BTreeSet,
     sync::{Arc, LazyLock},
@@ -31,53 +32,6 @@ pub use nana_text::Affinity as TextAffinity;
 
 static DEFAULT_LAYOUT_STYLE: LazyLock<Arc<LayoutStyle>> =
     LazyLock::new(|| Arc::new(LayoutStyle::default()));
-
-/// `base` with each field `over` sets written over it: every field whose
-/// value differs from the default layout's. A nested struct is written field
-/// by field; anything else (a value, an `Option`, an enum, a map) whole.
-fn overlay_layout(base: &LayoutStyle, over: &LayoutStyle) -> LayoutStyle {
-    use serde_json::Value;
-
-    fn overlay(base: &mut Value, default: &Value, over: Value) {
-        let Value::Object(over) = over else {
-            *base = over;
-            return;
-        };
-        for (key, field) in over {
-            let default = default.get(&key).unwrap_or(&Value::Null);
-            if *default == field {
-                continue;
-            }
-            let Some(slot) = base
-                .as_object_mut()
-                .map(|base| base.entry(key).or_insert(Value::Null))
-            else {
-                return;
-            };
-            // A struct has the same fields in all three; an enum variant or a
-            // map need not, and is replaced whole.
-            let same_shape = |value: &Value| match (value, default, &field) {
-                (Value::Object(value), Value::Object(default), Value::Object(field)) => {
-                    value.keys().eq(default.keys()) && field.keys().eq(default.keys())
-                }
-                _ => false,
-            };
-            if same_shape(slot) {
-                overlay(slot, default, field);
-            } else {
-                *slot = field;
-            }
-        }
-    }
-
-    static DEFAULT: LazyLock<Value> = LazyLock::new(|| {
-        serde_json::to_value(LayoutStyle::default()).expect("a layout serializes")
-    });
-    let mut value = serde_json::to_value(base).expect("a layout serializes");
-    let over = serde_json::to_value(over).expect("a layout serializes");
-    overlay(&mut value, &DEFAULT, over);
-    serde_json::from_value(value).expect("an overlaid layout deserializes")
-}
 
 pub(crate) fn layout_style_is_default(style: &Arc<LayoutStyle>) -> bool {
     Arc::ptr_eq(style, &DEFAULT_LAYOUT_STYLE)
@@ -899,6 +853,9 @@ pub enum StandardVisual {
         ratio: f32,
         /// Positions along the track, each in `0.0..=1.0`.
         markers: Arc<[f32]>,
+        /// `Some(ratio)`: the track from there to its end is a caution zone
+        /// (`RangeField::caution_from`).
+        caution: Option<f32>,
         invalid: bool,
         /// `Some(girth)`, finite and positive: a rail that thick across the
         /// whole content box, with no thumb unless focus is visible on the
@@ -1323,6 +1280,19 @@ pub struct ComponentTextRegion {
     pub color: Option<[f32; 4]>,
     pub font_size: f32,
     pub font_weight: Option<u16>,
+}
+
+/// A range's caution zone (`RangeField::caution_from`): the stretch of the
+/// track from `from` to its end, in the theme's warning colour.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RangeCaution {
+    /// Where it begins along the track, `0.0..1.0`.
+    pub from: f32,
+    /// The colour of the rail, the fill and the markers inside the zone.
+    pub color: [f32; 4],
+    /// The value is inside the zone on an enabled range: the thumb takes
+    /// the colour in place of the accent.
+    pub thumb: bool,
 }
 
 /// A range's value thumb (`RangeField::value_thumb`): a capsule as wide as
@@ -1773,6 +1743,8 @@ pub enum ComponentGeometry {
         bounds: Option<[ComponentTextRegion; 2]>,
         /// The capsule a value thumb is drawn as, at the current value.
         value_thumb: Option<RangeValueThumb>,
+        /// The caution zone and its theme-resolved colours.
+        caution: Option<RangeCaution>,
     },
     Scrollbar {
         horizontal: Option<ScrollbarBar>,
@@ -2381,7 +2353,7 @@ impl NodeStyle {
             layout: if layout_style_is_default(layout) {
                 self.layout
             } else {
-                Arc::new(overlay_layout(&self.layout, layout))
+                Arc::new(self.layout.overlaid(layout))
             },
             foreground: over.foreground.or(self.foreground),
             background: over.background.or(self.background),
@@ -3924,6 +3896,17 @@ pub struct AccessibilityNode {
     /// scrolls -- and on nodes inside a 3D context, whose `bounds` are the
     /// box around their projected corners, as in the viewport.
     pub transform: Option<nana_ui_core::PaintTransform>,
+    /// How far the node scrolls what it holds, in its own space: its
+    /// children's bounds are offsets in its space moved by `-scroll`
+    /// ([`Self::children_to_parent`]), so a scroll changes this node alone
+    /// and not the boxes it carries. Its scroll offset, scaled into its space
+    /// where its box stands upright there; `[0, 0]` on a node that does not
+    /// scroll, on one whose children are placed from their viewport boxes
+    /// (inside a 3D context, a modal frame or a motion overlay: their bounds
+    /// then hold the scroll), and in viewport projections. A platform tree
+    /// takes [`Self::children_to_parent`] as the node's transform and its
+    /// own box moved by `scroll` as its bounds, as AccessKit does.
+    pub scroll: [f32; 2],
     /// What the node's clip chain leaves of the viewport, in viewport
     /// coordinates: the overflow containers whose clip reaches it (#201),
     /// each where it sits after the scroll above it. `None` when no
@@ -3949,6 +3932,20 @@ impl AccessibilityNode {
         placed
     }
 
+    /// The map from the space this node's children's bounds are offsets in
+    /// into its parent's: [`Self::to_parent`] after the move by `-scroll`.
+    pub fn children_to_parent(&self) -> nana_ui_core::PaintTransform {
+        let placed = self.to_parent();
+        if self.scroll == [0.0, 0.0] {
+            return placed;
+        }
+        placed.then(nana_ui_core::PaintTransform {
+            e: -self.scroll[0],
+            f: -self.scroll[1],
+            ..nana_ui_core::PaintTransform::IDENTITY
+        })
+    }
+
     /// The node's box in its own space: `bounds`' size at the origin.
     pub fn local_bounds(&self) -> LayoutBox {
         LayoutBox {
@@ -3962,7 +3959,8 @@ impl AccessibilityNode {
 /// Where every node of a relative accessibility projection
 /// ([`crate::UiWorld::project_accessibility`], its deltas applied) stands in
 /// the viewport: [`AccessibilityNode::to_parent`] multiplied down each
-/// node's parent chain. A node whose parent is not among the nodes is
+/// node's parent chain, each parent's after its scroll
+/// ([`AccessibilityNode::children_to_parent`]). A node whose parent is not among the nodes is
 /// placed from the viewport, as a root is.
 ///
 /// For automation, hit queries and tests that hold the relative tree; a
@@ -3970,7 +3968,16 @@ impl AccessibilityNode {
 /// [`crate::UiWorld::project_accessibility_in_viewport`].
 #[derive(Debug, Clone, Default)]
 pub struct AccessibilityPlacements {
-    to_viewport: std::collections::HashMap<StableNodeId, (nana_ui_core::PaintTransform, LayoutBox)>,
+    /// Each node's map to the viewport, its own box, and the map its
+    /// children's space takes to the viewport.
+    to_viewport: std::collections::HashMap<
+        StableNodeId,
+        (
+            nana_ui_core::PaintTransform,
+            LayoutBox,
+            nana_ui_core::PaintTransform,
+        ),
+    >,
 }
 
 impl AccessibilityPlacements {
@@ -3997,11 +4004,13 @@ impl AccessibilityPlacements {
                 let above = node
                     .parent
                     .and_then(|parent| to_viewport.get(&parent))
-                    .map_or(nana_ui_core::PaintTransform::IDENTITY, |(placed, _)| {
-                        *placed
-                    });
+                    .map_or(
+                        nana_ui_core::PaintTransform::IDENTITY,
+                        |(_, _, children)| *children,
+                    );
                 let placed = above.then(node.to_parent());
-                to_viewport.insert(id, (placed, node.local_bounds()));
+                let children = above.then(node.children_to_parent());
+                to_viewport.insert(id, (placed, node.local_bounds(), children));
             }
         }
         Self { to_viewport }
@@ -4009,13 +4018,13 @@ impl AccessibilityPlacements {
 
     /// The map from `id`'s space to the viewport.
     pub fn transform(&self, id: StableNodeId) -> Option<nana_ui_core::PaintTransform> {
-        self.to_viewport.get(&id).map(|(placed, _)| *placed)
+        self.to_viewport.get(&id).map(|(placed, ..)| *placed)
     }
 
     /// `id`'s box corners in the viewport: top left, top right, bottom
     /// right, bottom left of its own box.
     pub fn corners(&self, id: StableNodeId) -> Option<[[f32; 2]; 4]> {
-        let (placed, local) = self.to_viewport.get(&id)?;
+        let (placed, local, _) = self.to_viewport.get(&id)?;
         let point = |x: f32, y: f32| {
             [
                 placed.a * x + placed.c * y + placed.e,
@@ -4055,7 +4064,7 @@ impl AccessibilityPlacements {
     /// Whether the viewport point `(x, y)` is inside `id`'s box, as a
     /// platform hit test through the node's transforms finds it.
     pub fn contains(&self, id: StableNodeId, x: f32, y: f32) -> bool {
-        let Some((placed, local)) = self.to_viewport.get(&id) else {
+        let Some((placed, local, _)) = self.to_viewport.get(&id) else {
             return false;
         };
         let det = placed.a * placed.d - placed.b * placed.c;
@@ -4618,7 +4627,7 @@ impl TextInputState {
             let mut all = Vec::with_capacity(additional.len() + 1);
             all.push(primary);
             all.extend(additional);
-            all.sort_by_key(|selection| {
+            all.compact_sort_by_key(|selection| {
                 let range = selection.ordered();
                 (range.start, range.end)
             });

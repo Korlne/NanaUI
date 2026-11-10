@@ -6,6 +6,7 @@ mod extraction;
 mod focus_scope;
 mod geometry;
 pub(crate) use geometry::{PROGRESS_GIRTH, range_value_thumb_height};
+use nana_ui_core::sort::CompactSort as _;
 mod hit_test;
 mod i18n;
 mod input;
@@ -1060,6 +1061,9 @@ pub struct UiWorld {
     /// Set while a layout move marks its box: the INPUT it marks is the
     /// move's alone (no [`DirtyMask::INPUT_ELSEWHERE`]).
     marking_layout_move: bool,
+    /// Set while a scroll marks its box: the INPUT it marks is the scroll's
+    /// ([`DirtyMask::INPUT_SCROLLED`], no [`DirtyMask::INPUT_ELSEWHERE`]).
+    marking_scroll: bool,
     /// Every accessibility node a projection handed out, as it handed it
     /// out: the nodes a delta leaves alone are checked against it.
     #[cfg(any(test, feature = "layout-verify"))]
@@ -1355,6 +1359,7 @@ impl UiWorld {
             page_origins: RefCell::default(),
             pointer_events_memo: RefCell::new(None),
             marking_layout_move: false,
+            marking_scroll: false,
             #[cfg(any(test, feature = "layout-verify"))]
             accessibility_shipped: Default::default(),
             pass_publishes_written_boxes: false,
@@ -2065,7 +2070,7 @@ impl UiWorld {
         {
             let align = record
                 .resolved_layout
-                .resolved_align_self(parent_record.resolved_layout.align_items);
+                .resolved_align_self(parent_record.resolved_layout.child_align_items());
             if align == nana_ui_core::AlignSpec::Baseline {
                 return false;
             }
@@ -2179,22 +2184,46 @@ impl UiWorld {
         // keeps the box its parent's held result recorded, so a parent is
         // checked against these and not against all of its children. One
         // list sorted by parent: a parent's children are one run of it.
-        let mut covered: Vec<(StableNodeId, StableNodeId)> = unique
-            .iter()
-            .filter_map(|&id| Some((self.parent_id(id)?, id)))
-            .collect();
-        covered.sort_unstable();
+        //
+        // A first publish (no result held) has nothing to check them
+        // against: every result is built, and only how many children it
+        // covers is counted.
+        let first_publish = self.layout_results.is_empty();
+        let (covered, mut children_visited) = if first_publish {
+            let count = unique
+                .iter()
+                .filter(|&&id| self.parent_id(id).is_some())
+                .count();
+            (Vec::new(), count)
+        } else {
+            let mut covered: Vec<(StableNodeId, StableNodeId)> = unique
+                .iter()
+                .filter_map(|&id| Some((self.parent_id(id)?, id)))
+                .collect();
+            covered.sort_unstable();
+            (covered, 0usize)
+        };
         let covered_ids: Vec<StableNodeId> = covered.iter().map(|&(_, id)| id).collect();
         #[cfg(feature = "benchmark")]
         let mut phase = crate::layout_engine::plan_stats::PhaseClock::start();
         let mut built = Vec::with_capacity(unique.len());
         let mut scratch = ResultScratch::default();
         let mut reused = 0usize;
-        let mut children_visited = 0usize;
         for &id in &unique {
             if boxless.contains(&id) {
                 self.layout_results.remove(&id);
                 self.layout_results_suppressed.remove(&id);
+                continue;
+            }
+            if first_publish {
+                children_visited = children_visited.saturating_add(
+                    self.nodes
+                        .get(id)
+                        .map_or(0, |node| node.hierarchy.children.len()),
+                );
+                if let Some(result) = self.build_layout_result(id, source, &mut scratch) {
+                    built.push((id, result));
+                }
                 continue;
             }
             let start = covered.partition_point(|&(parent, _)| parent < id);
@@ -2218,7 +2247,11 @@ impl UiWorld {
         #[cfg(feature = "benchmark")]
         phase.lap(8);
         let mut published = built;
+        // Nothing held to compare a first publish's results with.
         published.retain(|(id, result)| {
+            if first_publish {
+                return true;
+            }
             if self
                 .layout_results
                 .get(id)
@@ -2338,6 +2371,15 @@ impl UiWorld {
             self.mark(id, bits);
         }
         self.marking_layout_move = false;
+    }
+
+    /// [`Self::mark_scroll_compatible`] for `id`'s own scroll: its INPUT
+    /// mark is the scroll's ([`SystemWork::accessibility_scrolled`]) unless
+    /// something else marks INPUT on it too.
+    pub(super) fn mark_scrolled(&mut self, id: StableNodeId) {
+        self.marking_scroll = true;
+        let _ = self.mark_scroll_compatible(id, DirtyMask::INPUT | DirtyMask::RENDER);
+        self.marking_scroll = false;
     }
 
     /// Mark `id`, whose own 2D transform changed while what it hands its
@@ -3561,6 +3603,7 @@ impl UiWorld {
             focus_ime: Vec::new(),
             accessibility: Vec::new(),
             accessibility_moved: Vec::new(),
+            accessibility_scrolled: Vec::new(),
             layout_moved: Vec::new(),
             layout_reshaped: Vec::new(),
             accessibility_removals: sorted_unique(std::mem::take(
@@ -3659,7 +3702,7 @@ impl UiWorld {
             .filter(|(id, _)| self.presence_live(*id))
             .map(|(id, invalidation)| crate::LayoutFrontierSeed::new(id, invalidation))
             .collect::<Vec<_>>();
-        remaining.sort_unstable_by_key(|seed| seed.node);
+        remaining.compact_sort_by_key(|seed| seed.node);
         work.layout_frontier_seeds.extend(remaining);
         work.render_nodes_changed = work.render_extraction.len();
         work.render_nodes_extracted = work.render_extraction.len();
@@ -5626,6 +5669,12 @@ impl UiWorld {
         None
     }
 
+    /// Whether `target` can be what a pointer of `document` is over: the
+    /// hover and capture owner routing writes each sample.
+    pub(crate) fn accepts_pointer(&self, document: DocumentId, target: StableNodeId) -> bool {
+        self.validate_pointer_target(document, target).is_ok()
+    }
+
     fn validate_pointer_target(
         &self,
         document: DocumentId,
@@ -6652,11 +6701,14 @@ impl UiWorld {
         if bits & DirtyMask::LAYOUT != 0 {
             self.note_layout_source_change();
         }
-        let bits = if bits & DirtyMask::INPUT != 0 && !self.marking_layout_move {
-            // Marked for more than a move.
-            bits | DirtyMask::INPUT_ELSEWHERE
-        } else {
+        let bits = if bits & DirtyMask::INPUT == 0 || self.marking_layout_move {
             bits
+        } else if self.marking_scroll {
+            // Marked for its scroll.
+            bits | DirtyMask::INPUT_SCROLLED
+        } else {
+            // Marked for more than a move or a scroll.
+            bits | DirtyMask::INPUT_ELSEWHERE
         };
         let changed = self.record_mut(id).dirty.insert(bits);
         if changed {
@@ -7742,7 +7794,9 @@ fn layout_style_invalidation(
     )
 }
 
+mod block_stretch;
 mod deep_walk_tests;
+mod float_containment;
 #[cfg(test)]
 mod issue197;
 #[cfg(test)]

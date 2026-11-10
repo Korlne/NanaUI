@@ -26,12 +26,12 @@
 //! [`ResponsiveRule`] on the nearest query container, which the runtime
 //! measures; nothing here does.
 
+use nana_ui_core::sort::CompactSort as _;
 use std::collections::HashMap;
 use std::panic::Location;
-use std::sync::{Arc, Mutex, OnceLock, PoisonError, Weak};
+use std::sync::{Arc, Mutex, PoisonError, Weak};
 
 use nana_ui_core::LayoutStyle;
-use serde_json::Value;
 
 use super::controls::StyledComponent;
 use super::node::{El, NodeBindings};
@@ -42,30 +42,34 @@ use crate::{
     ResponsiveRule, StableNodeId, StyleVariant,
 };
 
-/// The Style Model fields one rule's declarations write, as a JSON object
-/// from each field's dotted path (`align_items`, `paint.outline.width`) to
-/// its value: produced by the build, read once. A field written with the
-/// value the default layout has is in it too, so a class can reset what
-/// the element was built with.
+/// The Style Model fields one rule's declarations write, as the code that
+/// writes them: produced by the build, one assignment per field
+/// (`layout.paint.outline.width = …`). A field written with the value the
+/// default layout has is among them too, so a class can reset what the
+/// element was built with.
+///
+/// Each value arrives as the field's own JSON and is read as the field's
+/// type ([`__style_value`]), so an application links the decoding of the
+/// field types its styles write and nothing else. A patch used to be one
+/// JSON object applied by serializing the whole layout, patching the tree
+/// and deserializing it again, which linked the entire Style Model's
+/// `Serialize` and `Deserialize` into every application.
 pub struct StylePatch {
-    json: &'static str,
-    value: OnceLock<Value>,
+    apply: fn(&mut LayoutStyle),
 }
 
 impl StylePatch {
     #[doc(hidden)]
-    pub const fn new(json: &'static str) -> Self {
-        Self {
-            json,
-            value: OnceLock::new(),
-        }
+    pub const fn new(apply: fn(&mut LayoutStyle)) -> Self {
+        Self { apply }
     }
+}
 
-    fn value(&self) -> &Value {
-        self.value.get_or_init(|| {
-            serde_json::from_str(self.json).expect("a compiled style patch is valid JSON")
-        })
-    }
+/// One field's value in a compiled [`StylePatch`], from the JSON the build
+/// wrote for it. The field's type is the one it is assigned to.
+#[doc(hidden)]
+pub fn __style_value<T: serde::de::DeserializeOwned>(json: &str) -> T {
+    serde_json::from_str(json).expect("a compiled style value is the field's JSON")
 }
 
 /// The CSS `@container` query of a rule, compiled at build time: the
@@ -204,7 +208,7 @@ fn plan(
         .flat_map(|&(lo, hi)| [lo, hi])
         .filter(|bound| bound.is_finite())
         .collect();
-    breakpoints.sort_by(f32::total_cmp);
+    breakpoints.compact_sort_by(f32::total_cmp);
     breakpoints.dedup();
     let why = if queries
         .iter()
@@ -281,7 +285,7 @@ impl StyleSite {
             .rules
             .iter()
             .filter(|(needs, _, query)| query.is_none() && needs & !active == 0)
-            .map(|(_, patch, _)| patch.value());
+            .map(|(_, patch, _)| *patch);
         let layout = Arc::new(apply(base, applying));
         #[cfg(test)]
         {
@@ -359,7 +363,7 @@ impl StyleSite {
                     applying
                         .iter()
                         .filter(|(_, _, query)| query.is_none_or(|query| query.holds_at(lower)))
-                        .map(|(_, patch, _)| patch.value()),
+                        .map(|(_, patch, _)| *patch),
                 );
                 StyleVariant::between(&authored, &styled)
             })
@@ -639,40 +643,16 @@ impl ResponsiveBinding {
     }
 }
 
-fn apply<'a>(base: &LayoutStyle, patches: impl Iterator<Item = &'a Value>) -> LayoutStyle {
-    let mut value = serde_json::to_value(base).expect("a layout serializes");
+fn apply(base: &LayoutStyle, patches: impl Iterator<Item = &'static StylePatch>) -> LayoutStyle {
+    let mut layout = base.clone();
     for patch in patches {
-        let Value::Object(fields) = patch else {
-            continue;
-        };
-        for (path, field) in fields {
-            *field_mut(&mut value, path) = field.clone();
-        }
+        (patch.apply)(&mut layout);
     }
-    let mut layout: LayoutStyle =
-        serde_json::from_value(value).expect("a patched layout deserializes");
     // Every patch is in, so the cascade is settled: a physical edge record
     // with no logical edge to order against decides nothing, and dropping it
     // gives the box the intent Rust states for the same edges.
     layout.drop_inert_physical_edges();
     layout
-}
-
-/// The field a patch key names: a dotted path through the Style Model's
-/// structs (`paint.outline.width`). The field itself, an enum or an
-/// `Option` included, is replaced whole: merging a `{"Px": 12}` into a
-/// `{"Percent": 50}` would be neither.
-fn field_mut<'a>(layout: &'a mut Value, path: &str) -> &'a mut Value {
-    path.split('.').fold(layout, |value, key| {
-        if !value.is_object() {
-            *value = Value::Object(Default::default());
-        }
-        value
-            .as_object_mut()
-            .expect("made an object above")
-            .entry(key)
-            .or_insert(Value::Null)
-    })
 }
 
 /// Writes a composed layout, keeping what `.visible` decided.
@@ -960,7 +940,9 @@ mod site_tests {
         );
     }
 
-    static PAD: StylePatch = StylePatch::new(r#"{"padding":{"Px":4.0}}"#);
+    static PAD: StylePatch = StylePatch::new(|layout| {
+        layout.padding = __style_value(r#"{"Px":4.0}"#);
+    });
     static PADDED: [SheetRule; 1] = [SheetRule {
         classes: &[0],
         patch: &PAD,
@@ -1011,9 +993,16 @@ mod site_tests {
         );
     }
 
-    static ROW: StylePatch = StylePatch::new(r#"{"height":{"Px":20.0}}"#);
-    static NARROW: StylePatch = StylePatch::new(r#"{"height":{"Px":40.0},"opacity":0.5}"#);
-    static LATER: StylePatch = StylePatch::new(r#"{"height":{"Px":30.0}}"#);
+    static ROW: StylePatch = StylePatch::new(|layout| {
+        layout.height = __style_value(r#"{"Px":20.0}"#);
+    });
+    static NARROW: StylePatch = StylePatch::new(|layout| {
+        layout.height = __style_value(r#"{"Px":40.0}"#);
+        layout.opacity = __style_value(r#"0.5"#);
+    });
+    static LATER: StylePatch = StylePatch::new(|layout| {
+        layout.height = __style_value(r#"{"Px":30.0}"#);
+    });
     /// `@container card (width < 300px)`.
     static CARD: SheetQuery = SheetQuery::new(
         Some("card"),

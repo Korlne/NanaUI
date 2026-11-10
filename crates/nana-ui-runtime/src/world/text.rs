@@ -897,7 +897,7 @@ pub(super) fn normalize_text_inlays(
         })
         .cloned()
         .collect();
-    normalized.sort_by(|a, b| (&a.offset, &a.label).cmp(&(&b.offset, &b.label)));
+    normalized.compact_sort_by(|a, b| (&a.offset, &a.label).cmp(&(&b.offset, &b.label)));
     normalized.dedup();
     normalized
 }
@@ -936,7 +936,7 @@ pub(super) fn build_text_display_view(
             .iter()
             .map(|inlay| (inlay.offset, Segment::Inlay(inlay))),
     );
-    segments.sort_by_key(|(position, segment)| (*position, segment_rank(segment)));
+    segments.compact_sort_by_key(|(position, segment)| (*position, segment_rank(segment)));
 
     fn segment_rank(segment: &Segment<'_>) -> u8 {
         match segment {
@@ -1113,7 +1113,7 @@ pub(super) fn remap_collapsed_after_edit(
             next.push(fold);
         }
     }
-    next.sort_by_key(|fold| (fold.start, fold.end));
+    next.compact_sort_by_key(|fold| (fold.start, fold.end));
     next.dedup();
     next
 }
@@ -1222,7 +1222,7 @@ pub(super) fn reconcile_collapsed_folds(
             }
         }
     }
-    next.sort_by_key(|fold| (fold.start, fold.end));
+    next.compact_sort_by_key(|fold| (fold.start, fold.end));
     next.dedup();
     next
 }
@@ -1656,7 +1656,7 @@ pub(super) fn merge_bracket_glyph_spans(
     if brackets.is_empty() {
         return spans;
     }
-    spans.sort_unstable_by_key(|span| (span.start, span.end));
+    spans.compact_sort_by_key(|span| (span.start, span.end));
     let mut merged: Vec<ExtractedTextSpan> = Vec::with_capacity(spans.len() + brackets.len());
     let mut bracket_index = 0usize;
     for span in spans.drain(..) {
@@ -1737,7 +1737,7 @@ pub(super) fn merge_inlay_glyph_spans_with_paint(
     if inlays.is_empty() {
         return spans;
     }
-    spans.sort_unstable_by_key(|span| (span.start, span.end));
+    spans.compact_sort_by_key(|span| (span.start, span.end));
     let mut merged: Vec<ExtractedTextSpan> = Vec::with_capacity(spans.len() + inlays.len());
     let mut inlay_index = 0usize;
     for span in spans.drain(..) {
@@ -1919,7 +1919,7 @@ fn derive_diagnostic_decorations(
     }
     let mut labels = Vec::new();
     let mut lines: Vec<_> = winners.into_iter().collect();
-    lines.sort_by_key(|(line, _)| *line);
+    lines.compact_sort_by_key(|(line, _)| *line);
     let engine = shaper.text_engine();
     let measure = crate::text_width::ChromeTextMeasure::new(engine.as_ref(), Some(style));
     for (_, winner) in lines {
@@ -3735,7 +3735,7 @@ impl UiWorld {
                 crate::components::TEXT_BRACKET_UNMATCHED_DEPTH,
             )
         }));
-        spans.sort_unstable_by_key(|&(start, _, _)| start);
+        spans.compact_sort_by_key(|&(start, _, _)| start);
         let spans: Arc<[(usize, usize, usize)]> = spans.into();
         *cache = Some((value.clone(), Arc::clone(&spans)));
         spans

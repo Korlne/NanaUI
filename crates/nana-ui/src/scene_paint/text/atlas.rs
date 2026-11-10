@@ -9,6 +9,7 @@
 //! around it — when to open a page, what to drop, how long a placement stays
 //! valid, and how a caller that kept a handle too long finds out.
 
+use nana_ui_core::sort::CompactSort as _;
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -723,7 +724,7 @@ impl GlyphAtlasManager {
         // Tallest first: a shelf allocator strands short shelves under tall
         // glyphs, and placing the tall ones into an empty page is the point of
         // repacking.
-        live.sort_unstable_by_key(|(index, image)| (std::cmp::Reverse(image.height), *index));
+        live.compact_sort_by_key(|(index, image)| (std::cmp::Reverse(image.height), *index));
         let mut trial: Vec<(usize, BucketedAtlasAllocator)> = self
             .pages
             .iter()

@@ -7,6 +7,7 @@
 
 use crate::layout::{LineBox, TextLayout, TextRect};
 use crate::shape::RunDirection;
+use nana_ui_core::sort::CompactSort as _;
 use serde::{Deserialize, Serialize};
 use std::ops::Range;
 use unicode_segmentation::UnicodeSegmentation;
@@ -238,7 +239,7 @@ impl TextLayout {
     fn indexed_cells(&self, line: &LineBox) -> LineCells {
         let cells = self.visual_cells(line);
         let mut by_cluster: Vec<u32> = (0..cells.len() as u32).collect();
-        by_cluster.sort_by_key(|index| {
+        by_cluster.compact_sort_by_key(|index| {
             let cell = &cells[*index as usize];
             (cell.cluster, cell.cluster_end)
         });
@@ -612,7 +613,7 @@ impl TextLayout {
         // are still two positions an arrow key has to be able to reach, so
         // they stay adjacent, in the line's reading order.
         let rtl = line.base_direction.is_rtl();
-        stops.sort_by(|a, b| {
+        stops.compact_sort_by(|a, b| {
             let bytes = if rtl {
                 b.caret.byte.cmp(&a.caret.byte)
             } else {

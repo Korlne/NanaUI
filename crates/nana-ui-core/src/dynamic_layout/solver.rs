@@ -21,6 +21,7 @@
 //! and so gives the same answer.
 
 use crate::DynamicLayoutCounters;
+use crate::sort::CompactSort as _;
 
 use super::{DiscreteCandidate, EnvelopeShape, ExecutionClass, LayoutCost, LayoutUnits, TotalCost};
 
@@ -431,7 +432,7 @@ fn solve_continuous(
     }
     scratch
         .entries
-        .sort_by_key(|entry| (entry.cost, entry.participant, entry.segment));
+        .compact_sort_by_key(|entry| (entry.cost, entry.participant, entry.segment));
     let mut start = 0;
     let mut levels = 0;
     while start < scratch.entries.len() {
@@ -545,11 +546,13 @@ fn choose_discrete(
         return;
     }
     // Most saving per unit cost first, then participant order.
-    scratch.discrete.sort_by_key(|(at, index, saves, cost)| {
-        let cost = u64::from(cost.finite().unwrap_or(u32::MAX));
-        let saves = saves.0.max(1) as u64;
-        (cost * 1_000_000 / saves, *at, *index)
-    });
+    scratch
+        .discrete
+        .compact_sort_by_key(|(at, index, saves, cost)| {
+            let cost = u64::from(cost.finite().unwrap_or(u32::MAX));
+            let saves = saves.0.max(1) as u64;
+            (cost * 1_000_000 / saves, *at, *index)
+        });
     let beam =
         (policy.budget.max_states / participants.len().max(1)).clamp(1, scratch.discrete.len());
     stats.beam_states = stats.beam_states.max(beam);

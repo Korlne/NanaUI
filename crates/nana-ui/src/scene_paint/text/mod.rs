@@ -41,6 +41,7 @@ mod raster_dwrite;
 mod upload;
 
 use nana_text::{TextEngine as _, TextLayout};
+use nana_ui_core::sort::CompactSort as _;
 use nana_ui_core::{LineHeightSpec, TextAlignSpec};
 use nana_ui_runtime::{TextHorizontalAlignment, TextShaping, TextVerticalAlignment};
 use nana_ui_scene::{
@@ -2716,7 +2717,7 @@ impl TextPipeline {
             }
         });
         let mut largest = drawn.into_iter().collect::<Vec<_>>();
-        largest.sort_unstable_by_key(|&(entry, slots)| (std::cmp::Reverse(slots), entry));
+        largest.compact_sort_by_key(|&(entry, slots)| (std::cmp::Reverse(slots), entry));
         let room = limit - limit / 3;
         let mut left = total;
         for (entry, slots) in largest {

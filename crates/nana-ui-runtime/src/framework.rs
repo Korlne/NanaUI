@@ -44,6 +44,7 @@ mod text_input;
 mod value_input;
 mod virtualize;
 mod virtualize_retained;
+use nana_ui_core::sort::CompactSort as _;
 use std::{
     any::{Any, TypeId},
     collections::{HashMap, HashSet, VecDeque},
@@ -2424,11 +2425,36 @@ impl AppContext {
         let mut queue = MutationQueue::with_capacity(8);
         queue.create(id, document, component.node_kind());
         component.project(id, &self.world, &mut queue);
-        self.stamp_component_type::<C>(id, &mut queue);
-        self.world.commit(queue)?;
-        self.views.insert(id, Box::new(component));
-        self.sync_component_lifecycle(id)?;
+        self.commit_created(
+            id,
+            queue,
+            &registry::ViewType::of::<C>(),
+            Box::new(component),
+            false,
+        )?;
         Ok(Entity::from_stable_id(id))
+    }
+
+    /// Stamp, commit and keep a component [`Self::create_component`] or
+    /// [`Self::create_detached_component`] just projected into `queue`;
+    /// `park` leaves it out of the document's roots. The same for every
+    /// component type, so it is compiled once.
+    #[inline(never)]
+    fn commit_created(
+        &mut self,
+        id: StableNodeId,
+        mut queue: MutationQueue,
+        view: &registry::ViewType,
+        component: Box<dyn Any + Send>,
+        park: bool,
+    ) -> Result<(), FrameworkError> {
+        self.stamp_component_type_erased(id, &mut queue, view);
+        if park {
+            queue.park_subtree(id);
+        }
+        self.world.commit(queue)?;
+        self.views.insert(id, component);
+        self.sync_component_lifecycle(id)
     }
 
     /// Let `component` share its layouts with equal ones already written.
@@ -2475,11 +2501,13 @@ impl AppContext {
         let mut queue = MutationQueue::with_capacity(8);
         queue.create(id, document, component.node_kind());
         component.project(id, &self.world, &mut queue);
-        self.stamp_component_type::<C>(id, &mut queue);
-        queue.park_subtree(id);
-        self.world.commit(queue)?;
-        self.views.insert(id, Box::new(component));
-        self.sync_component_lifecycle(id)?;
+        self.commit_created(
+            id,
+            queue,
+            &registry::ViewType::of::<C>(),
+            Box::new(component),
+            true,
+        )?;
         Ok(Entity::from_stable_id(id))
     }
 
@@ -3846,6 +3874,31 @@ impl AppContext {
         update: impl FnOnce(&mut C, &mut ViewContext<'_, C>) -> R,
         projection: Projection,
     ) -> Result<R, FrameworkError> {
+        let mut update = Some(update);
+        let mut result = None;
+        self.update_component_staged(
+            entity,
+            &mut |component, cx| {
+                if let Some(update) = update.take() {
+                    result = Some(update(component, cx));
+                }
+            },
+            projection,
+        )?;
+        Ok(result.expect("an update that returned ran its closure"))
+    }
+
+    /// The update itself, once per component type. The closure arrives as
+    /// one dynamic call: generic over it, this body was copied for every
+    /// call site of [`Self::update_component`] and every editing hook, some
+    /// 3 KiB each time.
+    #[inline(never)]
+    fn update_component_staged<C: ComponentView>(
+        &mut self,
+        entity: Entity<C>,
+        update: &mut dyn FnMut(&mut C, &mut ViewContext<'_, C>),
+        projection: Projection,
+    ) -> Result<(), FrameworkError> {
         if !self.world.contains(entity.id) {
             return Err(FrameworkError::MissingView(entity.id));
         }
@@ -3861,7 +3914,7 @@ impl AppContext {
         let mut mutations = MutationQueue::new();
         let mut events = VecDeque::new();
         let mut program_messages = std::mem::take(&mut self.program_messages);
-        let result = update(
+        update(
             &mut staged,
             &mut ViewContext {
                 entity,
@@ -3900,50 +3953,84 @@ impl AppContext {
             if !projected || self.world.is_noop_batch(&mutations) {
                 self.program_messages = program_messages;
                 self.views.insert(entity.id, boxed);
-                return Ok(result);
+                return Ok(());
             }
         }
-        let delivered = self.deliver_events(
+        self.finish_component_update(
             entity.id,
-            &mut staged,
+            TypeId::of::<C>(),
+            StagedUpdate {
+                staged: Box::new(staged),
+                previous: boxed,
+                mutations,
+                events,
+                program_messages,
+            },
+            (!projected).then_some(project_staged::<C>),
+            projection,
+        )
+    }
+
+    /// What follows a staged update that changed something: its events, its
+    /// projection, the commit and the follow-ups. None of it depends on the
+    /// component type beyond `project`, so it is compiled once rather than
+    /// with every [`Self::update_component_staged`].
+    #[inline(never)]
+    fn finish_component_update(
+        &mut self,
+        id: StableNodeId,
+        type_id: TypeId,
+        update: StagedUpdate,
+        project: Option<ProjectStagedFn>,
+        projection: Projection,
+    ) -> Result<(), FrameworkError> {
+        let StagedUpdate {
+            mut staged,
+            previous,
+            mut mutations,
+            mut events,
+            mut program_messages,
+        } = update;
+        let delivered = self.deliver_events(
+            id,
+            staged.as_mut(),
             &mut mutations,
             &mut events,
             &mut program_messages,
         );
         self.program_messages = program_messages;
-        if delivered.is_ok() && !projected {
-            staged.project(entity.id, &self.world, &mut mutations);
+        if delivered.is_ok()
+            && let Some(project) = project
+        {
+            project(staged.as_ref(), id, &self.world, &mut mutations);
         }
         let commit =
             delivered.and_then(|observers| self.commit_mutations(mutations).map(|_| observers));
-        if commit.is_ok() {
-            self.views.insert(entity.id, Box::new(staged));
-        } else {
-            self.views.insert(entity.id, boxed);
-        }
+        self.views
+            .insert(id, if commit.is_ok() { staged } else { previous });
         let observers = commit?;
-        let suspended = if self.world.is_mounted(entity.id) {
+        let suspended = if self.world.is_mounted(id) {
             Ok(())
         } else {
-            self.suspend(entity.id)
+            self.suspend(id)
         };
         let own = suspended.and_then(|()| {
             if projection == Projection::ProjectOnly {
                 return Ok(());
             }
-            self.sync_component_lifecycle(entity.id)?;
-            self.run_component_assembler(entity.id, TypeId::of::<C>())
+            self.sync_component_lifecycle(id)?;
+            self.run_component_assembler(id, type_id)
         });
         // Observer handlers already changed their components; their chrome
         // follows even when this component's own follow-up fails.
-        let observed = self.follow_up_observers(entity.id, observers);
+        let observed = self.follow_up_observers(id, observers);
         own.and(observed)?;
         // A surface that asked to open or close while this view was out
         // being updated asks again now that it is back, and a focus move it
         // missed reaches it.
         self.drain_modal_syncs()?;
         self.drain_focus_within()?;
-        Ok(result)
+        Ok(())
     }
 
     /// Projects the components observer handlers changed in place, and
@@ -4258,7 +4345,7 @@ impl AppContext {
             return None;
         }
         // Their placement's order, so siblings come back in the order shown.
-        rescued.sort_by_key(|(node, _)| {
+        rescued.compact_sort_by_key(|(node, _)| {
             let parent = self.world.parent_id(*node);
             let at = parent
                 .and_then(|parent| self.world.node(parent))
@@ -4472,6 +4559,30 @@ pub(super) struct TouchedObserver {
     /// The handler asked for the observer's assembler through
     /// [`ViewContext::reassemble`].
     pub(super) reassemble: bool,
+}
+
+/// A component an update changed, the view it replaces if the commit goes
+/// through, and what the update queued.
+struct StagedUpdate {
+    staged: Box<dyn Any + Send>,
+    previous: Box<dyn Any + Send>,
+    mutations: MutationQueue,
+    events: VecDeque<BoxedEvent>,
+    program_messages: Vec<ProgramMessage>,
+}
+
+/// Projects the staged component behind a type-erased view.
+type ProjectStagedFn = fn(&dyn Any, StableNodeId, &UiWorld, &mut MutationQueue);
+
+fn project_staged<C: ComponentView>(
+    staged: &dyn Any,
+    id: StableNodeId,
+    world: &UiWorld,
+    mutations: &mut MutationQueue,
+) {
+    if let Some(staged) = staged.downcast_ref::<C>() {
+        staged.project(id, world, mutations);
+    }
 }
 
 /// How [`AppContext::update_component`]'s implementation treats the result.

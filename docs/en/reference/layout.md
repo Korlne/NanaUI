@@ -65,7 +65,7 @@ Layout splits a node into three things, none of which replaces another:
   It is derived from the parent's context, the node's resolved layout intent, and the node's own content. It is a view,
   not a component, and it is not stored as another tree.
 - **Established context** (`FormattingContextKind`): how this node lays out its children. Layout records the one it
-  actually ran: `Flow` (`display: block` or unset), `Flex`, `Grid`, `Inline` (there are inline-level boxes among the in-flow
+  actually ran: `Flow` (`display: block` or unset, the same block layout), `Flex`, `Grid`, `Inline` (there are inline-level boxes among the in-flow
   children), `Layers` (`display: layers`, stacking), `Overlay` (a modal places its children by slot). A leaf with text establishes
   `Inline` for its own text; the glyphs belong to nana-text and do not become layout nodes. An empty leaf establishes no context.
 
@@ -884,6 +884,8 @@ Writing `subgrid` as a single token in a track list, such as `subgrid 80px`, sti
 
 When you build `LayoutStyle { display: Grid }` directly, without going through css_map, `align-items` defaults to `start`. Hand-written tests rely on this. `Default` cannot tell "not written" from an explicit `start` by display. Parsed through `display:grid`, it writes `stretch`.
 
+Block layout has no `align-items`. A container with no `display`, `display: block` or `flow-root` that stacks its children down the block axis (`LayoutStyle::stacks_as_block`) lays them out as CSS block layout does: a block-level child with no `align-self` and an `auto` width fills the containing block less its left and right margins (CSS 2.1 §10.3.3), whatever `align_items` says (`LayoutStyle::child_align_items`). So `LayoutStyle::default()`, `LayoutStyle { display: Some(Block) }` built directly (through `Stack::from_layout`, say) and `display: block` parsed by css_map give the same box. Some children keep their own width: one that names `align-self` (it still applies in the flow), one whose width is not `auto` (`Px`, a percentage, `Fill`, `Shrink`, `fit-content` and so on), replaced content with a natural size (an image, say; CSS 2.1 §10.3.4), and a child whose writing mode is orthogonal to the container's (what it has along that axis is its block size, which its content gives; CSS Writing Modes 3 §7.3). A flow laid along a row (`direction: Row`) and every flex, grid and layers container still align by `align_items`. To keep children at their content width, centred or at the end, make the container `display: Flex` (every `Stack` preset is), or give the child `align-self` or `width: Shrink`.
+
 `display: layers` is a NanaUI extension value; see `Layers` above. It does not write `stretch`: children of a stack align to the start by default, as with ZStack / Box; when `justify-items` is not written they align to the start too, not to grid's `stretch`.
 
 **Inline subset.** `display: inline` and `inline-block` inside a block container go through an inline formatting context, that is, an IFC.
@@ -909,6 +911,8 @@ A flex line's retained plan records the baseline each baseline-aligned child use
 An IFC line box narrows by the left and right insets where the current line intersects the margin boxes of **sibling** floats. That is shrink-to-avoid-float. An atomic inline item that does not fit in a line folds to the next line. If it still does not fit after narrowing, the line box moves down below the bottom edge of the nearest occupying float.
 
 An in-flow **block-level** border box does not narrow to avoid floats. That matches a non-BFC block in CSS.
+
+Floats do not take part in the height of normal flow (CSS 2.1 §10.6.3): a block container's `auto` height counts only its in-flow content, plus however far `clear` and line boxes shortened or pushed down by a float push that content. An ordinary block holding nothing but floats is 0 tall, and the floats hang out of its content box. When the container establishes a block formatting context (BFC) of its own, its height contains the packed floats (§10.6.7): one line of floats is one line tall, not the floats stacked and summed. A BFC is established by the document root, a float, `absolute` / `fixed`, `inline-block`, `overflow` other than `visible`, `display: flow-root` (`DisplaySpec::FlowRoot`), and flex, grid, layer and overlay items. Floats sit side by side inline-wise: they give the container a max-content width of their margin boxes' sum and a min-content width of the widest one. Gate: `world/float_containment.rs`, css-parity `T-FL08`.
 
 This is not full exclusion. An ancestor float does not intrude into a child block's IFC. There is no `shape-outside`.
 

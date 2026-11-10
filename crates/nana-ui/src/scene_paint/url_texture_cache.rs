@@ -14,6 +14,7 @@
 //! only uploads finished levels. A local image is still decoded on the frame
 //! path the first time it is seen (unchanged from before) and shown at its
 //! decoded size until the worker's resample or mip chain replaces it.
+use nana_ui_core::sort::CompactSort as _;
 use std::{
     borrow::Cow,
     cell::Cell,
@@ -983,7 +984,7 @@ impl UrlTextureCache {
                 inactive.push((entry.used.get(), *egress, key.clone(), size));
             }
         }
-        inactive.sort_unstable_by_key(|entry| entry.0);
+        inactive.compact_sort_by_key(|entry| entry.0);
         let mut count = inactive.len();
         for (used, egress, key, size) in inactive {
             if count <= RETAINED_ENTRIES

@@ -370,6 +370,11 @@ impl<Program: RuntimeProgram> WindowManager<Program> {
         if event_loop.exiting() || !self.window_contexts.contains_key(&id) {
             return false;
         }
+        // The output is all that draws this window's compositor motion while
+        // it is hidden, so its clock advances here as it does in a present.
+        // Without it a glyph reveal is painted where the last present left
+        // the clock: the newest glyph stays at the start of its fade.
+        self.sync_compositor_clock(id);
         let geometry = self.content_geometry_of(id);
         let viewport = LayoutViewport::new(geometry.logical_size.0, geometry.logical_size.1);
         let Some(flush) = self.program.write_document(id, |document| {

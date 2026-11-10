@@ -559,6 +559,9 @@ impl ComponentView for HostStack {
             ..NodeStyle::default()
         };
         let layout = std::sync::Arc::make_mut(&mut style.layout);
+        // A flex line: `align` and `justify` place the children, which a
+        // block container would stretch across instead.
+        layout.display = Some(nana_ui::runtime::DisplaySpec::Flex);
         layout.direction = Some(self.direction);
         layout.gap = Some(LengthSpec::Px(self.gap));
         layout.align_items = self.align;

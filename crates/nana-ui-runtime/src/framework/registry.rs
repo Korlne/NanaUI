@@ -163,22 +163,24 @@ impl AppContext {
     /// [`Self::stamp_component_type`] or [`Self::install_view`]), or the
     /// type's first node misses its behavior.
     pub(crate) fn register_view_type<C: ComponentView>(&mut self) {
-        let type_id = TypeId::of::<C>();
+        self.register_view_type_erased(&ViewType::of::<C>());
+    }
+
+    /// [`Self::register_view_type`] for a type described by value, so its
+    /// map lookups and inserts are compiled once and not per component type.
+    #[inline(never)]
+    fn register_view_type_erased(&mut self, view: &ViewType) {
+        let type_id = view.type_id;
         if self.behaviors.contains_key(&type_id) {
             return;
         }
-        self.reprojectors
-            .entry(type_id)
-            .or_insert(super::update_erased::<C>);
-        self.behaviors
-            .insert(type_id, super::hooks::ErasedBehavior::of::<C>());
-        if let Some(install) = C::BEHAVIOR.hooks {
+        self.reprojectors.entry(type_id).or_insert(view.update);
+        self.behaviors.insert(type_id, (view.behavior)());
+        if let Some(install) = view.hooks {
             install(&mut self.type_hooks);
         }
-        if let Some(activate) = C::BEHAVIOR.activation {
-            self.activations.entry(type_id).or_insert_with(|| {
-                Arc::new(move |context, id| activate(context, Entity::from_stable_id(id)))
-            });
+        if let Some(activation) = view.activation {
+            self.activations.entry(type_id).or_insert_with(activation);
         }
     }
 
@@ -193,37 +195,41 @@ impl AppContext {
         id: StableNodeId,
         queue: &mut MutationQueue,
     ) {
-        if let Some(entry) = self.components.get_by_rust(TypeId::of::<C>()) {
+        self.stamp_component_type_erased(id, queue, &ViewType::of::<C>());
+    }
+
+    #[inline(never)]
+    pub(super) fn stamp_component_type_erased(
+        &mut self,
+        id: StableNodeId,
+        queue: &mut MutationQueue,
+        view: &ViewType,
+    ) {
+        if let Some(entry) = self.components.get_by_rust(view.type_id) {
             queue.set_component_type(id, Some(entry.id.clone()));
         }
-        self.register_view_type::<C>();
+        self.register_view_type_erased(view);
 
-        if C::wants_child_reproject() {
-            self.child_reproject_views
-                .insert(id, super::reproject_typed::<C>);
+        if view.child_reproject {
+            self.child_reproject_views.insert(id, view.reproject);
         }
-        if C::wants_metrics_reproject() {
-            self.metrics_reproject_views
-                .insert(id, super::reproject_typed::<C>);
+        if view.metrics_reproject {
+            self.metrics_reproject_views.insert(id, view.reproject);
         }
-        if C::wants_recipe_reproject() {
-            self.recipe_reproject_views
-                .insert(id, super::reproject_typed::<C>);
+        if view.recipe_reproject {
+            self.recipe_reproject_views.insert(id, view.reproject);
         }
-        if C::wants_reduced_motion_reproject() {
+        if view.reduced_motion_reproject {
             self.reduced_motion_reproject_views
-                .insert(id, super::reproject_typed::<C>);
+                .insert(id, view.reproject);
         }
-        if C::wants_text_backend_reproject() {
-            self.text_backend_reproject_views
-                .insert(id, super::reproject_typed::<C>);
+        if view.text_backend_reproject {
+            self.text_backend_reproject_views.insert(id, view.reproject);
         }
-        if C::wants_hover_tracking() {
+        if view.hover_tracking {
             self.component_lifecycle.hover_cards.entry(id).or_default();
         }
-        self.emitters
-            .entry(TypeId::of::<C>())
-            .or_insert(super::update_erased::<C>);
+        self.emitters.entry(view.type_id).or_insert(view.update);
     }
 
     pub(super) fn allocate_id(&mut self) -> StableNodeId {
@@ -238,4 +244,52 @@ impl AppContext {
             }
         }
     }
+}
+
+/// What registering and stamping a component type read from it, as plain
+/// values: the generic entry points only fill this in.
+pub(super) struct ViewType {
+    type_id: TypeId,
+    update: UpdateErasedFn,
+    reproject: ChildReprojectFn,
+    behavior: fn() -> hooks::ErasedBehavior,
+    hooks: Option<fn(&mut TypeHooks)>,
+    activation: Option<fn() -> ActivationFn>,
+    child_reproject: bool,
+    metrics_reproject: bool,
+    recipe_reproject: bool,
+    reduced_motion_reproject: bool,
+    text_backend_reproject: bool,
+    hover_tracking: bool,
+}
+
+impl ViewType {
+    pub(super) fn of<C: ComponentView>() -> Self {
+        Self {
+            type_id: TypeId::of::<C>(),
+            update: update_erased::<C>,
+            reproject: reproject_typed::<C>,
+            behavior: hooks::ErasedBehavior::of::<C>,
+            hooks: C::BEHAVIOR.hooks,
+            activation: C::BEHAVIOR
+                .activation
+                .map(|_| activation_of::<C> as fn() -> ActivationFn),
+            child_reproject: C::wants_child_reproject(),
+            metrics_reproject: C::wants_metrics_reproject(),
+            recipe_reproject: C::wants_recipe_reproject(),
+            reduced_motion_reproject: C::wants_reduced_motion_reproject(),
+            text_backend_reproject: C::wants_text_backend_reproject(),
+            hover_tracking: C::wants_hover_tracking(),
+        }
+    }
+}
+
+/// The activation a type's [`ComponentView::BEHAVIOR`] names, reached by
+/// node id.
+fn activation_of<C: ComponentView>() -> ActivationFn {
+    let activate = C::BEHAVIOR.activation;
+    Arc::new(move |context, id| match activate {
+        Some(activate) => activate(context, Entity::from_stable_id(id)),
+        None => Ok(false),
+    })
 }
