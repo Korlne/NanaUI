@@ -338,6 +338,11 @@ pub use nana_window::{
     platform_material_support, take_menu_activations,
 };
 #[cfg(feature = "hosted")]
+pub use nana_window::{
+    LoginItem, LoginItemError, LoginItemState, Tray, TraySupport, install_tray, installed_tray,
+    login_item_state, remove_tray, set_login_item, tray_support,
+};
+#[cfg(feature = "hosted")]
 pub use nana_window::{RevealError, reveal_in_file_manager};
 pub use overlay::ExclusiveOverlay;
 pub use pane::ratio_pane_split;

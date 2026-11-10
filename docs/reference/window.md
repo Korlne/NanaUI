@@ -294,6 +294,34 @@ IME：焦点进可编辑字段时 `Window::request_ime_update(Enable)` 一次（
 
 菜单是整体替换：再调一次 `SetMenuBar` 换掉整条。没有增量条目 API。重建一个菜单很便宜。而跨三个平台做 diff 不便宜。
 
+## 托盘
+
+托盘图标和菜单栏一样画不进界面树：macOS 上是菜单栏右侧的图标，Windows 上是通知区域的图标。它属于应用，不属于窗口：应用的窗口都点不到（鼠标穿透、隐藏）时，用户靠它找回应用。
+
+`install_tray(&Tray, wake)` 显示托盘。`Tray` 是纯数据：悬浮提示、PNG 图标、菜单（和菜单栏同一份 `MenuEntry` 模型），以及 Windows 上主键单击报告的 id。选中项进同一个 `take_menu_activations()` 队列。选择可能发生在应用一帧都不画的时候，所以每排进一个 id 就调一次 `wake`：宿主在这里唤醒事件循环（例如给自己发一条程序消息），再去 drain。
+
+再调一次 `install_tray` 是原位更新菜单、提示和图标，图标位置不变；`remove_tray()` 撤掉。两者都在跑事件循环的线程上调用。
+
+| 平台 | `tray_support()` | 说明 |
+| --- | --- | --- |
+| macOS | `MenuBarExtra` | `NSStatusItem`。点击总是打开菜单，`primary` 不起作用。`template_icon` 让系统按菜单栏的颜色画图标 |
+| Windows | `NotificationArea` | `Shell_NotifyIcon`。右键打开菜单；设了 `primary` 时左键报告那个 id，否则左键也打开菜单。资源管理器重启后图标自动加回 |
+| 其它 | `Unavailable` | 什么都不装。把这些命令留在窗口里 |
+
+`installed_tray()` 读回平台实际持有的提示与菜单条目（macOS），`crates/nana-window/examples/tray-probe.rs` 用它做真机验收。
+
+## 登录时启动
+
+`login_item_state(&LoginItem)` 和 `set_login_item(&LoginItem, enabled)` 读写「登录时启动」。状态每次都从系统读：用户可以在系统设置里改它，应用不自己记。
+
+`LoginItem` 给出条目的稳定 id、显示名和要启动的命令。命令可以是正在运行的可执行文件，也可以是启动它的程序（比如商店客户端）。
+
+| 平台 | 存放位置 |
+| --- | --- |
+| Windows | 当前用户的 `Run` 注册表项，值名是 `id` |
+| macOS | 13 及以上的主应用登录项（`SMAppService`）。登记的是正在运行的应用包，命令不起作用；不从应用包运行时是 `Unavailable` |
+| Linux | `$XDG_CONFIG_HOME/autostart/<id>.desktop` |
+
 ## 路径规范化与显示
 
 公共路径接口位于 `nana_ui::path`（底层为 `nana_ui_platform::path`）：

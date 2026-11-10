@@ -295,6 +295,34 @@ For a menu bar drawn in the UI that follows the theme (custom title bars, Linux)
 
 Menus are replaced as a whole: calling `SetMenuBar` again replaces the entire bar. There is no incremental entry API. Rebuilding a menu is cheap. Diffing across three platforms is not.
 
+## Tray
+
+A tray icon cannot be drawn in the UI tree any more than the menu bar can: it is the icon at the right of the menu bar on macOS and the notification-area icon on Windows. It belongs to the application, not to a window: it is how the user gets back to an application whose windows cannot be clicked (click-through, hidden).
+
+`install_tray(&Tray, wake)` shows it. `Tray` is plain data: a tooltip, a PNG icon, a menu (the same `MenuEntry` model as the menu bar), and the id a primary click reports on Windows. Choices go to the same `take_menu_activations()` queue. A choice can arrive while the application draws no frames, so `wake` runs once for every id queued: the host wakes its event loop there (by sending itself a program message, say) and then drains.
+
+Calling `install_tray` again updates the menu, tooltip and icon in place, and the icon keeps its position; `remove_tray()` takes it away. Call both on the thread that runs the event loop.
+
+| Platform | `tray_support()` | Notes |
+| --- | --- | --- |
+| macOS | `MenuBarExtra` | `NSStatusItem`. A click always opens the menu; `primary` has no effect. `template_icon` lets the system draw the icon in the menu bar's colour |
+| Windows | `NotificationArea` | `Shell_NotifyIcon`. A right click opens the menu; with `primary` set a left click reports that id, otherwise it opens the menu too. The icon is added back after Explorer restarts |
+| Others | `Unavailable` | Nothing is installed. Keep the commands in a window |
+
+`installed_tray()` reads back the tooltip and menu entries the platform actually holds (macOS); `crates/nana-window/examples/tray-probe.rs` uses it for native acceptance.
+
+## Start at sign-in
+
+`login_item_state(&LoginItem)` and `set_login_item(&LoginItem, enabled)` read and write whether the application starts at sign-in. The state is read from the system every time: the user can change it in system settings, so the application does not remember it.
+
+`LoginItem` gives the entry's stable id, its display name and the command to start. The command may be the running executable or a program that starts it (a store client, say).
+
+| Platform | Where it is kept |
+| --- | --- |
+| Windows | The current user's `Run` registry key; the value is named `id` |
+| macOS | The main-app login item (`SMAppService`), macOS 13 and later. It registers the running application bundle and ignores the command; outside a bundle it is `Unavailable` |
+| Linux | `$XDG_CONFIG_HOME/autostart/<id>.desktop` |
+
 ## Path normalization and display
 
 The public path interface is `nana_ui::path` (backed by `nana_ui_platform::path`):

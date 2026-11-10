@@ -18,6 +18,7 @@ mod display_options;
 mod file_dialog;
 mod ime;
 mod keyboard;
+mod login_item;
 mod material;
 mod menu;
 mod motion_preference;
@@ -28,6 +29,7 @@ mod size_move;
 mod splash;
 mod text_scale_preference;
 mod transparency_preference;
+mod tray;
 mod underlay;
 mod web_surface;
 #[cfg(target_os = "windows")]
@@ -62,6 +64,7 @@ pub use file_dialog::{
 };
 pub use ime::discard_native_ime_preedit;
 pub use keyboard::{KeyboardModifiers, keyboard_modifiers};
+pub use login_item::{LoginItem, LoginItemError, LoginItemState, login_item_state, set_login_item};
 pub use material::{
     Appearance, FallbackColor, MaterialEffect, MaterialFallback, MaterialOutcome,
     PlatformMaterialSupport, apply_hosted_system_material, apply_system_material,
@@ -83,6 +86,7 @@ pub use splash::{
 };
 pub use text_scale_preference::{set_text_scale_waker, system_text_scale, take_text_scale_change};
 pub use transparency_preference::{system_reduced_transparency, take_reduced_transparency_change};
+pub use tray::{Tray, TraySupport, install_tray, installed_tray, remove_tray, tray_support};
 pub use underlay::{Underlay, UnderlayError};
 pub use web_surface::{
     WebFrame, WebFrameSink, WebSurface, WebSurfaceCommand, WebSurfaceCompletion, WebSurfaceDesc,

@@ -71,6 +71,8 @@ objc2::define_class!(
             let tag = sender.tag();
             if let Ok(id) = u32::try_from(tag) {
                 crate::menu::push_activation(id);
+                // A tray choice can arrive while no frame is being drawn.
+                crate::tray::notify();
             }
         }
     }
@@ -94,15 +96,102 @@ fn menu_target(mtm: objc2::MainThreadMarker) -> objc2::rc::Retained<MenuTarget> 
     unsafe { Retained::retain(pointer as *mut MenuTarget).expect("menu target is alive") }
 }
 
+/// Builds one `NSMenu` level from the model. Items report through the shared
+/// menu target, so the menu bar and the tray menu answer on one queue.
+pub(crate) fn build_menu(
+    mtm: objc2::MainThreadMarker,
+    menu: &crate::Menu,
+) -> objc2::rc::Retained<objc2_app_kit::NSMenu> {
+    use objc2::MainThreadOnly;
+    use objc2_app_kit::{NSEventModifierFlags, NSMenu, NSMenuItem};
+    use objc2_foundation::NSString;
+
+    let title = NSString::from_str(&menu.title);
+    let built = NSMenu::initWithTitle(NSMenu::alloc(mtm), &title);
+    // A menu that autoenables its items would grey out everything we do
+    // not wire to a responder, so the model owns enablement instead.
+    built.setAutoenablesItems(false);
+    for entry in &menu.entries {
+        match entry {
+            crate::MenuEntry::Separator => {
+                built.addItem(&NSMenuItem::separatorItem(mtm));
+            }
+            crate::MenuEntry::Submenu(child) => {
+                let child_title = NSString::from_str(&child.title);
+                // AppKit init/target setters are `unsafe` in objc2; the
+                // arguments here are all owned by this function.
+                let item = unsafe {
+                    NSMenuItem::initWithTitle_action_keyEquivalent(
+                        NSMenuItem::alloc(mtm),
+                        &child_title,
+                        None,
+                        &NSString::new(),
+                    )
+                };
+                let submenu = build_menu(mtm, child);
+                built.setSubmenu_forItem(Some(&submenu), &item);
+                built.addItem(&item);
+            }
+            crate::MenuEntry::Item {
+                id,
+                label,
+                shortcut,
+                enabled,
+                checked,
+            } => {
+                let title = NSString::from_str(label);
+                let key = NSString::from_str(
+                    shortcut
+                        .as_ref()
+                        .map(|shortcut| shortcut.key.as_str())
+                        .unwrap_or(""),
+                );
+                let item = unsafe {
+                    NSMenuItem::initWithTitle_action_keyEquivalent(
+                        NSMenuItem::alloc(mtm),
+                        &title,
+                        Some(objc2::sel!(nanaMenuAction:)),
+                        &key,
+                    )
+                };
+                if let Some(shortcut) = shortcut {
+                    let mut flags = NSEventModifierFlags::empty();
+                    if shortcut.primary {
+                        flags |= NSEventModifierFlags::Command;
+                    }
+                    if shortcut.shift {
+                        flags |= NSEventModifierFlags::Shift;
+                    }
+                    if shortcut.alt {
+                        flags |= NSEventModifierFlags::Option;
+                    }
+                    item.setKeyEquivalentModifierMask(flags);
+                }
+                // The id rides on the item's tag, which is what the action
+                // reads back; no per-item Rust state to keep alive.
+                item.setTag(*id as isize);
+                item.setEnabled(*enabled);
+                item.setState(if *checked {
+                    objc2_app_kit::NSControlStateValueOn
+                } else {
+                    objc2_app_kit::NSControlStateValueOff
+                });
+                unsafe { item.setTarget(Some(&menu_target(mtm))) };
+                built.addItem(&item);
+            }
+        }
+    }
+    built
+}
+
 /// Builds `NSMenu` from the model and makes it the application's main menu.
 ///
 /// The first menu is the application menu: AppKit gives that slot the process
 /// name and puts Quit in it, so the caller's first menu is expected to be the
 /// app menu and its entries are appended after a standard Quit item.
 pub(crate) fn install_menu_bar(bar: &crate::MenuBar) {
-    use objc2::rc::Retained;
     use objc2::{MainThreadMarker, MainThreadOnly};
-    use objc2_app_kit::{NSApplication, NSEventModifierFlags, NSMenu, NSMenuItem};
+    use objc2_app_kit::{NSApplication, NSMenu, NSMenuItem};
     use objc2_foundation::NSString;
 
     let Some(mtm) = MainThreadMarker::new() else {
@@ -110,85 +199,6 @@ pub(crate) fn install_menu_bar(bar: &crate::MenuBar) {
         // corrupting the menu bar from a worker.
         return;
     };
-
-    fn build_menu(mtm: MainThreadMarker, menu: &crate::Menu) -> Retained<NSMenu> {
-        let title = NSString::from_str(&menu.title);
-        let built = NSMenu::initWithTitle(NSMenu::alloc(mtm), &title);
-        // A menu that autoenables its items would grey out everything we do
-        // not wire to a responder, so the model owns enablement instead.
-        built.setAutoenablesItems(false);
-        for entry in &menu.entries {
-            match entry {
-                crate::MenuEntry::Separator => {
-                    built.addItem(&NSMenuItem::separatorItem(mtm));
-                }
-                crate::MenuEntry::Submenu(child) => {
-                    let child_title = NSString::from_str(&child.title);
-                    // AppKit init/target setters are `unsafe` in objc2; the
-                    // arguments here are all owned by this function.
-                    let item = unsafe {
-                        NSMenuItem::initWithTitle_action_keyEquivalent(
-                            NSMenuItem::alloc(mtm),
-                            &child_title,
-                            None,
-                            &NSString::new(),
-                        )
-                    };
-                    let submenu = build_menu(mtm, child);
-                    built.setSubmenu_forItem(Some(&submenu), &item);
-                    built.addItem(&item);
-                }
-                crate::MenuEntry::Item {
-                    id,
-                    label,
-                    shortcut,
-                    enabled,
-                    checked,
-                } => {
-                    let title = NSString::from_str(label);
-                    let key = NSString::from_str(
-                        shortcut
-                            .as_ref()
-                            .map(|shortcut| shortcut.key.as_str())
-                            .unwrap_or(""),
-                    );
-                    let item = unsafe {
-                        NSMenuItem::initWithTitle_action_keyEquivalent(
-                            NSMenuItem::alloc(mtm),
-                            &title,
-                            Some(objc2::sel!(nanaMenuAction:)),
-                            &key,
-                        )
-                    };
-                    if let Some(shortcut) = shortcut {
-                        let mut flags = NSEventModifierFlags::empty();
-                        if shortcut.primary {
-                            flags |= NSEventModifierFlags::Command;
-                        }
-                        if shortcut.shift {
-                            flags |= NSEventModifierFlags::Shift;
-                        }
-                        if shortcut.alt {
-                            flags |= NSEventModifierFlags::Option;
-                        }
-                        item.setKeyEquivalentModifierMask(flags);
-                    }
-                    // The id rides on the item's tag, which is what the action
-                    // reads back; no per-item Rust state to keep alive.
-                    item.setTag(*id as isize);
-                    item.setEnabled(*enabled);
-                    item.setState(if *checked {
-                        objc2_app_kit::NSControlStateValueOn
-                    } else {
-                        objc2_app_kit::NSControlStateValueOff
-                    });
-                    unsafe { item.setTarget(Some(&menu_target(mtm))) };
-                    built.addItem(&item);
-                }
-            }
-        }
-        built
-    }
 
     let root = NSMenu::initWithTitle(NSMenu::alloc(mtm), &NSString::new());
     root.setAutoenablesItems(false);

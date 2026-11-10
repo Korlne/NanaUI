@@ -226,6 +226,70 @@ mod tests {
     }
 }
 
+/// Appends `entries` to `popup`, building submenus as it goes.
+///
+/// # Safety
+/// `popup` is a live menu handle owned by the caller.
+pub(crate) unsafe fn append_menu_entries(
+    popup: windows_sys::Win32::UI::WindowsAndMessaging::HMENU,
+    entries: &[crate::MenuEntry],
+) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        AppendMenuW, CreateMenu, MF_CHECKED, MF_GRAYED, MF_POPUP, MF_SEPARATOR, MF_STRING,
+    };
+
+    for entry in entries {
+        match entry {
+            crate::MenuEntry::Separator => unsafe {
+                AppendMenuW(popup, MF_SEPARATOR, 0, std::ptr::null());
+            },
+            crate::MenuEntry::Submenu(child) => unsafe {
+                let child_popup = CreateMenu();
+                append_menu_entries(child_popup, &child.entries);
+                let title = wide(&child.title);
+                AppendMenuW(popup, MF_POPUP, child_popup as usize, title.as_ptr());
+            },
+            crate::MenuEntry::Item {
+                id,
+                label,
+                shortcut,
+                enabled,
+                checked,
+            } => unsafe {
+                // Windows draws the accelerator from the label, so the
+                // shortcut is appended after a tab the way the platform
+                // expects. Claiming the key itself is the host's job.
+                let mut text = label.clone();
+                if let Some(shortcut) = shortcut {
+                    let mut parts = Vec::new();
+                    if shortcut.primary {
+                        parts.push("Ctrl");
+                    }
+                    if shortcut.shift {
+                        parts.push("Shift");
+                    }
+                    if shortcut.alt {
+                        parts.push("Alt");
+                    }
+                    let key = shortcut.key.to_uppercase();
+                    parts.push(&key);
+                    text.push('\t');
+                    text.push_str(&parts.join("+"));
+                }
+                let mut flags = MF_STRING;
+                if !*enabled {
+                    flags |= MF_GRAYED;
+                }
+                if *checked {
+                    flags |= MF_CHECKED;
+                }
+                let text = wide(&text);
+                AppendMenuW(popup, flags, *id as usize, text.as_ptr());
+            },
+        }
+    }
+}
+
 /// Builds an `HMENU` from the model and attaches it to the window.
 ///
 /// Windows has no application-level menu bar: the strip belongs to the window,
@@ -234,73 +298,18 @@ mod tests {
 /// item's command id, matching [`crate::MenuEntry::Item::id`].
 pub(crate) fn install_menu_bar<W: HasWindowHandle + ?Sized>(window: &W, bar: &crate::MenuBar) {
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        AppendMenuW, CreateMenu, DrawMenuBar, MF_CHECKED, MF_GRAYED, MF_POPUP, MF_SEPARATOR,
-        MF_STRING, SetMenu,
+        AppendMenuW, CreateMenu, DrawMenuBar, MF_POPUP, SetMenu,
     };
 
     let Some(handle) = hwnd(window) else {
         return;
     };
 
-    /// Appends one level of the model. Returns the built popup.
-    unsafe fn build(menu: &crate::Menu) -> windows_sys::Win32::UI::WindowsAndMessaging::HMENU {
-        let popup = unsafe { CreateMenu() };
-        for entry in &menu.entries {
-            match entry {
-                crate::MenuEntry::Separator => unsafe {
-                    AppendMenuW(popup, MF_SEPARATOR, 0, std::ptr::null());
-                },
-                crate::MenuEntry::Submenu(child) => unsafe {
-                    let child_popup = build(child);
-                    let title = wide(&child.title);
-                    AppendMenuW(popup, MF_POPUP, child_popup as usize, title.as_ptr());
-                },
-                crate::MenuEntry::Item {
-                    id,
-                    label,
-                    shortcut,
-                    enabled,
-                    checked,
-                } => unsafe {
-                    // Windows draws the accelerator from the label, so the
-                    // shortcut is appended after a tab the way the platform
-                    // expects. Claiming the key itself is the host's job.
-                    let mut text = label.clone();
-                    if let Some(shortcut) = shortcut {
-                        let mut parts = Vec::new();
-                        if shortcut.primary {
-                            parts.push("Ctrl");
-                        }
-                        if shortcut.shift {
-                            parts.push("Shift");
-                        }
-                        if shortcut.alt {
-                            parts.push("Alt");
-                        }
-                        let key = shortcut.key.to_uppercase();
-                        parts.push(&key);
-                        text.push('\t');
-                        text.push_str(&parts.join("+"));
-                    }
-                    let mut flags = MF_STRING;
-                    if !*enabled {
-                        flags |= MF_GRAYED;
-                    }
-                    if *checked {
-                        flags |= MF_CHECKED;
-                    }
-                    let text = wide(&text);
-                    AppendMenuW(popup, flags, *id as usize, text.as_ptr());
-                },
-            }
-        }
-        popup
-    }
-
     unsafe {
         let root = CreateMenu();
         for menu in &bar.menus {
-            let popup = build(menu);
+            let popup = CreateMenu();
+            append_menu_entries(popup, &menu.entries);
             let title = wide(&menu.title);
             AppendMenuW(root, MF_POPUP, popup as usize, title.as_ptr());
         }

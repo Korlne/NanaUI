@@ -11,11 +11,12 @@ pub(crate) use fallback::{
 };
 #[cfg(target_os = "macos")]
 pub(crate) use macos::{
-    apply, clear, describe_configured_panel, install_menu_bar, installed_menu_bar,
+    apply, build_menu, clear, describe_configured_panel, install_menu_bar, installed_menu_bar,
     open_file_dialog, set_application_icon_png, set_presentation_hold, show_without_activation,
 };
 #[cfg(target_os = "windows")]
 pub(crate) use windows::{
-    DialogCancellation, apply, clear, install_menu_bar, set_application_icon_png,
-    set_presentation_hold, set_skip_taskbar, settle_layered_window, show_without_activation,
+    DialogCancellation, append_menu_entries, apply, clear, install_menu_bar,
+    set_application_icon_png, set_presentation_hold, set_skip_taskbar, settle_layered_window,
+    show_without_activation,
 };
