@@ -19,6 +19,7 @@ NanaUI's own code is dual-licensed under **MIT or Apache-2.0** (see [LICENSE-MIT
 | `read-fonts` | `0.41.0` | MIT OR Apache-2.0 | Low-level font table reading shared by `skrifa` and `harfrust` |
 | `fontdb` | `0.24.0` | MIT | System font directory scanning and `name` / `OS/2` metadata reading, only in `font/discovery.rs` |
 | `ttf-parser` | `0.25.1` | MIT OR Apache-2.0 | Font table parser used by `fontdb` |
+| `memmap2` | `0.9.11` | MIT OR Apache-2.0 | Read-only memory mapping of system font files, only in `font/mapped.rs` (`fontdb` uses it too) |
 | `icu_properties` | `2.3.0` | Unicode-3.0 | Unicode Script, `Emoji_Presentation`, and `Default_Ignorable` properties, only in `font/unicode.rs` |
 | `unicode-bidi` | `0.3.18` | MIT OR Apache-2.0 | Unicode Bidirectional Algorithm (UBA), only in `shaping/bidi.rs` |
 | `unicode-linebreak` | `0.1.5` | Apache-2.0 | UAX #14 line break opportunity tables, only in `layout/breaks.rs` |

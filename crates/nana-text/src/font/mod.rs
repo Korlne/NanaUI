@@ -14,6 +14,7 @@ mod coverage;
 mod discovery;
 mod face;
 mod fallback;
+mod mapped;
 mod matching;
 #[cfg(any(test, target_env = "ohos"))]
 mod ohos;

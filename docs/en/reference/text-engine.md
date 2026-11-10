@@ -243,7 +243,8 @@ the cost of zero-work frames. See the counters subsection of "UiWorld retained t
    bringing its types back. Comments are stripped before scanning, so `lib.rs` can state the boundary plainly.
 3. **allowlist**: when `crates/nana-text/src/**` references `nana_ui_core::`, it may only hit the items in the table above.
 4. **Font layer backends** (#90): `fontdb` may only appear in `src/font/discovery.rs`. `skrifa` may only appear in
-   `src/font/face.rs`. `icu_properties` may only appear in `src/font/unicode.rs`. `read_fonts` /
+   `src/font/face.rs`. `icu_properties` may only appear in `src/font/unicode.rs`. `memmap2` may only appear in
+   `src/font/mapped.rs`. `read_fonts` /
    `ttf_parser` may not be named anywhere. None of these three modules may be `pub mod` in `font/mod.rs`, so the public API
    cannot leak a third-party ID such as `fontdb::ID`. Same for #91: `harfrust` may only appear in
    `src/shaping/opentype.rs`, and `unicode_bidi` may only appear in `src/shaping/bidi.rs`. The module is not named
@@ -282,7 +283,7 @@ FontAssignment { range, font, reason }          FontInstance { key: FontInstance
 
 | Source | Entry point | Bytes |
 | --- | --- | --- |
-| Platform system fonts | `load_system_fonts` / `with_system_fonts` | Read from disk the first time details / coverage are needed, resident afterwards |
+| Platform system fonts | `load_system_fonts` / `with_system_fonts` | The file is mapped (not read onto the heap) the first time details / coverage are needed, and the faces of one file share that mapping |
 | Explicit file | `register_file` | Read and validated at registration; a bad file fails at registration |
 | In-memory bytes / test fixtures | `register_bytes(font_blob(..), &FaceDescriptor)` | Shared via `Arc` |
 

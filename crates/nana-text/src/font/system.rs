@@ -250,7 +250,15 @@ pub struct FontCounters {
 
 enum FaceBytes {
     Loaded(FontBlob),
-    File(PathBuf, OnceLock<Option<FontBlob>>),
+    File(Arc<FontFile>),
+}
+
+/// A font file and its bytes once a face needed them. Every face of a
+/// collection holds the same one, so a `.ttc` is loaded once however many of
+/// its faces are used: each face used to read the whole file for itself.
+struct FontFile {
+    path: PathBuf,
+    loaded: OnceLock<Option<FontBlob>>,
 }
 
 struct FaceRecord {
@@ -268,8 +276,11 @@ impl FaceRecord {
     fn blob(&self) -> Option<FontBlob> {
         match &self.bytes {
             FaceBytes::Loaded(blob) => Some(Arc::clone(blob)),
-            FaceBytes::File(path, loaded) => loaded
-                .get_or_init(|| std::fs::read(path).ok().map(font_blob))
+            // Only a system file is still unloaded here: a registered file
+            // was read at registration.
+            FaceBytes::File(file) => file
+                .loaded
+                .get_or_init(|| super::mapped::system_file(&file.path))
                 .clone(),
         }
     }
@@ -277,7 +288,7 @@ impl FaceRecord {
     fn loaded_blob(&self) -> Option<FontBlob> {
         match &self.bytes {
             FaceBytes::Loaded(blob) => Some(Arc::clone(blob)),
-            FaceBytes::File(_, loaded) => loaded.get().cloned().flatten(),
+            FaceBytes::File(file) => file.loaded.get().cloned().flatten(),
         }
     }
 
@@ -367,7 +378,7 @@ impl FaceRecord {
             families: self.families(),
             post_script_name: Arc::clone(&self.meta.post_script_name),
             path: match &self.bytes {
-                FaceBytes::File(path, _) => Some(path.clone()),
+                FaceBytes::File(file) => Some(file.path.clone()),
                 FaceBytes::Loaded(_) => None,
             },
             index: self.meta.index,
@@ -655,31 +666,48 @@ impl FontSystem {
         let bytes = std::fs::read(path).map_err(|error| FontError::Io(error.to_string()))?;
         let blob = font_blob(bytes);
         let metas = Self::parse_blob(&blob)?;
+        let file = Arc::new(FontFile {
+            path: path.to_path_buf(),
+            loaded: OnceLock::from(Some(blob)),
+        });
         let faces = metas
             .into_iter()
-            .map(|meta| {
-                let loaded = OnceLock::new();
-                let _ = loaded.set(Some(Arc::clone(&blob)));
-                NewFace {
-                    meta,
-                    bytes: FaceBytes::File(path.to_path_buf(), loaded),
-                    origin: FontOrigin::File,
-                }
+            .map(|meta| NewFace {
+                meta,
+                bytes: FaceBytes::File(Arc::clone(&file)),
+                origin: FontOrigin::File,
             })
             .collect();
         let registration = self.insert_faces(faces, descriptor);
         Ok(self.registered(registration))
     }
 
-    /// Scans the platform font directories as one source. Bytes are read
-    /// lazily, the first time a face's details or coverage are needed.
+    /// Scans the platform font directories as one source. A file's bytes are
+    /// mapped, not read, the first time one of its faces needs its details or
+    /// coverage, and the faces of a collection share that mapping.
     pub fn load_system_fonts(&mut self) -> FontRegistration {
-        let faces = discovery::system_faces()
+        self.insert_system_faces(discovery::system_faces())
+    }
+
+    fn insert_system_faces(
+        &mut self,
+        discovered: Vec<(DiscoveredSource, FaceMeta)>,
+    ) -> FontRegistration {
+        let mut files: HashMap<PathBuf, Arc<FontFile>> = HashMap::new();
+        let faces = discovered
             .into_iter()
             .map(|(source, meta)| NewFace {
                 meta,
                 bytes: match source {
-                    DiscoveredSource::File(path) => FaceBytes::File(path, OnceLock::new()),
+                    DiscoveredSource::File(path) => {
+                        let file = files.entry(path).or_insert_with_key(|path| {
+                            Arc::new(FontFile {
+                                path: path.clone(),
+                                loaded: OnceLock::new(),
+                            })
+                        });
+                        FaceBytes::File(Arc::clone(file))
+                    }
                     DiscoveredSource::Blob(blob) => FaceBytes::Loaded(blob),
                 },
                 origin: FontOrigin::System,
@@ -1304,6 +1332,52 @@ impl FontSystem {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Two faces of one file, as a collection's faces are discovered, hold
+    /// one copy of its bytes, and those are the file's.
+    #[test]
+    fn faces_of_one_system_file_share_its_bytes() {
+        let path = PathBuf::from(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/fonts/noto-sans-kr.ttf"
+        ));
+        let on_disk = std::fs::read(&path).unwrap();
+        let meta = discovery::parse_faces(&font_blob(on_disk.clone()))
+            .into_iter()
+            .next()
+            .expect("the fixture has a face");
+        let mut system = FontSystem::hermetic();
+        system.insert_system_faces(vec![
+            (DiscoveredSource::File(path.clone()), meta.clone()),
+            (DiscoveredSource::File(path.clone()), meta),
+        ]);
+        let faces = system.faces();
+        assert_eq!(faces.len(), 2);
+        let first = system.face_data(faces[0]).unwrap();
+        let second = system.face_data(faces[1]).unwrap();
+        assert!(Arc::ptr_eq(&first.blob(), &second.blob()));
+        assert_eq!(first.bytes(), &on_disk[..]);
+        assert_eq!(system.describe(faces[0]).unwrap().path, Some(path));
+    }
+
+    /// A system file that is gone by the time a face needs it is a face
+    /// without bytes, not a failure of the scan that listed it.
+    #[test]
+    fn a_system_file_that_cannot_be_opened_has_no_bytes() {
+        let path = PathBuf::from(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/fonts/noto-sans-kr.ttf"
+        ));
+        let meta = discovery::parse_faces(&font_blob(std::fs::read(&path).unwrap()))
+            .into_iter()
+            .next()
+            .unwrap();
+        let mut system = FontSystem::hermetic();
+        let missing = std::env::temp_dir().join("nana-text-no-such-font.ttf");
+        system.insert_system_faces(vec![(DiscoveredSource::File(missing), meta)]);
+        let face = system.faces()[0];
+        assert!(system.face_data(face).is_none());
+    }
 
     /// A `wght` animation selects with a new weight every frame. The cache
     /// keeps its ceiling instead of every weight it was ever asked for.

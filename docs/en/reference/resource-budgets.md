@@ -191,6 +191,18 @@ Plain box page at 2 101 / 21 001 / 67 201 boxes: 3 025 / 2 727 / 2 798 → 2 840
 
 After the fourth round on 2026-11-09 (see the fourth round of cold layout under "CPU time"), the plain box page at 21 001 boxes holds 2 541 → 2 523 B per box (allocation-stack total 2 748 → 2 730 B): the first layout hands the pass's measurement plan table to the retained cache whole instead of inserting entry by entry into a table that doubles up from empty; the control page at 31 001 boxes 3 014 → 3 012 B. Tree building is unchanged (12.2 allocations, 1 031 B per box). Recording no plans for single-child containers would save another 360 B per box but breaks the incremental contracts and was withdrawn; see the same section.
 
+**System font files are mapped, not read onto the heap (2026-11-11).** A platform's font files are large and an application uses a small part of them: PingFang, Hiragino and Apple Color Emoji are 60–190 MB each, and a line of text reads a few tables and a handful of glyphs. The font set used to `fs::read` a whole file the first time one of its faces needed bytes and keep it, and every face of one `.ttc` read its own copy. Files are now mapped read-only through `font/mapped.rs`, and the faces of one file share one mapping; the bytes stay in the page cache the system already shares between processes, and only the pages that are read are resident.
+
+Five lines of mixed Chinese, English, Japanese, Korean and emoji text laid out with system fonts (macOS, `FontSystem::with_system_fonts`, release):
+
+| | Before | After |
+| --- | ---: | ---: |
+| Live heap afterwards | 1 282 MiB | 0.7 MiB |
+| Peak memory footprint of the process | 1 349 MB | 3.7 MB |
+| Time to lay the five lines out | 116 ms | 1–2 ms |
+
+`nana-text/tests/system_font_memory.rs` (it reads the machine's fonts, so it is `#[ignore]`d and run by hand on the target platform) asks for the bytes of every installed face: 929 faces in 442 files, 2 194 MiB of font files, 0.04 MiB of heap. A file an application registers with `register_file` is still read at registration: a mapping needs the file not to be shortened in place while it is mapped, which the system font directories can be relied on for and an application's own file cannot. When mapping fails (a file system without it), the file is read instead.
+
 ## CPU time
 
 The cost of incremental frames is governed by the performance contract in `perf/` (`perf/README.md`): an idle frame does no work, paint-only changes do not relayout, and one edit does not scan siblings. The criterion is `WorkCounters`, not wall-clock time.

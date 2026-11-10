@@ -243,7 +243,8 @@ Phase 0 没有产品生产者。这是设计如此。当时防止它们变成摆
    把它的类型再带回来。注释会被剥掉再扫。所以 `lib.rs` 可以正常地把边界写清楚。
 3. **allowlist**：`crates/nana-text/src/**` 引用 `nana_ui_core::` 时。只许命中上面那张表里的项。
 4. **字体层后端**（#90）：`fontdb` 只许出现在 `src/font/discovery.rs`。`skrifa` 只许出现在
-   `src/font/face.rs`。`icu_properties` 只许出现在 `src/font/unicode.rs`。`read_fonts` /
+   `src/font/face.rs`。`icu_properties` 只许出现在 `src/font/unicode.rs`。`memmap2` 只许出现在
+   `src/font/mapped.rs`。`read_fonts` /
    `ttf_parser` 哪都不许点名。这三个模块在 `font/mod.rs` 里不得是 `pub mod`。公开 API 因此
    不可能带出 `fontdb::ID` 之类的第三方 ID。#91 同理：`harfrust` 只许出现在
    `src/shaping/opentype.rs`。`unicode_bidi` 只许出现在 `src/shaping/bidi.rs`。模块不叫
@@ -282,7 +283,7 @@ FontAssignment { range, font, reason }          FontInstance { key: FontInstance
 
 | 来源 | 入口 | 字节 |
 | --- | --- | --- |
-| 平台系统字体 | `load_system_fonts` / `with_system_fonts` | 首次需要 details / 覆盖率时读盘，之后常驻 |
+| 平台系统字体 | `load_system_fonts` / `with_system_fonts` | 首次需要 details / 覆盖率时把文件映射进来（不读进堆），同一个文件的各个字面共用一份映射 |
 | 显式文件 | `register_file` | 注册时读取并校验，坏文件在注册处失败 |
 | 内存 bytes / 测试 fixture | `register_bytes(font_blob(..), &FaceDescriptor)` | `Arc` 共享 |
 

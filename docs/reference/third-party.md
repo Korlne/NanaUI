@@ -19,6 +19,7 @@ NanaUI 自身代码采用 **MIT 或 Apache-2.0** 双许可发布（详见仓库�
 | `read-fonts` | `0.41.0` | MIT OR Apache-2.0 | `skrifa` 与 `harfrust` 共用的底层字表读取 |
 | `fontdb` | `0.24.0` | MIT | 系统字体目录扫描与 `name` / `OS/2` 元数据读取，仅限 `font/discovery.rs` |
 | `ttf-parser` | `0.25.1` | MIT OR Apache-2.0 | `fontdb` 使用的字表解析器 |
+| `memmap2` | `0.9.11` | MIT OR Apache-2.0 | 系统字体文件的只读内存映射，仅限 `font/mapped.rs`（`fontdb` 也用它） |
 | `icu_properties` | `2.3.0` | Unicode-3.0 | Unicode Script、`Emoji_Presentation`、`Default_Ignorable` 属性，仅限 `font/unicode.rs` |
 | `unicode-bidi` | `0.3.18` | MIT OR Apache-2.0 | Unicode 双向文本算法（UBA），仅限 `shaping/bidi.rs` |
 | `unicode-linebreak` | `0.1.5` | Apache-2.0 | UAX #14 断行机会表，仅限 `layout/breaks.rs` |

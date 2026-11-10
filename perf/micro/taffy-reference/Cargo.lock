@@ -620,6 +620,7 @@ dependencies = [
  "fontdb",
  "harfrust",
  "icu_properties",
+ "memmap2",
  "nana-ui-core",
  "serde",
  "serde_json",

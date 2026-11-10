@@ -26,6 +26,9 @@ unicode-segmentation.workspace = true
 # to the single `src/font/` file allowed to name it.
 # System font discovery and name/OS2 metadata parsing (`font/discovery.rs`).
 fontdb = "0.24"
+# System font files mapped instead of read (`font/mapped.rs`). `fontdb` already
+# brings it in; this names it so the font set can keep the mapping.
+memmap2 = "0.9"
 # Variation axes, named instances, colour tables, cmap (`font/face.rs`). Same
 # read-fonts line as harfrust 0.12, which Phase 2 shapes with.
 skrifa = "0.44"

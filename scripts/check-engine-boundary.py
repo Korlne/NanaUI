@@ -97,6 +97,7 @@ NANA_TEXT_CORE_ALLOWLIST = {
 # file may name the crate at all (it is reached only through another).
 NANA_TEXT_PRIVATE_BACKENDS = {
     "fontdb": "font/discovery.rs",
+    "memmap2": "font/mapped.rs",
     "skrifa": "font/face.rs",
     "read_fonts": None,
     "ttf_parser": None,
