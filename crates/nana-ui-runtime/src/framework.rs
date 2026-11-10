@@ -4381,16 +4381,6 @@ impl AppContext {
         self.component_lifecycle
             .chart_tooltips
             .retain(|owner, tooltip| !removed.contains(owner) && !removed.contains(tooltip));
-        self.child_reproject_views
-            .retain(|id, _| !removed.contains(id));
-        self.metrics_reproject_views
-            .retain(|id, _| !removed.contains(id));
-        self.recipe_reproject_views
-            .retain(|id, _| !removed.contains(id));
-        self.reduced_motion_reproject_views
-            .retain(|id, _| !removed.contains(id));
-        self.text_backend_reproject_views
-            .retain(|id, _| !removed.contains(id));
         self.pending_child_reprojects
             .retain(|id| !removed.contains(id));
         self.child_structure_owners
@@ -4399,21 +4389,115 @@ impl AppContext {
         self.component_lifecycle.tooltips.retain(|_, tooltip| {
             !removed.contains(&tooltip.overlay) && !removed.contains(&tooltip.host)
         });
-        self.assembled.retain(|parent, slots| {
-            if removed.contains(parent) {
-                return false;
+        // The tables below hold an entry per component or per keyed child.
+        // Walked in full, they made removing one node cost the size of the
+        // whole tree (2.4 ms among 100,000 buttons), and an assembly
+        // dropping a hundred children paid that two hundred times.
+        for views in [
+            &mut self.child_reproject_views,
+            &mut self.metrics_reproject_views,
+            &mut self.recipe_reproject_views,
+            &mut self.reduced_motion_reproject_views,
+            &mut self.text_backend_reproject_views,
+        ] {
+            forget_nodes(views, removed);
+        }
+        forget_nodes(&mut self.slot_keys, removed);
+        if self.placed_assembled.len() <= removed.len() {
+            self.placed_assembled.retain(|id| !removed.contains(id));
+        } else {
+            for id in removed {
+                self.placed_assembled.remove(id);
             }
-            slots.retain(|_, child| !removed.contains(&child.id));
-            true
-        });
-        self.assembled_parent
-            .retain(|child, (parent, _)| !removed.contains(child) && !removed.contains(parent));
-        self.placed_assembled.retain(|id| !removed.contains(id));
-        self.slot_keys.retain(|id, _| !removed.contains(id));
+        }
+        self.forget_assembled(removed);
+        #[cfg(test)]
+        self.assert_forgotten(removed);
         self.forget_reactive(removed);
         if !self.component_lifecycle.toast_stacks.is_empty() {
             self.forget_toast_stack_nodes(removed);
         }
+    }
+
+    /// Drops the removed nodes from both directions of the keyed-child
+    /// tables: a removed parent's table with its children's declarations,
+    /// and a removed child's key from the table of a parent that stays.
+    fn forget_assembled(&mut self, removed: &HashSet<StableNodeId>) {
+        // As [`forget_nodes`] chooses: the walk when the tables are the
+        // shorter side, which is every teardown of a tree that keys little.
+        if self.assembled.len() + self.assembled_parent.len() <= removed.len() {
+            self.assembled.retain(|parent, slots| {
+                if removed.contains(parent) {
+                    return false;
+                }
+                slots.retain(|_, child| !removed.contains(&child.id));
+                true
+            });
+            self.assembled_parent
+                .retain(|child, (parent, _)| !removed.contains(child) && !removed.contains(parent));
+            return;
+        }
+        let mut thinned = crate::NodeSet::default();
+        for id in removed {
+            if let Some(slots) = self.assembled.remove(id) {
+                for child in slots.values() {
+                    if self
+                        .assembled_parent
+                        .get(&child.id)
+                        .is_some_and(|(declared, _)| declared == id)
+                    {
+                        self.assembled_parent.remove(&child.id);
+                    }
+                }
+            }
+            if let Some((declared, _)) = self.assembled_parent.remove(id)
+                && !removed.contains(&declared)
+            {
+                thinned.insert(declared);
+            }
+        }
+        // Once per parent, however many of its children went.
+        for parent in thinned {
+            if let Some(slots) = self.assembled.get_mut(&parent) {
+                slots.retain(|_, child| !removed.contains(&child.id));
+            }
+        }
+    }
+
+    /// The walk over whole tables [`Self::forget_subtree`] used to do, as a
+    /// check on the lookups that replaced it: nothing that walk would have
+    /// dropped is still there. It makes every removal cost the tree again,
+    /// so it runs in this crate's tests only.
+    #[cfg(test)]
+    fn assert_forgotten(&self, removed: &HashSet<StableNodeId>) {
+        let gone = |id: &StableNodeId| removed.contains(id);
+        let reprojects = [
+            &self.child_reproject_views,
+            &self.metrics_reproject_views,
+            &self.recipe_reproject_views,
+            &self.reduced_motion_reproject_views,
+            &self.text_backend_reproject_views,
+        ];
+        assert!(
+            !reprojects.iter().any(|views| views.keys().any(gone)),
+            "a removed node is still registered for reprojection"
+        );
+        assert!(
+            !self.placed_assembled.iter().any(gone) && !self.slot_keys.keys().any(gone),
+            "a removed node still holds a placement or a slot key"
+        );
+        assert!(
+            self.assembled.iter().all(
+                |(parent, slots)| !gone(parent) && !slots.values().any(|child| gone(&child.id))
+            ),
+            "a removed node is still a keyed parent or a keyed child"
+        );
+        assert!(
+            self.assembled_parent
+                .iter()
+                .all(|(child, (parent, _))| !gone(child) && !gone(parent)),
+            "a removed node still has, or is, a declared parent"
+        );
     }
 
     /// What each `ToastStack` pushed to holds.
@@ -4551,6 +4635,23 @@ mod smooth_scroll_tests;
 
 #[cfg(test)]
 mod touch_scroll_tests;
+
+/// Drops `removed`'s entries from a table keyed by node, from the shorter
+/// side: the table is asked for each removed node, or walked when it holds
+/// fewer entries than there are removed nodes. Removing one node from a
+/// large tree and tearing a large tree down both cost what is removed.
+fn forget_nodes<V>(
+    table: &mut HashMap<StableNodeId, V, crate::BuildIdHasher>,
+    removed: &HashSet<StableNodeId>,
+) {
+    if table.len() <= removed.len() {
+        table.retain(|id, _| !removed.contains(id));
+    } else {
+        for id in removed {
+            table.remove(id);
+        }
+    }
+}
 
 /// A view an event handler ran on during another view's update.
 pub(super) struct TouchedObserver {

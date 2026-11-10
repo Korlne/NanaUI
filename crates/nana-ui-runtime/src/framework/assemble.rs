@@ -214,14 +214,16 @@ impl AssemblyScope<'_> {
         type_id: TypeId,
     ) -> Result<(), FrameworkError> {
         self.context.attach_child(self.parent, id)?;
-        let mut slots = self
-            .context
-            .assembled
-            .get(&self.parent)
-            .cloned()
-            .unwrap_or_default();
-        slots.insert(key, AssembledChild { id, type_id });
-        self.context.store_assembled(self.parent, slots);
+        // Into the parent's table as it stands. Copying the table to add one
+        // key made a parent's first assembly cost the square of its children
+        // (6 s for 16,000).
+        self.context.rekey_assembled(
+            self.parent,
+            AssembledKey {
+                key,
+                child: AssembledChild { id, type_id },
+            },
+        );
         Ok(())
     }
 
