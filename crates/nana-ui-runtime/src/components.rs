@@ -1282,20 +1282,16 @@ pub struct ComponentTextRegion {
 }
 
 /// A range's caution zone (`RangeField::caution_from`): the stretch of the
-/// track from `from` to its end, in the theme's warning colour (the rail
-/// and the fill take the same one today; they stay two fields for a theme
-/// that tells them apart).
+/// track from `from` to its end, in the theme's warning colour.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RangeCaution {
     /// Where it begins along the track, `0.0..1.0`.
     pub from: f32,
-    /// The rail's colour inside the zone, past the value.
-    pub track: [f32; 4],
-    /// The fill's colour inside the zone, up to the value.
-    pub fill: [f32; 4],
-    /// `Some(colour)` while the value is inside the zone on an enabled
-    /// range: the thumb takes it in place of the accent.
-    pub thumb: Option<[f32; 4]>,
+    /// The colour of the rail, the fill and the markers inside the zone.
+    pub color: [f32; 4],
+    /// The value is inside the zone on an enabled range: the thumb takes
+    /// the colour in place of the accent.
+    pub thumb: bool,
 }
 
 /// A range's value thumb (`RangeField::value_thumb`): a capsule as wide as

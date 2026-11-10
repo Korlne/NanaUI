@@ -6211,9 +6211,8 @@ fn a_ranges_caution_zone_repaints_the_rail_and_the_fill_past_where_it_begins() {
         range.component_geometry = Some(Box::new(ComponentGeometry::Range {
             caution: Some(nana_ui_runtime::RangeCaution {
                 from: 0.25,
-                track: [0.9, 0.7, 0.1, 0.5],
-                fill: [0.9, 0.7, 0.1, 1.0],
-                thumb: (ratio >= 0.25).then_some([0.9, 0.7, 0.1, 1.0]),
+                color: [0.9, 0.7, 0.1, 1.0],
+                thumb: ratio >= 0.25,
             }),
             label: None,
             value: nana_ui_runtime::ComponentTextRegion {

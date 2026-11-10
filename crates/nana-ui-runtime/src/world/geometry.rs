@@ -1605,21 +1605,22 @@ impl UiWorld {
                     width: (lane.width - travel).max(0.0),
                     height: thumb.min(content.height),
                 };
-                // The value inside the caution zone turns the thumb of an
-                // enabled range the warning colour.
-                let warning = self
-                    .style_model
-                    .color(SemanticColorRole::Warning)
-                    .as_rgba_array();
-                let caution_thumb = caution
-                    .filter(|from| track_gradient.is_none() && *ratio >= *from)
-                    .filter(|_| {
-                        !self
-                            .nodes
-                            .get(id)
-                            .is_some_and(|node| node.accessibility.disabled)
-                    })
-                    .map(|_| warning);
+                let disabled = self
+                    .nodes
+                    .get(id)
+                    .is_some_and(|node| node.accessibility.disabled);
+                // The caution zone in the theme's warning colour, whole on
+                // the rail as on the fill (a wash of it over a surface reads
+                // as a tan, not as a warning); the value inside it turns the
+                // thumb of an enabled range that colour too.
+                let caution = caution.map(|from| crate::RangeCaution {
+                    from,
+                    color: self
+                        .style_model
+                        .color(SemanticColorRole::Warning)
+                        .as_rgba_array(),
+                    thumb: !disabled && *ratio >= from,
+                });
                 let value_thumb = value_thumb
                     .as_ref()
                     .zip(capsule_width)
@@ -1629,10 +1630,6 @@ impl UiWorld {
                             width,
                             ..track
                         };
-                        let disabled = self
-                            .nodes
-                            .get(id)
-                            .is_some_and(|node| node.accessibility.disabled);
                         let mut text = text_region(
                             capsule,
                             Arc::clone(text),
@@ -1650,8 +1647,8 @@ impl UiWorld {
                                 .style_model
                                 .color(SemanticColorRole::AccentText)
                                 .as_rgba_array();
-                            text.color = Some(match caution_thumb {
-                                Some(warning) => {
+                            text.color = Some(match caution.filter(|caution| caution.thumb) {
+                                Some(crate::RangeCaution { color: warning, .. }) => {
                                     let body = self
                                         .style_model
                                         .color(SemanticColorRole::Text)
@@ -1672,19 +1669,6 @@ impl UiWorld {
                             editing: *editing,
                         }
                     });
-                // The caution zone in the theme's warning colour, whole on
-                // the rail as on the fill: a wash of it over a surface reads
-                // as a tan, not as a warning, and the thumb already says
-                // where the value is.
-                let caution = caution.filter(|_| track_gradient.is_none()).map(|from| {
-                    let fill = warning;
-                    crate::RangeCaution {
-                        from,
-                        track: fill,
-                        fill,
-                        thumb: caution_thumb,
-                    }
-                });
                 Some(crate::ComponentGeometry::Range {
                     caution,
                     border_width: self.theme.border().hairline,

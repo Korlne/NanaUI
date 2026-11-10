@@ -2106,10 +2106,10 @@ impl UiScene {
                             }
                         };
                         let pieces = [
-                            (5, from.max(rail_start), rail_span.1, caution.track, true),
-                            (6, from, fill_end.min(rail_span.1), caution.fill, false),
+                            (5, from.max(rail_start), rail_span.1, true),
+                            (6, from, fill_end.min(rail_span.1), false),
                         ];
-                        for (slot, start, end, color, round_end) in pieces {
+                        for (slot, start, end, round_end) in pieces {
                             if end <= start {
                                 continue;
                             }
@@ -2127,7 +2127,7 @@ impl UiScene {
                                     ..rail
                                 },
                                 VisualQuadStyle {
-                                    background: Some(color),
+                                    background: Some(caution.color),
                                     border_color: None,
                                     border_width: 0.0,
                                     corner_radius: [
@@ -2162,7 +2162,7 @@ impl UiScene {
                         // begins among them, is the zone's colour.
                         let zone_fill = caution
                             .filter(|caution| marker >= caution.from)
-                            .map(|caution| caution.fill);
+                            .map(|caution| caution.color);
                         self.insert_primitive(visual_quad_with_paint(
                             &visual_context,
                             5 + caution_slots + index as u64,
@@ -2184,7 +2184,9 @@ impl UiScene {
                     let thumb_slot = 5 + marker_count;
                     // Inside the caution zone the thumb is the warning
                     // colour in place of the accent.
-                    let caution_thumb = caution.and_then(|caution| caution.thumb);
+                    let caution_thumb = caution
+                        .filter(|caution| caution.thumb)
+                        .map(|caution| caution.color);
                     let thumb_paint = if caution_thumb.is_some() {
                         None
                     } else {
