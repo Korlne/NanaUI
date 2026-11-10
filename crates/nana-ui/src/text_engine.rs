@@ -12,7 +12,9 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
-use nana_text::font::{FaceDescriptor, FontError, FontStyle, FontSystem, GenericFamily, font_blob};
+use nana_text::font::{
+    FaceDescriptor, FontError, FontQuery, FontStyle, FontSystem, GenericFamily, font_blob,
+};
 use nana_text::{NativeTextEngine, SharedTextEngine};
 
 /// The bundled UI family, when `bundled-fonts` put it in the database.
@@ -283,6 +285,52 @@ pub(crate) fn alias_local_family(
         }
     }
     aliased
+}
+
+/// One face the font set chose, and the bytes it reads.
+pub(crate) struct ResolvedFace {
+    /// The first family name the face answers to.
+    pub family: Arc<str>,
+    pub data: nana_text::font::FontData,
+}
+
+/// The faces the one font set draws `text` with when asked for `family` at
+/// `weight`: what the family list resolves to first, then every fallback a
+/// character needed, each once.
+///
+/// It is the question interface text asks ([`FontQuery::from_style`] and the
+/// fallback policy), answered without shaping, so a second consumer of fonts
+/// (SVG `<text>`, an application's own rasterizer) uses the same sources, the
+/// same generic families and the same fallback instead of carrying a face of
+/// its own.
+pub(crate) fn resolve_faces(family: &str, weight: u16, text: &str) -> Vec<ResolvedFace> {
+    let style = nana_text::TextStyle {
+        font_family: Some(Arc::from(family)),
+        font_weight: weight,
+        ..nana_text::TextStyle::default()
+    };
+    let query = FontQuery::from_style(&style, None);
+    let engine = nana_text_engine();
+    let mut engine = lock_engine(&engine);
+    let fonts = engine.fonts_mut();
+    let selection = fonts.select(&query);
+    let mut ids: Vec<nana_text::FontId> = selection.primary.into_iter().collect();
+    for assignment in fonts.resolve_text(&selection, text, None) {
+        if let Some(font) = assignment.font
+            && !ids.contains(&font)
+        {
+            ids.push(font);
+        }
+    }
+    ids.into_iter()
+        .filter_map(|id| {
+            let face = fonts.describe(id)?;
+            Some(ResolvedFace {
+                family: face.families.first()?.clone(),
+                data: fonts.face_data(id)?,
+            })
+        })
+        .collect()
 }
 
 /// Mirror of [`crate::nana_text::set_sans_serif_family`].

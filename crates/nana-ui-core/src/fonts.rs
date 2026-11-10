@@ -1,10 +1,11 @@
 //! The bundled Noto Sans SC face, as a single source of truth.
 //!
 //! The constant lives here rather than in `nana-ui` because more than one
-//! crate needs it (the theme in `nana-ui`, `nana-ui-scene`, and `nana-text`'s
-//! tests). Each used to `include_bytes!` the file itself, and the linker does
-//! not merge identical constant data across crates. For the same reason the
-//! bytes sit in one `static` here and the public constant refers to it.
+//! crate needs it (the theme in `nana-ui`, and the tests of `nana-ui-scene`
+//! and `nana-text`). Each used to `include_bytes!` the file itself, and the
+//! linker does not merge identical constant data across crates. For the same
+//! reason the bytes sit in one `static` here and the public constant refers
+//! to it.
 //!
 //! It is one variable font: Noto Sans SC with its `wght` axis narrowed to
 //! 400..700 and its default instance at Regular (400), named instances
@@ -16,8 +17,10 @@
 //!
 //! Two features:
 //!
-//! - `bundled-font-regular` embeds the face, for crates that draw text
-//!   without a system-font fallback (the SVG rasterizer, Canvas2D).
+//! - `bundled-font-regular` embeds the face as bytes, for tests and
+//!   benchmarks that build a font set of their own. No drawing path reads
+//!   it: SVG text, like interface text, is drawn with what the host's one
+//!   font set resolves.
 //! - `bundled-fonts` additionally names it the theme's UI font set
 //!   ([`ui_font_sources`]): hosts that render the full theme register it with
 //!   the text engine. Implies the above and embeds nothing more. The Android

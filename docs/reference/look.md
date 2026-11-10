@@ -52,7 +52,30 @@ CSS 的单层 `box-shadow`（支持 outset 与 inset）与 `text-shadow`（仅 o
 
 ## 字体、语言与排版特性
 
-启用 `bundled-fonts` feature 时，宿主会自动注册 Noto Sans SC，并将其设为默认的 `sans-serif` 界面字体。捆绑的是一个可变字体：`wght` 轴 400–700、默认实例 Regular，命名实例 Regular / Medium / SemiBold / Bold，四档界面字重都走真实字重轴，不合成粗体。字符集是简体中文常用字加 JIS X 0208 第一水准汉字与各消费者界面文案用到的字；文件由 `scripts/build-ui-font.py` 生成，来源、校验和与字符集见 `crates/nana-ui/assets/fonts/README.md`。关闭该 feature 则回退到系统字体（注意：视觉快照与设计基线核对必须使用捆绑字体，不能拿系统字体替代）。
+界面文字、SVG 图片里的 `<text>`、应用自己要画或导出的文字，都由同一个字体集决定用哪个字体：`nana-text` 的 `FontSystem`，每个进程一份。它有三类来源：平台的系统字体、`bundled-fonts` 注册的内置字体、应用注册的字体。通用字体族（`sans-serif`、`serif`、`monospace`）指向谁、缺字时按文字的 script 回落到谁，是它的策略。没有哪条绘制路径自带一份字体。
+
+要知道某段文字实际用哪些字体，调用 `nana_ui::resolve_font_faces(family, weight, text)`：`family` 是 CSS 字体族列表，返回值按顺序是它解析到的首选字体面和 `text` 里每个字符用到的回落字体面，每个 `ResolvedFontFace` 带族名、字体文件的字节（与字体集共享，不复制）和它在集合文件里的序号。SVG 文字用的就是这个结果；应用自己栅格或导出文字时也应该问这里，而不是自己再嵌一份字体。
+
+### 内置字体还是系统字体
+
+启用 `bundled-fonts` feature 时，宿主会自动注册 Noto Sans SC，并将其设为默认的 `sans-serif` 界面字体。捆绑的是一个可变字体：`wght` 轴 400–700、默认实例 Regular，命名实例 Regular / Medium / SemiBold / Bold，四档界面字重都走真实字重轴，不合成粗体。字符集是简体中文常用字加 JIS X 0208 第一水准汉字与各消费者界面文案用到的字；文件由 `scripts/build-ui-font.py` 生成，来源、校验和与字符集见 `crates/nana-ui/assets/fonts/README.md`。视觉快照与设计基线核对必须使用捆绑字体（`use_hermetic_fonts`），不能拿系统字体替代。
+
+关闭该 feature，`sans-serif` 按平台的回落表解析到系统字体，二进制小约 4.2 MiB：
+
+| 平台 | 西文 | 简体中文 |
+| --- | --- | --- |
+| Windows | Segoe UI | Microsoft YaHei UI |
+| macOS / iOS | Helvetica Neue | PingFang SC |
+| HarmonyOS | HarmonyOS Sans | HarmonyOS Sans SC |
+| Linux / Android | Noto Sans、Roboto、DejaVu Sans | Noto Sans CJK SC、Noto Sans SC |
+
+取舍有三点：
+
+- **Linux 可能缺字**：回落表指望系统装了 Noto 的中日韩字体，没装就显示不出中文。面向 Linux 发行的应用应保留 `bundled-fonts`，可以在应用的 `Cargo.toml` 里按目标平台开启。
+- **字重**：内置样式用到 450、600、650。内置字体四档都在真实字重轴上；系统字体只有它自带的那几档（Microsoft YaHei 是 Light / Regular / Bold），中间字重由相邻的一档代替，必要时合成加粗。
+- **宽度不跨平台一致**：同一段文字在各平台宽度不同，折行与截断位置随之不同。
+
+SVG 图片里的文字跟随同一选择：有内置字体就用它，没有就用系统字体。
 
 ### 宿主字体注册与热卸载
 

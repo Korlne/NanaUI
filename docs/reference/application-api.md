@@ -123,7 +123,7 @@ Android、XR 与 accessibility provider 的设备验收。
 | --- | --- |
 | `hosted` | `run_runtime`、winit 0.31-line（workspace git pin，非 crates.io 0.31.0）、AccessKit；隐含 `gpu` |
 | `gpu` | `SceneWgpuPainter`、`HostTexture`、`GpuTextureView`、`GpuView` |
-| `bundled-fonts` | 嵌入 Noto Sans SC 可变字体（`wght` 400–700）并注册为界面字体 |
+| `bundled-fonts` | 嵌入 Noto Sans SC 可变字体（`wght` 400–700，约 4.2 MiB）并注册为界面字体。不开则界面文字与 SVG 文字都用系统字体，取舍见[外观](look.md#内置字体还是系统字体) |
 | `components` | 下面组件族的聚合 |
 | `full` | fonts + components + hosted + syntax-highlighting + icu + snippet-transforms + svg |
 | `svg` | SVG 图片：`url()` 纹理和 `Image` 里的 SVG 文档，以及宿主包的只有 SVG、没有 shapes 的图标。图标按自己的几何绘制，不需要它。关闭后 SVG 图片按无法读取的文件处理，`usvg`、`resvg`、`tiny-skia`（约 0.8 MiB）不链接。只在 `gpu` 开启时生效 |

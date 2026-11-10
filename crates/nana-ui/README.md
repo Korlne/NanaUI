@@ -40,7 +40,7 @@ cargo run -p nana-ui --example application-counter --features hosted,bundled-fon
 - `snippet-transforms`（默认）：snippet 里的正则变换（`${1/(.*)/${1:/upcase}/}`）。关闭后 snippet 照常展开和联动，变换原样返回，正则引擎（约 0.7 MiB）不进二进制。
 - `svg`（默认）：SVG 图片，即 `url()` 纹理和 `Image` 里的 SVG 文档，以及宿主包的只有 SVG、没有 shapes 的图标。图标按自己的几何绘制，不需要它。关闭后 SVG 图片按无法读取的文件处理，`usvg`、`resvg`、`tiny-skia`（约 0.8 MiB）不进二进制。只在 `gpu` 开启时生效。
 - `full`：`bundled-fonts`、`components`、`hosted`、`syntax-highlighting`、`icu`、`snippet-transforms` 和 `svg`。
-- `bundled-fonts`：注册内置的 Noto Sans SC 并设为界面默认字体。
+- `bundled-fonts`：注册内置的 Noto Sans SC 并设为界面默认字体（约 4.2 MiB）。不开则界面文字与 SVG 文字都用系统字体；缺中日韩字体的 Linux 上会显示不出中文。
 - `components`：打开 `calendar`、`charts`、`controls`、`graph-canvas`、`image-viewer`、`rich-text` 六个控件族，也可以单独开启。
 - `syntax-highlighting`：代码块语法高亮。
 - `view-macro`：`view!`、`css!` 和 `stylesheet!` 宏。

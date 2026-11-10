@@ -155,6 +155,12 @@ impl FontData {
     pub fn index(&self) -> u32 {
         self.index
     }
+
+    /// The shared bytes themselves, for a reader that keeps the file alive
+    /// instead of copying it: a system collection is tens of megabytes.
+    pub fn blob(&self) -> FontBlob {
+        Arc::clone(&self.blob)
+    }
 }
 
 impl std::fmt::Debug for FontData {

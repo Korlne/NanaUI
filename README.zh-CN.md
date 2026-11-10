@@ -237,7 +237,7 @@ nana-ui = { git = "https://github.com/sena-nana/NanaUI", features = ["hosted", "
 | Feature | 作用 |
 | --- | --- |
 | `hosted` | 桌面宿主：窗口、事件循环、平台无障碍，隐含 `gpu` |
-| `bundled-fonts` | 内置 Noto Sans SC 作为默认字体 |
+| `bundled-fonts` | 内置 Noto Sans SC 作为默认字体（约 4.2 MiB）；不开则用系统字体 |
 | `view-macro` | `view!`、`css!`、`stylesheet!` 宏 |
 | `components` | 日历、图表、节点图、图片查看器、富文本等控件族 |
 | `wgpu-interop` | 访问 `GpuContext` 背后的 WGPU 对象 |

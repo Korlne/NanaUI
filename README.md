@@ -237,7 +237,7 @@ nana-ui = { git = "https://github.com/sena-nana/NanaUI", features = ["hosted", "
 | Feature | Purpose |
 | --- | --- |
 | `hosted` | Desktop host: windows, event loop, platform accessibility; implies `gpu` |
-| `bundled-fonts` | Ships Noto Sans SC as the default UI font |
+| `bundled-fonts` | Ships Noto Sans SC as the default UI font (about 4.2 MiB); without it text uses system fonts |
 | `view-macro` | The `view!`, `css!` and `stylesheet!` macros |
 | `components` | Calendar, charts, node graph, image viewer, rich text and other control families |
 | `wgpu-interop` | Access to the WGPU objects behind `GpuContext` |
