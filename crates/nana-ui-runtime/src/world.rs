@@ -1185,6 +1185,10 @@ pub struct UiWorld {
     /// Children a run of removals from one parent already took out of its
     /// list, in one pass; their own mutations skip that edit (#389).
     unlinked_ahead: NodeSet,
+    /// Parents whose children the commit being applied has still to number,
+    /// each from the lowest index one of its edits shifted; `None` outside
+    /// its apply loop. See [`Self::renumber_children_from`].
+    renumber_later: Option<NodeMap<usize>>,
     /// The result chains the commit being applied has walked; `None`
     /// outside its apply loop. See [`ResultChainMemo`].
     result_chain_memo: Option<ResultChainMemo>,
@@ -1409,6 +1413,7 @@ impl UiWorld {
             #[cfg(test)]
             block_read_steps: 0,
             unlinked_ahead: NodeSet::default(),
+            renumber_later: None,
             result_chain_memo: None,
             #[cfg(test)]
             result_chain_steps: 0,
@@ -6601,7 +6606,32 @@ impl UiWorld {
     /// Give `parent`'s children from `from` on the index they now have. The
     /// list edit that shifted them already moved them, so this keeps that
     /// edit's cost.
+    ///
+    /// While a commit is being applied the numbering waits for its last
+    /// mutation: a commit that moves many children of one parent (a list
+    /// reversed, rows filled in between others) numbered the rest of the
+    /// list after every one of them, and reversing 16,000 rows took 0.6 s.
+    /// An index that is behind in the meantime is found out and scanned
+    /// for ([`Self::child_index`]), so nothing reads a wrong one.
     pub(crate) fn renumber_children_from(&mut self, parent: StableNodeId, from: usize) {
+        if let Some(later) = &mut self.renumber_later {
+            later
+                .entry(parent)
+                .and_modify(|first| *first = (*first).min(from))
+                .or_insert(from);
+            return;
+        }
+        self.renumber_children_now(parent, from);
+    }
+
+    /// Numbers the children the commit just applied left behind.
+    pub(crate) fn renumber_children_left(&mut self) {
+        for (parent, from) in self.renumber_later.take().into_iter().flatten() {
+            self.renumber_children_now(parent, from);
+        }
+    }
+
+    fn renumber_children_now(&mut self, parent: StableNodeId, from: usize) {
         let Some(children) = self
             .nodes
             .get(parent)

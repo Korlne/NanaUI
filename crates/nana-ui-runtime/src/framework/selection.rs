@@ -950,7 +950,7 @@ impl AppContext {
             for id in subtree {
                 removed.insert(id);
                 self.views.remove(&id);
-                self.component_lifecycle.tooltips.remove(&id);
+                self.component_lifecycle.remove_tooltip(id);
                 self.component_lifecycle.loading.remove(&id);
                 self.component_lifecycle.toast_timers.remove(&id);
             }

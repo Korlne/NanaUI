@@ -612,6 +612,26 @@ struct HoverCardLifecycle {
     open: bool,
 }
 
+impl ComponentLifecycle {
+    /// Records `target`'s tooltip, in place of any it had.
+    fn insert_tooltip(&mut self, target: StableNodeId, tooltip: TooltipLifecycle) {
+        self.remove_tooltip(target);
+        if tooltip.host != target {
+            self.tooltip_parts.insert(tooltip.host, target);
+        }
+        self.tooltip_parts.insert(tooltip.overlay, target);
+        self.tooltips.insert(target, tooltip);
+    }
+
+    /// Forgets `target`'s tooltip and what led back to it.
+    fn remove_tooltip(&mut self, target: StableNodeId) -> Option<TooltipLifecycle> {
+        let tooltip = self.tooltips.remove(&target)?;
+        self.tooltip_parts.remove(&tooltip.host);
+        self.tooltip_parts.remove(&tooltip.overlay);
+        Some(tooltip)
+    }
+}
+
 #[derive(Default)]
 struct ComponentLifecycle {
     now: Duration,
@@ -620,6 +640,10 @@ struct ComponentLifecycle {
     rich_text_presses: HashMap<(DocumentId, u64), StableNodeId, crate::BuildIdHasher>,
     pointer_positions: HashMap<(DocumentId, u64), (f32, f32), crate::BuildIdHasher>,
     tooltips: HashMap<StableNodeId, TooltipLifecycle, crate::BuildIdHasher>,
+    /// The target each tooltip's overlay, and its anchor when it has one,
+    /// belongs to: when one of those nodes is removed on its own, the
+    /// tooltip is found from it rather than by walking every tooltip.
+    tooltip_parts: HashMap<StableNodeId, StableNodeId, crate::BuildIdHasher>,
     #[cfg(feature = "charts")]
     chart_tooltips: HashMap<StableNodeId, StableNodeId, crate::BuildIdHasher>,
     hover_cards: HashMap<StableNodeId, HoverCardLifecycle, crate::BuildIdHasher>,
@@ -4402,7 +4426,12 @@ impl AppContext {
         for id in removed {
             self.component_lifecycle.wheel_scrolls.remove(id);
             self.stop_touch_fling(*id);
-            self.component_lifecycle.tooltips.remove(id);
+            // The node's own tooltip, and the one it was the overlay or the
+            // anchor of.
+            self.component_lifecycle.remove_tooltip(*id);
+            if let Some(target) = self.component_lifecycle.tooltip_parts.get(id).copied() {
+                self.component_lifecycle.remove_tooltip(target);
+            }
             self.component_lifecycle.loading.remove(id);
             self.component_lifecycle.toast_timers.remove(id);
             self.views.remove(id);
@@ -4416,9 +4445,6 @@ impl AppContext {
         self.child_structure_owners
             .retain(|node, owner| !removed.contains(node) && !removed.contains(owner));
         self.pending_modal_syncs.retain(|id| !removed.contains(id));
-        self.component_lifecycle.tooltips.retain(|_, tooltip| {
-            !removed.contains(&tooltip.overlay) && !removed.contains(&tooltip.host)
-        });
         // The tables below hold an entry per component or per keyed child.
         // Walked in full, they made removing one node cost the size of the
         // whole tree (2.4 ms among 100,000 buttons), and an assembly
@@ -4511,6 +4537,17 @@ impl AppContext {
         assert!(
             !reprojects.iter().any(|views| views.keys().any(gone)),
             "a removed node is still registered for reprojection"
+        );
+        assert!(
+            !self
+                .component_lifecycle
+                .tooltips
+                .iter()
+                .any(|(target, tooltip)| gone(target)
+                    || gone(&tooltip.overlay)
+                    || gone(&tooltip.host))
+                && !self.component_lifecycle.tooltip_parts.keys().any(gone),
+            "a removed node still has, or is part of, a tooltip"
         );
         assert!(
             !self.placed_assembled.iter().any(gone) && !self.slot_keys.keys().any(gone),

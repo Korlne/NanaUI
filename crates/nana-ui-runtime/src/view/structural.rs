@@ -302,16 +302,6 @@ pub(crate) fn container<C: StyledComponent + ComponentView>(
     style.apply(element)
 }
 
-/// Whether an item's key is the first of its kind, and built already.
-enum Admit {
-    /// A key seen earlier in the list: the item is skipped.
-    Duplicate,
-    /// A row with this key is built.
-    Built,
-    /// The first item with this key, and no row has it yet.
-    Fresh,
-}
-
 /// A row still to build: its key and the call that makes its view.
 type FreshRow<'a, K> = (K, Box<dyn FnOnce() -> AnyView + 'a>);
 
@@ -319,9 +309,12 @@ type FreshRow<'a, K> = (K, Box<dyn FnOnce() -> AnyView + 'a>);
 /// build a row. Everything else is [`EachBinding`], generic over the key
 /// alone.
 trait EachSource<K>: Send {
-    /// The keys `admit` lets through, in order, and the rows to build for
-    /// the ones it calls fresh. Reads the items tracked.
-    fn read<'a>(&'a self, admit: &mut dyn FnMut(&K) -> Admit) -> (Vec<K>, Vec<FreshRow<'a, K>>);
+    /// Every item's key, in order, a repeated key repeated. Reads the items
+    /// tracked.
+    fn keys(&self) -> Vec<K>;
+
+    /// The rows to build for the items at `indices`, each with its key.
+    fn rows<'a>(&'a self, indices: &[usize]) -> Vec<FreshRow<'a, K>>;
 }
 
 struct EachItems<T, S, KF, RF> {
@@ -340,26 +333,171 @@ where
     RF: Fn(T) -> V + Send + 'static,
     V: IntoView,
 {
-    fn read<'a>(&'a self, admit: &mut dyn FnMut(&K) -> Admit) -> (Vec<K>, Vec<FreshRow<'a, K>>) {
+    fn keys(&self) -> Vec<K> {
+        self.items
+            .with_value(|items| items.iter().map(&self.key_fn).collect())
+    }
+
+    fn rows<'a>(&'a self, indices: &[usize]) -> Vec<FreshRow<'a, K>> {
         self.items.with_value(|items| {
-            let mut keys = Vec::with_capacity(items.len());
-            let mut fresh: Vec<FreshRow<'a, K>> = Vec::new();
-            for item in items {
-                let key = (self.key_fn)(item);
-                match admit(&key) {
-                    Admit::Duplicate => continue,
-                    Admit::Built => {}
-                    Admit::Fresh => {
-                        let item = item.clone();
-                        let row_fn = &self.row_fn;
-                        fresh.push((key.clone(), Box::new(move || row_fn(item).into_any())));
-                    }
-                }
-                keys.push(key);
-            }
-            (keys, fresh)
+            indices
+                .iter()
+                .filter_map(|index| items.get(*index))
+                .map(|item| {
+                    let key = (self.key_fn)(item);
+                    let item = item.clone();
+                    let row_fn = &self.row_fn;
+                    let row: Box<dyn FnOnce() -> AnyView + 'a> =
+                        Box::new(move || row_fn(item).into_any());
+                    (key, row)
+                })
+                .collect()
         })
     }
+}
+
+/// What a list's items ask of the rows built for the items before them.
+#[derive(Debug, PartialEq)]
+struct Changes<K> {
+    /// The items' keys in order, the first of each.
+    keys: Vec<K>,
+    /// The items to build a row for, by index in the items.
+    fresh: Vec<usize>,
+    /// Keys with a row that no item has any more.
+    removed: Vec<K>,
+    /// How many keys at the start, and how many at the end, are the old
+    /// ones in the old order: their rows are in place already.
+    head: usize,
+    tail: usize,
+}
+
+impl<K: Eq + Hash + Clone> Changes<K> {
+    /// From `old`, the keys rows are built for in their order, to `items`,
+    /// every item's key. `built` says whether a key has a row.
+    ///
+    /// A list changes in one place far more often than everywhere: a row
+    /// inserted, removed or moved leaves the keys before and after it as
+    /// they were. Those are found by comparing, and only the keys between
+    /// are hashed. Hashing every key on every change made one inserted row
+    /// cost the length of the list (5 ms in 100,000 rows).
+    fn between(old: &[K], items: Vec<K>, built: impl Fn(&K) -> bool) -> Self {
+        let (head, tail) = common_ends(old, &items);
+        let was = &old[head..old.len() - tail];
+        let now = &items[head..items.len() - tail];
+        if now.is_empty() {
+            return Self {
+                removed: was.to_vec(),
+                keys: items,
+                fresh: Vec::new(),
+                head,
+                tail,
+            };
+        }
+        let settled = {
+            let had: HashSet<&K> = was.iter().collect();
+            let mut seen: HashSet<&K> = HashSet::with_capacity(now.len());
+            let mut fresh = Vec::new();
+            // The keys between with the repeats left out, once one is met.
+            let mut firsts: Option<Vec<K>> = None;
+            let mut unsettled = false;
+            for (offset, key) in now.iter().enumerate() {
+                if !seen.insert(key) {
+                    firsts.get_or_insert_with(|| now[..offset].to_vec());
+                    continue;
+                }
+                if !had.contains(key) {
+                    if built(key) {
+                        // A key from the unchanged start or end, named
+                        // again in between: which of the two comes first is
+                        // a question for the whole list.
+                        unsettled = true;
+                        break;
+                    }
+                    fresh.push(head + offset);
+                }
+                if let Some(firsts) = &mut firsts {
+                    firsts.push(key.clone());
+                }
+            }
+            (!unsettled).then(|| {
+                let removed: Vec<K> = was
+                    .iter()
+                    .filter(|key| !seen.contains(key))
+                    .cloned()
+                    .collect();
+                (fresh, removed, firsts)
+            })
+        };
+        let Some((fresh, removed, firsts)) = settled else {
+            return Self::across(old, items, built);
+        };
+        let keys = match firsts {
+            None => items,
+            Some(firsts) => items[..head]
+                .iter()
+                .cloned()
+                .chain(firsts)
+                .chain(items[items.len() - tail..].iter().cloned())
+                .collect(),
+        };
+        Self {
+            keys,
+            fresh,
+            removed,
+            head,
+            tail,
+        }
+    }
+
+    /// The same answer with every key hashed, for the lists
+    /// [`Self::between`] cannot settle from the changed part alone.
+    fn across(old: &[K], items: Vec<K>, built: impl Fn(&K) -> bool) -> Self {
+        let mut fresh = Vec::new();
+        let mut firsts = Vec::with_capacity(items.len());
+        let removed = {
+            let mut seen: HashSet<&K> = HashSet::with_capacity(items.len());
+            for (index, key) in items.iter().enumerate() {
+                if seen.insert(key) {
+                    if !built(key) {
+                        fresh.push(index);
+                    }
+                    firsts.push(index);
+                }
+            }
+            old.iter()
+                .filter(|key| !seen.contains(key))
+                .cloned()
+                .collect()
+        };
+        let keys = if firsts.len() == items.len() {
+            items
+        } else {
+            firsts
+                .into_iter()
+                .map(|index| items[index].clone())
+                .collect()
+        };
+        Self {
+            keys,
+            fresh,
+            removed,
+            head: 0,
+            tail: 0,
+        }
+    }
+}
+
+/// How many elements `old` and `new` start with in common, and how many of
+/// the rest they end with in common.
+fn common_ends<T: PartialEq>(old: &[T], new: &[T]) -> (usize, usize) {
+    let head = old.iter().zip(new).take_while(|(a, b)| a == b).count();
+    let tail = old[head..]
+        .iter()
+        .rev()
+        .zip(new[head..].iter().rev())
+        .take_while(|(a, b)| a == b)
+        .count();
+    (head, tail)
 }
 
 /// A keyed list bound to its items: diffing, building and removing rows,
@@ -372,6 +510,11 @@ struct EachBinding<K> {
     scope: Option<ScopeKey>,
     rows: HashMap<K, Built>,
     order: Vec<K>,
+    /// Every row's roots, in `order`, and how many each key has. Kept so a
+    /// change in one place takes the unchanged rows' roots from here rather
+    /// than look each row up again.
+    roots: Vec<StableNodeId>,
+    spans: Vec<u32>,
 }
 
 impl<K: Eq + Hash + Clone + Send + 'static> EachBinding<K> {
@@ -384,25 +527,49 @@ impl<K: Eq + Hash + Clone + Send + 'static> EachBinding<K> {
             scope: reactive::current_scope(),
             rows: HashMap::new(),
             order: Vec::new(),
+            roots: Vec::new(),
+            spans: Vec::new(),
         }
     }
 
-    /// The keys in order, and the rows whose keys are not built yet.
-    /// Duplicate keys after the first are skipped.
+    /// What the items now ask for, and the rows to build for the keys that
+    /// have none. Reads the items tracked; a key after the first item with
+    /// it is skipped.
     fn read<'a>(
         source: &'a dyn EachSource<K>,
+        order: &[K],
         rows: &HashMap<K, Built>,
-    ) -> (Vec<K>, Vec<FreshRow<'a, K>>) {
-        let mut seen = HashSet::new();
-        source.read(&mut |key| {
-            if !seen.insert(key.clone()) {
-                Admit::Duplicate
-            } else if rows.contains_key(key) {
-                Admit::Built
-            } else {
-                Admit::Fresh
-            }
-        })
+    ) -> (Changes<K>, Vec<FreshRow<'a, K>>) {
+        let changes = Changes::between(order, source.keys(), |key| rows.contains_key(key));
+        let fresh = source.rows(&changes.fresh);
+        (changes, fresh)
+    }
+
+    /// Takes `changes`' keys as the order, with the roots of the rows they
+    /// have. The rows of the unchanged start and end keep the roots they
+    /// had; only the rows between are looked up.
+    fn settle(&mut self, changes: Changes<K>) {
+        let Changes {
+            keys, head, tail, ..
+        } = changes;
+        let count = |spans: &[u32]| spans.iter().map(|span| *span as usize).sum::<usize>();
+        let head_roots = count(&self.spans[..head]);
+        let tail_spans = &self.spans[self.spans.len() - tail..];
+        let tail_roots = &self.roots[self.roots.len() - count(tail_spans)..];
+        let mut roots = Vec::with_capacity(self.roots.len() + keys.len() - head - tail);
+        let mut spans = Vec::with_capacity(keys.len());
+        roots.extend_from_slice(&self.roots[..head_roots]);
+        spans.extend_from_slice(&self.spans[..head]);
+        for key in &keys[head..keys.len() - tail] {
+            let row = self.rows.get(key).map_or(&[][..], |built| &built.roots);
+            roots.extend_from_slice(row);
+            spans.push(row.len() as u32);
+        }
+        roots.extend_from_slice(tail_roots);
+        spans.extend_from_slice(tail_spans);
+        self.order = keys;
+        self.roots = roots;
+        self.spans = spans;
     }
 
     /// Build the rows under `container`, placed already, and keep them
@@ -416,7 +583,9 @@ impl<K: Eq + Hash + Clone + Send + 'static> EachBinding<K> {
     ) {
         let effect =
             reactive::create_effect(vb.st.tag, EffectTarget::Structural(container), None, site);
-        let (keys, fresh) = reactive::run_tracked(effect, || Self::read(&*self.source, &self.rows));
+        let (changes, fresh) = reactive::run_tracked(effect, || {
+            Self::read(&*self.source, &self.order, &self.rows)
+        });
         let mut fresh = Some(fresh);
         let mut built = Vec::new();
         let scope = self.scope;
@@ -428,7 +597,7 @@ impl<K: Eq + Hash + Clone + Send + 'static> EachBinding<K> {
         // The rows it held borrow the source, which goes into the box below.
         drop(fresh);
         self.rows.extend(built);
-        self.order = keys;
+        self.settle(changes);
         vb.st
             .parts
             .structural
@@ -533,20 +702,15 @@ impl<K: Eq + Hash + Clone + Send + 'static> StructuralBinding for EachBinding<K>
         container: StableNodeId,
         effect: EffectKey,
     ) -> Result<(), FrameworkError> {
-        let (keys, fresh) = reactive::run_tracked(effect, || Self::read(&*self.source, &self.rows));
+        let (changes, fresh) = reactive::run_tracked(effect, || {
+            Self::read(&*self.source, &self.order, &self.rows)
+        });
         let transition = self.transition;
         let moves = transition.and_then(|transition| transition.moves);
-        let removed: Vec<K> = {
-            let kept: HashSet<&K> = keys.iter().collect();
-            self.order
-                .iter()
-                .filter(|key| !kept.contains(key))
-                .cloned()
-                .collect()
-        };
-        let removed = removed
-            .into_iter()
-            .filter_map(|key| self.rows.remove(&key))
+        let removed = changes
+            .removed
+            .iter()
+            .filter_map(|key| self.rows.remove(key))
             .collect();
         // Where kept rows are before the change, to slide them from.
         let firsts: Vec<_> = match moves {
@@ -561,7 +725,10 @@ impl<K: Eq + Hash + Clone + Send + 'static> StructuralBinding for EachBinding<K>
         self.leaving.retain(|root| cx.is_leaving(*root));
         remove(cx, removed, transition.as_ref(), &mut self.leaving)?;
         let mut entered = Vec::new();
-        if !fresh.is_empty() {
+        if fresh.is_empty() {
+            // Dropped here: the rows it would build borrow the source.
+            drop(fresh);
+        } else {
             let scope = self.scope;
             let built = build_detached_into(cx, container, false, |vb, created| {
                 let built = Self::build_rows(vb, scope, fresh);
@@ -577,15 +744,13 @@ impl<K: Eq + Hash + Clone + Send + 'static> StructuralBinding for EachBinding<K>
             }
             self.rows.extend(built);
         }
-        self.order = keys;
-        let ordered: Vec<StableNodeId> = self
-            .order
-            .iter()
-            .filter_map(|key| self.rows.get(key))
-            .flat_map(|built| built.roots.iter().copied())
-            .collect();
-        let ordered = with_leaving(cx, container, ordered, &self.leaving);
-        cx.reconcile_children(container, &ordered)?;
+        self.settle(changes);
+        if self.leaving.is_empty() {
+            cx.reconcile_children(container, &self.roots)?;
+        } else {
+            let ordered = with_leaving(cx, container, self.roots.clone(), &self.leaving);
+            cx.reconcile_children(container, &ordered)?;
+        }
         if let Some(enter) = transition.and_then(|transition| transition.enter) {
             cx.begin_enter(&entered, &enter)?;
         }
@@ -1025,5 +1190,104 @@ impl<K: Clone + PartialEq + Send + 'static> StructuralBinding for SwitchBinding<
             cx.begin_enter(&roots, &enter)?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A small deterministic generator: the cases must not change between
+    /// runs.
+    struct Lcg(u64);
+
+    impl Lcg {
+        fn below(&mut self, bound: usize) -> usize {
+            self.0 = self
+                .0
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            ((self.0 >> 33) as usize) % bound.max(1)
+        }
+    }
+
+    /// `old` after a few edits of every kind a list sees: rows inserted,
+    /// removed and moved, and keys repeated anywhere, the unchanged start
+    /// and end included.
+    fn edited(old: &[u32], random: &mut Lcg) -> Vec<u32> {
+        let mut items = old.to_vec();
+        for _ in 0..random.below(4) {
+            let at = random.below(items.len() + 1);
+            match random.below(5) {
+                0 => items.insert(at, 1_000 + random.below(50) as u32),
+                1 if !items.is_empty() => {
+                    items.remove(at.min(items.len() - 1));
+                }
+                2 if items.len() > 1 => {
+                    let from = random.below(items.len());
+                    let key = items.remove(from);
+                    items.insert(random.below(items.len() + 1), key);
+                }
+                3 if !items.is_empty() => {
+                    let again = items[random.below(items.len())];
+                    items.insert(at, again);
+                }
+                4 if !old.is_empty() => {
+                    items.insert(at, old[random.below(old.len())]);
+                }
+                _ => {}
+            }
+        }
+        items
+    }
+
+    #[test]
+    fn the_changed_part_of_a_list_answers_what_hashing_every_key_does() {
+        let mut random = Lcg(0x5eed);
+        let mut settled_between = 0;
+        for _ in 0..20_000 {
+            let old: Vec<u32> = (0..random.below(12) as u32).collect();
+            let items = edited(&old, &mut random);
+            let built = |key: &u32| old.contains(key);
+            let whole = Changes::across(&old, items.clone(), built);
+            let part = Changes::between(&old, items.clone(), built);
+            assert_eq!(part.keys, whole.keys, "{old:?} to {items:?}");
+            assert_eq!(part.fresh, whole.fresh, "{old:?} to {items:?}");
+            assert_eq!(part.removed, whole.removed, "{old:?} to {items:?}");
+            // The ends it reports unchanged are.
+            assert_eq!(part.keys[..part.head], old[..part.head]);
+            assert_eq!(
+                part.keys[part.keys.len() - part.tail..],
+                old[old.len() - part.tail..]
+            );
+            settled_between += usize::from(part.head + part.tail > 0);
+        }
+        assert!(settled_between > 10_000, "{settled_between} of 20,000");
+    }
+
+    #[test]
+    fn one_row_more_or_less_leaves_every_other_key_unhashed() {
+        let old: Vec<u32> = (0..1_000).collect();
+        let asked = std::cell::Cell::new(0);
+        let built = |key: &u32| {
+            asked.set(asked.get() + 1);
+            *key < 1_000
+        };
+        let mut items = old.clone();
+        items.insert(500, 5_000);
+        let changes = Changes::between(&old, items, built);
+        assert_eq!(changes.fresh, [500]);
+        assert!(changes.removed.is_empty());
+        assert_eq!((changes.head, changes.tail), (500, 500));
+        let mut items = old.clone();
+        items.remove(250);
+        let changes = Changes::between(&old, items, built);
+        assert_eq!(changes.removed, [250]);
+        assert_eq!((changes.head, changes.tail), (250, 749));
+        assert_eq!(
+            asked.get(),
+            1,
+            "only the inserted key is looked up among the rows"
+        );
     }
 }

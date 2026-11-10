@@ -47,22 +47,33 @@ impl AppContext {
             .node(parent)
             .ok_or(FrameworkError::MissingView(parent))?
             .children;
-        if current.as_slice() == ordered {
+        // The children at the start and at the end that stay where they are
+        // need no checking: they are this parent's children, each once. Only
+        // what is asked for between them can be missing, repeated, or one of
+        // those again, so a list changed in one place is checked there
+        // rather than over its whole length.
+        let (head, tail) = common_ends(&current, ordered);
+        if head == current.len() && head == ordered.len() {
             return Ok(false);
         }
-        let mut seen = crate::NodeSet::with_capacity_and_hasher(ordered.len(), Default::default());
-        for &child in ordered {
+        let between = &ordered[head..ordered.len() - tail];
+        let replaced: crate::NodeSet = current[head..current.len() - tail]
+            .iter()
+            .copied()
+            .collect();
+        let mut seen = crate::NodeSet::with_capacity_and_hasher(between.len(), Default::default());
+        for &child in between {
             if !self.world.contains(child) {
                 return Err(FrameworkError::MissingView(child));
             }
-            if child == parent || !seen.insert(child) {
+            let kept_in_place =
+                self.world.parent_id(child) == Some(parent) && !replaced.contains(&child);
+            if child == parent || kept_in_place || !seen.insert(child) {
                 return Err(FrameworkError::InvalidComponentHierarchy { parent, child });
             }
         }
         let mut mutations = MutationQueue::new();
-        if !reconcile_child_order(parent, ordered, &self.world, &mut mutations) {
-            return Ok(false);
-        }
+        reorder_between(parent, &current, ordered, (head, tail), &mut mutations);
         // commit_mutations validates the entire queue before changing either
         // the world or retained component lifecycles.
         self.commit_mutations(mutations)?;
@@ -295,19 +306,25 @@ pub(crate) fn move_into_order(
     ordered: &[StableNodeId],
     mutations: &mut MutationQueue,
 ) {
-    // A common head and tail stay put: one row inserted or removed anywhere
-    // leaves only the rows between to compare.
-    let head = current
-        .iter()
-        .zip(ordered)
-        .take_while(|(a, b)| a == b)
-        .count();
-    let tail = current[head..]
-        .iter()
-        .rev()
-        .zip(ordered[head..].iter().rev())
-        .take_while(|(a, b)| a == b)
-        .count();
+    move_between(
+        parent,
+        current,
+        ordered,
+        common_ends(current, ordered),
+        mutations,
+    );
+}
+
+/// [`move_into_order`] with the common head and tail found already. They
+/// stay put: one row inserted or removed anywhere leaves only the rows
+/// between to compare.
+fn move_between(
+    parent: StableNodeId,
+    current: &[StableNodeId],
+    ordered: &[StableNodeId],
+    (head, tail): (usize, usize),
+    mutations: &mut MutationQueue,
+) {
     let (current, ordered_middle) = (
         &current[head..current.len() - tail],
         &ordered[head..ordered.len() - tail],
@@ -343,19 +360,54 @@ pub(crate) fn reconcile_child_order(
         .node(parent)
         .map(|node| node.children)
         .unwrap_or_default();
-    if current.as_slice() == ordered {
+    let ends = common_ends(&current, ordered);
+    if ends.0 == current.len() && ends.0 == ordered.len() {
         return false;
     }
+    reorder_between(parent, &current, ordered, ends, mutations);
+    true
+}
+
+/// Moves `parent`'s children into `ordered` and parks the ones it leaves
+/// out, given the head and tail the two share.
+fn reorder_between(
+    parent: StableNodeId,
+    current: &[StableNodeId],
+    ordered: &[StableNodeId],
+    (head, tail): (usize, usize),
+    mutations: &mut MutationQueue,
+) {
     // Extract retained descendants before parking their former ancestors. A
     // live-to-live reparent must never retire focus, IME or pointer ownership.
-    move_into_order(parent, &current, ordered, mutations);
-    let keep = ordered.iter().copied().collect::<HashSet<_>>();
-    for child in &current {
+    move_between(parent, current, ordered, (head, tail), mutations);
+    // A child that is not wanted any more lies between the common head and
+    // tail, like everything else that changed.
+    let keep: crate::NodeSet = ordered[head..ordered.len() - tail]
+        .iter()
+        .copied()
+        .collect();
+    for child in &current[head..current.len() - tail] {
         if !keep.contains(child) {
             mutations.park_subtree(*child);
         }
     }
-    true
+}
+
+/// How many children `current` and `ordered` start with in common, and how
+/// many of the rest they end with in common.
+fn common_ends(current: &[StableNodeId], ordered: &[StableNodeId]) -> (usize, usize) {
+    let head = current
+        .iter()
+        .zip(ordered)
+        .take_while(|(a, b)| a == b)
+        .count();
+    let tail = current[head..]
+        .iter()
+        .rev()
+        .zip(ordered[head..].iter().rev())
+        .take_while(|(a, b)| a == b)
+        .count();
+    (head, tail)
 }
 
 /// Marks one longest strictly increasing subsequence of the known positions

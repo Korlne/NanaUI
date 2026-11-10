@@ -760,7 +760,7 @@ impl AppContext {
                 mutations.set_overlay_host(host, crate::OverlayHostState::default());
                 self.world.commit(mutations)?;
                 self.install_view(overlay, tooltip);
-                self.component_lifecycle.tooltips.insert(
+                self.component_lifecycle.insert_tooltip(
                     id,
                     TooltipLifecycle {
                         host,
@@ -794,7 +794,7 @@ impl AppContext {
                 }
                 self.world.commit(mutations)?;
                 self.views.remove(&existing.overlay);
-                self.component_lifecycle.tooltips.remove(&id);
+                self.component_lifecycle.remove_tooltip(id);
             }
             (None, None) => {}
         }

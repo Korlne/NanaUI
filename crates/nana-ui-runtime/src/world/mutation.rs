@@ -3168,6 +3168,7 @@ impl UiWorld {
         let mut layout_result_ids = Vec::new();
         let mutations = queue.as_slice();
         let mut run_end = 0;
+        self.renumber_later = Some(Default::default());
         self.result_chain_memo = Some(Default::default());
         #[cfg(test)]
         if self.result_chain_memo_off {
@@ -3229,6 +3230,7 @@ impl UiWorld {
         }
         // Results are published below: a walk after this one starts over.
         self.result_chain_memo = None;
+        self.renumber_children_left();
         debug_assert!(
             self.unlinked_ahead.is_empty(),
             "a removal run left children its mutations never reached"

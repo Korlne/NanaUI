@@ -886,7 +886,22 @@ The 5.8 ms in the last row is about what declaring the remaining 15 900 children
 
 `nana-ui-runtime/tests/tree_size_cost.rs` guards these: dropping 60 children takes as many commits as dropping one, and the other two are held against a ratio of sizes rather than a budget: a child among 3 200 allocates no more than 3 times what a child among 200 does (10 times before, 1.003 times now); the shortest removal of one node among 32 000 takes no more than 8 times that among 1 000 (39 times before in a debug build, 1.15 times now). In the runtime's own tests `forget_subtree` re-checks itself with the old full walk every time, confirming that nothing the old implementation would have dropped is left.
 
-Not changed: removing a child that is not the last still moves the siblings after it (about 0.25 ms to remove the first of 100 000 siblings; the world's child order), and `tooltips` is still walked, one entry per control that has a tooltip.
+Not changed: removing a child that is not the last still moves the siblings after it (about 0.25 ms to remove the first of 100 000 siblings; the world's child order).
+
+**A reactive list changed in one place no longer visits every key (2026-11-11).** Every change to an `each` list put all keys into hash sets to find the added and removed ones and looked every row's roots up again, and `reconcile_children` then checked every child for existence and repeats, so inserting or removing one row cost the length of the list. The head and tail the old and new key orders share are now found by comparing, and only the part between is hashed (`Changes::between`; it falls back to the whole list when a head or tail key shows up in between), the unchanged rows' roots are taken in one piece from the previous result, and `reconcile_children` checks and reorders only the children between the common head and tail. Release, aarch64 macOS, minimum read, per operation when inserting and then removing one row:
+
+| Rows | At the end, before | After | At the start, before | After |
+| ---: | ---: | ---: | ---: | ---: |
+| 1 000 | 30 µs | 3.7 µs | 31 µs | 5.6 µs |
+| 10 000 | 280 µs | 15 µs | 300 µs | 32 µs |
+| 100 000 | 4 628 µs | 109 µs | 5 575 µs | 489 µs |
+
+What still follows the row count is reading the keys, comparing them and a few `memcpy`s (about 1 ns per row); inserting at the start also renumbers the siblings after it (below). The unit tests of `view::structural` hold the partial comparison against the whole-list one over 20 000 random edits, and assert that inserting one row in the middle of 1 000 looks the row table up once.
+
+Two more in the same batch:
+
+- **Children are renumbered once per commit.** Every node records its index in its parent, and each edit of a child list renumbered the siblings after it; a commit that moves many children (a list reversed, every other row filled back in) renumbered after each move. While a commit is applied, only the lowest affected index per parent is now recorded, and the numbering happens once at the end; an index that is behind in the meantime is detected by `child_index`, which scans instead, so no wrong index is read. Reversing 16 000 rows 0.64 s → 0.28 s, filling 8 000 rows back in 114 ms → 52 ms. These two whole-list operations are still quadratic (each move finds its place in a `Vec` and shifts it), with less than half the constant; a single insertion costs what it did.
+- **A removed node's tooltip is looked up.** The `tooltips` table has an entry per control with a tooltip, and removing a node walked all of it to see whether a tooltip's overlay or anchor was among the removed; a second table from overlay / anchor to control is now kept and asked about the removed nodes.
 
 ## To do
 
