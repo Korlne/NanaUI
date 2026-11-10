@@ -10,6 +10,7 @@
 use super::{
     AdjustmentKind, AdjustmentSegment, EnvelopeShape, ExecutionClass, LayoutCost, LayoutUnits,
 };
+use crate::sort::CompactSort as _;
 
 /// A sequential line: the container's own shape and each child's, side by
 /// side. Capacities add; the merged shape keeps the cheapest first.
@@ -32,7 +33,7 @@ pub fn aggregate_sequential<'a>(
 pub fn aggregate_parallel(children: &[(LayoutUnits, &EnvelopeShape)]) -> EnvelopeShape {
     let mut order: Vec<usize> = (0..children.len()).collect();
     // Tallest first; ties in child order.
-    order.sort_by_key(|at| (std::cmp::Reverse(children[*at].0), *at));
+    order.compact_sort_by_key(|at| (std::cmp::Reverse(children[*at].0), *at));
     let Some(&first) = order.first() else {
         return EnvelopeShape::RIGID;
     };

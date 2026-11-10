@@ -70,7 +70,7 @@ impl UiWorld {
         // pinned entry, or one that cannot be (under a perspective the
         // offset is in its transform), is patched whole, outermost first.
         let mut sticky = self.sticky_nodes.affected(scroller);
-        sticky.sort_by_key(|id| {
+        sticky.compact_sort_by_key(|id| {
             std::iter::successors(self.parent_id(*id), |id| self.parent_id(*id)).count()
         });
         let pinned = self.pinned_hit_entries_under(document, &sticky);

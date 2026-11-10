@@ -11,6 +11,7 @@ use super::text::{EditableText, TextEdit};
 use crate::counters::TextWorkCounters;
 use crate::edit::Affinity;
 use crate::shared::SharedText;
+use nana_ui_core::sort::CompactSort as _;
 use std::borrow::Cow;
 use std::ops::Range;
 
@@ -194,7 +195,7 @@ impl EditSession {
         let mut all = Vec::with_capacity(self.state.additional.len() + 1);
         all.push(self.state.selection);
         all.extend_from_slice(&self.state.additional);
-        all.sort_by_key(|selection| {
+        all.compact_sort_by_key(|selection| {
             let range = selection.range();
             (range.start, range.end)
         });
@@ -685,7 +686,7 @@ impl EditSession {
     /// each insertion. Overlapping ranges fuse (the primary flag rides along),
     /// so two cursors deleting into each other delete the union once.
     fn replace_each(&mut self, mut ranges: Vec<(Range<usize>, bool)>, text: &str) -> EditChange {
-        ranges.sort_by_key(|(range, _)| (range.start, range.end));
+        ranges.compact_sort_by_key(|(range, _)| (range.start, range.end));
         let mut fused: Vec<(Range<usize>, bool)> = Vec::with_capacity(ranges.len());
         for (range, primary) in ranges {
             match fused.last_mut() {

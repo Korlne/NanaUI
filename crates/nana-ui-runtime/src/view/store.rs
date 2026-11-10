@@ -27,6 +27,7 @@
 //! `retain`, `swap` and `sort_by_key` fire only the list's triggers and the
 //! deep ones above, because they leave every item's contents as they were.
 
+use nana_ui_core::sort::CompactSort as _;
 use std::any::Any;
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -946,7 +947,7 @@ pub trait StoreList<T: 'static>: StorePath<Value = Vec<T>> {
     #[track_caller]
     fn sort_by_key<K: Ord>(&self, key: impl FnMut(&T) -> K) {
         write(self, Location::caller(), false, true, |items| {
-            items.sort_by_key(key)
+            items.compact_sort_by_key(key)
         });
     }
 }

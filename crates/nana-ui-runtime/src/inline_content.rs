@@ -3,6 +3,7 @@
 //! reference ordinary retained nodes; they are never wrapper components.
 
 use crate::StableNodeId;
+use nana_ui_core::sort::CompactSort as _;
 use nana_ui_core::{RichSpanStyle, RichText};
 use std::{ops::Range, sync::Arc};
 
@@ -148,7 +149,7 @@ impl InlineContent {
             atom.offset += range.start;
             atom
         }));
-        atoms.sort_unstable_by_key(|atom| atom.offset);
+        atoms.compact_sort_by_key(|atom| atom.offset);
         Self::from_parts(text, atoms.into())
     }
     pub fn atomic(node: StableNodeId) -> Self {

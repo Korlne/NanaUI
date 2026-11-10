@@ -14,6 +14,7 @@
 //! date and runs only if one of them produced a different value, so a
 //! computed whose result did not change stops the update there.
 
+use nana_ui_core::sort::CompactSort as _;
 use std::any::{Any, TypeId};
 use std::cell::RefCell;
 use std::fmt;
@@ -495,7 +496,7 @@ impl Runtime {
         if stale.is_empty() {
             return;
         }
-        stale.sort_unstable_by_key(|key| (key.index, key.generation));
+        stale.compact_sort_by_key(|key| (key.index, key.generation));
         let mut at = 0;
         while at < stale.len() {
             let key = stale[at];

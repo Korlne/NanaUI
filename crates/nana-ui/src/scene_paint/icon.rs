@@ -1,3 +1,4 @@
+use nana_ui_core::sort::CompactSort as _;
 use std::collections::{HashMap, HashSet};
 
 use bytemuck::{Pod, Zeroable};
@@ -832,7 +833,7 @@ impl IconPipeline {
         // placing large cells while the sheet is empty avoids stranding them.
         // The glyph order behind that is `frame_keys` iteration order, which
         // is a hash set's — pin it so one frame packs the same way twice.
-        keep.sort_unstable_by(|left, right| {
+        keep.compact_sort_by(|left, right| {
             right
                 .0
                 .px

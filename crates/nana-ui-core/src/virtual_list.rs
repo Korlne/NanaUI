@@ -1,5 +1,6 @@
 //! Backend-neutral geometry for lists that materialize only a visible window.
 
+use crate::sort::CompactSort as _;
 use std::collections::HashSet;
 use std::hash::Hash;
 use std::ops::Range;
@@ -578,7 +579,7 @@ impl VirtualListLayout {
         if start < end {
             ranges.push(start..end);
         }
-        ranges.sort_unstable_by_key(|range| range.start);
+        ranges.compact_sort_by_key(|range| range.start);
         let mut merged: Vec<Range<usize>> = Vec::with_capacity(ranges.len());
         for range in ranges {
             if let Some(previous) = merged.last_mut()

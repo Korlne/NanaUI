@@ -2,6 +2,7 @@
 //! objects and rich fill spans.
 
 use super::*;
+use nana_ui_core::sort::CompactSort as _;
 
 /// A tag's fill by its kind: the application's marker kinds, cycled.
 fn tag_color(kind: u16) -> [f32; 4] {
@@ -367,6 +368,6 @@ pub fn rich_fill_spans(
             });
         }
     }
-    out.sort_by_key(|span| (span.start, span.end));
+    out.compact_sort_by_key(|span| (span.start, span.end));
     out
 }

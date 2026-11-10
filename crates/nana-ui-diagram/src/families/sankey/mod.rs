@@ -5,6 +5,7 @@
 //! relaxed toward their neighbours over a few sweeps; links are ribbons
 //! bounded by two cubic curves.
 
+use nana_ui_core::sort::CompactSort as _;
 use std::collections::{HashMap, VecDeque};
 
 use super::kit;
@@ -280,7 +281,7 @@ pub(crate) fn layout(model: &Model, cx: &mut LayoutCx<'_>) -> Result<DiagramScen
         members[column[v]].push(v);
     }
     for col in &mut members {
-        col.sort_by(|&a, &b| value[b].total_cmp(&value[a]).then(a.cmp(&b)));
+        col.compact_sort_by(|&a, &b| value[b].total_cmp(&value[a]).then(a.cmp(&b)));
     }
 
     // Vertical scale: the busiest column fills the height.
@@ -381,7 +382,7 @@ pub(crate) fn layout(model: &Model, cx: &mut LayoutCx<'_>) -> Result<DiagramScen
     let attach = |links: &[usize], other: fn(&Link) -> usize, top: f32, ends: &mut [f32]| {
         let key = |li: usize| center(other(&model.links[li]), &y);
         let mut sorted = links.to_vec();
-        sorted.sort_by(|&a, &b| key(a).total_cmp(&key(b)).then(a.cmp(&b)));
+        sorted.compact_sort_by(|&a, &b| key(a).total_cmp(&key(b)).then(a.cmp(&b)));
         let mut at = top;
         for li in sorted {
             ends[li] = at;
@@ -410,7 +411,7 @@ pub(crate) fn layout(model: &Model, cx: &mut LayoutCx<'_>) -> Result<DiagramScen
 
     // Ribbons, widest first so narrow ones stay on top.
     let mut by_width: Vec<usize> = (0..model.links.len()).collect();
-    by_width.sort_by(|&a, &b| link_h[b].total_cmp(&link_h[a]).then(a.cmp(&b)));
+    by_width.compact_sort_by(|&a, &b| link_h[b].total_cmp(&link_h[a]).then(a.cmp(&b)));
     for li in by_width {
         let l = &model.links[li];
         let x0 = x[column[l.source]] + node_w;
@@ -486,7 +487,7 @@ fn topo(model: &Model, ins: &[Vec<usize>], outs: &[Vec<usize>]) -> Vec<usize> {
 /// the bottom, never above the top.
 fn resolve(col: &[usize], y: &mut [f32], h: &[f32], slot: &[f32], pad: f32, total_h: f32) {
     let mut sorted = col.to_vec();
-    sorted.sort_by(|&a, &b| {
+    sorted.compact_sort_by(|&a, &b| {
         (y[a] + h[a] / 2.0)
             .total_cmp(&(y[b] + h[b] / 2.0))
             .then(a.cmp(&b))

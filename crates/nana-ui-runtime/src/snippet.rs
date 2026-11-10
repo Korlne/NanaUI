@@ -1,4 +1,5 @@
 //! TextMate/LSP snippet parsing and linked placeholder coordinates.
+use nana_ui_core::sort::CompactSort as _;
 use std::{collections::BTreeMap, ops::Range};
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -523,7 +524,7 @@ impl crate::components::TextSnippetSession {
         for (range, transform) in &self.placeholders[active].transforms {
             edits.push((range.clone(), transform.apply(&inserted)));
         }
-        edits.sort_by_key(|(r, _)| (r.start, r.end));
+        edits.compact_sort_by_key(|(r, _)| (r.start, r.end));
         if edits.windows(2).any(|p| p[0].0.end > p[1].0.start) {
             return None;
         }

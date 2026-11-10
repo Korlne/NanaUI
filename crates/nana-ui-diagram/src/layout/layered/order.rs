@@ -3,6 +3,7 @@
 //! 1981; the transpose step as in Gansner et al. 1993). Crossings are
 //! counted with the accumulator tree of Barth, Jünger and Mutzel (2002).
 
+use nana_ui_core::sort::CompactSort as _;
 /// `layers[r]` lists the nodes on rank `r` in order; `up[v]` / `down[v]`
 /// are `v`'s neighbours on the ranks directly above and below.
 pub(crate) fn order(
@@ -79,7 +80,7 @@ fn reorder(layer: &mut [usize], neighbours: &[Vec<usize>], pos: &[usize]) {
             sortable.push((sum as f32 / ns.len() as f32, i, v));
         }
     }
-    sortable.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+    sortable.compact_sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
     let mut it = sortable.into_iter();
     let original: Vec<usize> = layer.to_vec();
     for i in 0..layer.len() {

@@ -44,6 +44,7 @@ mod text_input;
 mod value_input;
 mod virtualize;
 mod virtualize_retained;
+use nana_ui_core::sort::CompactSort as _;
 use std::{
     any::{Any, TypeId},
     collections::{HashMap, HashSet, VecDeque},
@@ -4344,7 +4345,7 @@ impl AppContext {
             return None;
         }
         // Their placement's order, so siblings come back in the order shown.
-        rescued.sort_by_key(|(node, _)| {
+        rescued.compact_sort_by_key(|(node, _)| {
             let parent = self.world.parent_id(*node);
             let at = parent
                 .and_then(|parent| self.world.node(parent))

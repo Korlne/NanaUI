@@ -3,6 +3,7 @@
 //! references, inline `` `type`{ ... } `` data and `data Name { ... }`
 //! blocks.
 
+use nana_ui_core::sort::CompactSort as _;
 use std::collections::HashMap;
 
 use super::{EntityKind, Frame, Model};
@@ -168,7 +169,7 @@ pub(super) fn parse(body: &str, cx: &mut ParseCx<'_>) -> Result<Model, DiagramEr
         }
     }
     // Time order, one frame per number.
-    pending.sort_by_key(|p| p.number);
+    pending.compact_sort_by_key(|p| p.number);
     let mut seen: HashMap<u64, usize> = HashMap::new();
     let mut kept: Vec<Pending> = Vec::new();
     for p in pending {

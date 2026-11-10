@@ -9,6 +9,7 @@
 //! `resolved_padding_against` / `resolved_margin_against` / gap helpers.
 //! Prefer extending these over duplicating box math in adapters.
 
+use crate::sort::CompactSort as _;
 use serde::{Deserialize, Serialize};
 
 use crate::scrollbar::ScrollbarSkin;
@@ -972,7 +973,7 @@ pub fn resolve_grid_track_sizes(
             break;
         }
 
-        freeze.sort_by_key(|(idx, _)| *idx);
+        freeze.compact_sort_by_key(|(idx, _)| *idx);
         for (idx, frozen_w) in freeze.into_iter().rev() {
             let (i, _, _, _) = active.remove(idx);
             widths[i] = frozen_w;

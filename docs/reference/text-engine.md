@@ -68,7 +68,7 @@ corpus/golden/TX-*.layout.json  签入的基线(Phase 0 由 cosmic 参照引擎�
 | 字形轮廓栅格化 | **成熟 crate**（swash，只在 `nana-text` 的 `raster/outline.rs` 后面） | #97 非目标明确写了不重写 TrueType 栅格器 |
 | 矩形打包 | **成熟 crate**（etagere，只在 `scene_paint/text/atlas.rs` 后面） | 同上；Nana 拥有的是 atlas 策略，不是打包算法 |
 
-`nana-text` 只许 import 这些 `nana_ui_core` 项：`DirSpec`、`FontFeatureSetting`、`FontKerningSpec`、`FontVariationSetting`、`LineBreakSpec`、`LineHeightSpec`、`TextAlignSpec`、`TextWrapBreak`、`WordBreakSpec`、`WritingModeSpec`。
+`nana-text` 只许 import 这些 `nana_ui_core` 项：`DirSpec`、`FontFeatureSetting`、`FontKerningSpec`、`FontVariationSetting`、`LineBreakSpec`、`LineHeightSpec`、`TextAlignSpec`、`TextWrapBreak`、`WordBreakSpec`、`WritingModeSpec`。完整清单以 `scripts/check-engine-boundary.py` 的 `NANA_TEXT_CORE_ALLOWLIST` 为准。其中 `nana_ui_core::sort` 不是词汇，是框架各调用点共用的那一份排序例程：在这里再放一份，就又回到每个调用点 6 KiB。
 
 其余是边界违规。例如 `LayoutStyle`、`ComputedStyle`、语义色、几何。见「边界如何被机器守住」。
 

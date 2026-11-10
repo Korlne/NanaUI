@@ -1,6 +1,7 @@
 //! Radar charts: `radar-beta` / `radar` with `axis` and `curve` lists and
 //! the `max`, `min`, `graticule`, `ticks` and `showLegend` options.
 
+use nana_ui_core::sort::CompactSort as _;
 use std::collections::HashMap;
 use std::f32::consts::{FRAC_PI_2, TAU};
 
@@ -282,7 +283,7 @@ pub(crate) fn layout(model: &Model, cx: &mut LayoutCx<'_>) -> Result<DiagramScen
         .collect();
     grid(&mut out);
     let mut order: Vec<usize> = (0..shapes.len()).collect();
-    order.sort_by(|&a, &b| shapes[b].0.total_cmp(&shapes[a].0).then(a.cmp(&b)));
+    order.compact_sort_by(|&a, &b| shapes[b].0.total_cmp(&shapes[a].0).then(a.cmp(&b)));
     if n >= 3 {
         for &c in &order {
             out.fill(

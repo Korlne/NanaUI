@@ -22,6 +22,7 @@
 use super::face::FaceDetails;
 use super::query::{FontQuery, FontStyle, canonical_bits};
 use crate::id::{FontGeneration, FontId};
+use nana_ui_core::sort::CompactSort as _;
 use nana_ui_core::{FontFeatureSetting, FontVariationSetting};
 use serde::{Deserialize, Serialize};
 use std::hash::{Hash, Hasher};
@@ -97,7 +98,7 @@ impl FontVariations {
                 }),
             }
         }
-        coords.sort_by_key(|coord| coord.tag);
+        coords.compact_sort_by_key(|coord| coord.tag);
         Self(coords)
     }
 
@@ -144,7 +145,7 @@ impl FontFeatures {
                 }),
             }
         }
-        features.sort_by_key(|feature| feature.tag);
+        features.compact_sort_by_key(|feature| feature.tag);
         Self(features)
     }
 
@@ -239,7 +240,7 @@ pub(crate) fn resolve_instance(
             });
         }
     }
-    coords.sort_by_key(|coord| coord.tag);
+    coords.compact_sort_by_key(|coord| coord.tag);
 
     let ignored_axes: Vec<[u8; 4]> = variations
         .as_slice()

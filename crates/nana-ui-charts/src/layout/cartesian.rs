@@ -1,5 +1,6 @@
 //! The cartesian grid: axes, split lines, and line, bar and scatter series.
 
+use nana_ui_core::sort::CompactSort as _;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -966,7 +967,7 @@ pub(super) fn layout(
     } else {
         BaseAxisHit::Continuous
     };
-    axis_series.sort_by_key(|series| series.series);
+    axis_series.compact_sort_by_key(|series| series.series);
     hit.axis = Some(AxisHit {
         along,
         plot,
@@ -1377,7 +1378,7 @@ fn layout_bars(
             .flat_map(|(_, bar)| (0..bar.data.len()).filter_map(|i| bar.data.get(i)))
             .map(|(x, _)| base_map.px(x))
             .collect();
-        xs.sort_by(f32::total_cmp);
+        xs.compact_sort_by(f32::total_cmp);
         xs.windows(2)
             .map(|w| w[1] - w[0])
             .filter(|d| *d > 0.5)

@@ -10,6 +10,7 @@ use crate::layout::{self, ClusterSpec, EdgeSpec, End, Graph, NodeSpec, RouteKind
 use crate::style::{self, Paint};
 use crate::text::{FontSpec, LaidText};
 use crate::{DiagramError, DiagramScene};
+use nana_ui_core::sort::CompactSort as _;
 
 pub(super) fn layout(model: &Model, cx: &mut LayoutCx<'_>) -> Result<DiagramScene, DiagramError> {
     let m = *cx.metrics;
@@ -95,7 +96,7 @@ pub(super) fn layout(model: &Model, cx: &mut LayoutCx<'_>) -> Result<DiagramScen
         d
     };
     let mut order: Vec<usize> = (0..model.subgraphs.len()).collect();
-    order.sort_by_key(|&c| (depth(c), c));
+    order.compact_sort_by_key(|&c| (depth(c), c));
     for &c in &order {
         let sub = &model.subgraphs[c];
         let rect = placed.clusters[c];

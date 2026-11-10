@@ -26,6 +26,7 @@
 //! [`ResponsiveRule`] on the nearest query container, which the runtime
 //! measures; nothing here does.
 
+use nana_ui_core::sort::CompactSort as _;
 use std::collections::HashMap;
 use std::panic::Location;
 use std::sync::{Arc, Mutex, PoisonError, Weak};
@@ -207,7 +208,7 @@ fn plan(
         .flat_map(|&(lo, hi)| [lo, hi])
         .filter(|bound| bound.is_finite())
         .collect();
-    breakpoints.sort_by(f32::total_cmp);
+    breakpoints.compact_sort_by(f32::total_cmp);
     breakpoints.dedup();
     let why = if queries
         .iter()

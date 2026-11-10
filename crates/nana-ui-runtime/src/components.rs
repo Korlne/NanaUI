@@ -1,3 +1,4 @@
+use nana_ui_core::sort::CompactSort as _;
 use std::{
     collections::BTreeSet,
     sync::{Arc, LazyLock},
@@ -4626,7 +4627,7 @@ impl TextInputState {
             let mut all = Vec::with_capacity(additional.len() + 1);
             all.push(primary);
             all.extend(additional);
-            all.sort_by_key(|selection| {
+            all.compact_sort_by_key(|selection| {
                 let range = selection.ordered();
                 (range.start, range.end)
             });

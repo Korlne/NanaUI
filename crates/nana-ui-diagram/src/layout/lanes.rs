@@ -16,6 +16,7 @@
 //! stacked along `y`, and is mapped to the requested direction at the end.
 //! Lane headers stay at the left (or top) whatever the flow direction.
 
+use nana_ui_core::sort::CompactSort as _;
 use std::collections::HashMap;
 
 use super::graph::Direction;
@@ -389,7 +390,7 @@ pub fn layout(
     }
     let mut offset: Vec<[f32; 2]> = vec![[0.5, 0.5]; graph.edges.len()];
     for list in shared.values_mut() {
-        list.sort_by(|a, b| {
+        list.compact_sort_by(|a, b| {
             a.2.total_cmp(&b.2)
                 .then(a.3.total_cmp(&b.3))
                 .then(a.0.cmp(&b.0))
@@ -443,7 +444,7 @@ pub fn layout(
     // takes a track further right the higher it starts, a run heading up
     // the lower it starts. Down runs sit left of up runs.
     for list in &mut gap_tracks {
-        list.sort_by(|a, b| {
+        list.compact_sort_by(|a, b| {
             // Equal starts share a port side, spread in target order.
             let key = |t: &(usize, f32, f32, f32)| {
                 let down = t.3 >= t.2;

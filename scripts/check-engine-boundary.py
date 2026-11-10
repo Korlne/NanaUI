@@ -65,7 +65,10 @@ REFERENCE_ONLY_PACKAGES = {"nana-css-parity"}
 # nana-ui-core -- layout, style model, semantic colour, geometry, and the
 # bundled font bytes -- is a boundary violation. `dynamic_layout` is the one
 # cost vocabulary (#208): the CJK line decision (#211) prices punctuation in
-# it rather than declare a second set of costs.
+# it rather than declare a second set of costs. `sort` is not vocabulary at
+# all: it is the one compiled sorting routine the framework's call sites
+# share (`nana_ui_core::sort`), and a second copy here would be the 6 KiB per
+# call site it exists to remove.
 NANA_TEXT_CORE_ALLOWLIST = {
     "DirSpec",
     "dynamic_layout",
@@ -74,6 +77,7 @@ NANA_TEXT_CORE_ALLOWLIST = {
     "FontVariationSetting",
     "LineBreakSpec",
     "LineHeightSpec",
+    "sort",
     "TextAlignSpec",
     "TextAutospaceSpec",
     "TextEmphasisPosition",

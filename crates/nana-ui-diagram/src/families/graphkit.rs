@@ -4,6 +4,7 @@
 //! end labels and outlined node shapes. Plain text helpers live in
 //! [`super::kit`].
 
+use nana_ui_core::sort::CompactSort as _;
 use std::collections::HashMap;
 
 use nana_ui_core::{RadiusTier, SemanticColorMix, SemanticColorRole as R};
@@ -325,7 +326,7 @@ pub(crate) fn outermost_first(parents: &[Option<usize>]) -> Vec<usize> {
             .count()
     };
     let mut order: Vec<usize> = (0..parents.len()).collect();
-    order.sort_by_key(|&c| (depth(c), c));
+    order.compact_sort_by_key(|&c| (depth(c), c));
     order
 }
 

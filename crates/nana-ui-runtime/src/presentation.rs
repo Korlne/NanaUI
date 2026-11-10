@@ -5,6 +5,7 @@
 //! [`TextPresenter`] values so every host and `AppContext` share one registry.
 //! Presenters color committed text only; IME preedit stays solid.
 
+use nana_ui_core::sort::CompactSort as _;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
@@ -145,7 +146,7 @@ pub(crate) fn sanitize_spans(text: &str, spans: Vec<TextSpan>) -> Vec<TextSpan> 
                 && text.is_char_boundary(span.end)
         })
         .collect::<Vec<_>>();
-    cleaned.sort_by_key(|span| (span.start, span.end));
+    cleaned.compact_sort_by_key(|span| (span.start, span.end));
     let mut merged: Vec<TextSpan> = Vec::new();
     let mut cursor = 0usize;
     for mut span in cleaned {

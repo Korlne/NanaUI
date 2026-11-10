@@ -175,7 +175,7 @@ impl UiWorld {
                 (owner == document).then_some((pointer_id, target))
             })
             .collect::<Vec<_>>();
-        captures.sort_unstable_by_key(|(pointer_id, _)| *pointer_id);
+        captures.compact_sort_by_key(|(pointer_id, _)| *pointer_id);
         captures
     }
 }

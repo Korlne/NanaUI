@@ -2,6 +2,7 @@
 
 mod commands;
 pub use commands::{DockCommand, DockCommandOutcome, DockItemLimits};
+use nana_ui_core::sort::CompactSort as _;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -1026,8 +1027,9 @@ fn reorder_dock_tab(root: &mut DockNode, dragged_id: &str, target_id: &str, befo
             if !reorder_sibling_ids(tabs, dragged_id, target_id, before) {
                 return false;
             }
-            contents
-                .sort_by_key(|(id, _)| tabs.iter().position(|tab| tab == id).unwrap_or(usize::MAX));
+            contents.compact_sort_by_key(|(id, _)| {
+                tabs.iter().position(|tab| tab == id).unwrap_or(usize::MAX)
+            });
             true
         }
         DockNode::Split { first, second, .. } => {

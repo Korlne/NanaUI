@@ -11,6 +11,7 @@
 //! that produced them has been evicted, so eviction can never race a pending
 //! upload or leave the queue pointing at freed bytes.
 
+use nana_ui_core::sort::CompactSort as _;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -171,7 +172,7 @@ impl GlyphRasterCache {
             .iter()
             .map(|(key, entry)| (entry.last_used, *key))
             .collect();
-        ages.sort_unstable_by_key(|(age, _)| *age);
+        ages.compact_sort_by_key(|(age, _)| *age);
         for (_, key) in ages {
             if self.entries.len() <= entry_target && self.bytes <= byte_target {
                 break;

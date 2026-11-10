@@ -6,6 +6,7 @@ mod extraction;
 mod focus_scope;
 mod geometry;
 pub(crate) use geometry::{PROGRESS_GIRTH, range_value_thumb_height};
+use nana_ui_core::sort::CompactSort as _;
 mod hit_test;
 mod i18n;
 mod input;
@@ -3701,7 +3702,7 @@ impl UiWorld {
             .filter(|(id, _)| self.presence_live(*id))
             .map(|(id, invalidation)| crate::LayoutFrontierSeed::new(id, invalidation))
             .collect::<Vec<_>>();
-        remaining.sort_unstable_by_key(|seed| seed.node);
+        remaining.compact_sort_by_key(|seed| seed.node);
         work.layout_frontier_seeds.extend(remaining);
         work.render_nodes_changed = work.render_extraction.len();
         work.render_nodes_extracted = work.render_extraction.len();

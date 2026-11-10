@@ -9,6 +9,7 @@
 //! 颜色写 [`SemanticColorRole`]、圆角写 [`RadiusTier`]、阴影写 [`ElevationRole`]，
 //! 由 `cx` 按当前主题解析，所以切换主题会自动重录。这里不暴露 GPU。
 
+use nana_ui_core::sort::CompactSort as _;
 use std::any::TypeId;
 use std::fmt;
 use std::sync::Arc;
@@ -1687,7 +1688,7 @@ impl<'a> PaintContext<'a> {
                     .map(|stop| (stop.offset.clamp(0.0, 1.0), self.color(stop.color)))
                     .collect();
                 // Stable, so equal offsets keep their order: a hard edge.
-                stops.sort_by(|a, b| a.0.total_cmp(&b.0));
+                stops.compact_sort_by(|a, b| a.0.total_cmp(&b.0));
                 if stops.is_empty() {
                     stops.push((0.0, [0.0; 4]));
                 }
@@ -1712,7 +1713,7 @@ impl<'a> PaintContext<'a> {
                                 (offset, [channels[0], channels[1], channels[2], alpha])
                             })
                             .collect::<Vec<_>>();
-                        stops.sort_by(|a, b| a.0.total_cmp(&b.0));
+                        stops.compact_sort_by(|a, b| a.0.total_cmp(&b.0));
                         if stops.is_empty() {
                             stops.push((0.0, [0.0; 4]));
                         }

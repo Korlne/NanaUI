@@ -5,6 +5,7 @@
 //! until the font set changed. Unlike clearing the whole table at the
 //! ceiling, the entries the current frames still ask for survive.
 
+use nana_ui_core::sort::CompactSort as _;
 use std::{collections::HashMap, hash::Hash};
 
 #[derive(Debug, Clone)]
@@ -51,7 +52,7 @@ impl<K: Eq + Hash + Clone, V> BoundedCache<K, V> {
                 .iter()
                 .map(|(key, (_, used))| (*used, key.clone()))
                 .collect();
-            used.sort_unstable_by_key(|(used, _)| *used);
+            used.compact_sort_by_key(|(used, _)| *used);
             for (_, key) in used.into_iter().take(self.cap / 4) {
                 self.entries.remove(&key);
             }

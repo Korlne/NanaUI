@@ -1,6 +1,7 @@
 //! Scene composition projection.
 
 use super::*;
+use nana_ui_core::sort::CompactSort as _;
 
 /// Structural frame program. Resource contents and bindings are deliberately
 /// resolved at consumption time, so a texture update does not compile a graph.
@@ -155,7 +156,7 @@ impl UiScene {
         // compile()'s hazard and dependency sets are quadratic in pass count.
         // Operation order inside a pass stays resource-label order.
         let mut ordered_resources = custom_resources.iter().collect::<Vec<_>>();
-        ordered_resources.sort_by_key(|(label, _)| *label);
+        ordered_resources.compact_sort_by_key(|(label, _)| *label);
         let mut prepare_passes: BTreeMap<&Arc<str>, (Vec<ResourceAccess>, Vec<RenderOperation>)> =
             BTreeMap::new();
         for (label, (resource, representative)) in ordered_resources {

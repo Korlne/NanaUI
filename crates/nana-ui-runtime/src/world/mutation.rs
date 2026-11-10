@@ -2698,7 +2698,7 @@ impl UiWorld {
                     .copied()
                     .filter(|fold| offered.contains(fold))
                     .collect();
-                collapsed.sort_by_key(|fold| (fold.start, fold.end));
+                collapsed.compact_sort_by_key(|fold| (fold.start, fold.end));
                 collapsed.dedup();
                 let changed = self
                     .nodes
@@ -3597,7 +3597,7 @@ impl UiWorld {
             .into_iter()
             .map(|(id, layout)| (depth(self, id), id, layout))
             .collect();
-        ordered.sort_by_key(|&(depth, id, _)| (depth, id));
+        ordered.compact_sort_by_key(|&(depth, id, _)| (depth, id));
         for (_, id, layout) in ordered {
             let frame = self.layout_frame_from_styles(id);
             let [x, y] = self.frame_origin_of(self.record(id), frame);

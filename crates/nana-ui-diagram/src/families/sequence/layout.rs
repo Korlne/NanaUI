@@ -2,6 +2,7 @@
 //! then one top-down sweep over the events for rows, activations, fragments
 //! and notes. ZenUML lowers onto the same model and draws through here.
 
+use nana_ui_core::sort::CompactSort as _;
 use nana_ui_core::{RadiusTier, SemanticColorMix, SemanticColorRole as R};
 
 use super::{Event, FragmentKind, LineKind, Message, Model, NotePlace, ParticipantKind};
@@ -371,7 +372,7 @@ pub(crate) fn layout(model: &Model, cx: &mut LayoutCx<'_>) -> Result<DiagramScen
     let mut gaps: Vec<f32> = (0..n.saturating_sub(1))
         .map(|k| hw[k] + hw[k + 1] + d.col_gap)
         .collect();
-    cons.sort_by_key(|c| c.1 - c.0);
+    cons.compact_sort_by_key(|c| c.1 - c.0);
     for (a, b, need) in cons {
         if a >= b || b > gaps.len() || !need.is_finite() {
             continue;
@@ -804,7 +805,7 @@ pub(crate) fn layout(model: &Model, cx: &mut LayoutCx<'_>) -> Result<DiagramScen
     }
 
     // Fragments, outermost first.
-    frames.sort_by_key(|f| f.open);
+    frames.compact_sort_by_key(|f| f.open);
     for f in &frames {
         draw_frame(&mut layers, f, &d);
     }
@@ -823,7 +824,7 @@ pub(crate) fn layout(model: &Model, cx: &mut LayoutCx<'_>) -> Result<DiagramScen
     }
 
     // Activation bars, shallow under deep.
-    bars.sort_by(|a, b| a.depth.cmp(&b.depth).then(a.y0.total_cmp(&b.y0)));
+    bars.compact_sort_by(|a, b| a.depth.cmp(&b.depth).then(a.y0.total_cmp(&b.y0)));
     for bar in &bars {
         let x0 = xs[bar.p] - d.bar_w / 2.0
             + (bar.depth.clamp(1, MAX_BAR_STEPS) - 1) as f32 * d.bar_w / 2.0;

@@ -1,6 +1,7 @@
 //! Component geometry derived from committed Runtime data.
 
 use crate::stack::own_frame;
+use nana_ui_core::sort::CompactSort as _;
 
 #[cfg(feature = "calendar")]
 mod calendar;
@@ -2788,7 +2789,7 @@ impl UiWorld {
                 })?
             })
             .collect::<Vec<_>>();
-        stale.sort_unstable_by_key(|(id, _)| *id);
+        stale.compact_sort_by_key(|(id, _)| *id);
         stale
     }
 

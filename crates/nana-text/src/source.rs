@@ -6,6 +6,7 @@
 
 use crate::id::TextRevision;
 use crate::style::TextStyle;
+use nana_ui_core::sort::CompactSort as _;
 use serde::{Deserialize, Serialize};
 use std::hash::{DefaultHasher, Hasher};
 use std::ops::Range;
@@ -421,7 +422,7 @@ impl TextSource {
         values.retain(|(at, _)| {
             *at <= self.text.len() && (*at == 0 || self.text.as_bytes()[at - 1] == b'\n')
         });
-        values.sort_by_key(|(at, _)| *at);
+        values.compact_sort_by_key(|(at, _)| *at);
         values.dedup_by_key(|(at, _)| *at);
         let mut offset = 0;
         self.paragraph_alignments = self
@@ -486,7 +487,7 @@ impl TextSource {
     /// [`Self::objects`], or empty, is dropped. Set the objects first.
     pub fn set_labels(&mut self, mut labels: Vec<ObjectLabel>) {
         labels.retain(|label| !label.text.is_empty() && self.object_at(label.offset).is_some());
-        labels.sort_by_key(|label| label.offset);
+        labels.compact_sort_by_key(|label| label.offset);
         labels.dedup_by_key(|label| label.offset);
         self.labels = labels;
         self.bump();
@@ -513,7 +514,7 @@ impl TextSource {
         placements.retain(|placement| {
             !placement.is_default() && self.object_at(placement.offset).is_some()
         });
-        placements.sort_by_key(|placement| placement.offset);
+        placements.compact_sort_by_key(|placement| placement.offset);
         placements.dedup_by_key(|placement| placement.offset);
         self.placements = placements;
         self.bump();
@@ -530,7 +531,7 @@ impl TextSource {
                 && self.text.is_char_boundary(ruby.range.end)
                 && !ruby.text.is_empty()
         });
-        rubies.sort_by_key(|ruby| ruby.range.start);
+        rubies.compact_sort_by_key(|ruby| ruby.range.start);
         let mut kept: Vec<RubySpan> = Vec::with_capacity(rubies.len());
         for ruby in rubies {
             if kept
@@ -555,7 +556,7 @@ impl TextSource {
                 && self.text.is_char_boundary(span.range.end)
                 && !span.mark.is_empty()
         });
-        emphasis.sort_by_key(|span| span.range.start);
+        emphasis.compact_sort_by_key(|span| span.range.start);
         let mut kept: Vec<EmphasisSpan> = Vec::with_capacity(emphasis.len());
         for span in emphasis {
             if kept
@@ -585,7 +586,7 @@ impl TextSource {
                 .get(object.offset..)
                 .is_some_and(|rest| rest.starts_with(OBJECT_REPLACEMENT))
         });
-        objects.sort_by_key(|object| object.offset);
+        objects.compact_sort_by_key(|object| object.offset);
         objects.dedup_by_key(|object| object.offset);
         self.objects = objects;
         self.bump();
@@ -751,7 +752,7 @@ impl TextSource {
     pub fn set_composition(&mut self, spans: Vec<TextSpan>) {
         self.spans.retain(|span| span.composition.is_none());
         self.spans.extend(spans);
-        self.spans.sort_by_key(|span| span.range.start);
+        self.spans.compact_sort_by_key(|span| span.range.start);
         self.bump();
     }
 

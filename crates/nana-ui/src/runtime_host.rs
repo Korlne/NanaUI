@@ -4,6 +4,7 @@
 //! [`run_runtime`] is the product host entry and delegates to
 //! [`crate::run_runtime_scene`].
 
+use nana_ui_core::sort::CompactSort as _;
 use std::cell::RefCell;
 use std::fmt;
 use std::sync::Arc;
@@ -347,7 +348,7 @@ pub enum RuntimeRedraw {
 impl RuntimeRedraw {
     pub fn for_windows(windows: impl IntoIterator<Item = WindowId>) -> Self {
         let mut windows: Vec<_> = windows.into_iter().collect();
-        windows.sort_by_key(|id| id.0);
+        windows.compact_sort_by_key(|id| id.0);
         windows.dedup();
         match windows.as_slice() {
             [] => Self::None,

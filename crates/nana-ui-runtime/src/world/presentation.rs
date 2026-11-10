@@ -208,7 +208,7 @@ impl UiWorld {
                 render_nodes_reextracted_from_animation: extract,
             });
         }
-        entries.sort_by_key(|entry| (entry.node, entry.property));
+        entries.compact_sort_by_key(|entry| (entry.node, entry.property));
         entries
     }
 

@@ -5,6 +5,7 @@
 //! candidates per node, so long edges run straight and nodes centre over
 //! their neighbours.
 
+use nana_ui_core::sort::CompactSort as _;
 use std::collections::HashSet;
 
 pub(crate) struct Separation<'a> {
@@ -96,7 +97,7 @@ pub(crate) fn position_x(
                 results[2].0[v],
                 results[3].0[v],
             ];
-            c.sort_by(f32::total_cmp);
+            c.compact_sort_by(f32::total_cmp);
             (c[1] + c[2]) / 2.0
         })
         .collect()
@@ -177,7 +178,7 @@ fn vertical_alignment(
             if ws.is_empty() {
                 continue;
             }
-            ws.sort_by_key(|&w| pos[w]);
+            ws.compact_sort_by_key(|&w| pos[w]);
             let mp = (ws.len() as f32 - 1.0) / 2.0;
             for &w in &ws[mp.floor() as usize..=mp.ceil() as usize] {
                 if align[v] == v && prev < pos[w] as isize && !conflicts.contains(&key(v, w)) {

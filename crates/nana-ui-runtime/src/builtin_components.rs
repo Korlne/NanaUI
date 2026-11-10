@@ -1,5 +1,6 @@
 //! Built-in components install through the same [`UiExtension`] ABI as plugins.
 
+use nana_ui_core::sort::CompactSort as _;
 use std::sync::Arc;
 
 use nana_ui_core::{
@@ -2450,7 +2451,7 @@ fn json_array(value: &serde_json::Value) -> Vec<&serde_json::Value> {
             if indexed.is_empty() {
                 return Vec::new();
             }
-            indexed.sort_by_key(|(index, _)| *index);
+            indexed.compact_sort_by_key(|(index, _)| *index);
             indexed.into_iter().map(|(_, item)| item).collect()
         }
         _ => Vec::new(),

@@ -1,5 +1,6 @@
 //! Week-column calendar heatmap. Application owns dates, values, titles, and meaning.
 
+use nana_ui_core::sort::CompactSort as _;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::Arc;
@@ -418,7 +419,7 @@ pub fn build_calendar_heatmap_model_in<T: Clone>(
         .iter()
         .filter_map(|datum| parse_date(&datum.date).map(|day| (day, datum)))
         .collect();
-    dated.sort_by_key(|(day, _)| *day);
+    dated.compact_sort_by_key(|(day, _)| *day);
     let Some((first, _)) = dated.first() else {
         return empty_model(&options, strings);
     };

@@ -1,6 +1,7 @@
 //! [`OutlineRasterizer`]: `swash` behind the raster boundary. The only file
 //! of this crate that names it (`scripts/check-engine-boundary.py`).
 
+use nana_ui_core::sort::CompactSort as _;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -165,7 +166,7 @@ impl OutlineRasterizer {
         // Down to three quarters, so the scan runs once per many frames
         // rather than on every new set.
         let excess = self.variations.len() - VARIATION_CAP * 3 / 4;
-        cold.sort_unstable_by_key(|(last_used, id)| (*last_used, id.0));
+        cold.compact_sort_by_key(|(last_used, id)| (*last_used, id.0));
         cold.truncate(excess);
         cold.into_iter()
             .map(|(_, id)| {

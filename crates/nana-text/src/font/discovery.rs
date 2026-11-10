@@ -10,6 +10,7 @@
 
 use super::query::FontStyle;
 use super::system::FontBlob;
+use nana_ui_core::sort::CompactSort as _;
 #[cfg(any(test, target_env = "ohos"))]
 use std::path::Path;
 use std::path::PathBuf;
@@ -98,7 +99,7 @@ pub fn parse_faces(blob: &FontBlob) -> Vec<FaceMeta> {
     let mut db = fontdb::Database::new();
     let ids = db.load_font_source(fontdb::Source::Binary(Arc::clone(blob)));
     let mut faces: Vec<FaceMeta> = ids.iter().filter_map(|id| db.face(*id)).map(meta).collect();
-    faces.sort_by_key(|face| face.index);
+    faces.compact_sort_by_key(|face| face.index);
     faces
 }
 

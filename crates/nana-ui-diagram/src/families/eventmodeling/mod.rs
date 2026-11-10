@@ -7,6 +7,7 @@
 
 mod parse;
 
+use nana_ui_core::sort::CompactSort as _;
 use nana_ui_core::{SemanticColorMix, SemanticColorRole as R};
 
 use super::swimlane::{draw_lanes, lane_titles, spacing};
@@ -120,7 +121,7 @@ impl Model {
                 lanes.push(key);
             }
         }
-        lanes.sort_by_key(|(band, ns)| (*band, ns.is_some()));
+        lanes.compact_sort_by_key(|(band, ns)| (*band, ns.is_some()));
         lanes
     }
 }
