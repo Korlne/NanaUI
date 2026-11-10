@@ -852,6 +852,9 @@ pub enum StandardVisual {
         ratio: f32,
         /// Positions along the track, each in `0.0..=1.0`.
         markers: Arc<[f32]>,
+        /// `Some(ratio)`: the track from there to its end is a caution zone
+        /// (`RangeField::caution_from`).
+        caution: Option<f32>,
         invalid: bool,
         /// `Some(girth)`, finite and positive: a rail that thick across the
         /// whole content box, with no thumb unless focus is visible on the
@@ -1276,6 +1279,18 @@ pub struct ComponentTextRegion {
     pub color: Option<[f32; 4]>,
     pub font_size: f32,
     pub font_weight: Option<u16>,
+}
+
+/// A range's caution zone (`RangeField::caution_from`): the stretch of the
+/// track from `from` to its end, in the theme's warning colour.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RangeCaution {
+    /// Where it begins along the track, `0.0..1.0`.
+    pub from: f32,
+    /// The rail's colour inside the zone, past the value.
+    pub track: [f32; 4],
+    /// The fill's colour inside the zone, up to the value.
+    pub fill: [f32; 4],
 }
 
 /// A range's value thumb (`RangeField::value_thumb`): a capsule as wide as
@@ -1726,6 +1741,8 @@ pub enum ComponentGeometry {
         bounds: Option<[ComponentTextRegion; 2]>,
         /// The capsule a value thumb is drawn as, at the current value.
         value_thumb: Option<RangeValueThumb>,
+        /// The caution zone and its theme-resolved colours.
+        caution: Option<RangeCaution>,
     },
     Scrollbar {
         horizontal: Option<ScrollbarBar>,

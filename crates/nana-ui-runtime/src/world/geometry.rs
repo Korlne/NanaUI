@@ -1542,6 +1542,7 @@ impl UiWorld {
                     thumb_ring: None,
                     bounds: None,
                     value_thumb: None,
+                    caution: None,
                 })
             }),
             StandardVisual::Range {
@@ -1555,6 +1556,7 @@ impl UiWorld {
                 value_thumb,
                 editing,
                 bounds,
+                caution,
                 ..
             } => own_frame(|| {
                 // The label, the value's slot and the unit are the parts
@@ -1639,7 +1641,22 @@ impl UiWorld {
                             editing: *editing,
                         }
                     });
+                // The caution zone in the theme's warning colour: whole on
+                // the fill, thinned on the rail past the value so the two
+                // still read apart.
+                let caution = caution.filter(|_| track_gradient.is_none()).map(|from| {
+                    let fill = self
+                        .style_model
+                        .color(SemanticColorRole::Warning)
+                        .as_rgba_array();
+                    crate::RangeCaution {
+                        from,
+                        track: [fill[0], fill[1], fill[2], fill[3] * 0.7],
+                        fill,
+                    }
+                });
                 Some(crate::ComponentGeometry::Range {
+                    caution,
                     border_width: self.theme.border().hairline,
                     label: label.as_ref().zip(part(LayoutPartKind::Label)).map(
                         |(label, bounds)| {

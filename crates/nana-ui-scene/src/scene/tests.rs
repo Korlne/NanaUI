@@ -6057,6 +6057,7 @@ fn standard_control_visuals_expand_without_backend_tag_matching() {
 
     let mut slider = node(2, None, &[]);
     slider.standard_visual = Some(StandardVisual::Range {
+        caution: None,
         label: None,
         value: Arc::from("25"),
         limits: None,
@@ -6119,6 +6120,7 @@ fn a_rail_range_draws_its_girth_and_shows_the_thumb_only_with_visible_focus() {
         height: 16.0,
     };
     range.standard_visual = Some(StandardVisual::Range {
+        caution: None,
         label: None,
         value: Arc::from(""),
         limits: None,
@@ -6135,6 +6137,7 @@ fn a_rail_range_draws_its_girth_and_shows_the_thumb_only_with_visible_focus() {
         reset: false,
     });
     range.component_geometry = Some(Box::new(ComponentGeometry::Range {
+        caution: None,
         label: None,
         value: nana_ui_runtime::ComponentTextRegion {
             bounds: LayoutBox::default(),
@@ -6174,6 +6177,101 @@ fn a_rail_range_draws_its_girth_and_shows_the_thumb_only_with_visible_focus() {
     scene.apply_delta([range], []);
     assert!(slot(&scene, 5).is_some(), "the thumb marks visible focus");
     assert!(slot(&scene, 6).is_some(), "with its ring");
+}
+
+/// A caution zone repaints its stretch of the rail and of the fill, over
+/// them and under the markers and the thumb, which move two slots on.
+#[test]
+fn a_ranges_caution_zone_repaints_the_rail_and_the_fill_past_where_it_begins() {
+    let range_at = |ratio: f32| {
+        let mut range = node(1, None, &[]);
+        range.layout = LayoutBox {
+            x: 0.0,
+            y: 0.0,
+            width: 200.0,
+            height: 16.0,
+        };
+        range.standard_visual = Some(StandardVisual::Range {
+            caution: Some(0.25),
+            label: None,
+            value: Arc::from(""),
+            limits: None,
+            unit: None,
+            size: nana_ui_core::ControlSize::Small,
+            ratio,
+            markers: Arc::from([0.25]),
+            invalid: false,
+            rail: None,
+            track_gradient: None,
+            value_thumb: None,
+            editing: false,
+            bounds: None,
+            reset: false,
+        });
+        range.component_geometry = Some(Box::new(ComponentGeometry::Range {
+            caution: Some(nana_ui_runtime::RangeCaution {
+                from: 0.25,
+                track: [0.9, 0.7, 0.1, 0.5],
+                fill: [0.9, 0.7, 0.1, 1.0],
+            }),
+            label: None,
+            value: nana_ui_runtime::ComponentTextRegion {
+                bounds: LayoutBox::default(),
+                content: Arc::<str>::from("").into(),
+                color: None,
+                font_size: 12.0,
+                font_weight: None,
+            },
+            unit: None,
+            track: range.layout,
+            track_girth: 2.0,
+            border_width: 1.0,
+            thumb_ring: None,
+            bounds: None,
+            value_thumb: None,
+        }));
+        style_mut(&mut range).background = Some([0.2, 0.5, 0.9, 1.0]);
+        style_mut(&mut range).border_color = Some([0.4, 0.4, 0.4, 1.0]);
+        let mut scene = UiScene::new();
+        scene.apply_delta([range], []);
+        scene
+    };
+    let span = |scene: &UiScene, slot| {
+        scene
+            .primitive(PrimitiveId { node: id(1), slot })
+            .map(|primitive| (primitive.bounds.x, primitive.bounds.width))
+    };
+
+    // The value inside the zone: the rail past it and the fill from where
+    // the zone begins.
+    let scene = range_at(0.5);
+    assert_eq!(
+        span(&scene, 3),
+        Some((0.0, 50.0)),
+        "the plain rail up to it"
+    );
+    assert_eq!(span(&scene, 4), Some((0.0, 100.0)), "the fill as ever");
+    assert_eq!(
+        span(&scene, 5),
+        Some((100.0, 100.0)),
+        "the rail in the zone"
+    );
+    assert_eq!(span(&scene, 6), Some((50.0, 50.0)), "the fill in the zone");
+    let (bounds, background, ..) = quad_parts(&scene, 1, 6).expect("the zone's fill");
+    assert_eq!(
+        (bounds.y, bounds.height),
+        (7.0, 2.0),
+        "as thick as the rail"
+    );
+    assert!(background.is_some());
+    assert!(span(&scene, 7).is_some(), "the marker, two slots on");
+    assert!(span(&scene, 8).is_some(), "and the thumb after it");
+    assert!(span(&scene, 9).is_none());
+
+    // The value short of the zone: only the rail is in it.
+    let scene = range_at(0.1);
+    assert_eq!(span(&scene, 5), Some((50.0, 150.0)));
+    assert!(span(&scene, 6).is_none(), "the fill ends before the zone");
 }
 
 /// A quad's bounds, fill, border colour, border width and surface paint.
@@ -6241,6 +6339,7 @@ fn a_gradient_range_paints_its_stops_and_rings_the_value() {
         height: 24.0,
     };
     range.standard_visual = Some(StandardVisual::Range {
+        caution: None,
         label: None,
         value: Arc::from(""),
         limits: None,
@@ -6257,6 +6356,7 @@ fn a_gradient_range_paints_its_stops_and_rings_the_value() {
         reset: false,
     });
     range.component_geometry = Some(Box::new(ComponentGeometry::Range {
+        caution: None,
         label: None,
         value: nana_ui_runtime::ComponentTextRegion {
             bounds: LayoutBox::default(),
@@ -7040,6 +7140,7 @@ fn a_focused_range_adds_a_thumb_focus_ring_and_keeps_the_rail_untouched() {
         let mut range = node(1, None, &[]);
         range.focused = focused;
         range.standard_visual = Some(StandardVisual::Range {
+            caution: None,
             label: None,
             value: Arc::from("50"),
             limits: None,
@@ -7125,6 +7226,7 @@ fn a_focused_range_adds_a_thumb_focus_ring_and_keeps_the_rail_untouched() {
 fn a_range_marker_paints_on_the_track_under_the_thumb() {
     let mut range = node(1, None, &[]);
     range.standard_visual = Some(StandardVisual::Range {
+        caution: None,
         label: None,
         value: Arc::from("50"),
         limits: None,
@@ -7236,6 +7338,7 @@ fn migrated_components_consume_runtime_subregion_geometry() {
 
     let mut range = node(3, None, &[]);
     range.standard_visual = Some(StandardVisual::Range {
+        caution: None,
         label: Some(Arc::from("Opacity")),
         value: Arc::from("25"),
         limits: None,
@@ -7252,6 +7355,7 @@ fn migrated_components_consume_runtime_subregion_geometry() {
         reset: false,
     });
     range.component_geometry = Some(Box::new(ComponentGeometry::Range {
+        caution: None,
         label: Some(ComponentTextRegion {
             bounds: LayoutBox {
                 x: 0.0,

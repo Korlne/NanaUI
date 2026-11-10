@@ -1911,6 +1911,10 @@ impl UiScene {
                         }) => Some(thumb),
                         _ => None,
                     };
+                    let caution = match node.component_geometry.as_deref() {
+                        Some(ComponentGeometry::Range { caution, .. }) => *caution,
+                        _ => None,
+                    };
                     let (track_band, thumb_ring, girth, border_width) =
                         match node.component_geometry.as_deref() {
                             Some(ComponentGeometry::Range {
@@ -1950,6 +1954,21 @@ impl UiScene {
                         height: girth,
                     };
                     let rail_radius = girth / 2.0;
+                    // Where the caution zone begins: the plain rail stops
+                    // there, cut square, and the zone's own takes over.
+                    let caution = caution.filter(|_| rail_girth.is_none() && gradient.is_none());
+                    let zone_x =
+                        caution.map(|caution| rail.x + rail.width * caution.from.clamp(0.0, 1.0));
+                    let plain_rail = |piece: SceneRect| match zone_x {
+                        Some(zone_x) if zone_x < piece.x + piece.width => (
+                            SceneRect {
+                                width: (zone_x - piece.x).max(0.0),
+                                ..piece
+                            },
+                            [rail_radius, 0.0, 0.0, rail_radius],
+                        ),
+                        _ => (piece, corner_radii(rail_radius)),
+                    };
                     if let Some(thumb) = value_thumb {
                         // A value thumb's rail runs the whole lane, the
                         // capsule's travel and half a capsule past each end,
@@ -1974,6 +1993,7 @@ impl UiScene {
                             width: (lane.x + lane.width - after_x).max(0.0),
                             ..lane
                         };
+                        let (after, after_radius) = plain_rail(after);
                         self.insert_primitive(visual_quad_with_paint(
                             &visual_context,
                             3,
@@ -1982,7 +2002,7 @@ impl UiScene {
                                 background: node.style.border_color,
                                 border_color: None,
                                 border_width: 0.0,
-                                corner_radius: corner_radii(rail_radius),
+                                corner_radius: after_radius,
                             },
                             matching_paint_color(
                                 node.style.paint_colors.border,
@@ -2026,15 +2046,16 @@ impl UiScene {
                         }
                         self.insert_primitive(strip);
                     } else {
+                        let (plain, plain_radius) = plain_rail(rail);
                         self.insert_primitive(visual_quad_with_paint(
                             &visual_context,
                             3,
-                            rail,
+                            plain,
                             VisualQuadStyle {
                                 background: node.style.border_color,
                                 border_color: None,
                                 border_width: 0.0,
-                                corner_radius: corner_radii(rail_radius),
+                                corner_radius: plain_radius,
                             },
                             matching_paint_color(
                                 node.style.paint_colors.border,
@@ -2059,11 +2080,76 @@ impl UiScene {
                             None,
                         ));
                     }
+                    // The caution zone paints its stretch of the rail (in
+                    // place of the plain one, which stopped where it begins)
+                    // and of the fill (over it) in the warning colour, under
+                    // the markers and the thumb: slots 5 and 6, which push
+                    // the markers and the thumb two slots on. Each piece is
+                    // cut square where the zone begins and keeps the rail's
+                    // round end.
+                    let caution_slots = if let Some((caution, from)) = caution.zip(zone_x) {
+                        // The rail and the fill as they were just painted.
+                        let (rail_span, fill_end, rail_start) = match value_thumb {
+                            Some(thumb) => {
+                                let capsule = scene_rect(thumb.capsule);
+                                let half = capsule.width / 2.0;
+                                let cut = if thumb.editing { 0.0 } else { thumb.gap };
+                                (
+                                    (rail.x - half, rail.x + rail.width + half),
+                                    capsule.x - cut,
+                                    capsule.x + capsule.width + cut,
+                                )
+                            }
+                            None => {
+                                let at = rail.x + rail.width * ratio;
+                                ((rail.x, rail.x + rail.width), at, at)
+                            }
+                        };
+                        let pieces = [
+                            (5, from.max(rail_start), rail_span.1, caution.track, true),
+                            (6, from, fill_end.min(rail_span.1), caution.fill, false),
+                        ];
+                        for (slot, start, end, color, round_end) in pieces {
+                            if end <= start {
+                                continue;
+                            }
+                            // The piece from where the zone begins is cut
+                            // square there; one that begins at the thumb
+                            // keeps the rail's round start.
+                            let round_start = start > from;
+                            let radius = |round: bool| if round { rail_radius } else { 0.0 };
+                            self.insert_primitive(visual_quad_with_paint(
+                                &visual_context,
+                                slot,
+                                SceneRect {
+                                    x: start,
+                                    width: end - start,
+                                    ..rail
+                                },
+                                VisualQuadStyle {
+                                    background: Some(color),
+                                    border_color: None,
+                                    border_width: 0.0,
+                                    corner_radius: [
+                                        radius(round_start),
+                                        radius(round_end),
+                                        radius(round_end),
+                                        radius(round_start),
+                                    ],
+                                },
+                                None,
+                                None,
+                            ));
+                        }
+                        2
+                    } else {
+                        0
+                    };
                     // Marker slots sit between the fill (4) and the thumb.
                     // With none of them, the thumb stays on slot 5 and the
                     // focus ring on slot 6 (a ring thumb takes 5..=7 and its
-                    // focus ring 8).
-                    let marker_count = markers.len() as u64;
+                    // focus ring 8); a caution zone pushes them two on.
+                    let marker_count = markers.len() as u64 + caution_slots;
                     for (index, marker) in markers.iter().copied().enumerate() {
                         let marker = marker.clamp(0.0, 1.0);
                         let tick = SceneRect {
@@ -2074,7 +2160,7 @@ impl UiScene {
                         };
                         self.insert_primitive(visual_quad_with_paint(
                             &visual_context,
-                            5 + index as u64,
+                            5 + caution_slots + index as u64,
                             tick,
                             VisualQuadStyle {
                                 background: node.style.background,

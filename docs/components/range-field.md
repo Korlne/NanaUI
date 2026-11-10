@@ -132,6 +132,7 @@ RangeField::new(137.0, 0.0, 200.0, 1.0)
 | `page_step` | — | 翻页步进，默认是 `step` 的十倍 |
 | `rail` | `Option<f32>` | `rail(粗细)` 只画这么粗的细轨，横贯整个控件，没有标签、数值和内边距，圆点只在焦点可见时出现；控件高度就是命中区 |
 | `track_gradient` | `Option<Arc<[GradientStop]>>` | `track_gradient(色标)` 把轨道画成渐变条：没有填充和字段内边距，圆点换成对比色圆环，语义不变。少于两个色标时保持常规外观；`rail` 优先 |
+| `caution_from` | `Option<f64>` | `caution_from(值)` 把从这个值到最大值的一段标成警示段：这段的轨道与填充换成主题的 Warning 色（填充实色、未填充处七成不透明），滑块、读数、步进与读屏语义不变，也不拦住取值；要在边界停一下就在那里配一个 `markers`。值在范围外或等于最大值时不标；`rail`、`track_gradient` 优先。几何在 `ComponentGeometry::Range` 的 `caution: Option<RangeCaution>`。只在构造器上，`<Slider>` 字段表里没有 |
 | `value_thumb` | `bool` | `value_thumb(true)` 把读数写进宽胶囊滑块，不画右侧读数；在胶囊上拖动不跳值，单击或 Enter 键入。`rail`、`track_gradient` 优先。`<Slider>` 字段表里有，`slider` 上同名 |
 | `show_bounds` | `bool` | `show_bounds(true)` 在轨道两端写最小值和带单位的最大值。`<Slider>` 字段表里有 |
 | `default_value` | `Option<f64>` | `Some(值)` 在行末放恢复默认按钮，值等于它时禁用；非有限值当作 `None`。`<Slider>` 字段表里有，可绑定 |

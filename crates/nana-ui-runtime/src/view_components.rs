@@ -5552,6 +5552,9 @@ pub struct RangeField {
     /// `Some(stops)` paints the track as this gradient; see
     /// [`Self::track_gradient`].
     pub track_gradient: Option<Arc<[nana_ui_core::GradientStop]>>,
+    /// `Some(value)`: the track from this value to the maximum is a caution
+    /// zone; see [`Self::caution_from`].
+    pub caution_from: Option<f64>,
     /// Draw the value inside a wide capsule thumb instead of beside the
     /// track; see [`Self::value_thumb`].
     pub value_thumb: bool,
@@ -5694,6 +5697,7 @@ impl RangeField {
             size: nana_ui_core::ControlSize::Medium,
             rail: None,
             track_gradient: None,
+            caution_from: None,
             value_thumb: false,
             show_bounds: false,
             default_value: None,
@@ -5773,6 +5777,18 @@ impl RangeField {
     pub fn track_gradient(mut self, stops: impl Into<Arc<[nana_ui_core::GradientStop]>>) -> Self {
         let stops: Arc<[nana_ui_core::GradientStop]> = stops.into();
         self.track_gradient = (stops.len() >= 2).then_some(stops);
+        self
+    }
+    /// Mark the track from `value` up to the maximum as a caution zone: a
+    /// stretch the value may enter but is past what is usual (gain over
+    /// 100%). That stretch of the rail and of the fill is painted in the
+    /// theme's warning colour; the thumb, the value, the steps and the
+    /// slider semantics are unchanged, and nothing stops the value at its
+    /// edge (pair it with a marker there for a stop). A value outside the
+    /// range marks nothing. A rail ([`Self::rail`]) or a gradient track
+    /// ([`Self::track_gradient`]) wins over it.
+    pub fn caution_from(mut self, value: f64) -> Self {
+        self.caution_from = Some(value);
         self
     }
     /// Draw the value inside the thumb: a wide accent capsule as wide as
@@ -5868,6 +5884,21 @@ impl RangeField {
         best.map_or(proportional, |(_, value)| value)
     }
 
+    /// Where the caution zone begins along the track, `0.0..1.0`; none
+    /// without one, on a rail or a gradient track, or when it would begin
+    /// outside the range or at its very end.
+    fn caution_ratio(&self) -> Option<f32> {
+        if self.rail.is_some() || self.track_gradient.is_some() {
+            return None;
+        }
+        let from = self.caution_from.filter(|from| from.is_finite())?;
+        let span = self.maximum - self.minimum;
+        if !(span.is_finite() && span > 0.0) || from < self.minimum || from >= self.maximum {
+            return None;
+        }
+        Some(((from - self.minimum) / span) as f32)
+    }
+
     fn marker_ratios(&self) -> Arc<[f32]> {
         let span = self.maximum - self.minimum;
         if !(span.is_finite() && span > 0.0) {
@@ -5950,6 +5981,7 @@ impl ComponentView for RangeField {
             size: self.size,
             ratio: self.ratio(),
             markers: self.marker_ratios(),
+            caution: self.caution_ratio(),
             invalid: self.invalid,
             rail,
             track_gradient: track_gradient.clone(),
