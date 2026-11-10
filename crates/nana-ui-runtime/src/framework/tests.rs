@@ -599,6 +599,58 @@ fn a_despawned_declared_parent_takes_its_placed_child() {
     assert!(context.view_entity::<Stack>(slot).is_none());
 }
 
+/// An assembly drops what it no longer declares in one commit. A keyed
+/// child placed under one of its siblings is inside that sibling's subtree
+/// then, and both still have to go.
+#[test]
+fn an_assembly_drops_a_child_placed_under_a_sibling_it_drops_too() {
+    let mut context = AppContext::new();
+    let document = DocumentId::new(1).unwrap();
+    let parent = context
+        .create_component(document, Stack::column(0.0))
+        .unwrap();
+    let mut shelf = None;
+    let mut book = None;
+    let mut kept = None;
+    context
+        .mount(parent, |scope| {
+            // The placed child is declared first, so a pass in declaration
+            // order would reach it after the sibling it sits under is gone.
+            book = Some(scope.child("book", Text::new("book"))?.stable_id());
+            shelf = Some(scope.child("shelf", Stack::column(0.0))?.stable_id());
+            kept = Some(scope.child("kept", Text::new("kept"))?.stable_id());
+            Ok(())
+        })
+        .unwrap();
+    let (shelf, book, kept) = (shelf.unwrap(), book.unwrap(), kept.unwrap());
+    context.place_assembled(book, shelf).unwrap();
+    assert_eq!(context.world().parent_id(book), Some(shelf));
+
+    context
+        .mount(parent, |scope| {
+            scope.child("kept", Text::new("kept"))?;
+            Ok(())
+        })
+        .unwrap();
+    assert!(!context.world().contains(book));
+    assert!(!context.world().contains(shelf));
+    assert_eq!(
+        context.world().node(parent.stable_id()).unwrap().children,
+        vec![kept]
+    );
+    assert!(context.assembly_path(book).is_none());
+    assert!(
+        context
+            .assembled_child(parent.stable_id(), "shelf")
+            .is_none()
+    );
+    assert!(
+        context
+            .assembled_child(parent.stable_id(), "book")
+            .is_none()
+    );
+}
+
 #[test]
 fn placing_a_node_back_under_its_declared_parent_ends_the_placement() {
     let mut context = AppContext::new();

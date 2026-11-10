@@ -880,9 +880,11 @@ The first now works from the shorter side: a table with more entries than there 
 | First assembly of 1 000 keyed children | 48 ms | 2.3 ms |
 | First assembly of 4 000 | 398 ms | 7.1 ms |
 | First assembly of 16 000 | 6 302 ms | 30 ms |
-| Drop 100 of 16 000 keyed children | 62 ms | 19 ms |
+| Drop 100 of 16 000 keyed children | 62 ms | 5.8 ms |
 
-`nana-ui-runtime/tests/tree_size_cost.rs` guards both, against a ratio of sizes rather than a budget: a child among 3 200 allocates no more than 3 times what a child among 200 does (10 times before, 1.003 times now); the shortest removal of one node among 32 000 takes no more than 8 times that among 1 000 (39 times before in a debug build, 1.15 times now). In the runtime's own tests `forget_subtree` re-checks itself with the old full walk every time, confirming that nothing the old implementation would have dropped is left.
+The 5.8 ms in the last row is about what declaring the remaining 15 900 children again takes (5.5 ms): an assembly now removes the children it no longer declares in one commit (`despawn_nodes`, 2026-11-11). It used to be a commit per child, and every commit that takes a child out of a parent settles the remaining siblings again, so dropping 100 took 19 ms. A keyed child placed under one of its siblings is removed before that sibling, so both go when neither is declared any more.
+
+`nana-ui-runtime/tests/tree_size_cost.rs` guards these: dropping 60 children takes as many commits as dropping one, and the other two are held against a ratio of sizes rather than a budget: a child among 3 200 allocates no more than 3 times what a child among 200 does (10 times before, 1.003 times now); the shortest removal of one node among 32 000 takes no more than 8 times that among 1 000 (39 times before in a debug build, 1.15 times now). In the runtime's own tests `forget_subtree` re-checks itself with the old full walk every time, confirming that nothing the old implementation would have dropped is left.
 
 Not changed: removing a child that is not the last still moves the siblings after it (about 0.25 ms to remove the first of 100 000 siblings; the world's child order), and `tooltips` is still walked, one entry per control that has a tooltip.
 

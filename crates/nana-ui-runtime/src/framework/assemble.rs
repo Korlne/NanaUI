@@ -237,9 +237,7 @@ impl AssemblyScope<'_> {
             .filter(|(key, _)| !self.seen_keys.contains(key.as_str()))
             .map(|(_, child)| child.id)
             .collect();
-        for id in unused {
-            self.context.despawn_node(id)?;
-        }
+        self.context.despawn_nodes(&unused)?;
         if let Some(mut slots) = self.context.assembled.get(&self.parent).cloned() {
             slots.retain(|key, _| self.seen_keys.contains(key.as_str()));
             self.context.store_assembled(self.parent, slots);

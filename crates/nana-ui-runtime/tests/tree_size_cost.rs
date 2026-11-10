@@ -78,6 +78,50 @@ fn a_keyed_child_costs_the_same_under_a_small_parent_and_a_large_one() {
     );
 }
 
+/// World commits an assembly makes when it declares its children again
+/// without `dropped` of them.
+fn commits_to_drop(dropped: usize) -> u64 {
+    const CHILDREN: usize = 120;
+    let document = DocumentId::new(1).unwrap();
+    let mut context = AppContext::new();
+    let parent = context.create_component(document, List::new()).unwrap();
+    let assemble = |context: &mut AppContext, from: usize| {
+        context
+            .mount(parent, |scope| {
+                for index in from..CHILDREN {
+                    scope.child(format!("row-{index}"), Text::new("row"))?;
+                }
+                Ok(())
+            })
+            .unwrap();
+    };
+    assemble(&mut context, 0);
+    let before = context.world().generation();
+    assemble(&mut context, dropped);
+    assert_eq!(
+        context
+            .world()
+            .node(parent.stable_id())
+            .unwrap()
+            .children
+            .len(),
+        CHILDREN - dropped
+    );
+    context.world().generation() - before
+}
+
+#[test]
+fn an_assembly_drops_its_children_in_one_commit_however_many() {
+    let one = commits_to_drop(1);
+    let many = commits_to_drop(60);
+    // A commit per dropped child settled the parent's remaining children
+    // once for each of them.
+    assert_eq!(
+        many, one,
+        "dropping 60 children took {many} commits, dropping one took {one}"
+    );
+}
+
 /// The least time, in nanoseconds, removing one button takes in a tree of
 /// `nodes` of them. The last child is the one removed, so its siblings do
 /// not move; the least of many removals, so a busy machine does not count.

@@ -4276,6 +4276,36 @@ impl AppContext {
         Ok(())
     }
 
+    /// Despawns several nodes in one commit: the children an assembly no
+    /// longer declares. One [`Self::despawn_node`] each was a commit each,
+    /// and every commit that takes a child out of a parent settles that
+    /// parent's remaining children again, so dropping a hundred of 16,000
+    /// keyed children cost a hundred passes over the rest.
+    pub(super) fn despawn_nodes(&mut self, ids: &[StableNodeId]) -> Result<(), FrameworkError> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+        if let Some(missing) = ids.iter().find(|id| !self.world.contains(**id)) {
+            return Err(FrameworkError::MissingView(*missing));
+        }
+        // Deepest first. A keyed child placed under one of its siblings is
+        // inside that sibling's subtree, and a subtree is despawned whole:
+        // the child has to go before the node it sits under.
+        let depth = |id: StableNodeId| {
+            std::iter::successors(self.world.parent_id(id), |id| self.world.parent_id(*id)).count()
+        };
+        let mut ordered: Vec<(usize, StableNodeId)> =
+            ids.iter().map(|id| (depth(*id), *id)).collect();
+        ordered.compact_sort_by_key(|(depth, _)| std::cmp::Reverse(*depth));
+        let mut queue = MutationQueue::with_capacity(ordered.len());
+        for (_, id) in ordered {
+            queue.despawn_subtree(id);
+        }
+        // The commit forgets what it despawns.
+        self.commit_mutations(queue)?;
+        Ok(())
+    }
+
     fn release_empty_document_layout(&mut self, document: DocumentId) {
         if !self.world.has_document_roots(document) {
             self.layout_cache.remove_document(document);
