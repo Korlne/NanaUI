@@ -460,10 +460,6 @@ pub struct SceneWgpuPainter {
     /// The active target's chart arrays.
     chart_target: chart::ChartPipelineTarget,
     dest: Option<DestTarget>,
-    /// Shared across resize-driven `DestTarget` recreations so the blit
-    /// pipeline is not recompiled on every interactive resize event. `None`
-    /// when the host device lacks `PIPELINE_CACHE`.
-    dest_pipeline_cache: Option<wgpu::PipelineCache>,
     /// Built with the other pipeline families, for the dest of this
     /// painter's own profile.
     dest_pipelines: Option<dest::DestPipelines>,
@@ -702,21 +698,8 @@ impl SceneWgpuPainter {
         let queue = __framework::queue(gpu);
         let format = __framework::format_to_wgpu(presentation.working_format());
         let policy = gpu.policy();
-        // Pipeline-cache reuse requires a host-enabled device feature;
-        // the painter must not demand it, so degrade to per-recreate
-        // compilation when the host did not opt in.
-        // SAFETY: `data: None` loads no untrusted cache blob; the cache
-        // only lets the driver reuse compilation state in-process.
-        let dest_pipeline_cache = device
-            .features()
-            .contains(wgpu::Features::PIPELINE_CACHE)
-            .then(|| unsafe {
-                device.create_pipeline_cache(&wgpu::PipelineCacheDescriptor {
-                    label: Some("nana-ui.scene.dest.cache"),
-                    data: None,
-                    fallback: true,
-                })
-            });
+        // Every pipeline below goes through the device's default pipeline
+        // cache when the host enabled one (`nana_gpu::GpuContext::load_pipeline_cache`).
         // The pipeline families compile side by side: each owns its shaders
         // and pipelines, and a compile is CPU work in the shader compiler and
         // the driver, so the painter costs its slowest family instead of the
@@ -746,7 +729,6 @@ impl SceneWgpuPainter {
                 let dest = beside!(scope, "nana-paint-dest", {
                     dest::DestPipelines::new(
                         device,
-                        dest_pipeline_cache.as_ref(),
                         format,
                         __framework::format_to_wgpu(presentation.target_format),
                         presentation,
@@ -806,7 +788,6 @@ impl SceneWgpuPainter {
             charts: None,
             chart_target: chart::ChartPipelineTarget::default(),
             dest: None,
-            dest_pipeline_cache,
             dest_pipelines: Some(dest_pipelines),
             last_gpu_work: None,
             last_gpu_timings: None,
@@ -2572,7 +2553,6 @@ impl SceneWgpuPainter {
             &mut self.dest,
             self.dest_pipelines.as_ref(),
             &self.device,
-            self.dest_pipeline_cache.as_ref(),
             self.format,
             __framework::format_to_wgpu(self.presentation.target_format),
             self.presentation,
@@ -4098,6 +4078,9 @@ fn quad_paints_nothing(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod pipeline_cache_tests;
 
 #[cfg(test)]
 mod presentation_tests;

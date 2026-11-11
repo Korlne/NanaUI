@@ -233,6 +233,9 @@ fn adapter_key(adapter: &AdapterInfo) -> Result<[u8; 15], PipelineCacheValidatio
             ];
             Ok(adapter)
         }
+        // NanaUI fork: DX12 caches hold shader bytecode, which does not depend
+        // on the adapter; the validation key names the compiler instead.
+        wgt::Backend::Dx12 => Ok([255; 15]),
         _ => Err(PipelineCacheValidationError::Unsupported),
     }
 }

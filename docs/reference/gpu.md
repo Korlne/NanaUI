@@ -46,6 +46,17 @@ Surface 的 HDR 能力由 `SurfaceCapabilities::format_capabilities` 决定，�
 - **目标附件与管线复用**：UI-only 与 GPU 节点混排之间切换时，只增加或释放 4x MSAA 附件，保留同尺寸、同格式及同 presentation profile 的线性颜色目标、绑定和组缓存。缩放必须重建尺寸相关纹理，但设备管线缓存命中时不再创建着色器模块或管线布局，避免多目标首帧重复解析 WGSL。改变尺寸、输出格式或 presentation profile 仍按原合同重建目标。
 
 
+### 5. 跨启动的着色器与管线缓存
+
+设备带 `PIPELINE_CACHE`（宿主设备在适配器提供时都会请求）的每个 `GpuContext` 自有一个管线缓存，并通过 fork 的 `wgpu::Device::set_default_pipeline_cache` 设为设备默认缓存。所有不指名缓存创建的管线都经过它——各场景家族、表面与文字材质、图表程序，以及在原始设备上自建管线的渲染器。DX12 上它存放编译好的着色器字节码，缓存里有的阶段不再交给 DXC/FXC 编译 naga 写出的 HLSL；Vulkan 上它就是驱动的 `VkPipelineCache`。Metal 与 GL 没有（`pipeline_cache_key()` 为 `None`）。
+
+框架只交出、收回字节，放在哪里由宿主决定：
+
+- `GpuContext::pipeline_cache_key()` 说明字节属于谁；`file_stem()` 为 `dx12`（字节码与适配器无关）或 `vulkan-<vendor>-<device>`。
+- `load_pipeline_cache(&bytes)` 在建 painter 之前替换缓存；`pipeline_cache_data()` 返回要保存的字节。`restore_pipeline_cache` / `persist_pipeline_cache` 经由 `PipelineCacheStore`（`load` / `save`）做同样的事。
+- 宿主应用用 `NanaApplicationBuilder::pipeline_cache(store)`（或 `StartupOptions::pipeline_cache`）交出存储：`nana-startup-gpu` 线程在 painter 编译前恢复、建完后保存。设备丢失后替换的新设备从空缓存开始。
+- 保存的字节在 wgpu 自己的头部与校验键之外再包一层信封（魔数、键、长度、校验和），DX12 载荷逐条校验。不是缓存、属于别的键、被截断或损坏、或被后端拒绝的字节一律拒收（`PipelineCacheLoad::Refused`），设备照常编译，就像什么都没载入；不会产生后端校验错误。驱动更新会在 wgpu/驱动内部使 Vulkan 数据失效，DXC 更新经校验键使 DX12 数据失效，两者都静默重编。
+
 ## 挂载宿主纹理（`HostTexture` + `GpuTextureView`）
 
 着色器输出、预览视口、离屏渲染纹理与普通按钮一样，是界面树上占据布局、受裁剪、可命中的节点。首次接入请使用默认路径：把画面画到可采样纹理上，在树上挂载 `GpuTextureView`，并用同一个字符串槽位名在 `host_textures()` 中登记。

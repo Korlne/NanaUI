@@ -399,7 +399,6 @@ fn reading_blend_pipeline(
 
 fn make_group_pipeline(
     device: &wgpu::Device,
-    pipeline_cache: Option<&wgpu::PipelineCache>,
     layout: &wgpu::PipelineLayout,
     shader: &super::wgsl::Program,
     format: wgpu::TextureFormat,
@@ -429,7 +428,7 @@ fn make_group_pipeline(
         depth_stencil: None,
         multisample: wgpu::MultisampleState::default(),
         multiview_mask: None,
-        cache: pipeline_cache,
+        cache: None,
     })
 }
 
@@ -553,7 +552,6 @@ pub(super) struct DestPipelines {
 impl DestPipelines {
     pub(super) fn new(
         device: &wgpu::Device,
-        pipeline_cache: Option<&wgpu::PipelineCache>,
         format: wgpu::TextureFormat,
         target_format: wgpu::TextureFormat,
         presentation: ScenePresentationProfile,
@@ -642,7 +640,7 @@ impl DestPipelines {
                 depth_stencil: None,
                 multisample: wgpu::MultisampleState::default(),
                 multiview_mask: None,
-                cache: pipeline_cache,
+                cache: None,
             })
         };
         let blit_pipeline =
@@ -749,7 +747,7 @@ impl DestPipelines {
                     });
                 (group_shader, group_pipeline_layout)
             });
-            make_group_pipeline(device, pipeline_cache, layout, shader, format, blend, label)
+            make_group_pipeline(device, layout, shader, format, blend, label)
         };
         let group_pipeline =
             cached_dest_pipeline(policy, format, 3, dest_group_layout_key(), || {
@@ -817,7 +815,6 @@ impl DestTarget {
         current: &mut Option<Self>,
         built: Option<&DestPipelines>,
         device: &wgpu::Device,
-        pipeline_cache: Option<&wgpu::PipelineCache>,
         format: wgpu::TextureFormat,
         target_format: wgpu::TextureFormat,
         presentation: ScenePresentationProfile,
@@ -845,7 +842,6 @@ impl DestTarget {
         *current = Some(Self::new(
             built,
             device,
-            pipeline_cache,
             format,
             target_format,
             presentation,
@@ -860,7 +856,6 @@ impl DestTarget {
     fn new(
         built: Option<&DestPipelines>,
         device: &wgpu::Device,
-        pipeline_cache: Option<&wgpu::PipelineCache>,
         format: wgpu::TextureFormat,
         target_format: wgpu::TextureFormat,
         presentation: ScenePresentationProfile,
@@ -917,14 +912,7 @@ impl DestTarget {
             })
             .cloned()
             .unwrap_or_else(|| {
-                DestPipelines::new(
-                    device,
-                    pipeline_cache,
-                    format,
-                    target_format,
-                    presentation,
-                    policy,
-                )
+                DestPipelines::new(device, format, target_format, presentation, policy)
             });
         let presentation_uniforms =
             ManagedBuffer::new(device.create_buffer(&wgpu::BufferDescriptor {
@@ -1548,7 +1536,6 @@ mod lifecycle_tests {
                 current,
                 None,
                 device,
-                None,
                 format,
                 output,
                 profile,

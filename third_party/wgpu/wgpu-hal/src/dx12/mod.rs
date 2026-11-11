@@ -85,6 +85,7 @@ mod descriptor;
 mod device;
 mod device_creation;
 mod instance;
+mod pipeline_cache;
 mod pipeline_desc;
 mod sampler;
 mod shader_compilation;
@@ -1349,9 +1350,21 @@ pub(super) enum CompiledShader {
     Dxc(Direct3D::Dxc::IDxcBlob),
     Fxc(Direct3D::ID3DBlob),
     Precompiled(Vec<u8>),
+    /// Bytecode a [`PipelineCache`] already held.
+    Cached(Arc<[u8]>),
 }
 
 impl CompiledShader {
+    /// The bytecode, as the pipeline cache stores it.
+    fn bytes(&self) -> &[u8] {
+        let native = self.create_native_shader();
+        if native.pShaderBytecode.is_null() {
+            return &[];
+        }
+        // SAFETY: the bytecode lives as long as `self`.
+        unsafe { core::slice::from_raw_parts(native.pShaderBytecode.cast(), native.BytecodeLength) }
+    }
+
     fn create_native_shader(&self) -> Direct3D12::D3D12_SHADER_BYTECODE {
         match self {
             CompiledShader::Dxc(shader) => Direct3D12::D3D12_SHADER_BYTECODE {
@@ -1363,6 +1376,10 @@ impl CompiledShader {
                 BytecodeLength: unsafe { shader.GetBufferSize() },
             },
             CompiledShader::Precompiled(shader) => Direct3D12::D3D12_SHADER_BYTECODE {
+                pShaderBytecode: shader.as_ptr().cast(),
+                BytecodeLength: shader.len(),
+            },
+            CompiledShader::Cached(shader) => Direct3D12::D3D12_SHADER_BYTECODE {
                 pShaderBytecode: shader.as_ptr().cast(),
                 BytecodeLength: shader.len(),
             },
@@ -1399,8 +1416,12 @@ pub struct RayTracingPipeline {}
 
 impl crate::DynRayTracingPipeline for RayTracingPipeline {}
 
+/// Compiled shader bytecode, persisted across runs through
+/// [`crate::Device::pipeline_cache_get_data`]; see the `pipeline_cache` module.
 #[derive(Debug)]
-pub struct PipelineCache;
+pub struct PipelineCache {
+    shaders: Mutex<pipeline_cache::ShaderBlobCache>,
+}
 
 impl crate::DynPipelineCache for PipelineCache {}
 

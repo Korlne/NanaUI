@@ -30,13 +30,42 @@ pub use nana_window::{
 };
 
 /// What an application asks of its startup, before anything else of it runs.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Clone, Default)]
 pub struct StartupOptions {
     pub splash: Option<SplashSpec>,
     /// The GPU adapter the shared device is created on, at startup and again
     /// when it is replaced after a device loss. What was found and chosen is
     /// [`RuntimeProgramContext::gpu_adapters`](crate::RuntimeProgramContext::gpu_adapters).
     pub adapter: crate::GpuAdapterChoice,
+    /// Where the device's shader and pipeline cache lives between runs. The
+    /// startup thread restores it before the painter compiles and saves it
+    /// once the painter is built; see `nana_gpu`'s `pipeline_cache` module.
+    /// `None` keeps the cache in memory only.
+    pub pipeline_cache: Option<Arc<dyn crate::PipelineCacheStore>>,
+}
+
+impl std::fmt::Debug for StartupOptions {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("StartupOptions")
+            .field("splash", &self.splash)
+            .field("adapter", &self.adapter)
+            .field("pipeline_cache", &self.pipeline_cache.is_some())
+            .finish()
+    }
+}
+
+/// Stores compare by identity.
+impl PartialEq for StartupOptions {
+    fn eq(&self, other: &Self) -> bool {
+        self.splash == other.splash
+            && self.adapter == other.adapter
+            && match (&self.pipeline_cache, &other.pipeline_cache) {
+                (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+                (None, None) => true,
+                _ => false,
+            }
+    }
 }
 
 impl StartupOptions {
@@ -47,6 +76,11 @@ impl StartupOptions {
 
     pub fn with_adapter(mut self, adapter: crate::GpuAdapterChoice) -> Self {
         self.adapter = adapter;
+        self
+    }
+
+    pub fn with_pipeline_cache(mut self, store: Arc<dyn crate::PipelineCacheStore>) -> Self {
+        self.pipeline_cache = Some(store);
         self
     }
 }

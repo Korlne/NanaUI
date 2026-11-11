@@ -88,3 +88,27 @@ validation is unchanged (an output still acquired is `PreviousOutputExists`).
 
 The `wgpu` API is unchanged. `ConfigureSurfaceError::GpuWaitTimeout` stays and
 is still returned when the wait itself times out.
+
+### Shader and pipeline cache on DX12
+
+- **`wgpu::Device::set_default_pipeline_cache(Option<&PipelineCache>)`** (new).
+  A pipeline created with `cache: None` uses the device's default cache. The
+  device holds it weakly (a `PipelineCache` holds its device), so it applies
+  while the application keeps the handle. A cache from another device is a
+  validation error; backends without caches ignore the call. Behind it:
+  `wgpu-core` `Device::set_default_pipeline_cache` /
+  `Global::device_set_default_pipeline_cache` and lock rank
+  `DEVICE_DEFAULT_PIPELINE_CACHE`; the dispatch trait method has a no-op
+  default, so custom backends still compile.
+- **`Features::PIPELINE_CACHE` on DX12.** `wgpu-hal`'s DX12 `PipelineCache` holds
+  compiled shader bytecode (DXIL from DXC, DXBC from FXC) keyed by a 128-bit
+  hash of the HLSL naga wrote, the entry point, the target profile and the
+  compile flags. A stage found there skips the compiler; a stage compiled is
+  added to it (also one the device's in-memory cache already had).
+  `create_pipeline_cache` with `data` loads it and `PipelineCache::get_data`
+  saves it (format in `wgpu-hal/src/dx12/pipeline_cache.rs`: per-entry
+  checksums, unused entries dropped after 8 saves). Bytecode does not depend
+  on the adapter, so `wgpu-core`'s header uses a constant adapter key on DX12
+  and the validation key names the compiler (kind, version and DXC commit):
+  cache bytes move between adapters but not between compilers. PSOs are not
+  cached (`ID3D12PipelineLibrary`); drivers keep their own.

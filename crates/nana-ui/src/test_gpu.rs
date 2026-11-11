@@ -56,28 +56,29 @@ pub(crate) fn private_context() -> GpuContext {
 /// The process-wide test device as the GPU contract sees it.
 pub(crate) fn context() -> GpuContext {
     static CONTEXT: OnceLock<GpuContext> = OnceLock::new();
-    CONTEXT
-        .get_or_init(|| {
-            let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-                backends: wgpu::Backends::from_env().unwrap_or_default(),
-                ..wgpu::InstanceDescriptor::new_without_display_handle()
-            });
-            let adapter = pollster::block_on(wgpu::util::initialize_adapter_from_env_or_default(
-                &instance, None,
-            ))
-            .expect("GPU tests require a WGPU adapter");
-            let (device, queue) =
-                pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-                    label: Some("nana-ui test device"),
-                    // What the hosted context asks for too, when the adapter has it.
-                    required_features: adapter.features() & wgpu::Features::DUAL_SOURCE_BLENDING,
-                    required_limits: wgpu::Limits::default(),
-                    memory_hints: wgpu::MemoryHints::MemoryUsage,
-                    trace: wgpu::Trace::Off,
-                    experimental_features: wgpu::ExperimentalFeatures::disabled(),
-                }))
-                .expect("GPU tests require a WGPU device");
-            __framework::adopt(adapter, device, queue)
-        })
-        .clone()
+    CONTEXT.get_or_init(fresh_context).clone()
+}
+
+/// A device of its own, created as [`context`]'s was.
+pub(crate) fn fresh_context() -> GpuContext {
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+        backends: wgpu::Backends::from_env().unwrap_or_default(),
+        ..wgpu::InstanceDescriptor::new_without_display_handle()
+    });
+    let adapter = pollster::block_on(wgpu::util::initialize_adapter_from_env_or_default(
+        &instance, None,
+    ))
+    .expect("GPU tests require a WGPU adapter");
+    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        label: Some("nana-ui test device"),
+        // What the hosted context asks for too, when the adapter has it.
+        required_features: adapter.features()
+            & (wgpu::Features::DUAL_SOURCE_BLENDING | wgpu::Features::PIPELINE_CACHE),
+        required_limits: wgpu::Limits::default(),
+        memory_hints: wgpu::MemoryHints::MemoryUsage,
+        trace: wgpu::Trace::Off,
+        experimental_features: wgpu::ExperimentalFeatures::disabled(),
+    }))
+    .expect("GPU tests require a WGPU device");
+    __framework::adopt(adapter, device, queue)
 }
