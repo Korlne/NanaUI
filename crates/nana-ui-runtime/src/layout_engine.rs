@@ -487,11 +487,11 @@ impl RuntimeLayoutEngine {
         // An island whose own border box changed moves its siblings, which only
         // its parent places. Such a pass also walks from the island's document
         // root, where the parent's retained plan replays the shift.
-        let mut resized_roots = crate::NodeSet::default();
+        let mut resized_roots = HashSet::new();
         let reach = if force_full {
             AffectedIndex::default()
         } else {
-            let covered: crate::NodeSet = islands.iter().map(|island| island.0).collect();
+            let covered: HashSet<StableNodeId> = islands.iter().map(|island| island.0).collect();
             AffectedIndex::new(world, &affected, &covered)
         };
         let affected_children = if force_full {
@@ -655,13 +655,13 @@ impl RuntimeLayoutEngine {
         // this pass consulted; a pass with none affected (a full one) keeps
         // no record of them.
         let tracks_consulted = !affected.is_empty();
-        let mut consulted: hashbrown::HashSet<(StableNodeId, u32, u32), crate::BuildIdHasher> = if tracks_consulted {
+        let mut consulted: hashbrown::HashSet<(StableNodeId, u32, u32)> = if tracks_consulted {
             std::mem::take(&mut intrinsic.consulted_plans)
                 .into_iter()
                 .map(|(id, available)| plan_key(id, available))
                 .collect()
         } else {
-            hashbrown::HashSet::default()
+            hashbrown::HashSet::new()
         };
         if retained.measure_plans.is_empty() && !tracks_consulted {
             // Nothing retained to merge into (a first layout): each holder
@@ -1181,10 +1181,10 @@ impl RetainedLayoutCache {
     pub(crate) fn take_inline_objects(
         &mut self,
         document: DocumentId,
-    ) -> HashMap<StableNodeId, Arc<[nana_text::InlineObject]>, crate::BuildIdHasher> {
+    ) -> HashMap<StableNodeId, Arc<[nana_text::InlineObject]>> {
         self.documents
             .get_mut(&document)
-            .map_or_else(HashMap::default, |cache| {
+            .map_or_else(HashMap::new, |cache| {
                 std::mem::take(&mut cache.inline_objects)
             })
     }
@@ -1232,7 +1232,7 @@ impl RetainedIntrinsic {
 
 #[derive(Default)]
 struct DocumentLayoutCache {
-    inline_objects: HashMap<StableNodeId, Arc<[nana_text::InlineObject]>, crate::BuildIdHasher>,
+    inline_objects: HashMap<StableNodeId, Arc<[nana_text::InlineObject]>>,
     intrinsics: crate::store::DenseNodeMap<RetainedIntrinsic>,
     /// Content-derived intrinsic facts, independent from retained used sizes.
     intrinsic_metrics: RetainedIntrinsicMetrics,
@@ -1249,7 +1249,7 @@ struct DocumentLayoutCache {
     /// Per container, the formatting context its last placement ran.
     contexts: crate::store::DenseNodeMap<crate::FormattingContextKind>,
     /// Cached in-flow child placement per container. See [`ContainerPlan`].
-    container_plans: crate::NodeMap<ContainerPlan>,
+    container_plans: HashMap<StableNodeId, ContainerPlan>,
     /// The containers whose plan holds an absolute child hung from an
     /// ancestor or from the initial containing block: a pass that does not
     /// place the container checks those children against their block.
@@ -1258,11 +1258,11 @@ struct DocumentLayoutCache {
     /// [`MeasurePlan`].
     measure_plans: crate::store::DenseNodeMap<MeasurePlanSlots>,
     /// Dynamic Layout envelopes, by box (Issue #213).
-    envelopes: crate::NodeMap<dynamic::RetainedEnvelope>,
+    envelopes: HashMap<StableNodeId, dynamic::RetainedEnvelope>,
     /// Where each overflowing line's solve stopped, by container.
-    line_solves: crate::NodeMap<dynamic::RetainedLineSolve>,
+    line_solves: HashMap<StableNodeId, dynamic::RetainedLineSolve>,
     /// What each box a line shrank resolved inside itself.
-    applied_adjustments: crate::NodeMap<dynamic::AppliedAdjustment>,
+    applied_adjustments: HashMap<StableNodeId, dynamic::AppliedAdjustment>,
     /// Which boxes hold an in-flow line box ([`UiWorld::holds_line_box_in`]),
     /// kept across passes. The answer reads only a box and what is inside
     /// it, so a pass drops it for its affected nodes and their ancestors and
@@ -2908,7 +2908,7 @@ impl<'a> PassScratch<'a> {
 
 /// On-demand `LayoutInput` cache. A miss loads exactly that id from `UiWorld`.
 struct LayoutInputMap<'a> {
-    inline_objects: HashMap<StableNodeId, Arc<[nana_text::InlineObject]>, crate::BuildIdHasher>,
+    inline_objects: HashMap<StableNodeId, Arc<[nana_text::InlineObject]>>,
     /// The frame of each positioned box this pass placed, and of each box
     /// back in flow that had another one: what its box is measured from.
     frames: crate::NodeMap<crate::LayoutFrame>,
@@ -2942,7 +2942,7 @@ struct LayoutInputMap<'a> {
     /// end; containers that took the fast path record nothing, so their
     /// existing plan simply stays. `None` retires a plan recorded when the
     /// container was still on the cacheable path.
-    container_plans: crate::NodeMap<Option<ContainerPlan>>,
+    container_plans: HashMap<StableNodeId, Option<ContainerPlan>>,
     /// Measure plans rebuilt this pass, merged the same way. An entry that
     /// ends the pass empty retires the container's retained plans.
     measure_plans: crate::store::DenseNodeMap<MeasurePlanSlots>,
@@ -2951,7 +2951,7 @@ struct LayoutInputMap<'a> {
     /// where those descendants sit ([`inline::descendant_baselines`]). `None`:
     /// a context the derivation does not lay out, which keeps the
     /// approximation of [`Self::baseline_metrics`].
-    derived_baselines: HashMap<(StableNodeId, u32, u32), BaselineMetrics, crate::BuildIdHasher>,
+    derived_baselines: HashMap<(StableNodeId, u32, u32), BaselineMetrics>,
     /// Which boxes hold an in-flow line box, settled once per box per pass
     /// ([`UiWorld::holds_line_box_in`]); exact for the same reason as
     /// [`Self::styles`].
@@ -3055,7 +3055,7 @@ impl<'a> LayoutInputMap<'a> {
     }
     fn new(world: &'a UiWorld) -> Self {
         Self {
-            inline_objects: HashMap::default(),
+            inline_objects: HashMap::new(),
             frames: crate::NodeMap::default(),
             world,
             nodes: crate::store::DenseNodeMap::default(),
@@ -3067,9 +3067,9 @@ impl<'a> LayoutInputMap<'a> {
             used_padding: Default::default(),
             far_start: Default::default(),
             contexts: Default::default(),
-            container_plans: crate::NodeMap::default(),
+            container_plans: HashMap::new(),
             measure_plans: Default::default(),
-            derived_baselines: HashMap::default(),
+            derived_baselines: HashMap::new(),
             line_boxes: RefCell::default(),
             line_boxes_settled: Cell::new(0),
         }
@@ -3667,7 +3667,7 @@ impl ScopeContext<'_> {
 #[derive(Default)]
 pub(crate) struct AffectedIndex {
     reach: crate::NodeSet,
-    reaching: crate::NodeMap<Vec<StableNodeId>>,
+    reaching: HashMap<StableNodeId, Vec<StableNodeId>>,
 }
 
 impl AffectedIndex {
@@ -3676,7 +3676,7 @@ impl AffectedIndex {
     pub(crate) fn new<'a>(
         world: &UiWorld,
         affected: impl IntoIterator<Item = &'a StableNodeId>,
-        covered: &crate::NodeSet,
+        covered: &HashSet<StableNodeId>,
     ) -> Self {
         let mut index = Self::default();
         // Nodes found inside an island. A node in `reach` is outside every

@@ -2479,8 +2479,9 @@ text_prepare_nodes_considered / skipped / culled
   `primitive_bounds`（也就是每个图元一次 `draw_primitive`）才是。两个版本都付。为了
   一个点让两个走同一棵树的函数用两种写法。不值。
 
-  还剩的：整数哈希那一换在 `nana-ui-runtime` 里还没做（`store.rs` 23 处、
-  `framework.rs` 18 处、`layout_engine.rs` 16 处……）。而逐图元那条路
+  还剩的：整数哈希那一换在 `nana-ui-runtime` 里试过、量不出来、撤回了（`store.rs`、
+  `layout_engine.rs` 用的 hashbrown 默认就是 foldhash，不是 SipHash；见
+  `resource-budgets.md`「长列表里改一行之后的那一帧」后面那段）。而逐图元那条路
   （`draw_primitive` → `primitive_bounds`）现在是 flush 和 batch 两侧共同的大头：
   同一个被改祖先下面所有后代的 delta 数学上是同一个（`A_new ∘ L ∘ L⁻¹ ∘ A_old⁻¹`）。
   按祖先记一份就够。但那要先证明「下面那段链没动」。再往下就是把整帧的绘制列表保留

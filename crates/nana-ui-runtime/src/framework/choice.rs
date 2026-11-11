@@ -1220,8 +1220,8 @@ impl AppContext {
     /// its place can take focus ([`Self::hand_over_menu_focus`]).
     pub(crate) fn menu_focus_before_removal(
         &self,
-        focused: &HashMap<DocumentId, StableNodeId, crate::BuildIdHasher>,
-        despawned: &crate::NodeSet,
+        focused: &HashMap<DocumentId, StableNodeId>,
+        despawned: &HashSet<StableNodeId>,
     ) -> Vec<(DocumentId, Entity<ActionMenu>, usize)> {
         focused
             .iter()

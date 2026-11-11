@@ -4,10 +4,6 @@
 mod paged;
 
 use hashbrown::HashMap;
-
-/// Tables keyed by node (or another counter) hash with [`crate::IdHasher`];
-/// hashbrown's default stays for keys a caller spells, such as tag names.
-type IdMap<K, V> = HashMap<K, V, crate::BuildIdHasher>;
 use std::sync::{Arc, LazyLock};
 
 use crate::ComputedStyle;
@@ -743,87 +739,87 @@ pub(crate) struct NodeStore {
     kinds: HashMap<String, Arc<NodeKind>>,
     /// The style every new node starts with, one for all of them.
     default_style: Arc<NodeStyle>,
-    visuals: IdMap<StableNodeId, StandardVisual>,
+    visuals: HashMap<StableNodeId, StandardVisual>,
     /// Nodes whose space ([`NodeRecord::space`]) pins accessibility
     /// ([`crate::node_space::NodeSpace::pins_accessibility`]): their
     /// accessible bounds, or those of the boxes under them, may not keep
     /// their offset from their parent's when a box above them moves.
-    space_pins: hashbrown::HashSet<StableNodeId, crate::BuildIdHasher>,
+    space_pins: hashbrown::HashSet<StableNodeId>,
     /// Nodes whose space is page-bound
     /// ([`crate::node_space::NodeSpace::page_bound`]): an open select,
     /// whose menu a layout pass gives a new room ([`crate::SelectMenuRoom`]),
     /// or a visual whose geometry reads the page. The few a move above them
     /// looks at again for extraction.
-    page_bound: hashbrown::HashSet<StableNodeId, crate::BuildIdHasher>,
-    custom_render: IdMap<StableNodeId, CustomRenderNode>,
-    event_listeners: IdMap<StableNodeId, EventListeners>,
-    component_types: IdMap<StableNodeId, ComponentTypeId>,
-    overlay_hosts: IdMap<StableNodeId, OverlayHostState>,
-    scroll_metrics: IdMap<StableNodeId, ScrollMetrics>,
+    page_bound: hashbrown::HashSet<StableNodeId>,
+    custom_render: HashMap<StableNodeId, CustomRenderNode>,
+    event_listeners: HashMap<StableNodeId, EventListeners>,
+    component_types: HashMap<StableNodeId, ComponentTypeId>,
+    overlay_hosts: HashMap<StableNodeId, OverlayHostState>,
+    scroll_metrics: HashMap<StableNodeId, ScrollMetrics>,
     /// Every text editor's session: its committed text, selections and IME
     /// composition, stored once (Issue #182).
-    editors: IdMap<StableNodeId, EditorRecord>,
-    highlights: IdMap<StableNodeId, HighlightRequest>,
-    text_presentations: IdMap<StableNodeId, TextPresentation>,
-    text_input_presentations: IdMap<StableNodeId, TextInputPresentation>,
-    empty_state_text: IdMap<StableNodeId, EmptyStateTextPresentation>,
-    modal_text: IdMap<StableNodeId, ModalTextPresentation>,
+    editors: HashMap<StableNodeId, EditorRecord>,
+    highlights: HashMap<StableNodeId, HighlightRequest>,
+    text_presentations: HashMap<StableNodeId, TextPresentation>,
+    text_input_presentations: HashMap<StableNodeId, TextInputPresentation>,
+    empty_state_text: HashMap<StableNodeId, EmptyStateTextPresentation>,
+    modal_text: HashMap<StableNodeId, ModalTextPresentation>,
     /// 代码折叠视图状态（仅喂过折叠区间的编辑器节点持有条目）。
-    text_fold_views: IdMap<StableNodeId, TextFoldViewState>,
+    text_fold_views: HashMap<StableNodeId, TextFoldViewState>,
     /// 行内提示（inlay）集（仅喂过非空 inlay 的编辑器节点持有条目；
     /// 世界校验后按 `(offset, label)` 排序去重）。
-    text_inlays: IdMap<StableNodeId, Arc<[crate::TextInlay]>>,
+    text_inlays: HashMap<StableNodeId, Arc<[crate::TextInlay]>>,
     /// 活跃 snippet 会话（仅会话进行中的编辑器持有条目）。
-    text_snippets: IdMap<StableNodeId, TextSnippetSession>,
+    text_snippets: HashMap<StableNodeId, TextSnippetSession>,
     /// 补全弹层会话（仅候选会话活跃的编辑器持有条目）。
-    text_completions: IdMap<StableNodeId, TextCompletionViewState>,
+    text_completions: HashMap<StableNodeId, TextCompletionViewState>,
     /// hover 文档浮窗（仅宿主喂入 hover 的编辑器持有条目）。
-    text_hovers: IdMap<StableNodeId, TextHoverViewState>,
+    text_hovers: HashMap<StableNodeId, TextHoverViewState>,
     /// 签名帮助浮窗（仅宿主喂入签名的编辑器持有条目）。
-    text_signatures: IdMap<StableNodeId, crate::TextSignatureHelp>,
+    text_signatures: HashMap<StableNodeId, crate::TextSignatureHelp>,
     /// minimap 视口钉住（仅显式导航过的多行编辑器持有条目）。
-    text_viewport_pins: IdMap<StableNodeId, ScrollOffset>,
+    text_viewport_pins: HashMap<StableNodeId, ScrollOffset>,
     /// 拖拽移动选中文本的落点指示线（仅拖拽态编辑器持有条目；文本空间
     /// 矩形）。框架侧拖拽状态机写入，提取层翻译为节点空间图元。
-    text_drop_indicators: IdMap<StableNodeId, LayoutBox>,
+    text_drop_indicators: HashMap<StableNodeId, LayoutBox>,
     /// The width a plain text that wrapped to its box would take on its
     /// own lines, unwrapped (its max-content width). Only text that wrapped
     /// holds an entry: its metrics are the lines it wrapped to, and layout
     /// needs this to give it more room once its box may grow.
-    text_natural_widths: IdMap<StableNodeId, f32>,
+    text_natural_widths: HashMap<StableNodeId, f32>,
     /// The strut an ordinary block's line boxes start from, per px of its
     /// font size: its own face's ascent and descent. Only a block with
     /// inline-level children and no line box of its own holds an entry, and
     /// only under a shaper that reports struts; see
     /// `UiWorld::resolve_block_struts`.
-    block_struts: IdMap<StableNodeId, crate::FontStrut>,
+    block_struts: HashMap<StableNodeId, crate::FontStrut>,
     /// The width a plain text that wraps was last shaped against: its box
     /// width then, or infinity when it had no box yet. Text that does not
     /// wrap holds no entry. Layout trusts the lines' own width only within a
     /// box at least this narrow; see `text_inline_size`.
-    text_wrap_limits: IdMap<StableNodeId, f32>,
+    text_wrap_limits: HashMap<StableNodeId, f32>,
     /// Languages nodes name for themselves (`lang`). Only those nodes hold an
     /// entry; their subtrees inherit through `ComputedStyle::language`.
-    languages: IdMap<StableNodeId, nana_text::font::LanguageTag>,
+    languages: HashMap<StableNodeId, nana_text::font::LanguageTag>,
     /// Typography scales nodes set for themselves. Only those nodes hold an
     /// entry; their subtrees inherit through `ComputedStyle::text_scale`.
-    text_scales: IdMap<StableNodeId, f32>,
+    text_scales: HashMap<StableNodeId, f32>,
     /// Application-owned rich text (spans over the node's text), only for
     /// nodes given one with `SetRichText`.
-    rich_texts: IdMap<StableNodeId, nana_ui_core::RichText>,
+    rich_texts: HashMap<StableNodeId, nana_ui_core::RichText>,
     /// Only mixed inline paragraphs pay for atomic participation metadata.
-    inline_contents: IdMap<StableNodeId, crate::inline_content::InlineRecord>,
-    inline_parents: IdMap<StableNodeId, StableNodeId>,
+    inline_contents: HashMap<StableNodeId, crate::inline_content::InlineRecord>,
+    inline_parents: HashMap<StableNodeId, StableNodeId>,
     /// Caret and selection of rich text editors.
-    rich_editor_marks: IdMap<StableNodeId, crate::RichEditorMarks>,
+    rich_editor_marks: HashMap<StableNodeId, crate::RichEditorMarks>,
     /// Per-glyph presentation of rich text nodes.
-    glyph_presentations: IdMap<StableNodeId, nana_ui_core::GlyphPresentation>,
+    glyph_presentations: HashMap<StableNodeId, nana_ui_core::GlyphPresentation>,
     /// Revisions, resolution stamp and retained layout handle of every node's
     /// text (Issue #95), one entry per node. Kept apart from the dense records
     /// on purpose: a large relayout scope decides "no text work" for every
     /// candidate, and a table of small entries keeps that scan in cache where
     /// the full records would not.
-    text_nodes: IdMap<StableNodeId, crate::text_node::TextNodeState>,
+    text_nodes: HashMap<StableNodeId, crate::text_node::TextNodeState>,
     /// Layouts retained by plain text nodes, addressed by
     /// [`crate::text_node::TextNodeState::layout`]. Released with the node.
     text_layouts: nana_text::TextLayoutStore,
@@ -1354,7 +1350,7 @@ impl NodeStore {
             return false;
         }
         let previous = self.inline_contents.remove(&id).unwrap_or_default();
-        let old: IdMap<_, _> = previous
+        let old: HashMap<_, _> = previous
             .atoms
             .iter()
             .zip(previous.objects.iter())
@@ -1367,11 +1363,11 @@ impl NodeStore {
         }
         if atoms.is_empty() {
             if self.inline_contents.is_empty() {
-                self.inline_contents = IdMap::default();
+                self.inline_contents = HashMap::new();
                 // A destination already installed earlier in this batch keeps
                 // its reverse binding when an old owner is cleared.
                 if self.inline_parents.is_empty() {
-                    self.inline_parents = IdMap::default();
+                    self.inline_parents = HashMap::new();
                 }
             }
             return true;

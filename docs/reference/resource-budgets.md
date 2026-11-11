@@ -962,6 +962,15 @@ painter 段（`nana-text-paint-benchmark --workload reflow`，交替 8 轮读最
 
 改最后一行的成本也随行数走，每个兄弟约 28 ns，没有动：采样里 65% 是容器的 `LayoutResult` 整份重建（它给每个子节点存一份摆放、片段和部件，是 #197 的公开合同），17% 是无障碍投影过一遍容器的子节点，9% 是 flex 容器的依赖图把所有兄弟连成一条链。三处都是「结果里带着整张子节点表」的形状，要降得换成能共享前缀的结构。行数到几千的列表该用虚拟化。
 
+**`nana-ui-runtime` 其余按节点的表换 `IdHasher`：量不出来，撤回（2026-11-11）。** 接着上面那一轮，把 `store.rs`（`NodeStore` 的 30 来张按节点的表、`space_pins` / `page_bound`）、`layout_engine.rs`（保留的容器计划、包络、行解、内联对象，`AffectedIndex::reaching`，`consulted`，`derived_baselines`）和 `framework.rs` 余下的 std 表（提交路径上的焦点 / 退役文档 / 删除集合，`forget_subtree` 一路的 `removed`，虚拟列表与表格的 `activity`，`focus_within`）全换成 `IdHasher`，量完撤回。原因先说：`store.rs` 与 `layout_engine.rs` 用的是 `hashbrown::HashMap`，默认哈希是 foldhash 而不是 SipHash，换掉的只是一次乘法对一次折叠乘法；真正还在 SipHash 上的只剩 `framework.rs` 那几处，它们按一次提交里的变更或被删的子树计数，不在逐帧逐节点的路上。
+
+x86_64 Windows、release、新旧两个二进制交替跑：
+
+- `nana-dirty-frame-benchmark --shape layout --position head --rows 4000 --dirty 1 --samples 100 --warmup 20`，20 对，最小值 8.28 → 8.70 ms，配对比值中位数 1.010（p50 1.009）。16 000 行 8 对 0.973，`layout-auto` 4 000 行 0.975，1 000 行 0.997，改最后一行 0.989，`nested` 0.959（0.020 → 0.019 ms），`paint` 1.000。方向不一致，量级在本机两次运行之间的抖动（±10%）以内。
+- `nana-framework-benchmark`（p50），旧先新后 6 对：虚拟列表物化 0.957、虚拟表格物化 0.955、5 000 节点布局 0.947；新先旧后 6 对：0.981、0.985、1.008。前一组的 5% 是先后位置带来的，两种顺序平均下来是 2–3%，仍在噪声里。
+
+所以这三处不再列为待办。要再动，先找一个 `framework.rs` 里成本按节点数走的场景（拆一棵上万节点的子树）单独量。
+
 **移除过的节点不再拖慢每一帧（2026-11-11）。** 布局起因按节点排队（`pending_layout_invalidations`）、按文档取走。移除一个节点时会先给它记一条拓扑起因，节点随后就没了；按文档取的那次排空（产品帧走的 `take_system_work_for`）认不出它属于哪个文档，就把它当成「别的文档的」原样留下。于是每个移除过的节点都在表里留一条，每一帧都把整张表倒出来、逐条查一遍再放回去：帧的成本跟着「这次会话里一共移除过多少节点」走。现在移除节点时连同它的起因一起清掉，排空时也丢掉已经不在世界里的节点的起因（别的文档的照旧留给它自己）。`perf/micro/stack-depth` 加了 `BURN=n`（建页之前先创建并移除 n 个节点），1 051 盒的页上每帧改一处，整帧最小值（release、aarch64 macOS）：
 
 | 此前移除过的节点 | 改宽度，改前 | 改后 | 改标签文字（控件页 1 551 盒），改前 | 改后 |

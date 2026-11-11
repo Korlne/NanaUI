@@ -590,7 +590,7 @@ impl AppContext {
     }
 
     /// Release the reactive state owned by despawned nodes.
-    pub(crate) fn forget_reactive(&mut self, removed: &crate::NodeSet) {
+    pub(crate) fn forget_reactive(&mut self, removed: &HashSet<StableNodeId>) {
         let host = &mut self.reactive;
         if host.nodes.is_empty()
             && host.structural.is_empty()

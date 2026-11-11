@@ -1397,7 +1397,7 @@ impl AppContext {
     pub(super) fn hover_card_focus_before_commit(
         &self,
         mutations: &MutationQueue,
-        previous_focus: &HashMap<DocumentId, StableNodeId, crate::BuildIdHasher>,
+        previous_focus: &HashMap<DocumentId, StableNodeId>,
     ) -> Vec<(DocumentId, StableNodeId, StableNodeId, Option<StableNodeId>)> {
         previous_focus
             .iter()

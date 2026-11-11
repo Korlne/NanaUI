@@ -80,7 +80,7 @@ impl ErasedOn {
 }
 
 impl AppContext {
-    pub(super) fn remove_event_handlers_for(&mut self, removed: &crate::NodeSet) -> usize {
+    pub(super) fn remove_event_handlers_for(&mut self, removed: &HashSet<StableNodeId>) -> usize {
         // An editor's undo journal dies with the editor.
         for id in removed {
             self.text_histories.forget(*id);
@@ -468,16 +468,16 @@ mod dependency_tests {
             .unwrap();
         cx.on_keyed::<_, Activate>(source, "binding", |_, _, _| {})
             .unwrap();
-        assert_eq!(cx.remove_event_handlers_for(&crate::NodeSet::from_iter([first.id])), 1);
+        assert_eq!(cx.remove_event_handlers_for(&HashSet::from([first.id])), 1);
         assert!(!cx.event_dependencies.contains_key(&first.id));
         let key = (source.id, TypeId::of::<Activate>());
         assert_eq!(cx.event_handlers[&key].len(), 2);
         assert!(cx.event_dependencies[&second.id].contains(&key));
-        assert_eq!(cx.remove_event_handlers_for(&crate::NodeSet::from_iter([source.id])), 1);
+        assert_eq!(cx.remove_event_handlers_for(&HashSet::from([source.id])), 1);
         assert!(!cx.event_dependencies.contains_key(&source.id));
         assert!(!cx.event_dependencies.contains_key(&second.id));
         assert_eq!(cx.event_handlers.len(), 1000);
         assert_eq!(cx.event_dependencies.len(), 1000);
-        assert_eq!(cx.remove_event_handlers_for(&crate::NodeSet::default()), 0);
+        assert_eq!(cx.remove_event_handlers_for(&HashSet::new()), 0);
     }
 }

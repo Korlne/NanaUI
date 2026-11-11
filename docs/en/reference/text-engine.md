@@ -2495,8 +2495,9 @@ How to read it:
   cost; `primitive_bounds` (that is, one `draw_primitive` per primitive) is, and both versions pay it. Two
   spellings of two functions walking the same tree for one point is not worth it.
 
-  What is left: the integer-hash switch has not been made in `nana-ui-runtime` (`store.rs` 23 sites, `framework.rs`
-  18, `layout_engine.rs` 16 …). And the per-primitive path (`draw_primitive` → `primitive_bounds`) is now the big
+  What is left: the integer-hash switch in `nana-ui-runtime` was tried, did not measure and was reverted (the
+  hashbrown tables in `store.rs` and `layout_engine.rs` already hash with foldhash, not SipHash; see the paragraph
+  after "The frame after one row of a long list changes" in `resource-budgets.md`). And the per-primitive path (`draw_primitive` → `primitive_bounds`) is now the big
   cost on both flush and batch: the delta for every descendant under one changed ancestor is mathematically the
   same (`A_new ∘ L ∘ L⁻¹ ∘ A_old⁻¹`), so one copy per ancestor would be enough — but that first requires proving
   "the chain below did not move". Further down is retaining the whole frame's draw list (damage tracking), which is

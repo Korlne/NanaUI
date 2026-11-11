@@ -220,7 +220,7 @@ impl AppContext {
         let mut mutations = MutationQueue::new();
         let mut next_entities = items.entities.clone();
         let mut next_containers = items.containers.clone();
-        let mut removed = crate::NodeSet::default();
+        let mut removed = HashSet::new();
         for key in &plan.unmounts {
             let id = items.containers[key].id;
             let mut stack = vec![id];
@@ -921,8 +921,8 @@ impl AppContext {
         owned: impl IntoIterator<Item = StableNodeId>,
         focused: Option<StableNodeId>,
         ime: Option<StableNodeId>,
-    ) -> crate::NodeSet {
-        let owned = owned.into_iter().collect::<crate::NodeSet>();
+    ) -> HashSet<StableNodeId> {
+        let owned = owned.into_iter().collect::<HashSet<_>>();
         [focused, ime]
             .into_iter()
             .flatten()
@@ -946,7 +946,7 @@ impl AppContext {
         &self,
         list: Entity<List>,
         items: &VirtualListItems<K, C>,
-    ) -> Result<crate::NodeSet, FrameworkError>
+    ) -> Result<HashSet<StableNodeId>, FrameworkError>
     where
         K: Clone + Eq + Hash,
         C: ComponentView,
@@ -970,7 +970,7 @@ impl AppContext {
         &self,
         table: Entity<Table>,
         items: &VirtualTableItems<R, C>,
-    ) -> Result<crate::NodeSet, FrameworkError>
+    ) -> Result<HashSet<StableNodeId>, FrameworkError>
     where
         R: Clone + Eq + Hash,
         C: Clone + Eq + Hash,

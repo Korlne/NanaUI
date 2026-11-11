@@ -45,7 +45,7 @@ pub(crate) struct UiBuilder<'a> {
     /// `(node, event type)`. The count is the handler's identity, so rebuilding
     /// the same tree replaces its handlers instead of stacking new ones.
     on_slots: HashMap<(StableNodeId, TypeId), usize>,
-    pending_forget: crate::NodeSet,
+    pending_forget: HashSet<StableNodeId>,
     /// Children this build's queue appends under each parent, in order.
     appended: HashMap<StableNodeId, Vec<StableNodeId>>,
     /// Nodes [`UiBuilder::adopt`] moved in this build.
@@ -123,7 +123,7 @@ impl<'a> UiBuilder<'a> {
             pending_views: HashMap::new(),
             pending_ons: Vec::new(),
             on_slots: HashMap::new(),
-            pending_forget: crate::NodeSet::default(),
+            pending_forget: HashSet::new(),
             appended: HashMap::new(),
             adopted: HashSet::new(),
             lifecycle: Vec::new(),
