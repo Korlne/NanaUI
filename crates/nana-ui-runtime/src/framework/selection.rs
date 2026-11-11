@@ -945,7 +945,7 @@ impl AppContext {
         }
 
         self.commit_mutations(mutations)?;
-        let mut removed = HashSet::new();
+        let mut removed = crate::NodeSet::default();
         for subtree in stale_subtrees {
             for id in subtree {
                 removed.insert(id);

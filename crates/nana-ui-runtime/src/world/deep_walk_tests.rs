@@ -221,7 +221,7 @@ fn islands_above_a_deep_chain_are_found_once() {
     let (cx, chain) = page(false);
     let world = cx.world();
     let island = chain[ISLAND_LEVEL];
-    let covered: std::collections::HashSet<_> = [island].into_iter().collect();
+    let covered: crate::NodeSet = [island].into_iter().collect();
     // The page above the island, then the chain from the bottom up to the
     // island: a walk from the bottom passes every node of the island.
     let affected: Vec<_> = chain[..ISLAND_LEVEL]

@@ -199,7 +199,7 @@ impl AppContext {
             }
         }
 
-        let mut removed_nodes = HashSet::new();
+        let mut removed_nodes = crate::NodeSet::default();
         for key in &plan.unmounts {
             let entity = items
                 .entities
@@ -469,7 +469,7 @@ impl AppContext {
         }
 
         let removed_rows = plan.rows.unmounts.iter().cloned().collect::<HashSet<_>>();
-        let mut removed_nodes = HashSet::new();
+        let mut removed_nodes = crate::NodeSet::default();
         for row in &plan.rows.unmounts {
             let mut stack = vec![items.rows[row].id];
             while let Some(id) = stack.pop() {

@@ -486,7 +486,7 @@ impl UiWorld {
         &mut self,
         scope: &[StableNodeId],
         baseline_of: impl Fn(StableNodeId) -> Option<f32>,
-        mut solved: hashbrown::HashMap<StableNodeId, Arc<[nana_text::InlineObject]>>,
+        mut solved: hashbrown::HashMap<StableNodeId, Arc<[nana_text::InlineObject]>, crate::BuildIdHasher>,
     ) {
         let mut parents = NodeSet::default();
         for &id in scope {

@@ -1156,7 +1156,7 @@ pub struct AppContext {
     emitters: HashMap<TypeId, UpdateErasedFn, crate::BuildIdHasher>,
     /// Per document, the focused node the focus-within listeners last heard
     /// about and the listeners told it is inside them.
-    focus_within: HashMap<DocumentId, (StableNodeId, Vec<StableNodeId>)>,
+    focus_within: HashMap<DocumentId, (StableNodeId, Vec<StableNodeId>), crate::BuildIdHasher>,
     /// Focus-within notices not yet delivered, some to a listener that is
     /// out being updated.
     pending_focus_within: Vec<(StableNodeId, bool)>,
@@ -1243,7 +1243,7 @@ pub(crate) struct VirtualListPublished {
     range: Range<usize>,
     len: usize,
     total_extent: f32,
-    activity: HashSet<StableNodeId>,
+    activity: crate::NodeSet,
     fingerprint: u64,
 }
 
@@ -1258,7 +1258,7 @@ pub(crate) struct VirtualTablePublished {
     column_len: usize,
     row_extent: f32,
     column_extent: f32,
-    activity: HashSet<StableNodeId>,
+    activity: crate::NodeSet,
     fingerprint: u64,
 }
 
@@ -1335,7 +1335,7 @@ where
         &mut self,
         layout: &VirtualTableLayout,
         pane: &nana_ui_core::VirtualTableFrozenWindow,
-        activity: HashSet<StableNodeId>,
+        activity: crate::NodeSet,
         fingerprint: u64,
     ) {
         self.published = Some(VirtualTablePublished {
@@ -1356,7 +1356,7 @@ where
         &self,
         layout: &VirtualTableLayout,
         pane: &nana_ui_core::VirtualTableFrozenWindow,
-        activity: &HashSet<StableNodeId>,
+        activity: &crate::NodeSet,
         fingerprint: u64,
     ) -> bool {
         self.published.as_ref().is_some_and(|published| {
@@ -1462,7 +1462,7 @@ where
         &mut self,
         layout: &VirtualListLayout,
         window: &VirtualListWindow,
-        activity: HashSet<StableNodeId>,
+        activity: crate::NodeSet,
         fingerprint: u64,
     ) {
         self.published = Some(VirtualListPublished {
@@ -1478,7 +1478,7 @@ where
         &self,
         layout: &VirtualListLayout,
         window: &VirtualListWindow,
-        activity: &HashSet<StableNodeId>,
+        activity: &crate::NodeSet,
         fingerprint: u64,
     ) -> bool {
         self.published.as_ref().is_some_and(|published| {
@@ -1553,7 +1553,7 @@ impl AppContext {
             activations: HashMap::default(),
             pointer_extensions: HashMap::default(),
             emitters: HashMap::default(),
-            focus_within: HashMap::new(),
+            focus_within: HashMap::default(),
             pending_focus_within: Vec::new(),
             draining_focus_within: false,
             reprojectors: HashMap::default(),
@@ -2033,7 +2033,7 @@ impl AppContext {
                 _ => None,
             })
             .filter_map(|document| self.world.focused(document).map(|node| (document, node)))
-            .collect::<HashMap<_, _>>();
+            .collect::<HashMap<_, _, crate::BuildIdHasher>>();
         let hover_restore = self.hover_card_focus_before_commit(&mutations, &previous_focus);
         let retired_documents = mutations
             .as_slice()
@@ -2044,7 +2044,7 @@ impl AppContext {
                 | crate::UiMutation::Detach { id: root } => self.world.document_of(*root),
                 _ => None,
             })
-            .collect::<HashSet<_>>();
+            .collect::<HashSet<_, crate::BuildIdHasher>>();
         let despawned = mutations
             .as_slice()
             .iter()
@@ -2053,11 +2053,11 @@ impl AppContext {
                 _ => None,
             })
             .flat_map(|root| self.retained_subtree(root))
-            .collect::<HashSet<_>>();
+            .collect::<HashSet<_, crate::BuildIdHasher>>();
         let deleted_layout_nodes = despawned
             .iter()
             .filter_map(|&id| self.world.document_of(id).map(|document| (document, id)))
-            .collect::<HashSet<_>>();
+            .collect::<HashSet<_, crate::BuildIdHasher>>();
         let menu_focus = if despawned.is_empty() {
             Vec::new()
         } else {
@@ -4295,7 +4295,7 @@ impl AppContext {
         let mut queue = MutationQueue::new();
         queue.despawn_subtree(id);
         self.commit_mutations(queue)?;
-        let removed = subtree.iter().copied().collect::<HashSet<_>>();
+        let removed = subtree.iter().copied().collect::<crate::NodeSet>();
         self.forget_subtree(&removed);
         Ok(())
     }
@@ -4350,7 +4350,7 @@ impl AppContext {
         if self.placed_assembled.is_empty() {
             return None;
         }
-        let mut roots: HashSet<StableNodeId> = mutations
+        let mut roots: crate::NodeSet = mutations
             .as_slice()
             .iter()
             .filter_map(|mutation| match mutation {
@@ -4361,7 +4361,7 @@ impl AppContext {
         if roots.is_empty() {
             return None;
         }
-        let under = |roots: &HashSet<StableNodeId>, id: StableNodeId| {
+        let under = |roots: &crate::NodeSet, id: StableNodeId| {
             std::iter::successors(Some(id), |id| self.world.parent_id(*id))
                 .any(|ancestor| roots.contains(&ancestor))
         };
@@ -4414,7 +4414,7 @@ impl AppContext {
         Some(first)
     }
 
-    fn forget_subtree(&mut self, removed: &HashSet<StableNodeId>) {
+    fn forget_subtree(&mut self, removed: &crate::NodeSet) {
         self.remove_event_handlers_for(removed);
         self.component_lifecycle
             .text_area_resizes
@@ -4478,7 +4478,7 @@ impl AppContext {
     /// Drops the removed nodes from both directions of the keyed-child
     /// tables: a removed parent's table with its children's declarations,
     /// and a removed child's key from the table of a parent that stays.
-    fn forget_assembled(&mut self, removed: &HashSet<StableNodeId>) {
+    fn forget_assembled(&mut self, removed: &crate::NodeSet) {
         // As [`forget_nodes`] chooses: the walk when the tables are the
         // shorter side, which is every teardown of a tree that keys little.
         if self.assembled.len() + self.assembled_parent.len() <= removed.len() {
@@ -4525,7 +4525,7 @@ impl AppContext {
     /// dropped is still there. It makes every removal cost the tree again,
     /// so it runs in this crate's tests only.
     #[cfg(test)]
-    fn assert_forgotten(&self, removed: &HashSet<StableNodeId>) {
+    fn assert_forgotten(&self, removed: &crate::NodeSet) {
         let gone = |id: &StableNodeId| removed.contains(id);
         let reprojects = [
             &self.child_reproject_views,
@@ -4709,7 +4709,7 @@ mod touch_scroll_tests;
 /// large tree and tearing a large tree down both cost what is removed.
 fn forget_nodes<V>(
     table: &mut HashMap<StableNodeId, V, crate::BuildIdHasher>,
-    removed: &HashSet<StableNodeId>,
+    removed: &crate::NodeSet,
 ) {
     if table.len() <= removed.len() {
         table.retain(|id, _| !removed.contains(id));

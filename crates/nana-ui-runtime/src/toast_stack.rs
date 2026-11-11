@@ -791,7 +791,7 @@ impl AppContext {
     /// next time the stack fits.
     pub(crate) fn forget_toast_stack_nodes(
         &mut self,
-        removed: &std::collections::HashSet<StableNodeId>,
+        removed: &crate::NodeSet,
     ) {
         let stacks = self.toast_stacks_mut();
         stacks.retain(|stack, _| !removed.contains(stack));
