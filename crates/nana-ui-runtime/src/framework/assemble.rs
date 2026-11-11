@@ -1,6 +1,7 @@
 use std::any::TypeId;
 use std::collections::HashSet;
 
+use crate::world::child_order::{common_ends, longest_increasing, positions_in};
 use crate::{ComponentView, DocumentId, Entity, MutationQueue, StableNodeId, View};
 
 use super::{AppContext, FrameworkError};
@@ -283,11 +284,34 @@ impl AssemblyScope<'_> {
         if current.as_slice() == ordered.as_slice() {
             return Ok(());
         }
+        // Every child that is not assembled is kept in front, so `ordered`
+        // leaves none out and nothing is parked.
         let mut mutations = MutationQueue::new();
-        move_into_order(self.parent, &current, &ordered, &mut mutations);
+        let ends = common_ends(&current, &ordered);
+        reorder_between(self.parent, &current, &ordered, ends, &mut mutations);
         self.context.commit_mutations(mutations)?;
         Ok(())
     }
+}
+
+/// How many children of a list an insert costs as much as looking at one of
+/// them for a reorder does. An insert finds its place in the list and shifts
+/// it, about 2 ns a child of the whole list and a microsecond besides; a
+/// reorder finds which children moved among the ones between the first and
+/// the last that did, up to 75 ns each when most of them stay.
+const REORDER_LOOKS: usize = 32;
+/// The microsecond an insert costs besides, in children of its list.
+const INSERT_BESIDES: usize = 1024;
+
+/// Whether `moves` children moved or brought into a list of `list` are
+/// cheaper as one [`crate::UiMutation::ReorderChildren`] that has to look
+/// through `looked` children than as an insert each. Two rows exchanged
+/// across a long list are two inserts; a block turned round, a list sorted
+/// or rows filled in between others are one reorder.
+fn reorder_is_cheaper(moves: usize, list: usize, looked: usize) -> bool {
+    moves >= 2
+        && moves.saturating_mul(list.saturating_add(INSERT_BESIDES))
+            >= looked.saturating_mul(REORDER_LOOKS)
 }
 
 /// Shared projection path for framework components already building one batch.
@@ -296,58 +320,96 @@ impl AssemblyScope<'_> {
 /// Moves as few children as the new order allows: the longest run of kept
 /// children already in increasing order stays put, and every other child is
 /// inserted before its successor. Reversing costs n moves, inserting or
-/// removing one child costs one.
-/// Insert the children of `ordered` that are not already in order in
-/// `current` (the longest increasing run stays put), each before its
-/// successor. Children of `current` missing from `ordered` are left alone.
+/// removing one child costs one. Children of `current` missing from
+/// `ordered` are left alone.
 pub(crate) fn move_into_order(
     parent: StableNodeId,
     current: &[StableNodeId],
     ordered: &[StableNodeId],
     mutations: &mut MutationQueue,
 ) {
-    move_between(
+    let reorders = move_between(
         parent,
         current,
         ordered,
         common_ends(current, ordered),
+        false,
         mutations,
     );
+    debug_assert!(!reorders, "only asked for when the order is complete");
 }
 
 /// [`move_into_order`] with the common head and tail found already. They
 /// stay put: one row inserted or removed anywhere leaves only the rows
 /// between to compare.
+///
+/// `complete` says that `current` is every child `parent` has and that the
+/// caller takes out the ones `ordered` leaves out, so `ordered` is the whole
+/// list afterwards. Then many moves are not queued one by one: the children
+/// that come from elsewhere are appended, and `true` is returned for the
+/// caller to queue one reorder to `ordered` once the others are out.
+#[must_use]
 fn move_between(
     parent: StableNodeId,
     current: &[StableNodeId],
     ordered: &[StableNodeId],
     (head, tail): (usize, usize),
+    complete: bool,
     mutations: &mut MutationQueue,
-) {
+) -> bool {
+    let list = current.len();
     let (current, ordered_middle) = (
         &current[head..current.len() - tail],
         &ordered[head..ordered.len() - tail],
     );
-    let mut next = ordered.get(ordered.len() - tail).copied();
-    let position: crate::NodeMap<usize> = current
-        .iter()
-        .enumerate()
-        .map(|(index, id)| (*id, index))
-        .collect();
-    let positions: Vec<Option<usize>> = ordered_middle
-        .iter()
-        .map(|id| position.get(id).copied())
-        .collect();
+    let positions = positions_in(current, ordered_middle);
     let stays = longest_increasing(&positions);
+    let moves = stays.iter().filter(|stays| !**stays).count();
+    // A child brought in is appended first, so the reorder looks through
+    // everything after the common head to find it at the end.
+    let brings = positions.iter().any(Option::is_none);
+    let looked = if brings {
+        ordered.len() - head
+    } else {
+        ordered_middle.len()
+    };
+    if complete
+        && reorder_is_cheaper(moves, list, looked)
+        && each_once(ordered_middle, &positions, current.len())
+    {
+        for (&child, position) in ordered_middle.iter().zip(&positions) {
+            if position.is_none() {
+                mutations.insert(parent, child, None);
+            }
+        }
+        return true;
+    }
     // Walking backwards, each moved child goes before the one that follows
     // it, which is already where it belongs.
+    let mut next = ordered.get(ordered.len() - tail).copied();
     for (index, &child) in ordered_middle.iter().enumerate().rev() {
         if !stays[index] {
             mutations.insert(parent, child, next);
         }
         next = Some(child);
     }
+    false
+}
+
+/// Whether no child is named twice: `positions` are where `ordered`'s
+/// children are among the `kept` it may keep, `None` for one from elsewhere.
+/// An order that repeats a child is left to the inserts, which take it as
+/// they always have.
+fn each_once(ordered: &[StableNodeId], positions: &[Option<usize>], kept: usize) -> bool {
+    let mut placed = vec![false; kept];
+    let mut brought = crate::NodeSet::default();
+    ordered
+        .iter()
+        .zip(positions)
+        .all(|(child, position)| match position {
+            Some(position) => !std::mem::replace(&mut placed[*position], true),
+            None => brought.insert(*child),
+        })
 }
 
 pub(crate) fn reconcile_child_order(
@@ -368,8 +430,8 @@ pub(crate) fn reconcile_child_order(
     true
 }
 
-/// Moves `parent`'s children into `ordered` and parks the ones it leaves
-/// out, given the head and tail the two share.
+/// Moves `parent`'s children, all of them in `current`, into `ordered` and
+/// parks the ones it leaves out, given the head and tail the two share.
 fn reorder_between(
     parent: StableNodeId,
     current: &[StableNodeId],
@@ -379,7 +441,7 @@ fn reorder_between(
 ) {
     // Extract retained descendants before parking their former ancestors. A
     // live-to-live reparent must never retire focus, IME or pointer ownership.
-    move_between(parent, current, ordered, (head, tail), mutations);
+    let reorders = move_between(parent, current, ordered, (head, tail), true, mutations);
     // A child that is not wanted any more lies between the common head and
     // tail, like everything else that changed.
     let keep: crate::NodeSet = ordered[head..ordered.len() - tail]
@@ -391,54 +453,9 @@ fn reorder_between(
             mutations.park_subtree(*child);
         }
     }
-}
-
-/// How many children `current` and `ordered` start with in common, and how
-/// many of the rest they end with in common.
-fn common_ends(current: &[StableNodeId], ordered: &[StableNodeId]) -> (usize, usize) {
-    let head = current
-        .iter()
-        .zip(ordered)
-        .take_while(|(a, b)| a == b)
-        .count();
-    let tail = current[head..]
-        .iter()
-        .rev()
-        .zip(ordered[head..].iter().rev())
-        .take_while(|(a, b)| a == b)
-        .count();
-    (head, tail)
-}
-
-/// Marks one longest strictly increasing subsequence of the known positions
-/// (patience sorting, O(n log n)).
-fn longest_increasing(positions: &[Option<usize>]) -> Vec<bool> {
-    // tails[k]: index in `positions` ending the best subsequence of length k+1.
-    let mut tails: Vec<usize> = Vec::new();
-    let mut previous: Vec<Option<usize>> = vec![None; positions.len()];
-    for (index, position) in positions.iter().enumerate() {
-        let Some(position) = *position else {
-            continue;
-        };
-        let length = tails.partition_point(|&tail| {
-            positions[tail].expect("tails hold known positions") < position
-        });
-        if length > 0 {
-            previous[index] = Some(tails[length - 1]);
-        }
-        if length == tails.len() {
-            tails.push(index);
-        } else {
-            tails[length] = index;
-        }
+    if reorders {
+        mutations.reorder_children(parent, ordered);
     }
-    let mut stays = vec![false; positions.len()];
-    let mut cursor = tails.last().copied();
-    while let Some(index) = cursor {
-        stays[index] = true;
-        cursor = previous[index];
-    }
-    stays
 }
 
 #[cfg(test)]
@@ -450,18 +467,23 @@ mod tests {
         context.world().node(parent).unwrap().children.to_vec()
     }
 
-    /// Reorder `parent` to `ordered`, returning how many inserts it took.
-    fn reorder(context: &mut AppContext, parent: StableNodeId, ordered: &[StableNodeId]) -> usize {
+    /// Reorder `parent` to `ordered`, returning how many children that moved
+    /// or brought in, and the mutations it queued.
+    fn reorder_queued(
+        context: &mut AppContext,
+        parent: StableNodeId,
+        ordered: &[StableNodeId],
+    ) -> (usize, Vec<crate::UiMutation>) {
         let mut mutations = MutationQueue::new();
         reconcile_child_order(parent, ordered, context.world(), &mut mutations);
-        let moves = mutations
-            .as_slice()
-            .iter()
-            .filter(|mutation| matches!(mutation, crate::UiMutation::Insert { .. }))
-            .count();
-        context.commit_mutations(mutations).unwrap();
+        let queued = mutations.as_slice().to_vec();
+        let report = context.commit_mutations(mutations).unwrap();
         assert_eq!(children(context, parent), ordered);
-        moves
+        (report.reparented + report.inserted, queued)
+    }
+
+    fn reorder(context: &mut AppContext, parent: StableNodeId, ordered: &[StableNodeId]) -> usize {
+        reorder_queued(context, parent, ordered).0
     }
 
     #[test]
@@ -573,6 +595,77 @@ mod tests {
                 .count();
             assert_eq!(reorder(&mut context, parent, &order), order.len() - kept);
         }
+    }
+
+    /// One move is an insert, and so are two far apart in a long list. More
+    /// of them close together are one reorder, after the inserts that bring
+    /// children in and the parks that take them out, and the children land
+    /// the same.
+    #[test]
+    fn many_moves_are_queued_as_one_reorder() {
+        let mut context = AppContext::new();
+        let document = DocumentId::new(1).unwrap();
+        let mut stack = || {
+            context
+                .create_component(document, Stack::column(0.0))
+                .unwrap()
+                .stable_id()
+        };
+        let parent = stack();
+        let all: Vec<_> = (0..200).map(|_| stack()).collect();
+        let (fresh, other) = (stack(), stack());
+        let mut mutations = MutationQueue::new();
+        for child in &all {
+            mutations.insert(parent, *child, None);
+        }
+        context.commit_mutations(mutations).unwrap();
+        let kinds = |queued: &[crate::UiMutation]| {
+            let count =
+                |of: fn(&crate::UiMutation) -> bool| queued.iter().filter(|m| of(m)).count();
+            (
+                count(|m| matches!(m, crate::UiMutation::Insert { .. })),
+                count(|m| matches!(m, crate::UiMutation::ParkSubtree { .. })),
+                count(|m| matches!(m, crate::UiMutation::ReorderChildren { .. })),
+            )
+        };
+
+        let mut order = all.clone();
+        order[40..60].rotate_left(1);
+        let (moves, queued) = reorder_queued(&mut context, parent, &order);
+        assert_eq!((moves, kinds(&queued)), (1, (1, 0, 0)));
+        // The first and the last exchanged: a reorder would look through
+        // every child between them to move two.
+        order.swap(0, 199);
+        let (moves, queued) = reorder_queued(&mut context, parent, &order);
+        assert_eq!((moves, kinds(&queued)), (2, (2, 0, 0)));
+        // Ten in a row turned round: nine moves, found among those ten.
+        order[90..100].reverse();
+        let (moves, queued) = reorder_queued(&mut context, parent, &order);
+        assert_eq!((moves, kinds(&queued)), (9, (0, 0, 1)));
+
+        // Everything turned round, one child dropped, one brought in from
+        // nowhere and one from under another parent.
+        context
+            .append_child(
+                crate::Entity::<Stack>::from_stable_id(fresh),
+                crate::Entity::<Stack>::from_stable_id(other),
+            )
+            .unwrap();
+        order.reverse();
+        let dropped = order.remove(5);
+        order.insert(9, fresh);
+        order.insert(20, other);
+        let (moves, queued) = reorder_queued(&mut context, parent, &order);
+        assert_eq!(kinds(&queued), (2, 1, 1));
+        assert!(matches!(
+            queued.last(),
+            Some(crate::UiMutation::ReorderChildren { .. })
+        ));
+        // The two brought in, and every kept child but one.
+        assert_eq!(moves, 2 + (order.len() - 2 - 1));
+        assert_eq!(context.world().parent_id(dropped), None);
+        assert_eq!(context.world().parent_id(other), Some(parent));
+        assert_eq!(children(&context, fresh), []);
     }
 
     #[test]

@@ -24,6 +24,12 @@ pub enum UiMutation {
         child: StableNodeId,
         before: Option<StableNodeId>,
     },
+    /// Put `parent`'s children in `order`, which holds each of them once;
+    /// see [`MutationQueue::reorder_children`].
+    ReorderChildren {
+        parent: StableNodeId,
+        order: Arc<[StableNodeId]>,
+    },
     /// Unparent a node. It stays retained and `Mounted`, but leaves the live
     /// document until [`Self::Insert`].
     Detach {
@@ -361,6 +367,25 @@ impl MutationQueue {
             parent,
             child,
             before,
+        });
+    }
+
+    /// Put the children `parent` has into `order` in one edit, whatever the
+    /// length of the list: reversing or sorting a long list this way costs
+    /// its length, where an [`Self::insert`] per moved child costs the
+    /// length each. `order` must hold exactly the children `parent` has when
+    /// the batch reaches this mutation, each once; it brings in no child and
+    /// leaves none out, so insert the new ones and remove the old ones
+    /// before it. Children that keep their order among themselves are not
+    /// touched.
+    pub fn reorder_children(
+        &mut self,
+        parent: StableNodeId,
+        order: impl Into<Arc<[StableNodeId]>>,
+    ) {
+        self.mutations.push(UiMutation::ReorderChildren {
+            parent,
+            order: order.into(),
         });
     }
 

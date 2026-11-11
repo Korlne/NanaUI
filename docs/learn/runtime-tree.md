@@ -56,9 +56,9 @@ title: 运行时保留树
 
 ### 2. 批式变异提交：`UiMutation` / `MutationQueue` / `commit`
 
-所有对树的修改都表示为 `UiMutation` 枚举变体（`crates/nana-ui-runtime/src/mutation.rs:15-302`）：
+所有对树的修改都表示为 `UiMutation` 枚举变体（`crates/nana-ui-runtime/src/mutation.rs:15-330`）：
 
-- **拓扑操作**：`Create`、`Insert`（兼做移动位置，`before = None` 表示追加到末尾）、`Detach`（脱离父节点但保持 `Mounted`）、`ParkSubtree`（整棵子树停用隐藏但保留节点身份与内部状态）、`DespawnSubtree`（彻底销毁，ID 永久退役）。
+- **拓扑操作**：`Create`、`Insert`（兼做移动位置，`before = None` 表示追加到末尾）、`ReorderChildren`（把一个父节点现有的子节点一次排成给定顺序，成本随表长走而不是随移动次数乘表长）、`Detach`（脱离父节点但保持 `Mounted`）、`ParkSubtree`（整棵子树停用隐藏但保留节点身份与内部状态）、`DespawnSubtree`（彻底销毁，ID 永久退役）。
 - **样式、主题与文本**：`SetStyle`、`SetPresetTheme`、`SetThemeTokens`（整体携带 `Arc<CompiledTheme>`）、`SetText`、`SetRichText`、`SetLanguage`、`SetLocale`、`SetLocalizedText`。
 - **布局写回与滚动**：`WriteLayout`（仅供布局引擎写回结果与测试使用）、`PatchPlacement`、`SetScrollOffset`。
 

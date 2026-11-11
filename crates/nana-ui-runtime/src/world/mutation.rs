@@ -263,6 +263,7 @@ impl<'a> ValidationPlan<'a> {
                     child,
                     before,
                 } => self.insert(*parent, *child, *before)?,
+                UiMutation::ReorderChildren { parent, order } => self.reorder(*parent, order)?,
                 UiMutation::Detach { id } => {
                     self.detach(*id)?;
                 }
@@ -1422,7 +1423,13 @@ impl UiWorld {
                     .and_then(|before| siblings.iter().position(|id| *id == before))
                     .unwrap_or(siblings.len());
                 siblings.insert(index, *child);
+                #[cfg(test)]
+                let shifted = (siblings.len() - index - 1) as u64;
                 let _parent_hierarchy = parent_hierarchy;
+                #[cfg(test)]
+                {
+                    self.child_list_steps += shifted;
+                }
                 self.renumber_children_from(*parent, index);
                 self.hierarchy_mut(*child).parent = Some(*parent);
                 let below = self.record(*parent).hierarchy.depth.saturating_add(1);
@@ -1481,6 +1488,9 @@ impl UiWorld {
                 if let Some(old_parent) = old_parent {
                     self.note_structural_change(old_parent);
                 }
+            }
+            UiMutation::ReorderChildren { parent, order } => {
+                self.reorder_children(*parent, order, report);
             }
             UiMutation::Detach { id } => {
                 self.record_topology_invalidation(*id);
@@ -2960,6 +2970,7 @@ impl UiWorld {
                         .is_some_and(|index| siblings.get(index + 1) == Some(before)),
                 }
             }
+            UiMutation::ReorderChildren { parent, order } => self.children_in_order(*parent, order),
             UiMutation::ParkSubtree { root } => {
                 self.unlinked_root(*root) && self.mount_state(*root) == Some(MountState::Parked)
             }

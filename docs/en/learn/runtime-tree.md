@@ -56,9 +56,9 @@ This chapter goes into the heart of `nana-ui-runtime`: **how the `UiWorld` retai
 
 ### 2. Batched mutation commit: `UiMutation` / `MutationQueue` / `commit`
 
-Every change to the tree is expressed as a variant of the `UiMutation` enum (`crates/nana-ui-runtime/src/mutation.rs:15-302`):
+Every change to the tree is expressed as a variant of the `UiMutation` enum (`crates/nana-ui-runtime/src/mutation.rs:15-330`):
 
-- **Topology operations**: `Create`, `Insert` (also used to move; `before = None` means append at the end), `Detach` (leave the parent but stay `Mounted`), `ParkSubtree` (deactivate and hide a whole subtree while keeping node identity and internal state), `DespawnSubtree` (destroy completely; the IDs are retired permanently).
+- **Topology operations**: `Create`, `Insert` (also used to move; `before = None` means append at the end), `ReorderChildren` (put the children a parent has into a given order in one edit, at the cost of the list's length rather than its length per move), `Detach` (leave the parent but stay `Mounted`), `ParkSubtree` (deactivate and hide a whole subtree while keeping node identity and internal state), `DespawnSubtree` (destroy completely; the IDs are retired permanently).
 - **Style, theme, and text**: `SetStyle`, `SetPresetTheme`, `SetThemeTokens` (carries an `Arc<CompiledTheme>` as a whole), `SetText`, `SetRichText`, `SetLanguage`, `SetLocale`, `SetLocalizedText`.
 - **Layout write-back and scrolling**: `WriteLayout` (only for the layout engine writing back results and for tests), `PatchPlacement`, `SetScrollOffset`.
 

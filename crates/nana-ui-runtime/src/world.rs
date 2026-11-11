@@ -1,6 +1,7 @@
 mod accessibility;
 mod animation;
 mod block_reads;
+pub(crate) mod child_order;
 mod clip_chain;
 mod extraction;
 mod focus_scope;
@@ -685,6 +686,11 @@ pub enum UiWorldError {
         parent: StableNodeId,
         before: StableNodeId,
     },
+    /// A [`UiMutation::ReorderChildren`] whose order is not `parent`'s
+    /// children, each once.
+    InvalidChildOrder {
+        parent: StableNodeId,
+    },
     InvalidStyle(StableNodeId),
     InvalidText(StableNodeId),
     InvalidLayout(StableNodeId),
@@ -763,6 +769,11 @@ impl fmt::Display for UiWorldError {
                 formatter,
                 "node {} is not a child of parent {}",
                 before.get(),
+                parent.get()
+            ),
+            Self::InvalidChildOrder { parent } => write!(
+                formatter,
+                "the order given for the children of node {} is not its children, each once",
                 parent.get()
             ),
             Self::InvalidStyle(id) => write!(formatter, "node {} has an invalid style", id.get()),
@@ -2049,7 +2060,8 @@ impl UiWorld {
             }
             crate::UiMutation::Detach { .. }
             | crate::UiMutation::ParkSubtree { .. }
-            | crate::UiMutation::DespawnSubtree { .. } => true,
+            | crate::UiMutation::DespawnSubtree { .. }
+            | crate::UiMutation::ReorderChildren { .. } => true,
             _ => false,
         };
         if forget && let Some(memo) = self.result_chain_memo.as_mut() {
@@ -6632,6 +6644,16 @@ impl UiWorld {
     }
 
     fn renumber_children_now(&mut self, parent: StableNodeId, from: usize) {
+        self.renumber_children_within(parent, from..usize::MAX);
+    }
+
+    /// Give `parent`'s children at `range` the index they have, at once: for
+    /// an edit that leaves the children after it where they were.
+    pub(crate) fn renumber_children_within(
+        &mut self,
+        parent: StableNodeId,
+        range: std::ops::Range<usize>,
+    ) {
         let Some(children) = self
             .nodes
             .get(parent)
@@ -6639,12 +6661,13 @@ impl UiWorld {
         else {
             return;
         };
+        let range = range.start.min(children.len())..range.end.min(children.len());
         #[cfg(test)]
         {
-            self.child_list_steps += children.len().saturating_sub(from) as u64;
+            self.child_list_steps += range.len() as u64;
         }
-        for (index, &child) in children.iter().enumerate().skip(from) {
-            if let Some(record) = self.nodes.get_mut(child) {
+        for index in range {
+            if let Some(record) = self.nodes.get_mut(children[index]) {
                 record.hierarchy.index_in_parent = u32::try_from(index).unwrap_or(u32::MAX);
             }
         }
