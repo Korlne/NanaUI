@@ -107,7 +107,7 @@ hosted = [
 ]
 
 [dependencies]
-naga = { version = "=30.0.1", features = ["wgsl-in", "wgsl-out"], optional = true }
+naga = { workspace = true, features = ["wgsl-in", "wgsl-out"], optional = true }
 accesskit = { workspace = true, optional = true }
 bytemuck = { version = "1.24", features = ["derive"], optional = true }
 base64 = { workspace = true, optional = true }
@@ -144,7 +144,8 @@ accesskit_macos = { workspace = true, optional = true }
 [dev-dependencies]
 pollster = { workspace = true }
 # `egui-in-nanaui` mixes an egui panel into the tree. egui-wgpu 0.37 is on
-# the same WGPU major; default features off so it picks no backends.
+# the same WGPU major and builds against the fork through the workspace
+# `[patch.crates-io]`; default features off so it picks no backends.
 egui = { version = "0.37", default-features = false, features = ["default_fonts"] }
 egui-wgpu = { version = "0.37", default-features = false }
 log = "0.4"

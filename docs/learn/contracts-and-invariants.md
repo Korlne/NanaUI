@@ -42,12 +42,12 @@ UiWorld → ExtractedNode → UiScene → SceneWgpuPainter
   - `pub fn route_input` 全仓仅定义于 `crates/nana-ui-runtime/src/framework/input.rs:397`（无头测试变体 `HeadlessInput::route_shaped` 位于同模块的 `input/headless.rs:119`，内部仍调用 `context.route_input`）。
   - `nana-ui`（`scene_host/host_services.rs`）与 `nana-ui-devtools`（`agent/runtime.rs:120`）全部只是将事件降维或转发给 `AppContext::route_input`，不存在第二套路由。
 
-## 合同四：全进程单一 GPU 设备与队列，锁定唯一 WGPU 主版本
+## 合同四：全进程单一 GPU 设备与队列，只有一份 wgpu
 
-- **是什么**：WGPU 是唯一正式图形后端，全工作区依赖图锁定唯一主版本（当前为 `wgpu = "30.0.0"`）。严禁创建第二个 `Device` / `Queue`，严禁在产品呈现路径上执行 CPU 回读（readback）。
+- **是什么**：WGPU 是唯一正式图形后端，依赖图里只有一份 wgpu：NanaUI 自己的 wgpu fork（`third_party/wgpu`，沿用上游包名与版本 30.0.1）。以 git 依赖本仓库就会带上它；应用若还用到 egui-wgpu 之类依赖 crates.io wgpu 的库，需在自己的工作区用 `[patch.crates-io]` 把 wgpu 与 naga 指到本仓库的同一个 rev（写法见 `third_party/wgpu/README.zh-CN.md`）。严禁创建第二个 `Device` / `Queue`，严禁在产品呈现路径上执行 CPU 回读（readback）。
 - **为什么**：两套设备意味着两套独立的提交时序与围栏，实时画面与 UI 控件无法在同一帧、同一次 `present` 中严格对齐；而 CPU 回读会直接打断 GPU 异步流水线。
 - **违反后果**：窗口缩放或高刷动画下画面撕裂、延迟一帧或跨设备句柄崩溃。
-- **核查方式**：`python3 scripts/check-engine-boundary.py` 强制检查公开签名——`wgpu::*` 只能在开启 `wgpu-interop` feature 时出现在白名单允许的四个 crate（`nana-gpu`、`nana-frame-exchange`、`nana-ui`、`nana-ui-devtools`）中，框架内部源码则通过私有模块 `nana_gpu::__framework` 访问。
+- **核查方式**：`python3 scripts/check-engine-boundary.py` 强制检查公开签名——`wgpu::*` 只能在开启 `wgpu-interop` feature 时出现在白名单允许的四个 crate（`nana-gpu`、`nana-frame-exchange`、`nana-ui`、`nana-ui-devtools`）中，框架内部源码则通过私有模块 `nana_gpu::__framework` 访问；同一脚本还要求依赖图里的 wgpu 与 naga 全部来自 `third_party/wgpu`。
 
 ## 合同五：原始窗口句柄绝不进入普通控件
 

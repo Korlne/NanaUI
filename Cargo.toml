@@ -37,7 +37,9 @@ members = [
     "examples/reactive-sfc",
 ]
 resolver = "2"
-exclude = ["tools/css-parity-webview", "crates/nana-icons-tabler"]
+# `third_party/wgpu` holds NanaUI's wgpu fork (see its README): ordinary
+# path dependencies, not members, so their tests and dev-dependencies stay out.
+exclude = ["tools/css-parity-webview", "crates/nana-icons-tabler", "third_party/wgpu"]
 
 [workspace.dependencies]
 nana-ui-core = { path = "crates/nana-ui-core" }
@@ -74,11 +76,15 @@ sys-locale = "0.3.2"
 # resolver and transport traits, which ureq keeps outside semver.
 ureq = { version = "=3.4.2", default-features = false, features = ["rustls"] }
 tungstenite = { version = "0.30", default-features = false, features = ["handshake", "rustls-tls-native-roots"] }
-# Keep a single WGPU major version across NanaUI.
+# wgpu and naga are NanaUI's fork in `third_party/wgpu` (upstream names and
+# versions kept); every graph holds that one copy. A git dependency on this
+# repository brings the fork along; an application that also uses wgpu
+# ecosystem crates patches crates.io wgpu onto it (see third_party/wgpu).
 # Framework crates never pick graphics backends. `nana-ui` turns
 # them all on through their default `wgpu-backends` feature; an application
 # that builds with `default-features = false` names its own backends on `wgpu`.
-wgpu = { version = "30.0.0", default-features = false, features = ["std", "parking_lot", "wgsl"] }
+wgpu = { version = "30.0.1", path = "third_party/wgpu/wgpu", default-features = false, features = ["std", "parking_lot", "wgsl"] }
+naga = { version = "30.0.1", path = "third_party/wgpu/naga" }
 # Hosted desktop windowing. winit 0.31-line git rev, not the iced-rs fork.
 # crates.io 0.31.0 stable is not required yet; pin exact sha (not floating master).
 # rwh_06 is always-on in 0.31; x11/wayland features are Linux-only optional backends.
@@ -148,3 +154,17 @@ opt-level = 3
 opt-level = 3
 [profile.dev.package.zstd-sys]
 opt-level = 3
+
+# Crates from crates.io that depend on wgpu (egui-wgpu in an example) build
+# against the fork too, so the graph keeps one wgpu.
+[patch.crates-io]
+naga = { path = "third_party/wgpu/naga" }
+naga-types = { path = "third_party/wgpu/naga-types" }
+wgpu = { path = "third_party/wgpu/wgpu" }
+wgpu-core = { path = "third_party/wgpu/wgpu-core" }
+wgpu-core-deps-apple = { path = "third_party/wgpu/wgpu-core-deps-apple" }
+wgpu-core-deps-emscripten = { path = "third_party/wgpu/wgpu-core-deps-emscripten" }
+wgpu-core-deps-windows-linux-android = { path = "third_party/wgpu/wgpu-core-deps-windows-linux-android" }
+wgpu-hal = { path = "third_party/wgpu/wgpu-hal" }
+wgpu-naga-bridge = { path = "third_party/wgpu/wgpu-naga-bridge" }
+wgpu-types = { path = "third_party/wgpu/wgpu-types" }

@@ -17,6 +17,6 @@ Read [`docs/reference/gpu.md`](../../../docs/reference/gpu.md) and the crate bou
 - Paint HostTexture and Custom nodes in document order inside the current destination pass. Do not resolve around interleaved GPU nodes or move them to a frame-end overlay.
 - Frame exchange is GPU-side. Keep producer handoff, prepare, present, and sampled-lease lifetime ordered; CPU readback belongs only to explicit snapshot tooling. Application frame data uses the exchange's typed payload, retained with its lease independently of epoch; a binding reads data from its currently sampled frame, never a separate latest-state snapshot.
 - Keep `CustomRenderNode` a layout and Scene node. Live2D or other producers supply ordinary HostTexture slots; framework crates do not gain product-specific renderer types.
-- Inspect `Cargo.toml`, `Cargo.lock`, and the dependency graph for dependency changes and keep one WGPU major version.
+- Inspect `Cargo.toml`, `Cargo.lock`, and the dependency graph for dependency changes and keep the one wgpu: NanaUI's fork in `third_party/wgpu`.
 
 Test geometry, invalidation, replacement, lifetime, and redraw behavior. Use `$nanaui-validation` for evidence and report untested backends or platforms.

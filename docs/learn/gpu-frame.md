@@ -9,7 +9,7 @@ title: GPU 与帧生命周期
 ## 职责与边界
 
 - **`nana-gpu` 是后端合同，WGPU 是其唯一实现**：`crates/nana-gpu/src/lib.rs:1` 规定 `GpuContext` 代表进程唯一的 GPU 设备（携带设备代际、硬件能力、粘性丢失状态、纹理创建/上传与提交守卫）；`FrameContext` 从 `begin_frame` 到 `submit` 或 drop 独占一个命令编码器（drop 即自动 `discard` 并回滚 painter 登记的保留状态写入）；`GpuTexture` 与 `GpuRenderTarget` 携带 `DeviceGeneration`，跨代际资源在入口即被拒绝。`wgpu-interop` feature 是显式的底层逃生舱。
-- **宿主拥有设备与帧（`AGENTS.md` 核心合同）**：宿主拥有 `Window`、`Surface`、`GpuContext`、每一帧的 `FrameContext` 以及帧调度；`SceneWgpuPainter` 建立在宿主上下文之上，只往宿主的帧里录制绘制命令。全工作区锁定唯一 `wgpu = "30.0.0"` 主版本，严禁创建第二个 `Device` / `Queue`，严禁在产品呈现路径上执行 CPU 回读。
+- **宿主拥有设备与帧（`AGENTS.md` 核心合同）**：宿主拥有 `Window`、`Surface`、`GpuContext`、每一帧的 `FrameContext` 以及帧调度；`SceneWgpuPainter` 建立在宿主上下文之上，只往宿主的帧里录制绘制命令。依赖图里只有 NanaUI 自己的 wgpu fork（`third_party/wgpu`，沿用上游包名与版本 30.0.1） 这一份 wgpu，严禁创建第二个 `Device` / `Queue`，严禁在产品呈现路径上执行 CPU 回读。
 - **`nana-frame-exchange` 只传递生产者帧**：在宿主已有的同一份 `GpuContext` 上提供有界最新帧交换池（内部通过 GPU 侧 `copy_texture_to_texture` 复制，不回读 CPU），自身不拥有 UI 设备或提交权（`crates/nana-frame-exchange/src/lib.rs:1`）。
 - **GPU 内容是树上的一等节点**：通过 `CustomRenderNode` 或 `HostTexture`（`GpuTextureView`）挂载在树上，像普通按钮一样参与布局、裁剪、命中测试与文档顺序。
 

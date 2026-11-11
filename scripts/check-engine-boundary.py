@@ -23,7 +23,8 @@ WGPU is the only GPU backend, but not the extension contract (Issue #183): the
 crates that carry the contract (nana-gpu, nana-frame-exchange, nana-ui) may
 name `wgpu` in a public signature only behind the explicit `wgpu-interop`
 feature, and only the framework crates may reach the backend through
-`nana_gpu::__framework`.
+`nana_gpu::__framework`. The wgpu and naga crates in the graph are all NanaUI's
+fork in `third_party/wgpu`.
 """
 
 from __future__ import annotations
@@ -108,6 +109,22 @@ NANA_TEXT_PRIVATE_BACKENDS = {
     "swash": "raster/outline.rs",
 }
 
+# NanaUI's wgpu fork (`third_party/wgpu`, upstream names kept): every copy of
+# these crates in the graph must be the vendored one, so there is one wgpu.
+FORKED_WGPU_DIR = ROOT / "third_party" / "wgpu"
+FORKED_WGPU_PACKAGES = {
+    "naga",
+    "naga-types",
+    "wgpu",
+    "wgpu-core",
+    "wgpu-core-deps-apple",
+    "wgpu-core-deps-emscripten",
+    "wgpu-core-deps-windows-linux-android",
+    "wgpu-hal",
+    "wgpu-naga-bridge",
+    "wgpu-types",
+}
+
 GPU_BACKEND_PACKAGES = {
     "ash",
     "d3d12",
@@ -164,9 +181,14 @@ def check_dependency_graph(data: dict) -> list[str]:
     packages = {p["id"]: p for p in data["packages"]}
     workspace = set(data["workspace_members"])
     graph = {n["id"]: [d["pkg"] for d in n["deps"] if any(k["kind"] != "dev" for k in d["dep_kinds"])] for n in data["resolve"]["nodes"]}
-    wgpu_majors = {p["version"].split(".")[0] for p in packages.values() if p["name"] == "wgpu"}
-    if len(wgpu_majors) > 1:
-        failures.append(f"multiple WGPU major versions: {sorted(wgpu_majors)}")
+    for package in packages.values():
+        if package["name"] not in FORKED_WGPU_PACKAGES:
+            continue
+        manifest = Path(package["manifest_path"]).resolve()
+        if not manifest.is_relative_to(FORKED_WGPU_DIR):
+            failures.append(
+                f"{package['name']} {package['version']} is not NanaUI's fork in third_party/wgpu: {package.get('source') or manifest}"
+            )
     for root in workspace:
         name = packages[root]["name"]
         pending = [(d, [name], False) for d in graph.get(root, [])]

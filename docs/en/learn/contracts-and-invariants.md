@@ -42,12 +42,12 @@ UiWorld → ExtractedNode → UiScene → SceneWgpuPainter
   - `pub fn route_input` is defined only at `crates/nana-ui-runtime/src/framework/input.rs:397` in the whole repository (the headless test variant `HeadlessInput::route_shaped` is at `input/headless.rs:119` in the same module and still calls `context.route_input` internally).
   - `nana-ui` (`scene_host/host_services.rs`) and `nana-ui-devtools` (`agent/runtime.rs:120`) only lower or forward events to `AppContext::route_input`; there is no second router.
 
-## Contract four: one GPU device and queue per process, locked to one WGPU major version
+## Contract four: one GPU device and queue per process, and one wgpu
 
-- **What**: WGPU is the only official graphics backend, and the whole workspace dependency graph is locked to one major version (currently `wgpu = "30.0.0"`). Creating a second `Device` / `Queue` is forbidden, and so is CPU readback on the product presentation path.
+- **What**: WGPU is the only official graphics backend, and the dependency graph holds one wgpu: NanaUI's fork in `third_party/wgpu` (upstream package names and version 30.0.1 kept). A git dependency on this repository brings it along; an application that also uses a crate built on crates.io wgpu, such as egui-wgpu, patches wgpu and naga onto this repository at the same rev with `[patch.crates-io]` in its own workspace (see `third_party/wgpu/README.md`). Creating a second `Device` / `Queue` is forbidden, and so is CPU readback on the product presentation path.
 - **Why**: two devices mean two independent submission timelines and fences, so live GPU content and UI controls cannot line up exactly in the same frame and the same `present`; CPU readback breaks the asynchronous GPU pipeline outright.
 - **Consequence of violation**: tearing, one-frame lag, or cross-device handle crashes during window resizing or high-refresh animation.
-- **How to verify**: `python3 scripts/check-engine-boundary.py` enforces public signatures: `wgpu::*` may appear only with the `wgpu-interop` feature enabled and only in the four allowlisted crates (`nana-gpu`, `nana-frame-exchange`, `nana-ui`, `nana-ui-devtools`); framework-internal sources reach it through the private module `nana_gpu::__framework`.
+- **How to verify**: `python3 scripts/check-engine-boundary.py` enforces public signatures: `wgpu::*` may appear only with the `wgpu-interop` feature enabled and only in the four allowlisted crates (`nana-gpu`, `nana-frame-exchange`, `nana-ui`, `nana-ui-devtools`); framework-internal sources reach it through the private module `nana_gpu::__framework`; the same script requires every wgpu and naga crate in the graph to come from `third_party/wgpu`.
 
 ## Contract five: raw window handles never reach ordinary controls
 
