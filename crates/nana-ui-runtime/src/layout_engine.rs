@@ -357,14 +357,14 @@ impl RuntimeLayoutEngine {
             frontier
         };
         let affected = if force_full {
-            HashSet::new()
+            crate::NodeSet::default()
         } else {
             frontier.nodes().clone()
         };
         // Facts change at a mutation and its metric-owning ancestors. Nodes
         // reached only because their parent's context/constraint changed keep
         // compatible intrinsic facts; their used size is still recomputed.
-        let mut metrics_changed = HashSet::new();
+        let mut metrics_changed = crate::NodeSet::default();
         let mut metric_edges = 0usize;
         for seed in typed_seeds.iter().filter(|seed| {
             frontier.is_seed(seed.node) && frontier.measure_nodes().contains(&seed.node)
@@ -3553,7 +3553,7 @@ impl<'a> LayoutInputMap<'a> {
 /// records, with the plans placed under them: shown again, they are placed
 /// afresh and record their contexts again (#392).
 fn collapse_omitted_boxes(
-    affected: &HashSet<StableNodeId>,
+    affected: &crate::NodeSet,
     nodes: &mut LayoutInputMap<'_>,
     retained: &mut DocumentLayoutCache,
     output: &mut PassOutput,
@@ -3592,11 +3592,11 @@ struct ScopeContext<'a> {
     /// What reached each affected node: a seed of its own, or which kind of
     /// dependency edge.
     frontier: &'a LayoutFrontier,
-    affected: &'a HashSet<StableNodeId>,
+    affected: &'a crate::NodeSet,
     /// `affected` by parent: what a container's plan re-checks or patches.
     affected_children: &'a AffectedChildren,
-    measure: &'a HashSet<StableNodeId>,
-    metrics_changed: &'a HashSet<StableNodeId>,
+    measure: &'a crate::NodeSet,
+    metrics_changed: &'a crate::NodeSet,
     retained: &'a DocumentLayoutCache,
     /// Which boxes lead to an affected node, built once per pass.
     reach: &'a AffectedIndex,
@@ -3613,7 +3613,7 @@ struct ScopeContext<'a> {
 struct AffectedChildren(crate::NodeMap<Vec<StableNodeId>>);
 
 impl AffectedChildren {
-    fn new(world: &UiWorld, affected: &HashSet<StableNodeId>) -> Self {
+    fn new(world: &UiWorld, affected: &crate::NodeSet) -> Self {
         let mut by_parent = crate::NodeMap::<Vec<StableNodeId>>::default();
         for &id in affected {
             if let Some(parent) = world.parent_id(id) {
@@ -3652,7 +3652,7 @@ impl ScopeContext<'_> {
 /// node is never cut.
 #[derive(Default)]
 pub(crate) struct AffectedIndex {
-    reach: HashSet<StableNodeId>,
+    reach: crate::NodeSet,
     reaching: HashMap<StableNodeId, Vec<StableNodeId>>,
 }
 

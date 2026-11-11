@@ -6319,10 +6319,10 @@ impl UiWorld {
             .union(LayoutDependencyFootprint::DEPENDS_ON_WRITING_CONTEXT);
         let lateral = LayoutDependencyFootprint::DEPENDS_ON_SIBLING_PREFIX
             .union(LayoutDependencyFootprint::CONTEXT_LOCAL_COUPLING);
-        let mut up_seen = HashSet::new();
-        let mut constraint_seen = HashSet::new();
-        let mut context_seen = HashSet::new();
-        let mut context_parents: HashMap<StableNodeId, LayoutDependencyFootprint> = HashMap::new();
+        let mut up_seen = NodeSet::default();
+        let mut constraint_seen = NodeSet::default();
+        let mut context_seen = NodeSet::default();
+        let mut context_parents: NodeMap<LayoutDependencyFootprint> = NodeMap::default();
         let mut pending = VecDeque::new();
 
         for seed in seeds {
