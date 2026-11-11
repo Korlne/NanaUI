@@ -2970,8 +2970,9 @@ impl AppContext {
         &mut self,
         entity: Entity<ActionMenuItem>,
     ) -> Result<bool, FrameworkError> {
+        let keep_open = self.read(entity, |item| item.keep_open)?;
         let activated = self.activate_component(entity, |item| item.disabled)?;
-        if activated {
+        if activated && !keep_open {
             self.close_owning_menu(entity.id)?;
         }
         Ok(activated)
@@ -2994,8 +2995,56 @@ impl AppContext {
                 }
                 return Ok(());
             }
+            if let Some(entity) = self.view_entity::<crate::AnchoredActionMenu>(id) {
+                self.dismiss_anchored_menu(entity)?;
+                return Ok(());
+            }
             current = self.world.parent_id(id);
         }
+        Ok(())
+    }
+
+    /// Close an open [`crate::AnchoredActionMenu`] as the framework does:
+    /// through its overlay host when it is that host's open overlay (focus
+    /// goes back where it was), and telling the application with
+    /// [`crate::AnchoredMenuDismissed`]. Returns whether it was open.
+    pub fn dismiss_anchored_menu(
+        &mut self,
+        entity: Entity<crate::AnchoredActionMenu>,
+    ) -> Result<bool, FrameworkError> {
+        if !self.read(entity, |menu| menu.open)? {
+            return Ok(false);
+        }
+        let host = self.world.parent_id(entity.id).filter(|host| {
+            self.world
+                .overlay_host(*host)
+                .is_some_and(|state| state.active == Some(entity.id))
+        });
+        if let Some(host) = host {
+            // The host's dismissal writes `open` and emits the event.
+            if self.dismiss_overlay(Entity::from_stable_id(host))? {
+                return Ok(true);
+            }
+        }
+        self.note_anchored_menu_dismissed(entity.id)?;
+        Ok(true)
+    }
+
+    /// The framework closed the anchored menu `root`: its `open` follows and
+    /// the application hears of it. Nothing for any other view.
+    pub(crate) fn note_anchored_menu_dismissed(
+        &mut self,
+        root: StableNodeId,
+    ) -> Result<(), FrameworkError> {
+        let Some(entity) = self.view_entity::<crate::AnchoredActionMenu>(root) else {
+            return Ok(());
+        };
+        self.update_component(entity, |menu, cx| {
+            if menu.open {
+                menu.open = false;
+                cx.emit(crate::AnchoredMenuDismissed);
+            }
+        })?;
         Ok(())
     }
 

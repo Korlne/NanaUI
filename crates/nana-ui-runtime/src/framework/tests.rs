@@ -14523,3 +14523,99 @@ fn a_ring_takes_no_layout_space_and_a_border_does() {
     assert_eq!(off.ring, None);
     assert!(!off.layout.paint.outline.is_active());
 }
+
+/// A menu built from components under an overlay host: whatever it holds,
+/// the arrows walk its focus stops; a command closes it and a `keep_open`
+/// row or another control leaves it open; a framework dismissal clears its
+/// `open` and is reported once.
+#[test]
+fn a_composed_anchored_menu_walks_its_stops_and_closes_on_a_command() {
+    let mut context = AppContext::new();
+    let document = DocumentId::new(1).unwrap();
+    let host = context
+        .create_component(document, OverlayHost::new())
+        .unwrap();
+    let menu = context
+        .create_component(document, crate::AnchoredActionMenu::new(24.0, 36.0))
+        .unwrap();
+    // A header of the application's own rows, a divider, then commands.
+    let header = context
+        .create_component(document, crate::Stack::column(0.0))
+        .unwrap();
+    let model = context
+        .create_component(
+            document,
+            crate::ListItem::new("Nana").role(crate::ListItemRole::Button),
+        )
+        .unwrap();
+    let divider = context
+        .create_component(document, crate::Divider::horizontal())
+        .unwrap();
+    let step_in = context
+        .create_component(
+            document,
+            crate::ActionMenuItem::new("Replace").keep_open(true),
+        )
+        .unwrap();
+    let remove = context
+        .create_component(document, crate::ActionMenuItem::new("Remove"))
+        .unwrap();
+    context.append_child(host, menu).unwrap();
+    context.append_child(menu, header).unwrap();
+    context.append_child(header, model).unwrap();
+    context.append_child(menu, divider).unwrap();
+    context.append_child(menu, step_in).unwrap();
+    context.append_child(menu, remove).unwrap();
+    context.activate_overlay(host, menu).unwrap();
+
+    let dismissals = Arc::new(Mutex::new(0usize));
+    let observed = Arc::clone(&dismissals);
+    context
+        .on(menu, move |_menu, _: &crate::AnchoredMenuDismissed, _cx| {
+            *observed.lock().unwrap() += 1;
+        })
+        .unwrap();
+
+    let stops = [model.stable_id(), step_in.stable_id(), remove.stable_id()];
+    let walk = |context: &mut AppContext, key: &str| {
+        assert!(context.navigate_open_anchored_menu(document, key).unwrap());
+        context.world().focused(document).unwrap()
+    };
+    // Opening it put focus on its first stop.
+    assert_eq!(context.world().focused(document), Some(stops[0]));
+    assert_eq!(walk(&mut context, "ArrowDown"), stops[1]);
+    assert_eq!(walk(&mut context, "ArrowDown"), stops[2]);
+    assert_eq!(walk(&mut context, "ArrowDown"), stops[0], "wraps");
+    assert_eq!(walk(&mut context, "ArrowUp"), stops[2]);
+    assert_eq!(walk(&mut context, "Home"), stops[0]);
+    assert_eq!(walk(&mut context, "End"), stops[2]);
+
+    // The application's own row and a `keep_open` command leave it open.
+    assert!(context.activate_node(model.stable_id()).unwrap());
+    assert!(context.activate_action_menu_item(step_in).unwrap());
+    assert!(context.read(menu, |menu| menu.open).unwrap());
+    assert_eq!(*dismissals.lock().unwrap(), 0);
+
+    // A command closes it, through the host.
+    assert!(context.activate_action_menu_item(remove).unwrap());
+    assert!(!context.read(menu, |menu| menu.open).unwrap());
+    assert_eq!(*dismissals.lock().unwrap(), 1);
+
+    // Opened again, Escape closes it the same way.
+    context
+        .update_component(menu, |menu, _| menu.open = true)
+        .unwrap();
+    context.activate_overlay(host, menu).unwrap();
+    assert!(
+        context
+            .route_overlay_key(document, OverlayKey::Escape)
+            .unwrap()
+    );
+    assert!(!context.read(menu, |menu| menu.open).unwrap());
+    assert_eq!(*dismissals.lock().unwrap(), 2);
+    assert!(
+        !context
+            .navigate_open_anchored_menu(document, "ArrowDown")
+            .unwrap()
+    );
+}

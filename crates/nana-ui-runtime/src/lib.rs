@@ -343,8 +343,8 @@ pub use media_transport::{
     MediaTransportPlacement, MediaTransportSlots, media_clock,
 };
 pub use menus::{
-    ActionMenuItem, AnchoredActionMenu, ContextMenu, ContextMenuEvent, ContextMenuItem,
-    resolve_anchored_origin,
+    ActionMenuItem, AnchoredActionMenu, AnchoredMenuDismissed, ContextMenu, ContextMenuEvent,
+    ContextMenuItem, resolve_anchored_origin,
 };
 pub use motion_api::{
     FlipBuilder, FoldBuilder, NodeMotion, SpringBuilder, TimelineBuilder, TransitionBuilder,

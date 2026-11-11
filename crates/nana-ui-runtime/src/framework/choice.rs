@@ -1152,6 +1152,69 @@ impl AppContext {
         Ok(true)
     }
 
+    /// Arrow keys, Home and End in an open [`crate::AnchoredActionMenu`]
+    /// that is the document's menu overlay: they walk its focus stops in
+    /// order, whatever components those are, wrapping at either end. From
+    /// no focus, or focus outside the menu, down and Home take the first
+    /// stop and up and End the last. The key is consumed while such a menu
+    /// is open, so it never moves a control underneath.
+    pub(crate) fn navigate_open_anchored_menu(
+        &mut self,
+        document: DocumentId,
+        key: &str,
+    ) -> Result<bool, FrameworkError> {
+        if !matches!(key, "ArrowDown" | "ArrowUp" | "Home" | "End") {
+            return Ok(false);
+        }
+        let Some(overlay) = self.active_runtime_overlay(document) else {
+            return Ok(false);
+        };
+        if overlay.kind != RuntimeOverlayKind::Menu
+            || self
+                .view_entity::<crate::AnchoredActionMenu>(overlay.root)
+                .is_none()
+        {
+            return Ok(false);
+        }
+        let focused = self.world.focused(document);
+        // A field in the menu keeps its own arrows and Home / End.
+        if self.world.focused_text_input(document).is_some() {
+            return Ok(false);
+        }
+        // Every focusable thing in it, not only the Tab stops: rows that
+        // rove among themselves for Tab are each a place the arrows reach.
+        let stops: Vec<StableNodeId> = self
+            .world
+            .document_order(document)
+            .into_iter()
+            .filter(|stop| {
+                *stop != overlay.root
+                    && self.world.is_mounted(*stop)
+                    && self
+                        .world
+                        .interaction(*stop)
+                        .is_some_and(|interaction| interaction.focusable)
+                    && !self.world.motion_blocks_input(*stop)
+                    && self.world.is_overlay_reachable(*stop)
+                    && self.overlay_descendant(overlay.root, *stop)
+            })
+            .collect();
+        if stops.is_empty() {
+            return Ok(true);
+        }
+        let current = focused.and_then(|node| stops.iter().position(|stop| *stop == node));
+        let last = stops.len() - 1;
+        let next = match (key, current) {
+            ("Home", _) | ("ArrowDown", None) => 0,
+            ("End", _) | ("ArrowUp", None) => last,
+            ("ArrowDown", Some(index)) => (index + 1) % stops.len(),
+            ("ArrowUp", Some(index)) => index.checked_sub(1).unwrap_or(last),
+            _ => return Ok(false),
+        };
+        self.focus_node(document, stops[next])?;
+        Ok(true)
+    }
+
     /// Before a commit that removes the focused node: where focus is in an
     /// open action menu, which survives the commit, so the item that takes
     /// its place can take focus ([`Self::hand_over_menu_focus`]).

@@ -404,6 +404,8 @@ impl AppContext {
         {
             self.dismiss_context_menu(Entity::from_stable_id(root))?;
         }
+        // So does a menu built from components.
+        self.note_anchored_menu_dismissed(root)?;
         Ok(true)
     }
 

@@ -1017,6 +1017,11 @@ impl AppContext {
             if self.navigate_open_action_menu(document, key)? {
                 return Ok(CONSUMED);
             }
+            // A menu built from components: the arrows walk whatever focus
+            // stops it holds.
+            if self.navigate_open_anchored_menu(document, key)? {
+                return Ok(CONSUMED);
+            }
         }
         // The application's key policy sees keys, not text.
         if !stroke.is_text()

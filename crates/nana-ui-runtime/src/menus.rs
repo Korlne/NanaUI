@@ -41,6 +41,10 @@ pub struct ActionMenuItem {
     pub danger: bool,
     pub disabled: bool,
     pub mark: crate::MenuItemMark,
+    /// Choosing it leaves the menu it is in open: a row that changes what
+    /// the menu shows (a level to step into, a switch whose state the menu
+    /// keeps showing) instead of running a command and going away.
+    pub keep_open: bool,
     pub style: NodeStyle,
 }
 
@@ -79,6 +83,7 @@ impl ActionMenuItem {
             danger: false,
             disabled: false,
             mark: crate::MenuItemMark::Command,
+            keep_open: false,
             style: item_style(size),
         }
     }
@@ -131,6 +136,13 @@ impl ActionMenuItem {
 
     pub fn active(mut self, active: bool) -> Self {
         self.active = active;
+        self
+    }
+
+    /// Leave the menu open when this row is chosen; see
+    /// [`Self::keep_open`](field@Self::keep_open).
+    pub fn keep_open(mut self, keep_open: bool) -> Self {
+        self.keep_open = keep_open;
         self
     }
 
@@ -254,7 +266,26 @@ impl crate::ComponentView for ActionMenuItem {
     }
 }
 
-/// Viewport-level menu surface pinned to a logical anchor.
+/// An [`AnchoredActionMenu`] was closed by the framework: a press outside
+/// it, Escape, another overlay of its host taking its place, or a command
+/// in it being chosen. Its `open` is already `false`. Not emitted when the
+/// application closes it by writing `open` itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AnchoredMenuDismissed;
+
+/// Viewport-level menu surface pinned to a logical anchor: a pointer menu
+/// built from components. Its children are the menu, laid out in a column,
+/// and may be anything: [`ActionMenuItem`] commands, a `Divider`, a header
+/// of the application's own rows, a scroll view, a text field.
+///
+/// Under an `OverlayHost` and opened with `AppContext::activate_overlay` it
+/// is a menu overlay like `ContextMenu`: it takes the pointer, a press
+/// outside it or Escape closes it, Tab stays inside it, and the arrow keys,
+/// Home and End walk its focus stops in order whatever they are. Choosing
+/// an [`ActionMenuItem`] in it closes it, unless the item is
+/// [`ActionMenuItem::keep_open`]; other controls in it leave it open. When
+/// the framework closes it, it writes `open = false` and emits
+/// [`AnchoredMenuDismissed`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct AnchoredActionMenu {
     pub open: bool,
