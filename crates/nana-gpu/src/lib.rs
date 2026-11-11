@@ -58,7 +58,8 @@ pub use context::{
 pub use error::GpuError;
 pub use frame::{FrameAcquisition, FrameContext, FrameId, GpuSubmission, RetainedWrites};
 pub use pipeline_cache::{
-    PipelineCacheKey, PipelineCacheLoad, PipelineCacheRefusal, PipelineCacheStore,
+    PipelineCacheKey, PipelineCacheLoad, PipelineCacheRefusal, PipelineCacheSaver,
+    PipelineCacheStore,
 };
 pub use policy::{FrameSlotId, GpuDeviceState, GpuPolicyStats, PipelineKey, TransientResourceKey};
 pub use realization::{GpuBuffer, GpuBufferDescriptor, GpuBufferUsages, GpuSampler};

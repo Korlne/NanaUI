@@ -366,6 +366,9 @@ pub(crate) struct GpuInner {
     /// The device's default pipeline cache (`wgpu::Device::set_default_pipeline_cache`
     /// holds it weakly, so it lives here).
     pub(crate) pipeline_cache: Mutex<Option<wgpu::PipelineCache>>,
+    /// What the store last received or supplied, so a later save happens
+    /// only when the cache grew past it.
+    pub(crate) pipeline_cache_mark: Mutex<crate::pipeline_cache::PersistMark>,
 }
 
 /// The one device a process renders with. Cloning is cheap and keeps the
@@ -453,6 +456,7 @@ impl GpuContext {
                 pending_uploads: Mutex::new(crate::upload::UploadBatch::default()),
                 pipeline_cache_key,
                 pipeline_cache: Mutex::new(pipeline_cache),
+                pipeline_cache_mark: Mutex::new(Default::default()),
             }),
         }
     }

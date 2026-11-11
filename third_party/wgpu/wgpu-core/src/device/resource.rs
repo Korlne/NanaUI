@@ -4139,6 +4139,9 @@ impl Device {
                     }
                 },
             )?;
+        if let Some(cache) = &cache {
+            cache.note_pipeline_built();
+        }
 
         let immediate_slots_required =
             shader_module
@@ -5005,6 +5008,9 @@ impl Device {
                 },
             )?
         };
+        if let Some(cache) = &cache {
+            cache.note_pipeline_built();
+        }
 
         let pass_context = RenderPassContext {
             attachments: AttachmentData {
@@ -5138,6 +5144,7 @@ impl Device {
             label: desc.label.to_string(),
             // This would be none in the error condition, which we don't implement yet
             raw: ManuallyDrop::new(raw),
+            pipelines_built: AtomicU64::new(0),
         };
 
         let cache = Arc::new(cache);

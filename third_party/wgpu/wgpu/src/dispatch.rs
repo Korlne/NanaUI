@@ -318,6 +318,11 @@ pub trait ComputePipelineInterface: CommonTraits {
 }
 pub trait PipelineCacheInterface: CommonTraits {
     fn get_data(&self) -> Option<Vec<u8>>;
+    /// NanaUI fork: see `PipelineCache::pipelines_built`. Backends without
+    /// caches keep the default.
+    fn pipelines_built(&self) -> Option<u64> {
+        None
+    }
 }
 pub trait CommandEncoderInterface: CommonTraits {
     fn copy_buffer_to_buffer(

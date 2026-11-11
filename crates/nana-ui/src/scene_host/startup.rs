@@ -576,6 +576,7 @@ impl<Message: Send + 'static> PendingStartup<Message> {
                 #[cfg(not(target_os = "android"))]
                 accessibility,
                 painter: painter.map(|(receiver, profile)| (profile, receiver)),
+                pipeline_cache: self.options.pipeline_cache.clone(),
                 icons: self.icons,
                 startup,
             },

@@ -59,8 +59,8 @@ other by path, so:
   so `cargo test --workspace` runs it):
   - `dx12_cache_format` compiles `wgpu-hal/src/dx12/pipeline_cache.rs` in
     directly, so that module's own unit tests run there, on every OS;
-  - `pipeline_cache` covers the DX12 cache and `set_default_pipeline_cache`
-    through the `wgpu` API;
+  - `pipeline_cache` covers the DX12 cache, `set_default_pipeline_cache` and
+    `PipelineCache::pipelines_built` through the `wgpu` API;
   - `surface_reconfigure` (Windows) reconfigures a small window's surface on
     DX12 and Vulkan while another thread submits;
   - `timed_poll` races zero-timeout waits against other threads' polls and
@@ -132,6 +132,14 @@ is still returned when the wait itself times out.
   and the validation key names the compiler (kind, version and DXC commit):
   cache bytes move between adapters but not between compilers. PSOs are not
   cached (`ID3D12PipelineLibrary`); drivers keep their own.
+- **`wgpu::PipelineCache::pipelines_built() -> Option<u64>`** (new). How many
+  pipelines were created through the cache, named in their descriptor or as
+  the device default; a hit counts too. A count unchanged since the last
+  `get_data` means nothing could have been added, so a host skips fetching
+  and saving. `wgpu-core` keeps an atomic counter on its `PipelineCache`,
+  bumped after a render or compute pipeline is created with it, and exposes
+  `Global::pipeline_cache_pipelines_built`; the dispatch trait method
+  defaults to `None`, so custom and WebGPU backends still compile.
 
 ### A timed poll racing another thread's poll reports a timeout
 

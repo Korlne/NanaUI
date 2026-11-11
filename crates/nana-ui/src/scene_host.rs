@@ -9,6 +9,7 @@ mod display;
 mod host_services;
 mod input;
 mod output;
+mod pipeline_cache;
 mod presence;
 mod present;
 mod production;
@@ -319,6 +320,9 @@ struct WindowManager<Program: RuntimeProgram> {
         crate::ScenePresentationProfile,
         Receiver<startup::StartupPainter>,
     )>,
+    /// The host's pipeline cache store, when the application gave one: saved
+    /// to as pipelines compile, restored onto a replacement device.
+    pipeline_cache: Option<pipeline_cache::HostPipelineCache>,
     /// Set when a skin material compiled off the UI thread is ready: every
     /// window paints again, since any of them may draw it.
     material_redraws: Arc<std::sync::atomic::AtomicBool>,
@@ -398,6 +402,10 @@ impl<Program: RuntimeProgram> Drop for WindowManager<Program> {
         // Shutdown is the bounded final-flush lane. Normal UI updates only
         // advance the coordinator generation and never synchronously flush.
         let _ = self.store.flush();
+        // Pipelines compiled since the last save, if any.
+        if let Some(cache) = &mut self.pipeline_cache {
+            cache.finish();
+        }
     }
 }
 
@@ -1072,6 +1080,7 @@ fn initialize<Program: RuntimeProgram>(
             #[cfg(not(target_os = "android"))]
             accessibility: None,
             painter: None,
+            pipeline_cache: None,
             icons: None,
             startup,
         },
@@ -1098,6 +1107,8 @@ struct PrimaryStart {
         crate::ScenePresentationProfile,
         Receiver<startup::StartupPainter>,
     )>,
+    /// The store the startup thread restored the device's cache from.
+    pipeline_cache: Option<Arc<dyn crate::PipelineCacheStore>>,
     /// Rendered off the event thread while the device was requested.
     icons: Option<Receiver<SceneIcons>>,
     startup: startup::HostStartup,
@@ -1125,6 +1136,7 @@ fn complete_startup<Program: RuntimeProgram>(
         #[cfg(not(target_os = "android"))]
             accessibility: early_accessibility,
         painter: early_painter,
+        pipeline_cache,
         icons,
         startup: host_startup,
     } = start;
@@ -1362,6 +1374,7 @@ fn complete_startup<Program: RuntimeProgram>(
         texture_subscriptions: HashMap::new(),
         texture_redraws: Arc::new(Mutex::new(HashSet::new())),
         startup_painter: None,
+        pipeline_cache: pipeline_cache.map(pipeline_cache::HostPipelineCache::new),
         material_redraws: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         material_waker: None,
         image_targets: Arc::new(Mutex::new(HashMap::new())),
@@ -1415,6 +1428,7 @@ fn complete_startup<Program: RuntimeProgram>(
         }
         _ => {
             let _ = ready.painter_mut(profile);
+            ready.watch_pipeline_cache();
         }
     }
     ready.prepare_window_chrome(

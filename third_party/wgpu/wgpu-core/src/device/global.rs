@@ -1906,6 +1906,18 @@ impl Global {
         device.set_default_pipeline_cache(cache.as_ref())
     }
 
+    /// NanaUI fork: how many pipelines were created through this cache, named
+    /// in their descriptor or as the device default. `None` for an invalid
+    /// cache.
+    pub fn pipeline_cache_pipelines_built(&self, id: id::PipelineCacheId) -> Option<u64> {
+        self.hub
+            .pipeline_caches
+            .get(id)
+            .get()
+            .ok()
+            .map(|cache| cache.pipelines_built.load(Ordering::Relaxed))
+    }
+
     pub fn pipeline_cache_get_data(&self, id: id::PipelineCacheId) -> Option<Vec<u8>> {
         use crate::pipeline_cache;
         api_log!("PipelineCache::get_data");

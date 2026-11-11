@@ -16,13 +16,22 @@
 //! 3. After building them (and again later, if it likes), save
 //!    [`GpuContext::pipeline_cache_data`].
 //!
+//! Pipelines built later (materials, charts, families built on first use)
+//! reach the store through [`PipelineCacheSaver`], which saves off the
+//! calling thread once a burst of new pipelines has settled, and once more
+//! when it is finished, each time only if the cache grew
+//! ([`GpuContext::persist_pipeline_cache_if_grown`]). A device replaced
+//! after a loss starts from the store again; the scene host does that before
+//! anything rebuilds.
+//!
 //! Bytes that are not a cache, belong to another adapter or backend, were
 //! truncated or corrupted, or were written by an older format are refused, and
 //! the device keeps compiling as if nothing was loaded. Loading never fails a
 //! device and never raises a backend validation error.
 
 use std::fmt;
-use std::sync::Arc;
+use std::sync::{Arc, Condvar, Mutex};
+use std::time::Duration;
 
 use crate::{GpuBackend, GpuContext};
 
@@ -72,9 +81,12 @@ impl fmt::Display for PipelineCacheKey {
 
 /// Where a host keeps cache bytes between runs, for hosts that hand the
 /// framework a store instead of calling [`GpuContext::load_pipeline_cache`]
-/// and [`GpuContext::pipeline_cache_data`] themselves. Both calls happen off
-/// the event thread; neither may panic. A store that has nothing, or fails,
-/// returns `None` or drops the bytes: the device then compiles as usual.
+/// and [`GpuContext::pipeline_cache_data`] themselves. Neither call may
+/// panic, and neither ever runs on a frame path: the startup thread and
+/// [`PipelineCacheSaver`]'s thread make them, and so does the scene host
+/// while it replaces a device (which already blocks on the new device) and
+/// while it shuts down. A store that has nothing, or fails, returns `None`
+/// or drops the bytes: the device then compiles as usual.
 pub trait PipelineCacheStore: Send + Sync {
     fn load(&self, key: &PipelineCacheKey) -> Option<Vec<u8>>;
     fn save(&self, key: &PipelineCacheKey, bytes: &[u8]);
@@ -209,6 +221,15 @@ fn resolve<F: Future>(future: F) -> Option<F::Output> {
     }
 }
 
+/// Where the cache stood when the store last received or supplied it.
+#[derive(Debug, Default)]
+pub(crate) struct PersistMark {
+    /// The cache's pipeline count then (`wgpu::PipelineCache::pipelines_built`).
+    built: Option<u64>,
+    /// The length of the cache's own bytes then.
+    len: usize,
+}
+
 impl GpuContext {
     /// Which saved bytes this device can use, or `None` when it has no
     /// pipeline cache to persist.
@@ -235,6 +256,10 @@ impl GpuContext {
             .unwrap_or_else(|error| error.into_inner());
         match create(device, Some(payload)) {
             Some(cache) => {
+                *self.pipeline_cache_mark() = PersistMark {
+                    built: cache.pipelines_built(),
+                    len: payload.len(),
+                };
                 *slot = Some(cache);
                 PipelineCacheLoad::Loaded
             }
@@ -257,12 +282,75 @@ impl GpuContext {
     /// Save [`Self::pipeline_cache_data`] to `store`. Whether there was
     /// anything to save.
     pub fn persist_pipeline_cache(&self, store: &dyn PipelineCacheStore) -> bool {
-        let (Some(key), Some(bytes)) = (&self.inner.pipeline_cache_key, self.pipeline_cache_data())
-        else {
+        self.persist(store, false)
+    }
+
+    /// [`Self::persist_pipeline_cache`], but only when the cache grew since
+    /// the store last received or supplied it: a pipeline compiled that the
+    /// cache did not have. Pipelines found in the cache, or none built at
+    /// all, save nothing, and when no pipeline was built since the last
+    /// check the cache's bytes are not even fetched. Whether it saved.
+    pub fn persist_pipeline_cache_if_grown(&self, store: &dyn PipelineCacheStore) -> bool {
+        self.persist(store, true)
+    }
+
+    fn persist(&self, store: &dyn PipelineCacheStore, only_grown: bool) -> bool {
+        let Some(key) = &self.inner.pipeline_cache_key else {
             return false;
         };
-        store.save(key, &bytes);
+        let (built, payload) = {
+            let slot = self
+                .inner
+                .pipeline_cache
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            let Some(cache) = slot.as_ref() else {
+                return false;
+            };
+            // Read before the bytes: a pipeline built in between is counted
+            // again next time rather than missed.
+            let built = cache.pipelines_built();
+            if only_grown && built.is_some() && built == self.pipeline_cache_mark().built {
+                return false;
+            }
+            let Some(payload) = cache.get_data() else {
+                return false;
+            };
+            (built, payload)
+        };
+        {
+            let mut mark = self.pipeline_cache_mark();
+            if only_grown && payload.len() <= mark.len {
+                // Within one process a cache only gains entries, so bytes no
+                // longer than the store's hold nothing new.
+                mark.built = built;
+                return false;
+            }
+            *mark = PersistMark {
+                built,
+                len: payload.len(),
+            };
+        }
+        // The store's I/O runs with no lock held.
+        store.save(key, &wrap(key, &payload));
         true
+    }
+
+    fn pipeline_cache_mark(&self) -> std::sync::MutexGuard<'_, PersistMark> {
+        self.inner
+            .pipeline_cache_mark
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+    }
+
+    /// Pipelines built through the device's cache so far.
+    fn pipelines_built(&self) -> Option<u64> {
+        self.inner
+            .pipeline_cache
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .as_ref()
+            .and_then(wgpu::PipelineCache::pipelines_built)
     }
 
     /// The cache's bytes for the host to save under
@@ -277,6 +365,153 @@ impl GpuContext {
             .as_ref()?
             .get_data()?;
         Some(wrap(key, &payload))
+    }
+}
+
+/// Saves a device's pipeline cache to a store from a thread of its own, so
+/// pipelines compiled after startup (materials, charts, families built on
+/// first use) are there next run too.
+///
+/// Every `interval` the thread checks whether pipelines were built; once a
+/// check finds none built since the previous one (a burst of compiles has
+/// settled), it saves with [`GpuContext::persist_pipeline_cache_if_grown`].
+/// So it saves at most once per `interval`, never in the middle of a burst,
+/// and only bytes the store does not already have. An idle check reads one
+/// counter. Nothing it does touches a frame.
+///
+/// [`Self::finish`] (or dropping it) saves once more if the cache grew and
+/// waits for that; [`Self::abandon`] stops without saving. A lost device is
+/// never saved.
+pub struct PipelineCacheSaver {
+    gpu: GpuContext,
+    shared: Arc<SaverShared>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+#[derive(Default)]
+struct SaverShared {
+    stop: Mutex<Option<SaverStop>>,
+    wake: Condvar,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SaverStop {
+    Finish,
+    Abandon,
+}
+
+impl PipelineCacheSaver {
+    /// The interval hosts use unless they have a reason to pick another.
+    pub const DEFAULT_INTERVAL: Duration = Duration::from_secs(10);
+
+    /// Starts saving `gpu`'s cache to `store`. `None` when the device has no
+    /// cache or the thread could not start. Restore the cache first
+    /// ([`GpuContext::restore_pipeline_cache`]): the saver does not, and a
+    /// save before the restore would replace the stored bytes.
+    pub fn spawn(
+        gpu: &GpuContext,
+        store: Arc<dyn PipelineCacheStore>,
+        interval: Duration,
+    ) -> Option<Self> {
+        gpu.pipeline_cache_key()?;
+        let shared = Arc::new(SaverShared::default());
+        let thread = std::thread::Builder::new()
+            .name("nana-pipeline-cache".into())
+            .spawn({
+                let (gpu, shared) = (gpu.clone(), Arc::clone(&shared));
+                move || save_loop(&gpu, store.as_ref(), &shared, interval)
+            })
+            .ok()?;
+        Some(Self {
+            gpu: gpu.clone(),
+            shared,
+            thread: Some(thread),
+        })
+    }
+
+    /// The device whose cache this saves.
+    pub fn gpu(&self) -> &GpuContext {
+        &self.gpu
+    }
+
+    /// Stops, saving once more if the cache grew (and the device was not
+    /// lost). Returns once that save is done.
+    pub fn finish(mut self) {
+        self.stop(SaverStop::Finish);
+    }
+
+    /// Stops without saving again.
+    pub fn abandon(mut self) {
+        self.stop(SaverStop::Abandon);
+    }
+
+    fn stop(&mut self, how: SaverStop) {
+        let Some(thread) = self.thread.take() else {
+            return;
+        };
+        *self
+            .shared
+            .stop
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = Some(how);
+        self.shared.wake.notify_all();
+        let _ = thread.join();
+    }
+}
+
+impl Drop for PipelineCacheSaver {
+    fn drop(&mut self) {
+        self.stop(SaverStop::Finish);
+    }
+}
+
+impl fmt::Debug for PipelineCacheSaver {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PipelineCacheSaver")
+            .field("generation", &self.gpu.generation())
+            .finish_non_exhaustive()
+    }
+}
+
+fn save_loop(
+    gpu: &GpuContext,
+    store: &dyn PipelineCacheStore,
+    shared: &SaverShared,
+    interval: Duration,
+) {
+    let mut previous = gpu.pipelines_built();
+    let mut stop = shared
+        .stop
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    loop {
+        stop = shared
+            .wake
+            .wait_timeout_while(stop, interval, |stop| stop.is_none())
+            .unwrap_or_else(|error| error.into_inner())
+            .0;
+        let how = *stop;
+        if gpu.is_lost() || how == Some(SaverStop::Abandon) {
+            return;
+        }
+        if how == Some(SaverStop::Finish) {
+            drop(stop);
+            gpu.persist_pipeline_cache_if_grown(store);
+            return;
+        }
+        // Checked without the stop lock held, so `finish` never waits on the
+        // store behind a periodic save for longer than that save.
+        drop(stop);
+        let now = gpu.pipelines_built();
+        if now == previous {
+            gpu.persist_pipeline_cache_if_grown(store);
+        }
+        previous = now;
+        stop = shared
+            .stop
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
     }
 }
 

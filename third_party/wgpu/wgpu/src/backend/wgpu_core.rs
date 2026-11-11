@@ -2481,6 +2481,10 @@ impl dispatch::PipelineCacheInterface for CorePipelineCache {
     fn get_data(&self) -> Option<Vec<u8>> {
         self.context.0.pipeline_cache_get_data(self.id)
     }
+
+    fn pipelines_built(&self) -> Option<u64> {
+        self.context.0.pipeline_cache_pipelines_built(self.id)
+    }
 }
 
 impl Drop for CorePipelineCache {
