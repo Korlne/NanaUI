@@ -10,6 +10,7 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
+use crate::marker::{RunMarker, UncleanExit};
 use crate::record::{FaultRecord, Field, Record, pack, saturating_ns};
 use crate::ring::Ring;
 use crate::schema::{EventDescriptor, Severity};
@@ -90,6 +91,10 @@ pub(crate) struct Shared {
     worker_done: (Mutex<bool>, Condvar),
     pub(crate) shutdown: AtomicBool,
     pub(crate) stats: Stats,
+    /// This session's run marker; taken (and deleted) by a clean shutdown.
+    pub(crate) marker: Mutex<Option<RunMarker>>,
+    /// Earlier sessions found without a clean shutdown at start.
+    unclean_exits: Vec<UncleanExit>,
 }
 
 pub(crate) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -401,6 +406,16 @@ impl Diagnostics {
         meta.monotonic_start_ns = crate::clock::monotonic_now_ns();
         let state = WorkerState::new(&config, &meta);
         let stem = crate::files::session_stem(&meta.app_id, meta.wall_start_unix_ns, meta.pid);
+        // Earlier sessions' markers first, then this one's.
+        let marker_dir = (enabled && config.run_marker)
+            .then(|| paths.crash.clone().or_else(|| paths.logs.clone()))
+            .flatten();
+        let unclean_exits = marker_dir.as_deref().map_or_else(Vec::new, |dir| {
+            crate::marker::take_stale(dir, &meta.app_id, paths.logs.as_deref())
+        });
+        let marker = marker_dir
+            .as_deref()
+            .and_then(|dir| RunMarker::create(dir, &stem, &meta).ok());
         let shared = Arc::new(Shared {
             id: NEXT_INSTANCE.fetch_add(1, Ordering::Relaxed),
             min_severity,
@@ -420,6 +435,8 @@ impl Diagnostics {
             worker_done: (Mutex::new(!enabled), Condvar::new()),
             shutdown: AtomicBool::new(!enabled),
             stats: Stats::default(),
+            marker: Mutex::new(marker),
+            unclean_exits,
         });
         if enabled {
             let worker_shared = shared.clone();
@@ -453,7 +470,51 @@ impl Diagnostics {
                 }
             }
         }
-        Self { shared }
+        let diagnostics = Self { shared };
+        diagnostics.report_unclean_exits();
+        diagnostics
+    }
+
+    /// One fault per earlier session that left its marker, and (unless each
+    /// of them wrote its own crash snapshot) an `unclean-exit` snapshot,
+    /// written before `start` returns so [`Diagnostics::last_crash`] sees it
+    /// at once.
+    fn report_unclean_exits(&self) {
+        let shared = &self.shared;
+        if shared.unclean_exits.is_empty() {
+            return;
+        }
+        for exit in &shared.unclean_exits {
+            shared.fault(
+                &crate::framework::diagnostics::UNCLEAN_EXIT,
+                &[
+                    Field::new("session_id", exit.session_id),
+                    Field::new("pid", exit.pid),
+                    Field::new("start_unix_ns", exit.start_unix_ns),
+                    Field::new("last_write_unix_ns", exit.last_write_unix_ns),
+                ],
+                Some(exit.describe().into_boxed_str()),
+            );
+        }
+        if shared
+            .unclean_exits
+            .iter()
+            .any(|exit| exit.crash_snapshot.is_none())
+        {
+            let _ = worker::snapshot_now(
+                shared,
+                crate::crash::UNCLEAN_EXIT_REASON,
+                None,
+                SYNC_SNAPSHOT_WAIT,
+            );
+        }
+    }
+
+    /// Earlier sessions of this app that ended without shutting down, found
+    /// (and reported as `diagnostics.unclean_exit` faults) at start. Empty
+    /// when `config.run_marker` is off.
+    pub fn unclean_exits(&self) -> &[UncleanExit] {
+        &self.shared.unclean_exits
     }
 
     /// Make this the process-wide instance the macros write to. Returns a
@@ -572,6 +633,37 @@ impl Diagnostics {
         }
     }
 
+    /// Record a fault and write a flight-recorder snapshot from the calling
+    /// thread before returning, for faults the process may not outlive (a
+    /// lost GPU device) where the worker's next poll could come too late.
+    /// Waits up to `wait` for the worker's state; blocks on disk. Never call
+    /// it on a per-frame path.
+    pub fn fault_with_snapshot(
+        &self,
+        event: &'static EventDescriptor,
+        fields: &[Field],
+        message: Option<&str>,
+        reason: &str,
+        wait: Duration,
+    ) -> io::Result<PathBuf> {
+        let shared = &self.shared;
+        if !shared.config.enabled || (event.severity as u8) < shared.min_severity {
+            return Err(io::Error::other("diagnostics are disabled"));
+        }
+        let (len, values) = pack(event, fields);
+        let fault = FaultRecord {
+            record: Record {
+                ts_ns: shared.now_ns(),
+                event,
+                thread: 0,
+                len,
+                values,
+            },
+            message: message.map(Into::into),
+        };
+        worker::snapshot_now(shared, reason, Some(fault), wait)
+    }
+
     /// Drain and write everything pending. `durable` also syncs to disk.
     /// Blocks up to `timeout`; returns whether the worker confirmed.
     pub fn flush(&self, durable: bool, timeout: Duration) -> bool {
@@ -624,6 +716,10 @@ impl Diagnostics {
         }
         // Covers the no-worker case; idempotent after the worker's own exit.
         shared.release_producers();
+        // A clean exit, even if a hung disk kept the worker from finishing.
+        if let Some(marker) = lock(&shared.marker).take() {
+            marker.remove();
+        }
     }
 
     pub fn stats(&self) -> DiagnosticsStats {
@@ -653,6 +749,10 @@ impl Diagnostics {
 
 /// Longest [`Diagnostics::shutdown`] waits for the worker's final flush.
 pub const SHUTDOWN_WAIT: Duration = Duration::from_secs(5);
+
+/// How long a synchronous snapshot taken outside the worker waits for its
+/// state lock.
+pub(crate) const SYNC_SNAPSHOT_WAIT: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AlreadyInstalled;
@@ -696,6 +796,7 @@ pub fn install(
         return Err(AlreadyInstalled);
     }
     let panic_hook = config.enabled && config.panic_hook;
+    let native_crash_handler = config.enabled && config.native_crash_handler;
     let diagnostics = Diagnostics::start(config, meta, paths);
     let guard = match diagnostics.install_global() {
         Ok(guard) => guard,
@@ -706,6 +807,9 @@ pub fn install(
     };
     if panic_hook {
         crate::crash::install_panic_hook();
+    }
+    if native_crash_handler {
+        crate::native_crash::install();
     }
     Ok(guard)
 }
@@ -743,6 +847,22 @@ pub fn register_thread() {
 pub fn set_session_info(key: impl Into<String>, value: impl Into<String>) {
     if let Some(diagnostics) = global() {
         diagnostics.set_session_info(key, value);
+    }
+}
+
+/// [`Diagnostics::fault_with_snapshot`] on the global instance, waiting up to
+/// one second for its state. Fails when none is installed.
+pub fn fault_with_snapshot(
+    event: &'static EventDescriptor,
+    fields: &[Field],
+    message: Option<&str>,
+    reason: &str,
+) -> io::Result<PathBuf> {
+    match global() {
+        Some(diagnostics) => {
+            diagnostics.fault_with_snapshot(event, fields, message, reason, SYNC_SNAPSHOT_WAIT)
+        }
+        None => Err(io::Error::other("no diagnostics instance is installed")),
     }
 }
 

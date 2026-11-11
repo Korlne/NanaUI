@@ -41,7 +41,9 @@ mod crash;
 mod export;
 mod files;
 pub mod framework;
+mod marker;
 mod metric;
+mod native_crash;
 pub mod nlog;
 mod package;
 mod priority;
@@ -55,15 +57,17 @@ pub mod stall;
 mod throttle;
 mod worker;
 
-pub use crash::install_panic_hook;
+pub use crash::{CrashKind, LastCrash, install_panic_hook, last_crash, last_crash_in};
 pub use export::{ExportOptions, to_json_lines, to_text};
 pub use files::Sink;
+pub use marker::UncleanExit;
 pub use metric::{HISTOGRAM_BUCKETS, HistogramCells, HistogramSample, Metric, MetricValue};
 pub use package::{PackageOptions, export_package_from};
 pub use record::{Field, FieldValue};
 pub use runtime::{
-    __private, AlreadyInstalled, Diagnostics, DiagnosticsGuard, DiagnosticsStats, enabled, global,
-    install, metrics_enabled, register_thread, set_session_info, snapshot,
+    __private, AlreadyInstalled, Diagnostics, DiagnosticsGuard, DiagnosticsStats, enabled,
+    fault_with_snapshot, global, install, metrics_enabled, register_thread, set_session_info,
+    snapshot,
 };
 pub use schema::{
     Domain, EventDescriptor, FieldDescriptor, FieldKind, MAX_FIELDS, MetricDescriptor, MetricKind,
