@@ -17,6 +17,7 @@ const EN: Record<string, string> = {
   "原生图表引擎": "Native diagram engine",
   "iOS 实验宿主": "iOS experimental host",
   "通用片元材质": "General fragment materials",
+  "局部呈现": "Partial present",
   "移动宿主": "Mobile host",
   "Windows GPU 共享纹理输入": "Windows GPU shared-texture input",
   "Runtime 与 Scene": "Runtime and Scene",
@@ -432,6 +433,7 @@ const zhSidebar = {
       items: [
         { text: "实时画面", link: "/reference/gpu" },
         { text: "通用片元材质", link: "/reference/materials" },
+        { text: "局部呈现", link: "/reference/partial-present" },
         { text: "窗口外输出（ExternalSurface）", link: "/reference/output" },
         { text: "Runtime 与 Scene", link: "/reference/runtime-scene" },
         { text: "架构合同", link: "/reference/architecture" },

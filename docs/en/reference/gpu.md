@@ -156,6 +156,10 @@ python perf/stack_attribution.py --scope "upload::record" $S/dx12-text-mutate-1p
 
 The `gpu-scene-*` sampling commands are as in §6. `nana-text-paint-benchmark` now picks its backend from `WGPU_BACKEND`.
 
+### 8. Measured: partial present (2026-11-11)
+
+What a caret-blink or hover frame costs on DX12, and the design and staged plan for presenting with dirty rectangles and tracking damage, are in [Partial present and damage tracking](./partial-present.md). Verdict: not now.
+
 ## Mounting host textures (`HostTexture` + `GpuTextureView`)
 
 Shader output, preview viewports, and offscreen render textures are nodes in the UI tree just like ordinary buttons: they take part in layout, are clipped, and can be hit. For a first integration, use the default path: draw the content into a sampleable texture, mount a `GpuTextureView` in the tree, and register it in `host_textures()` under the same string slot name.

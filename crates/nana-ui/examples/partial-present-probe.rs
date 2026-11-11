@@ -10,10 +10,12 @@
 //! - `still`: nothing changes, so the painter answers from its retained batch.
 //!
 //! Every frame is painted and presented in full, as the scene host does
-//! today. Two passes per run: the first times the CPU side (runtime flush,
-//! paint recording, submit, the wait in acquire, the present call) with
-//! frames overlapping as usual; the second waits for each frame and reads GPU
-//! timestamps around the painter's work. Prints one JSON object.
+//! today. One frame per 60 Hz period, each waited for before the next, and
+//! the run stops after 30 s, so the GPU is never loaded beyond one frame in
+//! flight. Two passes per run: the first times the CPU side (runtime flush,
+//! paint recording, submit, the wait in acquire, the present call); the
+//! second reads GPU timestamps around the painter's work. Prints one JSON
+//! object.
 //!
 //! ```text
 //! cargo run --release -p nana-ui --example partial-present-probe \
@@ -28,7 +30,7 @@ mod probe {
     use std::sync::Arc;
     use std::time::{Duration, Instant};
 
-    use nana_gpu::__framework;
+    use nana_ui::GpuRenderTarget;
     use nana_ui::runtime::{
         Button, Card, DocumentId, Entity, FlexDirection, FlexWrap, LayoutStyle, LayoutViewport,
         LengthSpec, List, NodeStyle, RuntimeDocument, SemanticColorRole, Text,
@@ -45,7 +47,10 @@ mod probe {
     const LOGICAL: [f64; 2] = [1600.0, 1000.0];
     const WARMUP: usize = 30;
     const FRAMES: usize = 240;
-    const LINE: &str = "    let layout = text.layout(constraints, &mut shaper).expect(\"wrapped line\");";
+    const PERIOD: Duration = Duration::from_micros(16_667);
+    const TIME_CAP: Duration = Duration::from_secs(30);
+    const LINE: &str =
+        "    let layout = text.layout(constraints, &mut shaper).expect(\"wrapped line\");";
 
     #[derive(Clone, Copy, PartialEq, Eq, Debug)]
     pub enum Scene {
@@ -117,7 +122,7 @@ mod probe {
 
     impl Page {
         fn step(&mut self, scene: Scene, frame: usize) {
-            let on = frame % 2 == 0;
+            let on = frame.is_multiple_of(2);
             let (entity, card) = match scene {
                 Scene::Still => return,
                 Scene::Caret => (
@@ -158,7 +163,11 @@ mod probe {
                 Scene::Caret => self.caret,
                 Scene::Hover => self.hover,
             };
-            let rect = self.document.context().world().layout_box(entity.stable_id())?;
+            let rect = self
+                .document
+                .context()
+                .world()
+                .layout_box(entity.stable_id())?;
             let x0 = (rect.x * scale).floor().max(0.0) as u32;
             let y0 = (rect.y * scale).floor().max(0.0) as u32;
             let x1 = ((rect.x + rect.width) * scale).ceil() as u32;
@@ -227,7 +236,9 @@ mod probe {
 
         fn read(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> Duration {
             let slice = self.mapped.slice(..);
-            slice.map_async(wgpu::MapMode::Read, |result| result.expect("map timestamps"));
+            slice.map_async(wgpu::MapMode::Read, |result| {
+                result.expect("map timestamps")
+            });
             device
                 .poll(wgpu::PollType::wait_indefinitely())
                 .expect("timestamps");
@@ -255,6 +266,8 @@ mod probe {
         shaper: NanaTextShaper,
         frame: usize,
         last_present: Option<Instant>,
+        frame_started: Instant,
+        run_started: Instant,
         samples: Samples,
         adapter: String,
         physical: [u32; 2],
@@ -269,6 +282,10 @@ mod probe {
             if done {
                 return false;
             }
+            if self.run_started.elapsed() > TIME_CAP {
+                return false;
+            }
+            self.frame_started = Instant::now();
             let window = self.window.clone().expect("window");
             let scale = window.scale_factor() as f32;
             let shared = self.shared.as_ref().expect("gpu");
@@ -296,7 +313,7 @@ mod probe {
                 _ => return true,
             };
             let acquire = started.elapsed();
-            let target = __framework::render_target(
+            let target = GpuRenderTarget::from_wgpu(
                 shared.gpu(),
                 frame
                     .texture
@@ -305,7 +322,7 @@ mod probe {
                 [frame.texture.width(), frame.texture.height()],
             );
             if let (true, Some(stamps)) = (timed, &self.timestamps) {
-                __framework::encoder(&mut recording).write_timestamp(&stamps.queries, 0);
+                recording.wgpu_encoder().write_timestamp(&stamps.queries, 0);
             }
             let started = Instant::now();
             painter
@@ -328,7 +345,7 @@ mod probe {
                 .expect("paint");
             let paint = started.elapsed();
             if let (true, Some(stamps)) = (timed, &self.timestamps) {
-                let encoder = __framework::encoder(&mut recording);
+                let encoder = recording.wgpu_encoder();
                 encoder.write_timestamp(&stamps.queries, 1);
                 encoder.resolve_query_set(&stamps.queries, 0..2, &stamps.resolved, 0);
                 encoder.copy_buffer_to_buffer(&stamps.resolved, 0, &stamps.mapped, 0, 16);
@@ -344,14 +361,23 @@ mod probe {
             let now = Instant::now();
             let interval = self.last_present.map(|last| now - last);
             self.last_present = Some(now);
+            // Bounded load: one frame per 60 Hz period and nothing queued
+            // behind it, as an isolated blink or hover frame is.
+            let device = shared.gpu().wgpu().device();
+            device
+                .poll(wgpu::PollType::wait_indefinitely())
+                .expect("frame completion");
+            if let Some(rest) = PERIOD.checked_sub(self.frame_started.elapsed()) {
+                std::thread::sleep(rest);
+            }
 
             if sampling {
                 let work = painter.last_gpu_work().unwrap_or_default();
                 self.samples.draw_calls = self.samples.draw_calls.max(work.draw_calls);
                 self.samples.batch_rebuilds += work.batch_rebuilds;
                 if timed {
-                    let device = __framework::device(shared.gpu());
-                    let queue = __framework::queue(shared.gpu());
+                    let device = shared.gpu().wgpu().device();
+                    let queue = shared.gpu().wgpu().queue();
                     if let Some(stamps) = &self.timestamps {
                         self.samples.gpu.push(stamps.read(device, queue));
                     }
@@ -415,19 +441,20 @@ mod probe {
             );
             let features =
                 wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS;
-            let graphics = pollster::block_on(HostedGpuContext::new(window.clone(), features, false))
-                .or_else(|_| {
-                    pollster::block_on(HostedGpuContext::new(
-                        window.clone(),
-                        wgpu::Features::empty(),
-                        false,
-                    ))
-                })
-                .expect("hosted GPU context");
+            let graphics =
+                pollster::block_on(HostedGpuContext::new(window.clone(), features, false))
+                    .or_else(|_| {
+                        pollster::block_on(HostedGpuContext::new(
+                            window.clone(),
+                            wgpu::Features::empty(),
+                            false,
+                        ))
+                    })
+                    .expect("hosted GPU context");
             let (shared, surface) = graphics.into_parts();
-            let info = __framework::adapter(shared.gpu()).get_info();
+            let info = shared.gpu().wgpu().adapter_info().clone();
             self.adapter = format!("{} ({:?})", info.name, info.backend);
-            let device = __framework::device(shared.gpu());
+            let device = shared.gpu().wgpu().device();
             self.timestamps = device
                 .features()
                 .contains(wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS)
@@ -476,19 +503,28 @@ mod probe {
             shaper: NanaTextShaper::default(),
             frame: 0,
             last_present: None,
+            frame_started: Instant::now(),
+            run_started: Instant::now(),
             samples: Samples::default(),
             adapter: String::new(),
             physical: [0, 0],
             damage_rect: None,
         };
-        EventLoop::new().expect("event loop").run_app(probe).expect("run");
+        EventLoop::new()
+            .expect("event loop")
+            .run_app(probe)
+            .expect("run");
     }
 }
 
 #[cfg(target_os = "windows")]
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let scene = match args.iter().find(|arg| !arg.starts_with("--")).map(String::as_str) {
+    let scene = match args
+        .iter()
+        .find(|arg| !arg.starts_with("--"))
+        .map(String::as_str)
+    {
         Some("hover") => probe::Scene::Hover,
         Some("still") => probe::Scene::Still,
         _ => probe::Scene::Caret,

@@ -156,6 +156,10 @@ python perf/stack_attribution.py --scope "upload::record" $S/dx12-text-mutate-1p
 
 `gpu-scene-*` 场景的采样命令同 §6。`nana-text-paint-benchmark` 现在按 `WGPU_BACKEND` 选后端。
 
+### 8. 实测：局部呈现（2026-11-11）
+
+光标闪烁、悬停这类小改动的帧在 DX12 上的开销，以及带脏矩形呈现与 damage 跟踪的设计和分阶段计划，见 [局部呈现与 damage 跟踪](./partial-present.md)。结论：现在不做。
+
 ## 挂载宿主纹理（`HostTexture` + `GpuTextureView`）
 
 着色器输出、预览视口、离屏渲染纹理与普通按钮一样，是界面树上占据布局、受裁剪、可命中的节点。首次接入请使用默认路径：把画面画到可采样纹理上，在树上挂载 `GpuTextureView`，并用同一个字符串槽位名在 `host_textures()` 中登记。
