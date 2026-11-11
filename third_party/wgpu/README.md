@@ -62,7 +62,9 @@ other by path, so:
   - `pipeline_cache` covers the DX12 cache and `set_default_pipeline_cache`
     through the `wgpu` API;
   - `surface_reconfigure` (Windows) reconfigures a small window's surface on
-    DX12 and Vulkan while another thread submits.
+    DX12 and Vulkan while another thread submits;
+  - `timed_poll` races zero-timeout waits against other threads' polls and
+    submissions on DX12 and Vulkan for a few seconds.
 
   A GPU test without an adapter skips; `NANA_REQUIRE_WGPU_FORK_TESTS=1`
   makes it fail instead, as the Windows CI job does for DX12.
@@ -130,3 +132,15 @@ is still returned when the wait itself times out.
   and the validation key names the compiler (kind, version and DXC commit):
   cache bytes move between adapters but not between compilers. PSOs are not
   cached (`ID3D12PipelineLibrary`); drivers keep their own.
+
+### A timed poll racing another thread's poll reports a timeout
+
+`Device::poll` with a `Wait` that times out reads the fence, then triages the
+queue. If the GPU finishes and another thread's poll triages every
+submission in between, the queue is empty while the fence value this poll
+read is still below its wait target. Upstream asserts that this cannot
+happen ("If the queue is empty, the current submission index … should be at
+least the wait submission index …") and panics. In `wgpu-core`'s
+`Device::maintain` the fork returns `QueueEmpty` only when the fence it read
+reached the wait target; otherwise the poll reports `Err(PollError::Timeout)`,
+which is what its own wait did. The `wgpu` API is unchanged.

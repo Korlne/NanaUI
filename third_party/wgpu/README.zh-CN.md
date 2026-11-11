@@ -35,7 +35,8 @@
 - 每项 fork 改动的测试写在 `third_party/wgpu-fork-tests`（工作区成员，`cargo test --workspace` 会跑它）：
   - `dx12_cache_format` 直接把 `wgpu-hal/src/dx12/pipeline_cache.rs` 编译进来，该模块自带的单元测试也在这里跑，所有系统都跑；
   - `pipeline_cache` 通过 `wgpu` 接口测试 DX12 缓存与 `set_default_pipeline_cache`；
-  - `surface_reconfigure`（Windows）在另一个线程提交的同时，对一个小窗口的 surface 在 DX12 与 Vulkan 上反复重配置。
+  - `surface_reconfigure`（Windows）在另一个线程提交的同时，对一个小窗口的 surface 在 DX12 与 Vulkan 上反复重配置；
+  - `timed_poll` 在 DX12 与 Vulkan 上让零超时的等待与其他线程的 poll、提交竞争几秒。
 
   没有适配器时 GPU 测试会跳过；设 `NANA_REQUIRE_WGPU_FORK_TESTS=1` 则改为失败，Windows CI 对 DX12 就是这样跑的。这些测试里的 GPU 负载要小且有上限。
 
@@ -74,3 +75,7 @@
   字节码与适配器无关，所以 `wgpu-core` 的头部在 DX12 上用固定的适配器键，校验键写的是编译器
   （种类、版本和 DXC 提交）：缓存字节可以换适配器使用，不能换编译器。不缓存 PSO
   （`ID3D12PipelineLibrary`），驱动自有缓存。
+
+### 带超时的 poll 与别的线程的 poll 竞争时报超时
+
+`Device::poll` 的 `Wait` 超时后先读围栏，再整理队列。若这期间 GPU 完成、另一个线程的 poll 把所有提交都整理掉了，队列为空，而这次 poll 读到的围栏值仍低于它等待的序号。上游断言这不可能发生（"If the queue is empty, the current submission index … should be at least the wait submission index …"）并 panic。fork 在 `wgpu-core` 的 `Device::maintain` 里只有读到的围栏达到等待序号时才返回 `QueueEmpty`，否则报 `Err(PollError::Timeout)`，也就是它自己那次等待的结果。`wgpu` 的接口没有变化。
