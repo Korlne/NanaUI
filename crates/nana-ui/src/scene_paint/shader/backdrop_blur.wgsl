@@ -70,7 +70,10 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     var total = 1.0;
     // Texels k and k + 1 on each side in one bilinear read, placed between
     // them by their weights, so their sum is exact with half the reads.
-    for (var k = 1; k <= reach; k = k + 2) {
+    // Counted by pair, so the loop ends for every `reach`, which the
+    // framework's shaders promise the device (no loop bounding).
+    for (var pair = 0; pair < (reach + 1) / 2; pair = pair + 1) {
+        let k = 2 * pair + 1;
         let near = gaussian_weight(f32(k), sigma);
         let far = select(0.0, gaussian_weight(f32(k + 1), sigma), k + 1 <= reach);
         let weight = near + far;

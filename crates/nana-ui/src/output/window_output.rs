@@ -1560,10 +1560,10 @@ impl StraightAlpha {
                 | GpuTextureUsages::COPY_SRC,
         })?;
         let device = nana_gpu::__framework::device(gpu);
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("nana-ui.window-output.straight"),
-            source: wgpu::ShaderSource::Wgsl(STRAIGHT_ALPHA_WGSL.into()),
-        });
+        let shader = crate::scene_paint::wgsl::Program::new(
+            "nana-ui.window-output.straight",
+            STRAIGHT_ALPHA_WGSL,
+        );
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("nana-ui.window-output.straight"),
             entries: &[wgpu::BindGroupLayoutEntry {
@@ -1586,7 +1586,7 @@ impl StraightAlpha {
             label: Some("nana-ui.window-output.straight"),
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {
-                module: &shader,
+                module: &shader.stage(device, "vs").module,
                 entry_point: Some("vs"),
                 compilation_options: Default::default(),
                 buffers: &[],
@@ -1595,7 +1595,7 @@ impl StraightAlpha {
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
             fragment: Some(wgpu::FragmentState {
-                module: &shader,
+                module: &shader.stage(device, "fs").module,
                 entry_point: Some("fs"),
                 compilation_options: Default::default(),
                 targets: &[Some(wgpu::ColorTargetState {

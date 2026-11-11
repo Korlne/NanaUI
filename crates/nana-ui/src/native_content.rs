@@ -331,30 +331,27 @@ impl SceneGpuRenderer for NativeContentRenderer {
             return;
         }
         let device = context.gpu.raw_device();
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("native content opening"),
-            source: wgpu::ShaderSource::Wgsl(
-                r#"
+        let shader = crate::scene_paint::wgsl::Program::new(
+            "native content opening",
+            r#"
 @vertex fn vertex(@builtin(vertex_index) i:u32) -> @builtin(position) vec4<f32> {
     var p = array<vec2<f32>,3>(vec2(-1.0,-1.0),vec2(3.0,-1.0),vec2(-1.0,3.0));
     return vec4(p[i],0.0,1.0);
 }
 @fragment fn fragment() -> @location(0) vec4<f32> { return vec4(0.0); }
-"#
-                .into(),
-            ),
-        });
+"#,
+        );
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("native content opening"),
             layout: None,
             vertex: wgpu::VertexState {
-                module: &shader,
+                module: &shader.stage(device, "vertex").module,
                 entry_point: Some("vertex"),
                 buffers: &[],
                 compilation_options: Default::default(),
             },
             fragment: Some(wgpu::FragmentState {
-                module: &shader,
+                module: &shader.stage(device, "fragment").module,
                 entry_point: Some("fragment"),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: nana_gpu::__framework::format_to_wgpu(context.target_format),

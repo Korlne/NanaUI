@@ -114,8 +114,18 @@ pub(super) fn joined(files: &[&str]) -> String {
 /// A program that does not parse or validate here (none of the framework's
 /// does; the tests compile them all) goes to the device as WGSL, whole,
 /// which then reports the error as it always has.
+///
+/// A framework program ([`Self::new`]) is compiled without loop bounding:
+/// every loop in the framework's shaders ends whatever the data, so the
+/// counter wgpu adds to each loop is dead weight in every pixel. Bounds and
+/// integer-division checks stay: indices and divisors come from the CPU's
+/// buffers, and Metal has no hardware robustness behind them. A material
+/// program ([`Self::material`]) carries an application's or skin's WGSL and
+/// keeps every check.
 pub(crate) struct Program {
     label: &'static str,
+    /// An application's or skin's WGSL is in it: every runtime check stays.
+    material: bool,
     source: std::borrow::Cow<'static, str>,
     ir: std::cell::OnceCell<Option<naga::Module>>,
     stages: std::cell::RefCell<Vec<(String, Stage)>>,
@@ -158,12 +168,25 @@ impl Program {
     ) -> Self {
         Self {
             label,
+            material: false,
             source: source.into(),
             ir: std::cell::OnceCell::new(),
             stages: std::cell::RefCell::new(Vec::new()),
             whole: std::cell::OnceCell::new(),
             #[cfg(target_os = "windows")]
             precompiled: std::cell::Cell::new(None),
+        }
+    }
+
+    /// A program holding an application's or skin's WGSL, compiled with
+    /// every runtime check.
+    pub(super) fn material(
+        label: &'static str,
+        source: impl Into<std::borrow::Cow<'static, str>>,
+    ) -> Self {
+        Self {
+            material: true,
+            ..Self::new(label, source)
         }
     }
 
@@ -267,10 +290,10 @@ impl Program {
                     .filter_map(|(_, declared)| declared.name.clone())
                     .collect();
                 Stage {
-                    module: device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                        label: Some(self.label),
-                        source: wgpu::ShaderSource::Naga(std::borrow::Cow::Owned(ir)),
-                    }),
+                    module: self.module(
+                        device,
+                        wgpu::ShaderSource::Naga(std::borrow::Cow::Owned(ir)),
+                    ),
                     overrides: Some(overrides),
                 }
             }
@@ -287,13 +310,25 @@ impl Program {
 
     fn whole(&self, device: &wgpu::Device) -> wgpu::ShaderModule {
         self.whole
-            .get_or_init(|| {
-                device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                    label: Some(self.label),
-                    source: wgpu::ShaderSource::Wgsl(self.source.clone()),
-                })
-            })
+            .get_or_init(|| self.module(device, wgpu::ShaderSource::Wgsl(self.source.clone())))
             .clone()
+    }
+
+    /// `source` as a module, with the runtime checks [`Self`] describes.
+    fn module(&self, device: &wgpu::Device, source: wgpu::ShaderSource<'_>) -> wgpu::ShaderModule {
+        let descriptor = wgpu::ShaderModuleDescriptor {
+            label: Some(self.label),
+            source,
+        };
+        if self.material {
+            return device.create_shader_module(descriptor);
+        }
+        let mut checks = wgpu::ShaderRuntimeChecks::checked();
+        checks.force_loop_bounding = false;
+        // SAFETY: only loop bounding is off, and every loop in the
+        // framework's shaders ends for any input (`loop_bounds_hold` checks
+        // each one is counted against a bound it cannot overflow).
+        unsafe { device.create_shader_module_trusted(descriptor, checks) }
     }
 }
 
@@ -435,6 +470,133 @@ mod tests {
             }
             assert!(cut(ir, "no_such_entry").is_none());
         }
+    }
+
+    /// Framework programs are compiled without loop bounding
+    /// ([`Program::module`]), so every loop in their files has to end for
+    /// any data: each is a `for` whose counter starts at a constant, steps
+    /// by one and is compared strictly against its bound (or, as
+    /// `n - 1u < bound`, one below it, or with `<=` against a constant), so
+    /// it ends before the counter can overflow. The few others are listed with why they end.
+    #[test]
+    fn loop_bounds_hold() {
+        // Loops that end for a reason the shape check cannot see.
+        const ARGUED: &[(&str, &str)] = &[
+            // Binary search: `end - idx` shrinks every turn.
+            ("motion", "while (idx < end)"),
+            // Float counters, bounded by `taps`, clamped to 1..8.
+            ("host texture", "for (var i = 0.0; i < taps.x; i += 1.0)"),
+            ("host texture", "for (var j = 0.0; j < taps.y; j += 1.0)"),
+        ];
+        let files = [
+            ("backdrop blur", BACKDROP_BLUR),
+            ("backdrop composite", BACKDROP_COMPOSITE),
+            ("backdrop copy", BACKDROP_COPY),
+            ("blit", BLIT),
+            ("chart", CHART),
+            ("color", COLOR),
+            ("layer", LAYER),
+            ("layer blend", LAYER_BLEND),
+            ("motion", MOTION),
+            ("path", PATH),
+            ("quad", QUAD),
+            ("quad paint", QUAD_PAINT),
+            ("quad paint data", QUAD_PAINT_DATA),
+            ("quad solid", QUAD_SOLID),
+            ("text atlas", TEXT_ATLAS),
+            ("triangle", TRIANGLE),
+            ("triangle solid", TRIANGLE_SOLID),
+            ("vertex", VERTEX),
+            ("host texture", crate::gpu_texture::SOURCE),
+        ];
+        /// Where `word` stands as a word of `source`.
+        fn words<'a>(source: &'a str, word: &'a str) -> impl Iterator<Item = usize> + 'a {
+            let part = |c: char| c.is_alphanumeric() || c == '_';
+            source
+                .match_indices(word)
+                .map(|(at, _)| at)
+                .filter(move |&at| {
+                    !source[..at].chars().next_back().is_some_and(part)
+                        && !source[at + word.len()..].chars().next().is_some_and(part)
+                })
+        }
+        let mut counted = 0;
+        let mut argued = 0;
+        for (name, source) in files {
+            // The host texture's source keeps its comments.
+            let source = &source
+                .lines()
+                .map(|line| line.split("//").next().unwrap())
+                .collect::<Vec<_>>()
+                .join(
+                    "
+",
+                );
+            assert_eq!(words(source, "loop").count(), 0, "{name} has a bare loop");
+            for at in words(source, "while") {
+                let line = source[at..].lines().next().unwrap().trim_end_matches(" {");
+                assert!(ARGUED.contains(&(name, line)), "{name}: {line}");
+                argued += 1;
+            }
+            for at in words(source, "for") {
+                let open = at + source[at..].find('(').unwrap();
+                let mut depth = 0;
+                let close = open
+                    + source[open..]
+                        .char_indices()
+                        .find(|&(_, c)| {
+                            depth += match c {
+                                '(' => 1,
+                                ')' => -1,
+                                _ => 0,
+                            };
+                            depth == 0
+                        })
+                        .unwrap()
+                        .0;
+                let line = &source[at..=close];
+                if ARGUED.contains(&(name, line)) {
+                    argued += 1;
+                    continue;
+                }
+                let parts: Vec<&str> = source[open + 1..close].split(';').map(str::trim).collect();
+                let [init, condition, step] = parts[..] else {
+                    panic!("{name}: {line}");
+                };
+                let counter = init
+                    .strip_prefix("var ")
+                    .and_then(|rest| rest.split([' ', ':', '=']).next())
+                    .unwrap_or_else(|| panic!("{name}: {line}"));
+                let start = init.rsplit('=').next().unwrap().trim();
+                assert!(
+                    start.trim_end_matches('u').parse::<i64>().is_ok(),
+                    "{name}: {line} starts at a constant"
+                );
+                assert!(
+                    [
+                        format!("{counter} = {counter} + 1"),
+                        format!("{counter} = {counter} + 1u"),
+                        format!("{counter} += 1"),
+                        format!("{counter} += 1u"),
+                        format!("{counter}++"),
+                    ]
+                    .contains(&step.to_owned()),
+                    "{name}: {line} steps by one"
+                );
+                let constant = |bound: &str| bound.trim_end_matches('u').parse::<i64>().is_ok();
+                assert!(
+                    condition.starts_with(&format!("{counter} < "))
+                        || condition.starts_with(&format!("{counter} - 1u < "))
+                        || condition
+                            .strip_prefix(&format!("{counter} <= "))
+                            .is_some_and(constant),
+                    "{name}: {line} is compared strictly, or against a constant"
+                );
+                counted += 1;
+            }
+        }
+        assert!(counted >= 15, "{counted} counted loops");
+        assert_eq!(argued, ARGUED.len());
     }
 
     /// The program text each family hands the device is the files joined.

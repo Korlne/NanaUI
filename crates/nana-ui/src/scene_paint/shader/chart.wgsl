@@ -341,7 +341,9 @@ fn chart_line_fs(input: LineOut) -> @location(0) vec4<f32> {
     let count = draw.a.y;
     let segments = select(count - 1u, count, closed);
     let k = draw.b.x;
-    for (var step = 1u; step <= k; step = step + 1u) {
+    // `step - 1u < k` rather than `step <= k`: the loop ends for every `k`,
+    // which the framework's shaders promise the device (no loop bounding).
+    for (var step = 1u; step - 1u < k; step = step + 1u) {
         for (var side = 0u; side < 2u; side = side + 1u) {
             var other: i32 = i32(segment) + select(-i32(step), i32(step), side == 1u);
             if closed {

@@ -19,7 +19,7 @@ use crate::scene_paint::url_texture_cache::UrlTextureCache;
 use crate::scene_paint::{pack_linear, pack_paint_color};
 use nana_ui_runtime::TextureSlotName;
 
-const SOURCE: &str = r#"
+pub(crate) const SOURCE: &str = r#"
 @group(0) @binding(0)
 var source: texture_2d<f32>;
 

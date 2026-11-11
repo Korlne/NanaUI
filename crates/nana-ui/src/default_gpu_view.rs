@@ -354,10 +354,10 @@ impl PreparedGpuView {
                 vertex_layout: std::mem::size_of::<GpuViewInstance>() as u64,
             },
             || {
-                let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                    label: Some("nana-ui default gpu-view shader"),
-                    source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(GPU_VIEW_SHADER)),
-                });
+                let shader = crate::scene_paint::wgsl::Program::new(
+                    "nana-ui default gpu-view shader",
+                    GPU_VIEW_SHADER,
+                );
                 let pipeline_layout =
                     device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                         label: Some("nana-ui default gpu-view pipeline layout"),
@@ -368,7 +368,7 @@ impl PreparedGpuView {
                     label: Some("nana-ui default gpu-view pipeline"),
                     layout: Some(&pipeline_layout),
                     vertex: wgpu::VertexState {
-                        module: &shader,
+                        module: &shader.stage(device, "vertex_main").module,
                         entry_point: Some("vertex_main"),
                         buffers: &[Some(wgpu::VertexBufferLayout {
                             array_stride: std::mem::size_of::<GpuViewInstance>() as u64,
@@ -383,7 +383,7 @@ impl PreparedGpuView {
                         compilation_options: wgpu::PipelineCompilationOptions::default(),
                     },
                     fragment: Some(wgpu::FragmentState {
-                        module: &shader,
+                        module: &shader.stage(device, "fragment_main").module,
                         entry_point: Some("fragment_main"),
                         targets: &[Some(wgpu::ColorTargetState {
                             format,

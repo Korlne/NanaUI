@@ -48,15 +48,12 @@ impl OutputTransfer {
         let source = format!(
             "{SHADER}\n@fragment fn fs(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {{ var c = textureLoad(image, vec2<i32>(p.xy), 0); {conversion} return c; }}"
         );
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("nana.output.transfer"),
-            source: wgpu::ShaderSource::Wgsl(source.into()),
-        });
+        let shader = crate::scene_paint::wgsl::Program::new("nana.output.transfer", source);
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("nana.output.transfer"),
             layout: Some(&layout_pipeline),
             vertex: wgpu::VertexState {
-                module: &shader,
+                module: &shader.stage(device, "vs").module,
                 entry_point: Some("vs"),
                 compilation_options: Default::default(),
                 buffers: &[],
@@ -65,7 +62,7 @@ impl OutputTransfer {
             depth_stencil: None,
             multisample: Default::default(),
             fragment: Some(wgpu::FragmentState {
-                module: &shader,
+                module: &shader.stage(device, "fs").module,
                 entry_point: Some("fs"),
                 compilation_options: Default::default(),
                 targets: &[Some(wgpu::ColorTargetState {

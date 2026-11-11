@@ -507,7 +507,7 @@ impl QuadPipeline {
                 // material only uses one slot; bind a live instance to the other.
                 let [bind, motion, material] = &layouts;
                 let layout=device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label:Some("surface material"), bind_group_layouts:&[Some(bind), Some(motion), Some(material), Some(material)], immediate_size:0 });
-                let program = super::wgsl::Program::new("surface material", source);
+                let program = super::wgsl::Program::material("surface material", source);
                 Some(solid_pipeline(&device, &program, &layout, format, samples))
             });
             // Still compiling: paint natively and ask again next frame.

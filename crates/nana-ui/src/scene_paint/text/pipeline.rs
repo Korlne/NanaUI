@@ -955,7 +955,8 @@ fn shade(input:VsOut)->TextShade {
                 let [globals, atlas, materials] = &layouts;
                 let layout=device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {label:Some("text color and transition materials"),bind_group_layouts:&[Some(globals),Some(atlas),Some(materials)],immediate_size:0});
                 let blend=if dual {let c=wgpu::BlendComponent{src_factor:wgpu::BlendFactor::Src1,dst_factor:wgpu::BlendFactor::OneMinusSrc1,operation:wgpu::BlendOperation::Add};wgpu::BlendState{color:c,alpha:c}}else{wgpu::BlendState::ALPHA_BLENDING};
-                let program = super::super::wgsl::Program::new("nana-ui.scene.text.shader", source);
+                let program =
+                    super::super::wgsl::Program::material("nana-ui.scene.text.shader", source);
                 Some(build_pipeline(&device,&layout,format,&program,blend))
             });
             // Still compiling: the glyphs draw natively until it is ready.
