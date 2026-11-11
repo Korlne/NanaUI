@@ -30,7 +30,9 @@ fn apply_color_filter(color: vec4<f32>, paint: QuadPaintData) -> vec4<f32> {
 }
 
 fn point_in_polygon(local: vec2<f32>, paint: QuadPaintData) -> bool {
-    if (paint.polygon_count < 3u) {
+    // `verts` holds eight points; the CPU caps the count there too.
+    let count = min(paint.polygon_count, 8u);
+    if (count < 3u) {
         return true;
     }
     var verts = array<vec2<f32>, 8>(
@@ -38,8 +40,8 @@ fn point_in_polygon(local: vec2<f32>, paint: QuadPaintData) -> bool {
         paint.poly2.xy, paint.poly2.zw, paint.poly3.xy, paint.poly3.zw,
     );
     var inside = false;
-    var j = paint.polygon_count - 1u;
-    for (var i: u32 = 0u; i < paint.polygon_count; i = i + 1u) {
+    var j = count - 1u;
+    for (var i: u32 = 0u; i < count; i = i + 1u) {
         let vi = verts[i];
         let vj = verts[j];
         if ((vi.y > local.y) != (vj.y > local.y))
