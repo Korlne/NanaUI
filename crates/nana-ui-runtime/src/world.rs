@@ -85,15 +85,18 @@ fn child_number(index: usize) -> u32 {
 /// Stable external node identity. Zero is reserved so missing/default IDs
 /// cannot accidentally address a live node.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct StableNodeId(u64);
+pub struct StableNodeId(std::num::NonZeroU64);
 
 impl StableNodeId {
     pub const fn new(value: u64) -> Option<Self> {
-        if value == 0 { None } else { Some(Self(value)) }
+        match std::num::NonZeroU64::new(value) {
+            Some(value) => Some(Self(value)),
+            None => None,
+        }
     }
 
     pub const fn get(self) -> u64 {
-        self.0
+        self.0.get()
     }
 }
 
