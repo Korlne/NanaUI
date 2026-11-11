@@ -1,24 +1,28 @@
 //! CPU cost of a frame's uploads, per path.
 //!
 //! Each frame writes `writes` runs of `bytes` bytes to distinct destination
-//! buffers and submits. What is timed is the thread's own CPU (Windows
-//! `QueryThreadCycleTime`, so a wait on the GPU costs nothing) for the writes
-//! plus the submit, and separately for the wait on the frame, which runs the
-//! callbacks that return staging to the ring. Paths:
+//! buffers, clears a small target in a render pass (so every submit carries
+//! real GPU work), submits, and waits for the frame: one submission in flight
+//! at a time. The thread's own CPU is timed (Windows `QueryThreadCycleTime`,
+//! so a blocked wait costs nothing): `record` is the writes, `to submit` the
+//! writes plus recording and submitting, `wait` the wait on the frame, which
+//! runs the callbacks that return staging to the ring. Medians, in thousands
+//! of cycles. Paths:
 //!
-//! - `none`: the frame without uploads (what every frame pays anyway).
-//!
-//! Every frame also clears a small target in a render pass, so each submit
-//! carries real GPU work and the paths are measured as what they add to it.
-//! - `ring`: `FrameUploadHandle::write_buffer` — the `UploadRing` path.
+//! - `none`: the frame without uploads, the baseline the others add to.
+//! - `ring`: `FrameUploadHandle::write_buffer`, the `UploadRing` path.
 //! - `text`: one `queue.write_buffer_with` into a staging ring, then one
 //!   `copy_buffer_to_buffer` per run in the frame's encoder (the text
 //!   pipeline's instance/index path).
 //! - `queue`: one `queue.write_buffer` per run.
-//! - `copy`: only the `copy_buffer_to_buffer`s of `text`, from a buffer
-//!   already on the GPU: what the copy commands cost without any staging.
-//! - `memcpy`: the same bytes copied into memory that stays mapped, with no
-//!   wgpu call: the floor a persistently mapped upload path could reach.
+//! - `copy`: only the copies of `text`, from a buffer already on the GPU:
+//!   what the copy commands cost without any staging.
+//! - `memcpy`: the same bytes copied into upload memory that stays mapped,
+//!   with no wgpu call: the floor a persistently mapped upload path could
+//!   reach.
+//!
+//! `UPLOAD_COST_ONLY=ring,8,65536` runs one cell ten times as long, for a
+//! stack sampler to attach to. Results: `docs/reference/gpu.md` section 7.
 //!
 //! ```bash
 //! WGPU_BACKEND=dx12 WGPU_ADAPTER_NAME=nvidia cargo run --release -p nana-gpu --example upload-cost
@@ -80,8 +84,23 @@ fn main() {
     );
     println!(
         "{:<10} {:>6} {:>7} {:>12} {:>12} {:>12} {:>12} {:>10}",
-        "path", "writes", "bytes", "record kcyc", "submit kcyc", "poll kcyc", "total kcyc", "submit us"
+        "path", "writes", "bytes", "record", "to submit", "wait", "total", "submit us"
     );
+    if let Ok(only) = std::env::var("UPLOAD_COST_ONLY") {
+        let mut parts = only.split(',');
+        let path = match parts.next() {
+            Some("none") => Path::None,
+            Some("ring") => Path::Ring,
+            Some("text") => Path::Text,
+            Some("queue") => Path::Queue,
+            Some("copy") => Path::Copy,
+            _ => Path::Memcpy,
+        };
+        let writes = parts.next().and_then(|v| v.parse().ok()).unwrap_or(8);
+        let bytes = parts.next().and_then(|v| v.parse().ok()).unwrap_or(65536);
+        run(&gpu, &device, &queue, path, writes, bytes, FRAMES * 10);
+        return;
+    }
     for (writes, bytes) in [(4usize, 256usize), (32, 1024), (8, 64 * 1024)] {
         for path in [
             Path::None,
@@ -91,7 +110,7 @@ fn main() {
             Path::Copy,
             Path::Memcpy,
         ] {
-            run(&gpu, &device, &queue, path, writes, bytes);
+            run(&gpu, &device, &queue, path, writes, bytes, FRAMES);
         }
         println!();
     }
@@ -104,6 +123,7 @@ fn run(
     path: Path,
     writes: usize,
     bytes: usize,
+    frames: usize,
 ) {
     let targets: Vec<wgpu::Buffer> = (0..writes)
         .map(|_| {
@@ -152,11 +172,11 @@ fn run(
     let data: Vec<u8> = (0..bytes).map(|i| i as u8).collect();
     let mut cursor = 0u64;
 
-    let mut record = Vec::with_capacity(FRAMES);
-    let mut submit = Vec::with_capacity(FRAMES);
-    let mut poll = Vec::with_capacity(FRAMES);
-    let mut wall = Vec::with_capacity(FRAMES);
-    for frame in 0..WARMUP + FRAMES {
+    let mut record = Vec::with_capacity(frames);
+    let mut submit = Vec::with_capacity(frames);
+    let mut wait = Vec::with_capacity(frames);
+    let mut wall = Vec::with_capacity(frames);
+    for frame in 0..WARMUP + frames {
         let mut recording = gpu.begin_frame("upload-cost");
         let started = Instant::now();
         let before = thread_cycles();
@@ -243,18 +263,17 @@ fn run(
         let submission = recording.submit();
         let submitted = thread_cycles();
         let submit_wall = started.elapsed();
-        // Wait for the frame: a blocked thread spends no cycles, so this is
-        // the completion callbacks (chunk back to the ring, frame slot).
+        // A blocked thread spends no cycles: what this counts is the
+        // completion callbacks (chunk back to the ring, frame slot).
         let _ = device.poll(wgpu::PollType::Wait {
             submission_index: Some(__framework::submission_index(&submission).clone()),
             timeout: None,
         });
         let after = thread_cycles();
-        let polled = submitted;
         if frame >= WARMUP {
             record.push(recorded - before);
             submit.push(submitted - before);
-            poll.push(after - polled);
+            wait.push(after - submitted);
             wall.push(submit_wall.as_secs_f64() * 1e6);
         }
     }
@@ -265,7 +284,7 @@ fn run(
     };
     let r = median(&mut record);
     let s = median(&mut submit);
-    let p = median(&mut poll);
+    let w = median(&mut wait);
     wall.sort_by(f64::total_cmp);
     println!(
         "{:<10} {:>6} {:>7} {:>12.1} {:>12.1} {:>12.1} {:>12.1} {:>10.1}",
@@ -274,8 +293,8 @@ fn run(
         bytes,
         r as f64 / 1000.0,
         s as f64 / 1000.0,
-        p as f64 / 1000.0,
-        (s + p) as f64 / 1000.0,
+        w as f64 / 1000.0,
+        (s + w) as f64 / 1000.0,
         wall[wall.len() / 2],
     );
 }

@@ -117,6 +117,45 @@ WGPU_BACKEND=dx12 target/release/examples/input-latency-probe.exe --clicks 300 -
 WGPU_BACKEND=dx12 target/release/examples/input-latency-probe.exe --clicks 300 --continuous 60 --output $S/lat-dx12-c60.json
 ```
 
+### 7. Measured: a persistently mapped upload path (2026-11-11)
+
+The proposed fork change: a buffer created mapped and never unmapped, which NanaUI writes directly once its frame-slot fences show the GPU is not reading that range. It would drop `UploadRing`'s mapped chunk and copy commands, and the text staging ring's `write_buffer_with` and `copy_buffer_to_buffer`. On unified-memory devices the GPU would read that memory directly; on discrete GPUs it would sit in an upload heap or ReBAR. **Decision: not done**, for the reasons the two measurements below give. Same machine as §6 (RTX 5060 Ti discrete, plus the Intel integrated GPU of the Core Ultra 7 265K), release builds. Metal was not measured (no macOS host). The text-engine page's figure of about fifty thousand instructions per `write_buffer` comes from Metal, which has unified memory and is where this change would pay most; re-measure there when a Mac is available.
+
+**The upload paths alone (`crates/nana-gpu/examples/upload-cost.rs`).** Each frame clears a 256×256 target in a render pass, writes `writes` runs of `bytes` bytes to their own destination buffers, calls `FrameContext::submit`, and waits for that frame (one submission in flight at a time). Timing is `QueryThreadCycleTime`, so blocked waits do not count. The table gives the sum of two medians over 2000 frames, thread cycles from the writes to the return of the submit and in the wait for the frame, minus the same frame without uploads, in thousands of cycles (about 3.8 thousand cycles = 1 µs). `ring` is `UploadRing`; `text` is the text path (one `write_buffer_with` plus one copy per run); `copy` records only the copy commands, from a source already on the GPU; `memcpy` copies the same bytes into upload memory that stays mapped, the floor of a persistently mapped path. The example also has `queue` (one `queue.write_buffer` per run), left out of the table.
+
+| Adapter | Backend | Empty frame | 4×256 B: ring / text / copy / memcpy | 32×1 KiB: ring / text / copy / memcpy | 8×64 KiB: ring / text / copy / memcpy |
+| --- | --- | ---: | --- | --- | --- |
+| RTX 5060 Ti | DX12 | 370–416 | +230 / +282 / +101 / +12 | +199 / +277 / +140 / −5 | +759 / +567 / −122 / +157 |
+| RTX 5060 Ti | Vulkan | 310–394 | −52 / −71 / −71 / −85 | +131 / +138 / +114 / +15 | +741 / +225 / −16 / +246 |
+| Intel integrated | DX12 | 99–134 | +59 / +102 / +37 / +4 | +143 / +277 / +155 / −10 | +165 / +271 / +100 / +31 |
+| Intel integrated | Vulkan | 67–71 | +22 / +30 / +11 / −5 | +108 / +114 / +130 / +32 | +154 / +109 / +75 / +65 |
+
+On NVIDIA the empty frame itself varies by ±50 thousand cycles on both backends; the negative numbers are that noise.
+
+- Small uploads add 6–75 µs a frame (`ring` minus `memcpy`): the most a persistently mapped path could save. Most of it is the driver's cost for the copy commands and the extra command buffer (the `copy` column), not the staging itself.
+- Every `write_buffer_with` / `write_buffer` call makes wgpu-core create a staging buffer: about 160–180 thousand cycles (about 45 µs) on NVIDIA DX12. The text path pays it once in each frame that writes instances.
+- `ring` writing 512 KiB on NVIDIA adds about 750 thousand cycles, far more than copying the same bytes into mapped memory; Intel does not show it. The cause was not found (that cell was not sampled). It is an `UploadRing` issue, not a fork one.
+
+**Share in real scenes.** Sampled with §6's `stack-sampler` on `gpu-scene-ui-dense-2k`, `text-paint-color` and `host-textures-64`, and on `nana-text-paint-benchmark` with ten thousand labels, `static` and `mutate-1pct`, counted inclusively: `nana_gpu::upload::record` (take a mapped chunk, copy, unmap, record the copies, `map_buffer_on_submit`) is at most 0.5% of non-blocked CPU in every scene, and `ui-dense-2k`'s steady frames upload nothing. Text staging (`write_buffer_with` plus `copy_writes`) is at most 0.5% in DX12 `static` and `mutate-1pct`. What the upload command buffer adds inside `queue_submit` cannot be separated in the samples; from the `copy` column it is at most about 40 µs a frame, about 1% of `text-paint-color`'s 3.6 ms frame. NVIDIA's Vulkan driver spins inside waits, which dilutes the Vulkan percentages, so the decision uses the DX12 numbers. The prominent `queue.write_buffer` in `host-textures-64` and `ui-dense-2k` (18% and 4–7%) is the bench's own GpuView previews writing their uniforms every frame, not framework uploads.
+
+**Why not.** The ceiling is about 1% of CPU in frames that upload, and nothing in still frames. The price is a new class of bug: the CPU writing memory the GPU may be reading, with correctness resting entirely on the frame-slot fences and out of reach of wgpu-core's validation. The fork would have to change wgpu-core's map state, its rejection of mapped buffers at submit, initialization tracking, and the rule that `MAP_WRITE` cannot share a buffer with `STORAGE`/`VERTEX` (today only the native `MAPPABLE_PRIMARY_BUFFERS` feature lifts it). On a discrete GPU without ReBAR every draw would read instance data across PCIe, turning saved CPU into GPU time. If uploads ever become hot, start on NanaUI's side: make the text staging copy from the frame's `UploadRing` chunk (it is unmapped before the submit, so copies in the frame encoder may read it), removing one staging allocation per frame; and find the cause of the 512 KiB cell.
+
+Commands (repository root; S is a temporary directory):
+
+```sh
+cargo build -j 12 --release -p nana-gpu --example upload-cost
+WGPU_BACKEND=dx12 WGPU_ADAPTER_NAME=nvidia target/release/examples/upload-cost.exe   # also vulkan, intel
+UPLOAD_COST_ONLY=ring,8,65536 target/release/examples/upload-cost.exe                # one cell, ten times as long
+export CARGO_PROFILE_RELEASE_DEBUG=limited
+cargo build -j 12 --release -p nana-ui --bin nana-text-paint-benchmark --features gpu
+WGPU_BACKEND=dx12 target/release/examples/stack-sampler.exe --delay-ms 4000 --duration-ms 8000 --interval-us 2000 \
+  --out $S/dx12-text-mutate-1pct.folded -- target/release/nana-text-paint-benchmark.exe \
+  --labels 10000 --workload mutate-1pct --frames 2000
+python perf/stack_attribution.py --scope "upload::record" $S/dx12-text-mutate-1pct.folded
+```
+
+The `gpu-scene-*` sampling commands are as in §6. `nana-text-paint-benchmark` now picks its backend from `WGPU_BACKEND`.
+
 ## Mounting host textures (`HostTexture` + `GpuTextureView`)
 
 Shader output, preview viewports, and offscreen render textures are nodes in the UI tree just like ordinary buttons: they take part in layout, are clipped, and can be hit. For a first integration, use the default path: draw the content into a sampleable texture, mount a `GpuTextureView` in the tree, and register it in `host_textures()` under the same string slot name.

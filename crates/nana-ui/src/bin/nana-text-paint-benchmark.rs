@@ -402,7 +402,9 @@ fn main() {
 }
 
 fn gpu() -> Option<(GpuContext, String)> {
-    let instance = wgpu::Instance::default();
+    // `WGPU_BACKEND` picks the backend to measure; all of them otherwise.
+    let instance =
+        wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
     let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
         power_preference: wgpu::PowerPreference::HighPerformance,
         ..Default::default()

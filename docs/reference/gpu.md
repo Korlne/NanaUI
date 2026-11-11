@@ -117,6 +117,45 @@ WGPU_BACKEND=dx12 target/release/examples/input-latency-probe.exe --clicks 300 -
 WGPU_BACKEND=dx12 target/release/examples/input-latency-probe.exe --clicks 300 --continuous 60 --output $S/lat-dx12-c60.json
 ```
 
+### 7. 实测：持续映射的上传路径（2026-11-11）
+
+设想的 fork 改动：新增一种创建即映射、永不 unmap 的缓冲，NanaUI 用帧槽 fence 自证 GPU 不在读某段，再直接写进去，省掉 `UploadRing` 的映射块与拷贝命令、文本 staging ring 的 `write_buffer_with` 与 `copy_buffer_to_buffer`。统一内存设备上 GPU 直接读这块内存；独显上用 upload heap / ReBAR。**结论：不做**，理由是下面两组测量。测量机器同 §6（RTX 5060 Ti 独显，另加 Core Ultra 7 265K 的 Intel 核显），release 构建。Metal 没有测（没有 macOS 主机）。文本引擎文档里「`write_buffer` 每次约五万条指令」的数字来自 Metal，那里是统一内存，也是这项改动收益最大的地方，有 Mac 时值得重测。
+
+**单测上传路径（`crates/nana-gpu/examples/upload-cost.rs`）。** 每帧在一个 render pass 里清一张 256×256 目标，再把 `writes` 段、每段 `bytes` 字节写进各自的目标缓冲，然后 `FrameContext::submit` 并等这一帧完成（任何时候只有一个提交在飞）。计时用 `QueryThreadCycleTime`，阻塞等待不计入。下表是「写入到提交返回」与「等待这一帧」两段线程周期中位数之和（2000 帧），减去不上传的同一帧，单位千周期（约 3.8 千周期 = 1 µs）。`ring` 是 `UploadRing`；`text` 是文本路径（一次 `write_buffer_with` 加每段一条拷贝）；`copy` 只录拷贝命令，源已在 GPU 上；`memcpy` 是同样的字节拷进一块一直映射着的 upload 内存，即持续映射路径的下限。示例另有 `queue`（每段一次 `queue.write_buffer`），表里略去。
+
+| 适配器 | 后端 | 空帧 | 4×256 B：ring / text / copy / memcpy | 32×1 KiB：ring / text / copy / memcpy | 8×64 KiB：ring / text / copy / memcpy |
+| --- | --- | ---: | --- | --- | --- |
+| RTX 5060 Ti | DX12 | 370–416 | +230 / +282 / +101 / +12 | +199 / +277 / +140 / −5 | +759 / +567 / −122 / +157 |
+| RTX 5060 Ti | Vulkan | 310–394 | −52 / −71 / −71 / −85 | +131 / +138 / +114 / +15 | +741 / +225 / −16 / +246 |
+| Intel 核显 | DX12 | 99–134 | +59 / +102 / +37 / +4 | +143 / +277 / +155 / −10 | +165 / +271 / +100 / +31 |
+| Intel 核显 | Vulkan | 67–71 | +22 / +30 / +11 / −5 | +108 / +114 / +130 / +32 | +154 / +109 / +75 / +65 |
+
+NVIDIA 两个后端的空帧本身在 ±50 千周期内波动，表里的负数就是这个噪声。
+
+- 小上传每帧多花 6–75 µs（`ring` 减 `memcpy`），这是持续映射最多能省下的。其中大半是驱动处理拷贝命令和多一条命令缓冲的成本（`copy` 一列），staging 本身只占一部分。
+- `write_buffer_with` / `write_buffer` 每次调用都要让 wgpu-core 建一块 staging 缓冲：NVIDIA DX12 上一次约 160–180 千周期（约 45 µs）。文本路径在每个写 instance 的帧付一次。
+- `ring` 在 NVIDIA 上写 512 KiB 时多出约 750 千周期，比把同样字节拷进映射内存贵得多，Intel 上没有这个现象。原因没有查明（这一格没有采样），是 `UploadRing` 自身的问题，与 fork 无关。
+
+**真实场景里的占比。** 用 §6 的 `stack-sampler` 采 `gpu-scene-ui-dense-2k`、`text-paint-color`、`host-textures-64`，以及 `nana-text-paint-benchmark` 一万标签的 `static` 与 `mutate-1pct`，按包含式计：`nana_gpu::upload::record`（取映射块、拷贝、unmap、录拷贝、`map_buffer_on_submit`）在每个场景都不超过非阻塞 CPU 的 0.5%；`ui-dense-2k` 的稳态帧根本不上传。文本 staging（`write_buffer_with` 加 `copy_writes`）在 DX12 的 `static` 和 `mutate-1pct` 里不超过 0.5%。上传命令缓冲在 `queue_submit` 里多出的部分采样分不出来，按上表 `copy` 一列估计每帧不超过约 40 µs，对 `text-paint-color` 约 3.6 ms 的帧是 1% 左右。NVIDIA 的 Vulkan 驱动在等待里自旋，那几组的百分比被稀释，所以结论只用 DX12 的数。`host-textures-64` 和 `ui-dense-2k` 里显眼的 `queue.write_buffer`（18% 与 4–7%）是 bench 自己的 GpuView 预览每帧写 uniform，不是框架上传。
+
+**不做的理由。** 能省的上限是有上传的帧 1% 左右的 CPU，静止帧为零。代价是新增一类错误：CPU 写进 GPU 可能正在读的内存，正确性完全押在帧槽 fence 上，wgpu-core 的校验也管不到它。实现还要改 wgpu-core 的映射状态、提交时对已映射缓冲的拒绝、初始化跟踪，以及 `MAP_WRITE` 不能与 `STORAGE`/`VERTEX` 共用一个缓冲的规则（今天只有原生特性 `MAPPABLE_PRIMARY_BUFFERS` 放开它）。独显没有 ReBAR 时，GPU 每次 draw 都要隔着 PCIe 读 instance 数据，CPU 省下的会变成 GPU 时间。如果以后上传真的成了热点，先在 NanaUI 这一侧做：让文本 staging 以帧的 `UploadRing` 块为拷贝源（块在提交前已 unmap，帧 encoder 里的拷贝可以读它），省掉每帧一次 staging 分配；再查明 512 KiB 那一格。
+
+命令（仓库根目录；S 为临时目录）：
+
+```sh
+cargo build -j 12 --release -p nana-gpu --example upload-cost
+WGPU_BACKEND=dx12 WGPU_ADAPTER_NAME=nvidia target/release/examples/upload-cost.exe   # 另跑 vulkan、intel
+UPLOAD_COST_ONLY=ring,8,65536 target/release/examples/upload-cost.exe                # 只跑一格，时长十倍
+export CARGO_PROFILE_RELEASE_DEBUG=limited
+cargo build -j 12 --release -p nana-ui --bin nana-text-paint-benchmark --features gpu
+WGPU_BACKEND=dx12 target/release/examples/stack-sampler.exe --delay-ms 4000 --duration-ms 8000 --interval-us 2000 \
+  --out $S/dx12-text-mutate-1pct.folded -- target/release/nana-text-paint-benchmark.exe \
+  --labels 10000 --workload mutate-1pct --frames 2000
+python perf/stack_attribution.py --scope "upload::record" $S/dx12-text-mutate-1pct.folded
+```
+
+`gpu-scene-*` 场景的采样命令同 §6。`nana-text-paint-benchmark` 现在按 `WGPU_BACKEND` 选后端。
+
 ## 挂载宿主纹理（`HostTexture` + `GpuTextureView`）
 
 着色器输出、预览视口、离屏渲染纹理与普通按钮一样，是界面树上占据布局、受裁剪、可命中的节点。首次接入请使用默认路径：把画面画到可采样纹理上，在树上挂载 `GpuTextureView`，并用同一个字符串槽位名在 `host_textures()` 中登记。
