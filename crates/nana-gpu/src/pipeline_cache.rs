@@ -159,14 +159,14 @@ pub(crate) fn unwrap<'a>(
 /// and toolchains, which `std`'s hashers are not.
 fn checksum(bytes: &[u8]) -> u64 {
     let mut hash = 0xcbf2_9ce4_8422_2325u64 ^ bytes.len() as u64;
-    let mut chunks = bytes.chunks_exact(8);
-    for chunk in &mut chunks {
-        hash = (hash ^ u64::from_le_bytes(chunk.try_into().unwrap()))
+    let (words, rest) = bytes.as_chunks::<8>();
+    for word in words {
+        hash = (hash ^ u64::from_le_bytes(*word))
             .wrapping_mul(0x0000_0100_0000_01b3)
             .rotate_left(23);
     }
     let mut last = [0u8; 8];
-    last[..chunks.remainder().len()].copy_from_slice(chunks.remainder());
+    last[..rest.len()].copy_from_slice(rest);
     hash = (hash ^ u64::from_le_bytes(last)).wrapping_mul(0x0000_0100_0000_01b3);
     hash = (hash ^ (hash >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
     hash = (hash ^ (hash >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
@@ -320,10 +320,7 @@ mod tests {
         );
         let mut flipped = wrapped.clone();
         *flipped.last_mut().unwrap() ^= 1;
-        assert_eq!(
-            unwrap(&key(), &flipped),
-            Err(PipelineCacheRefusal::Corrupt)
-        );
+        assert_eq!(unwrap(&key(), &flipped), Err(PipelineCacheRefusal::Corrupt));
         assert_eq!(
             unwrap(&key(), &wrapped[..10]),
             Err(PipelineCacheRefusal::Corrupt)

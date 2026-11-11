@@ -1363,9 +1363,7 @@ impl CompiledShader {
             return &[];
         }
         // SAFETY: the bytecode lives as long as `self`.
-        unsafe {
-            core::slice::from_raw_parts(native.pShaderBytecode.cast(), native.BytecodeLength)
-        }
+        unsafe { core::slice::from_raw_parts(native.pShaderBytecode.cast(), native.BytecodeLength) }
     }
 
     fn create_native_shader(&self) -> Direct3D12::D3D12_SHADER_BYTECODE {

@@ -162,8 +162,7 @@ fn dxc_identity(kind: &str, compiler: &Dxc::IDxcCompiler3) -> String {
     if let Ok(version_info) = compiler.cast::<Dxc::IDxcVersionInfo2>() {
         let mut count = 0;
         let mut hash: *mut i8 = core::ptr::null_mut();
-        if unsafe { version_info.GetCommitInfo(&mut count, &mut hash) }.is_ok() && !hash.is_null()
-        {
+        if unsafe { version_info.GetCommitInfo(&mut count, &mut hash) }.is_ok() && !hash.is_null() {
             let commit = unsafe { CStr::from_ptr(hash.cast()) };
             identity.push_str(&format!(" {count} {}", commit.to_string_lossy()));
             unsafe { windows::Win32::System::Com::CoTaskMemFree(Some(hash.cast_const().cast())) };

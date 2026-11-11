@@ -114,10 +114,11 @@ impl ShaderBlobCache {
             .iter()
             .filter(|(_, entry)| entry.age <= MAX_AGE)
             .collect::<Vec<_>>();
-        let size = 12 + kept
-            .iter()
-            .map(|(_, entry)| 40 + entry.bytes.len())
-            .sum::<usize>();
+        let size = 12
+            + kept
+                .iter()
+                .map(|(_, entry)| 40 + entry.bytes.len())
+                .sum::<usize>();
         let mut out = Vec::with_capacity(size);
         out.extend_from_slice(&MAGIC);
         out.extend_from_slice(&(kept.len() as u32).to_le_bytes());

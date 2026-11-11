@@ -46,6 +46,17 @@ A Surface's HDR capability is determined by `SurfaceCapabilities::format_capabil
 - **Target attachment and pipeline reuse**: when switching between UI-only and mixed GPU-node content, only the 4x MSAA attachment is added or released; the linear color target, bindings, and group caches of the same size, format, and presentation profile are kept. Scaling must rebuild size-dependent textures, but on a device pipeline cache hit no shader module or pipeline layout is created again, so multi-target first frames do not parse WGSL repeatedly. Changing size, output format, or presentation profile still rebuilds the target under the original contract.
 
 
+### 5. Shader and pipeline cache across launches
+
+Every `GpuContext` whose device has `PIPELINE_CACHE` (the hosted device requests it whenever the adapter offers it) owns one pipeline cache and makes it the device default through the fork's `wgpu::Device::set_default_pipeline_cache`. Every pipeline created without naming a cache goes through it — all scene families, surface and text materials, chart programs, and renderers that build pipelines on the raw device. On DX12 it holds compiled shader bytecode, so a stage found there skips naga's HLSL compile in DXC/FXC; on Vulkan it is the driver's `VkPipelineCache`. Metal and GL have none (`pipeline_cache_key()` is `None`).
+
+The framework hands out and takes back bytes; the host decides where they live:
+
+- `GpuContext::pipeline_cache_key()` names what the bytes belong to; `file_stem()` is `dx12` (bytecode is adapter-independent) or `vulkan-<vendor>-<device>`.
+- `load_pipeline_cache(&bytes)` replaces the cache before painters are built; `pipeline_cache_data()` returns the bytes to save. `restore_pipeline_cache` / `persist_pipeline_cache` do the same through a `PipelineCacheStore` (`load` / `save`).
+- Hosted applications pass a store with `NanaApplicationBuilder::pipeline_cache(store)` (or `StartupOptions::pipeline_cache`): the `nana-startup-gpu` thread restores it before the painter compiles and saves it once the painter is built. A device replaced after a loss starts with an empty cache.
+- The saved bytes carry an envelope (magic, key, length, checksum) over wgpu's own header and validation key, and the DX12 payload checksums each entry. Bytes that are not a cache, belong to another key, are truncated or corrupted, or that the backend rejects are refused (`PipelineCacheLoad::Refused`) and the device compiles as if nothing had been loaded; no backend validation error is raised. A driver update invalidates Vulkan data inside wgpu/the driver, and a DXC update invalidates DX12 data through the validation key; both silently recompile.
+
 ## Mounting host textures (`HostTexture` + `GpuTextureView`)
 
 Shader output, preview viewports, and offscreen render textures are nodes in the UI tree just like ordinary buttons: they take part in layout, are clipped, and can be hit. For a first integration, use the default path: draw the content into a sampleable texture, mount a `GpuTextureView` in the tree, and register it in `host_textures()` under the same string slot name.

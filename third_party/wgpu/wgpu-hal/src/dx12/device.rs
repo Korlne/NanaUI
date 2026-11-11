@@ -2266,14 +2266,13 @@ impl crate::Device for super::Device {
             super::PipelineCache,
         >,
     ) -> Result<super::ComputePipeline, crate::PipelineError> {
-        let blob_cs =
-            self.load_shader(
-                &desc.stage,
-                desc.layout,
-                naga::ShaderStage::Compute,
-                None,
-                desc.cache,
-            )?;
+        let blob_cs = self.load_shader(
+            &desc.stage,
+            desc.layout,
+            naga::ShaderStage::Compute,
+            None,
+            desc.cache,
+        )?;
 
         let pair = {
             profiling::scope!("ID3D12Device::CreateComputePipelineState");
