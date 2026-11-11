@@ -4,14 +4,14 @@
 //! duplicate ancestor/descendant lists: callers provide the retained tree
 //! relationships and receive the union of the work needed for this pass.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashSet, VecDeque};
 
 use nana_ui_core::{
     InvalidationKind, InvalidationReason, LayoutDependencyFootprint, LayoutInvalidation,
     LayoutInvalidationSource,
 };
 
-use crate::StableNodeId;
+use crate::{BuildIdHasher, NodeMap, NodeSet, StableNodeId};
 
 /// A seed plus its node identity.  The contract crate keeps invalidation data
 /// tree-independent; Runtime binds it to the retained node here.
@@ -31,22 +31,42 @@ struct DependencyLink {
     footprint: LayoutDependencyFootprint,
 }
 
-/// One node's links in insertion order, indexed by target so a repeated edge
-/// merges in O(1). Scanning the list instead made a parent whose children all
-/// carry a link quadratic in its child count.
+/// One node's links in insertion order. A repeated edge merges into the one
+/// held: past [`Adjacency::SCANNED`] links they are indexed by target, since
+/// scanning the list made a parent whose children all carry a link quadratic
+/// in its child count. Most nodes hold a link or two, and an index each cost
+/// a pass that moves a long run of siblings an allocation per sibling.
 #[derive(Debug, Clone, Default)]
 struct Adjacency {
     links: Vec<DependencyLink>,
-    by_target: HashMap<StableNodeId, usize>,
+    by_target: NodeMap<usize>,
 }
 
 impl Adjacency {
+    /// Links looked through one by one before they are indexed.
+    const SCANNED: usize = 8;
+
     fn add(&mut self, target: StableNodeId, footprint: LayoutDependencyFootprint) {
-        if let Some(&index) = self.by_target.get(&target) {
+        let held = if self.links.len() <= Self::SCANNED {
+            self.links.iter().position(|link| link.target == target)
+        } else {
+            self.by_target.get(&target).copied()
+        };
+        if let Some(index) = held {
             self.links[index].footprint = self.links[index].footprint.union(footprint);
             return;
         }
-        self.by_target.insert(target, self.links.len());
+        if self.links.len() == Self::SCANNED {
+            self.by_target = self
+                .links
+                .iter()
+                .enumerate()
+                .map(|(index, link)| (link.target, index))
+                .collect();
+        }
+        if self.links.len() >= Self::SCANNED {
+            self.by_target.insert(target, self.links.len());
+        }
         self.links.push(DependencyLink { target, footprint });
     }
 }
@@ -59,10 +79,10 @@ impl Adjacency {
 /// intended for flex/grid/inline sibling domains.
 #[derive(Debug, Clone, Default)]
 pub struct LayoutDependencyGraph {
-    parents: HashMap<StableNodeId, Adjacency>,
-    children: HashMap<StableNodeId, Adjacency>,
-    contexts: HashMap<StableNodeId, Adjacency>,
-    isolated: HashSet<StableNodeId>,
+    parents: NodeMap<Adjacency>,
+    children: NodeMap<Adjacency>,
+    contexts: NodeMap<Adjacency>,
+    isolated: NodeSet,
     constraint: ConstraintDescentCounts,
 }
 
@@ -153,10 +173,7 @@ impl LayoutDependencyGraph {
         Self::links(&self.contexts, node)
     }
 
-    fn links(
-        adjacency: &HashMap<StableNodeId, Adjacency>,
-        node: StableNodeId,
-    ) -> &[DependencyLink] {
+    fn links(adjacency: &NodeMap<Adjacency>, node: StableNodeId) -> &[DependencyLink] {
         adjacency
             .get(&node)
             .map(|adjacency| adjacency.links.as_slice())
@@ -185,7 +202,7 @@ impl LayoutDependencyGraph {
             + Self::link_count(&self.contexts)
     }
 
-    fn link_count(adjacency: &HashMap<StableNodeId, Adjacency>) -> usize {
+    fn link_count(adjacency: &NodeMap<Adjacency>) -> usize {
         adjacency
             .values()
             .map(|adjacency| adjacency.links.len())
@@ -193,7 +210,7 @@ impl LayoutDependencyGraph {
     }
 
     fn add_link(
-        links: &mut HashMap<StableNodeId, Adjacency>,
+        links: &mut NodeMap<Adjacency>,
         source: StableNodeId,
         target: StableNodeId,
         footprint: LayoutDependencyFootprint,
@@ -316,13 +333,13 @@ impl FrontierEntry {
 /// Per-pass union of measure, placement, context, writing and scroll work.
 #[derive(Debug, Clone, Default)]
 pub struct LayoutFrontier {
-    entries: HashMap<StableNodeId, FrontierEntry>,
-    all: HashSet<StableNodeId>,
-    measure: HashSet<StableNodeId>,
-    placement: HashSet<StableNodeId>,
-    contexts: HashSet<StableNodeId>,
-    writing: HashSet<StableNodeId>,
-    scroll: HashSet<StableNodeId>,
+    entries: NodeMap<FrontierEntry>,
+    all: NodeSet,
+    measure: NodeSet,
+    placement: NodeSet,
+    contexts: NodeSet,
+    writing: NodeSet,
+    scroll: NodeSet,
     seeds: usize,
     seed_merges: usize,
     dependency_edges_visited: usize,
@@ -424,7 +441,7 @@ impl LayoutFrontier {
         // own size changed) still has to reach its parent's placement. Keep
         // this compact set so the distinction does not widen descendant
         // propagation.
-        let direct_seeds = seeds.iter().map(|seed| seed.node).collect::<HashSet<_>>();
+        let direct_seeds = seeds.iter().map(|seed| seed.node).collect::<NodeSet>();
         for seed in seeds {
             if seed.invalidation.is_empty() {
                 frontier.propagations_stopped = frontier.propagations_stopped.saturating_add(1);
@@ -464,7 +481,7 @@ impl LayoutFrontier {
             .union(LayoutDependencyFootprint::CONSUMES_PARENT_BLOCK_CONSTRAINT)
             .union(LayoutDependencyFootprint::DEPENDS_ON_CONTAINING_BLOCK)
             .union(LayoutDependencyFootprint::DEPENDS_ON_WRITING_CONTEXT);
-        let mut visited = HashSet::new();
+        let mut visited = HashSet::<_, BuildIdHasher>::default();
         while let Some((node, invalidation)) = pending.pop_front() {
             let key = (
                 node,
@@ -686,27 +703,27 @@ impl LayoutFrontier {
         self.all.contains(&node)
     }
 
-    pub fn nodes(&self) -> &HashSet<StableNodeId> {
+    pub fn nodes(&self) -> &NodeSet {
         &self.all
     }
 
-    pub fn measure_nodes(&self) -> &HashSet<StableNodeId> {
+    pub fn measure_nodes(&self) -> &NodeSet {
         &self.measure
     }
 
-    pub fn placement_nodes(&self) -> &HashSet<StableNodeId> {
+    pub fn placement_nodes(&self) -> &NodeSet {
         &self.placement
     }
 
-    pub fn context_nodes(&self) -> &HashSet<StableNodeId> {
+    pub fn context_nodes(&self) -> &NodeSet {
         &self.contexts
     }
 
-    pub fn writing_nodes(&self) -> &HashSet<StableNodeId> {
+    pub fn writing_nodes(&self) -> &NodeSet {
         &self.writing
     }
 
-    pub fn scroll_nodes(&self) -> &HashSet<StableNodeId> {
+    pub fn scroll_nodes(&self) -> &NodeSet {
         &self.scroll
     }
 
@@ -755,5 +772,46 @@ impl LayoutFrontier {
 
     pub(crate) fn note_dependency_walk(&mut self, edges: usize) {
         self.dependency_edges_visited = self.dependency_edges_visited.saturating_add(edges);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn node(raw: usize) -> StableNodeId {
+        StableNodeId::new(raw as u64 + 1).unwrap()
+    }
+
+    /// A repeated edge merges into the one held, whether the links are few
+    /// enough to look through or indexed, and across the step between.
+    #[test]
+    fn a_repeated_link_merges_at_any_count() {
+        let inline = LayoutDependencyFootprint::EXPORTS_INTRINSIC_INLINE;
+        let block = LayoutDependencyFootprint::EXPORTS_INTRINSIC_BLOCK;
+        for count in [
+            1,
+            Adjacency::SCANNED - 1,
+            Adjacency::SCANNED,
+            Adjacency::SCANNED + 1,
+            Adjacency::SCANNED + 2,
+            40,
+        ] {
+            let mut links = Adjacency::default();
+            for footprint in [inline, block] {
+                for target in 0..count {
+                    links.add(node(target), footprint);
+                }
+                assert_eq!(links.links.len(), count, "{count} links");
+            }
+            for target in (0..count).rev() {
+                links.add(node(target), inline);
+            }
+            assert_eq!(links.links.len(), count, "{count} links");
+            for (index, link) in links.links.iter().enumerate() {
+                assert_eq!(link.target, node(index), "{count} links");
+                assert_eq!(link.footprint, inline.union(block), "{count} links");
+            }
+        }
     }
 }

@@ -2122,7 +2122,7 @@ pub(super) fn plan_missed_change(
     plan: &MeasurePlan,
     child: StableNodeId,
     nodes: &LayoutInputMap<'_>,
-    measure: &HashSet<StableNodeId>,
+    measure: &crate::NodeSet,
 ) -> bool {
     let Some(entry) = plan.entry(child) else {
         return false;
