@@ -37,7 +37,7 @@ A Surface's HDR capability is determined by `SurfaceCapabilities::format_capabil
 ### 4. Frame upload ring (UploadRing), frame slots, and caches
 
 - **Batched upload (`UploadRing`)**: the renderer does not scatter `queue.write_buffer` / `write_texture` calls. Instead, it appends writes through `GpuWorkSink` to the current `FrameContext`'s upload batch. When `FrameContext::submit` is called, the device's pending batch (including off-frame writes and writes from previously discarded frames) and this frame's upload batch are copied with one `memcpy` into a mapped block of the `UploadRing` (capped at `32 MiB`), merged into a single upload command buffer, and land ahead of the render commands in the same `queue.submit`. This removes WGPU's internal staging allocation for each small write. (Text glyph blocks still use an in-encoder `copy_buffer_to_buffer` at the recorded position, so that multiple draws to the same target before a single submit each see the correct glyphs; see #224. Glyph atlas regions written by the second and later paints within the same frame are likewise copied at the recorded position; see "Atlas ordering for multiple targets in one frame" below. These count toward `upload_bytes` but not `upload_writes` / `upload_copies`.)
-- **Bounded frame slots**: each `FrameContext` holds a frame slot while recording (discard returns it immediately; submit returns it in the GPU completion callback). When slots are full, `begin_frame()` does one bounded wait on the oldest submitted frame; `try_begin_frame()` returns `None` immediately when slots are full. The window presentation path uses `try_begin_frame()`, and **must call `get_current_texture` only after obtaining a frame slot**. (If no slot is available, it first does one non-blocking `poll`; if still full, it skips this frame and leaves the buffer already on screen in place. This prevents a transparent swapchain from taking a buffer and then waiting, which would blank the whole window.)
+- **Bounded frame slots**: each host frame (`begin_frame` / `try_begin_frame`) holds a frame slot while recording (discard returns it immediately; submit returns it in the GPU completion callback; producer frames take no slot, see §9). When slots are full, `begin_frame()` does one bounded wait on the oldest submitted frame and frees that slot once the wait completes; `try_begin_frame()` returns `None` immediately when slots are full. The window presentation path uses `try_begin_frame()`, and **must call `get_current_texture` only after obtaining a frame slot**. (If no slot is available, it first does one non-blocking `poll`; if still full, it skips this frame and leaves the buffer already on screen in place. This prevents a transparent swapchain from taking a buffer and then waiting, which would blank the whole window.)
 - **Generational caches and shared URL textures**: the pipeline and resource layout registries use a `StampedCache` isolated per `DeviceGeneration` (when full, it linearly evicts the least recently used 1/8 and compiles pipelines in parallel outside the lock). `SceneWgpuPainter` holds a single `UrlTextureCache` shared by Quad backgrounds, `border-image`, and HostTexture masks (at most 4 concurrent HTTP fetches, an idle cap of 256 entries / `64 MiB`, automatic release after 120 consecutive painted frames without a reference; raster image decode is capped at `4096 px` / `64 MiB`, SVG at `2048 px`).
 - **Painter core shared across profiles**: incompatible output groups of the headless `PresentationDriver` share one `SceneWgpuPainter`. Profile-independent parts are stored once: the text engine, shape/raster caches and glyph atlas, `UrlTextureCache`, and motion resources. The icon atlas is target state, one per painted `RenderTargetId` (plus one for the painter's own default target). Each working format (and its URL source encoding) keeps one pipeline set (quad, mesh, icon and text programs, HostTexture, backdrop, chart), swapped in when the profile switches and built on first use. URL textures are bucketed by egress and source encoding (sRGB or legacy linear direct write), so the two encodings never overwrite each other. Each target uses only one profile for its lifetime. Whenever the shared atlas evicts or moves glyphs for any profile, the placement epoch advances, and other targets rebuild their retained `PreparedBatch`. Window hosts still hold one painter per profile.
 - **Atlas ordering for multiple targets in one frame**: a `FrameContext`'s upload batch lands as a whole ahead of all of that frame's passes at submit time, and the glyph atlas is shared by every target that painter draws. So the second and later paints within one frame write their glyph regions with `copy_buffer_to_texture` at the recorded position in that frame's encoder, ordered after the passes already recorded. When a later group evicts, reuses, or compacts an earlier group's glyph rectangles, the earlier group still samples its own glyphs. The first paint still goes through the upload batch, so the cost of a single-target frame is unchanged. The same applies when a window and its same-profile outputs share a painter within one frame. These copies live with the frame's encoder: when a frame is discarded they never land, and before the next paint the painter makes the atlas forget all glyph positions, so each target re-places glyphs and rebuilds its batches. A painter records into only one frame at a time: the host submits or discards the current frame before painting into the next; two frames submitted out of order would put one frame's atlas writes under the other frame's passes.
@@ -160,6 +160,41 @@ The `gpu-scene-*` sampling commands are as in §6. `nana-text-paint-benchmark` n
 
 What a caret-blink or hover frame costs on DX12, and the design and staged plan for presenting with dirty rectangles and tracking damage, are in [Partial present and damage tracking](./partial-present.md). Verdict: not now.
 
+### 9. Submission budget: an app cannot stall the desktop
+
+The device has one queue, and the desktop compositor (DWM on Windows) waits behind the same GPU. A process that queues seconds of work freezes the whole desktop; an early unthrottled probe did exactly that. `GpuContext` therefore bounds unfinished submissions per **lane** (`FrameLane`):
+
+| Lane | Entry points | Limit | Who waits |
+| --- | --- | --- | --- |
+| `Presentation` | `begin_frame` / `try_begin_frame` | the frame slot count (default 3) | only on its own lane's oldest submission |
+| `Producer` | `begin_producer_frame` / `try_begin_producer_frame` | `GpuDeviceState::set_producer_submission_budget`, default **2** | only on the producer lane's oldest submission |
+
+- **Producers** (video, models, offscreen work behind a `CustomRenderNode`, `FrameExchange` copies) use `begin_producer_frame`. It takes no frame slot, so however busy producers are, window frames still get theirs. With the budget used up, `begin_producer_frame` blocks until the lane's oldest submission finishes, and `try_begin_producer_frame` polls once without blocking and returns `None`. `FrameContext::submit` checks the budget again **before** taking the `submission_order` lock (so producers recording concurrently cannot overshoot it), and a wait never holds up another lane's submit. `FrameExchange::copy_from` uses the producer lane and returns `CopyOutcome::PoolFull` when the budget is used up.
+- **Host frames** are paced by frame slots. When every slot is held by an unsubmitted recording, a frame runs without a slot (`gpu.frame_slots_exhausted`); such frames are still held to the same limit and wait on their lane's oldest submission before submitting instead of piling up.
+- The count is conservative: a submission leaves only once a completion callback or a wait proved it finished, so the real queue depth never exceeds it. `GpuPolicyStats` reports `producer_submission_waits`, `producer_submissions_peak` and `presentation_submission_waits`; the `gpu.submission_budget_waits` metric counts waits.
+- Default 2: one executing and one ready behind it keeps a producer busy without letting it queue several frames of work ahead of the compositor. Producers with very light frames that need more overlap may raise it; producers with heavy frames should stay at 1–2.
+
+**What the budget does not bound** (stated plainly):
+
+- Raw `queue.submit` through `wgpu-interop`, and `GpuContext::flush_uploads`, are not counted. The escape hatch hands out the queue as is; its caller does its own throttling (at most 1–2 in flight; see the GPU load rule in `AGENTS.md`).
+- Queue depth cannot bound a **single** draw or dispatch that runs for seconds. Windows resets the device through TDR after about 2 seconds; a submit whose wait outlives 5 seconds goes ahead and reports `gpu.submission_budget_overrun` rather than hanging its thread. Once the device is lost waits end at once, and the host replaces the `GpuContext` per `is_lost()`.
+- Known gap: in the fork, `wgpu::Device::poll` panics, instead of returning an error, when the backend wait returns `DeviceError::Lost`. On DX12 the fence reads `u64::MAX` after a TDR, so waits return and this path is not taken; Vulkan's `VK_ERROR_DEVICE_LOST` takes it. Every `poll` in the framework (frame slot waits, the submission budget, `GpuContext::poll`) is affected; it is to be fixed in the fork.
+
+Measured (2026-11-11, RTX 5060 Ti, DX12, Mailbox, `surface-resize-probe --frame-context --resizes 200`; the producer submits back to back with no wait of its own, bounded only by budget 2; 20 s cap per run, load stepped up one level at a time, desktop responsive throughout):
+
+| Load | Window frame p50 / p95 / max | Producer peak in flight | Producer waits | Window lane waits |
+| --- | --- | --- | --- | --- |
+| no producer | 4.0 / 6.5 ms (one 522 ms outlier, unrelated to producers) | 0 | 0 | 0 |
+| `--load 8` | 5.3 / 8.2 / 10.1 ms | 2 | 1043 of 1047 submits | 0 |
+| `--load 16` | 6.3–6.4 / 9.2–9.6 / 15.9–33.7 ms | 2 | 618–626 of 620–628 submits | 0 |
+| `--load 16`, raw wgpu producer (waits after each submit) | 8.9–9.3 / 50.6–55.2 / 108–109 ms | 1 | — | — |
+
+```bash
+cargo run -p nana-ui --example surface-resize-probe --features gpu,wgpu-interop --release -- --frame-context --load 4
+```
+
+`--load` is capped at 16 and `--resizes` at 200; never run two GPU probes at once.
+
 ## Mounting host textures (`HostTexture` + `GpuTextureView`)
 
 Shader output, preview viewports, and offscreen render textures are nodes in the UI tree just like ordinary buttons: they take part in layout, are clipped, and can be hit. For a first integration, use the default path: draw the content into a sampleable texture, mount a `GpuTextureView` in the tree, and register it in `host_textures()` under the same string slot name.
@@ -267,7 +302,7 @@ When live content is produced on a separate thread (such as model rendering, bro
 let mut exchange = FrameExchange::new(&gpu, frame_exchange::DEFAULT_CAPACITY, epoch, notify);
 let inbox = exchange.inbox(); // send to the UI thread
 
-let mut frame = gpu.begin_frame("producer");
+let mut frame = gpu.begin_producer_frame("producer");
 scene.render(frame.wgpu_encoder()); // wgpu-interop
 frame.submit();
 match exchange.copy_from(&rendered, epoch) {

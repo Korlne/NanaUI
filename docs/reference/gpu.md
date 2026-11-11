@@ -37,7 +37,7 @@ Surface 的 HDR 能力由 `SurfaceCapabilities::format_capabilities` 决定，�
 ### 4. 帧上传环（UploadRing）、帧槽（Frame Slots）与缓存
 
 - **批量合并上传（`UploadRing`）**：渲染器不散乱调用 `queue.write_buffer` / `write_texture`，而是通过 `GpuWorkSink` 将写入追加到当前 `FrameContext` 的上传批。调用 `FrameContext::submit` 时，设备待落地批（含帧外写入与此前被丢弃帧的写入）与本帧上传批通过一次 `memcpy` 拷入 `UploadRing`（上限 `32 MiB`）的一个映射块，合并为单个上传命令缓冲并在同一次 `queue.submit` 中排在渲染命令之前落地，从而消除每次小写入在 WGPU 内部的 staging 分配（文本字形块仍走 encoder 内按录制位置的 `copy_buffer_to_buffer`，以保证单次提交前同一目标多次绘制各自看到正确的字形，见 #224；同一帧内第二个及之后的 paint 写入的字形图集区域同样按录制位置拷贝，见下文“同帧多目标的图集顺序”，计入 `upload_bytes` 但不计入 `upload_writes` / `upload_copies`）。
-- **有界帧槽（Frame Slots）**：每个 `FrameContext` 在录制期占用一个帧槽（discard 立即归还，submit 在 GPU 完成回调中归还）。槽满时 `begin_frame()` 对最早已提交的帧做一次有界等待；`try_begin_frame()` 则在槽满时立即返回 `None`。窗口呈现路径使用 `try_begin_frame()`，且**必须在拿到帧槽之后才调用 `get_current_texture`**（拿不到槽时先非阻塞 `poll` 一次，仍满则直接跳过本帧，让已上屏的缓冲继续留在屏幕上，避免透明交换链取走缓冲后等待导致整窗空白）。
+- **有界帧槽（Frame Slots）**：每个宿主帧（`begin_frame` / `try_begin_frame`）在录制期占用一个帧槽（discard 立即归还，submit 在 GPU 完成回调中归还；生产者帧不占帧槽，见 §9）。槽满时 `begin_frame()` 对最早已提交的帧做一次有界等待，等到即释放该槽；`try_begin_frame()` 则在槽满时立即返回 `None`。窗口呈现路径使用 `try_begin_frame()`，且**必须在拿到帧槽之后才调用 `get_current_texture`**（拿不到槽时先非阻塞 `poll` 一次，仍满则直接跳过本帧，让已上屏的缓冲继续留在屏幕上，避免透明交换链取走缓冲后等待导致整窗空白）。
 - **代际化缓存与 URL 纹理共享**：管线与资源布局注册表采用按 `DeviceGeneration` 隔离的 `StampedCache`（满时线性淘汰最久未用的 1/8，并在锁外并行编译管线）。`SceneWgpuPainter` 持有唯一的 `UrlTextureCache`，供 Quad 背景、`border-image` 与 HostTexture 遮罩共享（最多并发拉取 4 个 HTTP 资源，闲置上限 256 项 / `64 MiB`，连续 120 个绘制帧未引用后自动释放；栅格图解码上限 `4096 px` / `64 MiB`，SVG 上限 `2048 px`）。
 - **跨 profile 共享 painter 核心**：headless `PresentationDriver` 的不兼容输出组共用一个 `SceneWgpuPainter`。与 profile 无关的部分只存一份：文本引擎、shape / raster 缓存与字形图集、`UrlTextureCache` 与 motion 资源；图标图集属于目标状态，每个绘制过的 `RenderTargetId` 各一份（另有 painter 自身默认目标的一份）。每个工作格式（及其 URL 源编码）保留一份管线集（quad、mesh、图标与文本程序、HostTexture、backdrop、chart），切换 profile 时换入，首次使用时构建。URL 纹理按 egress 与源编码（sRGB 或 legacy 线性直写）分桶，两种编码互不覆盖。每个目标终身只用一个 profile；共享图集为任一 profile 淘汰或搬移字形都会推进 placement epoch，使其他目标保留的 `PreparedBatch` 重建。窗口宿主仍按 profile 各持有 painter。
 - **同帧多目标的图集顺序**：一个 `FrameContext` 的上传批在提交时整体排在该帧所有 pass 之前，而字形图集被该 painter 绘制的所有目标共享。因此同一帧内第二个及之后的 paint 把字形区域改为在该帧 encoder 的录制位置上 `copy_buffer_to_texture`，排在此前已录制的 pass 之后，后一组淘汰、复用或 compact 前一组的字形矩形时，前一组仍采样自己的字形。首个 paint 仍走上传批，单目标帧成本不变。窗口与它的同 profile 输出在一帧内共用 painter 时同样适用。这些拷贝随帧的 encoder 存在：帧被丢弃时它们没有落地，painter 在下一次绘制前让图集忘掉全部字形位置，各目标重新放置并重建批次。一个 painter 同一时刻只向一个帧录制：宿主提交或丢弃当前帧之后再向下一帧绘制，乱序提交的两个帧会让一帧的图集写入落在另一帧的 pass 之下。
@@ -160,6 +160,41 @@ python perf/stack_attribution.py --scope "upload::record" $S/dx12-text-mutate-1p
 
 光标闪烁、悬停这类小改动的帧在 DX12 上的开销，以及带脏矩形呈现与 damage 跟踪的设计和分阶段计划，见 [局部呈现与 damage 跟踪](./partial-present.md)。结论：现在不做。
 
+### 9. 提交预算：不让应用拖垮桌面
+
+设备只有一条队列，桌面合成器（Windows 上的 DWM）也排在同一块 GPU 后面。一个进程排进几秒的工作，整个桌面都会卡住；早期一个不限速的探针就这样冻住过整台机器。`GpuContext` 因此按**通道**（`FrameLane`）限制尚未完成的提交数：
+
+| 通道 | 入口 | 上限 | 谁会等 |
+| --- | --- | --- | --- |
+| `Presentation` | `begin_frame` / `try_begin_frame` | 帧槽数（默认 3） | 只等自己通道最早的提交 |
+| `Producer` | `begin_producer_frame` / `try_begin_producer_frame` | `GpuDeviceState::set_producer_submission_budget`，默认 **2** | 只等生产者通道最早的提交 |
+
+- **生产者**（视频、模型、`CustomRenderNode` 背后的离屏工作、`FrameExchange` 的拷贝）使用 `begin_producer_frame`。它不占帧槽，所以生产者再忙也不会让窗口帧拿不到槽；预算满时 `begin_producer_frame` 阻塞到本通道最早的提交完成，`try_begin_producer_frame` 非阻塞 `poll` 一次后返回 `None`。`FrameContext::submit` 在取 `submission_order` 锁**之前**再按预算检查一次（并发录制的多个生产者也不会超额），所以等待永远不会挡住另一条通道的提交。`FrameExchange::copy_from` 已走生产者通道，预算满时返回 `CopyOutcome::PoolFull`。
+- **宿主帧**由帧槽定节奏。帧槽全被未提交的录制占住时，帧会无槽运行（`gpu.frame_slots_exhausted`）；这些帧仍受同一上限约束，提交前等待本通道最早的提交，而不是无限堆积。
+- 计数是保守的：一条提交只有在完成回调或一次等待证明它已完成后才离开，所以真实的队列深度不会超过统计值。`GpuPolicyStats` 报告 `producer_submission_waits`、`producer_submissions_peak` 与 `presentation_submission_waits`；指标 `gpu.submission_budget_waits` 计等待次数。
+- 默认值 2：一条在执行、一条已备好，足以让生产者保持忙碌，又不会让它在合成器前排出多帧工作。每帧工作很轻、需要更多并行的生产者可以调高；单帧很重的生产者应保持 1–2。
+
+**预算管不到的地方**（如实说明）：
+
+- `wgpu-interop` 的裸 `queue.submit` 与 `GpuContext::flush_uploads` 不计入预算。逃生口按原样交出队列，调用方自己负责限速（最多 1–2 条在途，见 `AGENTS.md` 的 GPU 负载规则）。
+- 队列深度管不住**单条**跑几秒的绘制或计算。Windows 在约 2 秒后触发 TDR 重置设备；单次等待超过 5 秒的提交会照常放行并上报 `gpu.submission_budget_overrun`，不会把提交线程永远挂住。设备丢失后等待立即结束，宿主按 `is_lost()` 换上新的 `GpuContext`。
+- 已知缺口：fork 中 `wgpu::Device::poll` 在后端等待返回 `DeviceError::Lost` 时会 panic，而不是返回错误。DX12 在 TDR 后围栏读数为 `u64::MAX`，等待直接返回，不触发这条路径；Vulkan 的 `VK_ERROR_DEVICE_LOST` 会触发。框架内所有 `poll`（帧槽等待、提交预算、`GpuContext::poll`）都受影响，待在 fork 中修复。
+
+实测（2026-11-11，RTX 5060 Ti，DX12，Mailbox，`surface-resize-probe --frame-context --resizes 200`，生产者连续提交、不自行等待，仅靠预算 2 限速；每档 20 秒上限，逐档加载，桌面始终可用）：
+
+| 负载 | 窗口帧 p50 / p95 / max | 生产者峰值在途 | 生产者等待 | 窗口通道等待 |
+| --- | --- | --- | --- | --- |
+| 无生产者 | 4.0 / 6.5 ms（一次 522 ms 离群值，与生产者无关） | 0 | 0 | 0 |
+| `--load 8` | 5.3 / 8.2 / 10.1 ms | 2 | 1043 / 1047 次提交 | 0 |
+| `--load 16` | 6.3–6.4 / 9.2–9.6 / 15.9–33.7 ms | 2 | 618–626 / 620–628 次提交 | 0 |
+| `--load 16`，裸 wgpu 生产者（每条提交后自行等待） | 8.9–9.3 / 50.6–55.2 / 108–109 ms | 1 | — | — |
+
+```bash
+cargo run -p nana-ui --example surface-resize-probe --features gpu,wgpu-interop --release -- --frame-context --load 4
+```
+
+`--load` 上限 16，`--resizes` 上限 200；不要同时运行两个 GPU 探针。
+
 ## 挂载宿主纹理（`HostTexture` + `GpuTextureView`）
 
 着色器输出、预览视口、离屏渲染纹理与普通按钮一样，是界面树上占据布局、受裁剪、可命中的节点。首次接入请使用默认路径：把画面画到可采样纹理上，在树上挂载 `GpuTextureView`，并用同一个字符串槽位名在 `host_textures()` 中登记。
@@ -267,7 +302,7 @@ NanaUI 的 wgpu fork 让 `Surface::configure`（窗口缩放）只等仍在使�
 let mut exchange = FrameExchange::new(&gpu, frame_exchange::DEFAULT_CAPACITY, epoch, notify);
 let inbox = exchange.inbox(); // 发送给 UI 线程
 
-let mut frame = gpu.begin_frame("producer");
+let mut frame = gpu.begin_producer_frame("producer");
 scene.render(frame.wgpu_encoder()); // wgpu-interop
 frame.submit();
 match exchange.copy_from(&rendered, epoch) {

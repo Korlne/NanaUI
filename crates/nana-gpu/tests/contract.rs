@@ -842,10 +842,24 @@ fn a_producer_flood_stays_within_its_submission_budget_and_leaves_window_frames_
         before.presentation_submission_waits
     );
     assert_eq!(after.frame_slot_stalls, before.frame_slot_stalls);
-    __framework::device(&gpu)
+    // Completion callbacks may need a poll after the wait that finished
+    // their work; the budget drains once they run.
+    poll_until(&gpu, || gpu.policy().producer_submissions_in_flight() == 0);
+}
+
+fn poll_until(gpu: &GpuContext, mut ready: impl FnMut() -> bool) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    __framework::device(gpu)
         .poll(wgpu::PollType::wait_indefinitely())
         .unwrap();
-    assert_eq!(gpu.policy().producer_submissions_in_flight(), 0);
+    while !ready() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "completion never arrived"
+        );
+        gpu.poll();
+        thread::sleep(Duration::from_millis(1));
+    }
 }
 
 #[test]
@@ -862,10 +876,8 @@ fn a_discarded_producer_frame_returns_no_budget() {
     let seen = Arc::clone(&done);
     gpu.on_submission_complete(&submission, move || seen.store(true, Ordering::Release))
         .unwrap();
-    __framework::device(&gpu)
-        .poll(wgpu::PollType::wait_indefinitely())
-        .unwrap();
-    assert!(done.load(Ordering::Acquire));
+    poll_until(&gpu, || done.load(Ordering::Acquire));
+    poll_until(&gpu, || gpu.policy().producer_submissions_in_flight() == 0);
     assert!(gpu.try_begin_producer_frame("budget returned").is_some());
 }
 

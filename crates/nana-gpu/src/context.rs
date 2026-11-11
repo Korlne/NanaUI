@@ -677,15 +677,26 @@ impl GpuContext {
         let slot = loop {
             match self.inner.policy.take_frame_slot(id.get()) {
                 Ok(slot) => break Some(slot),
-                Err(crate::policy::SlotWait::Submitted(index)) if !waited => {
+                Err(crate::policy::SlotWait::Submitted { index, slot, token }) if !waited => {
                     waited = true;
                     self.inner.policy.record_slot_wait();
-                    // The slot is released by the submission's completion
-                    // callback, which this poll runs.
-                    let _ = self.inner.device.poll(wgpu::PollType::Wait {
-                        submission_index: Some(index),
-                        timeout: Some(std::time::Duration::from_secs(1)),
-                    });
+                    // The completion callback that normally frees the slot is
+                    // registered after the submit and can sit behind a
+                    // producer's later submission; a finished wait frees the
+                    // slot itself, so producer work never makes this frame
+                    // run without one. The callback's release is then a no-op
+                    // (it matches the exact token).
+                    if self
+                        .inner
+                        .device
+                        .poll(wgpu::PollType::Wait {
+                            submission_index: Some(index),
+                            timeout: Some(std::time::Duration::from_secs(1)),
+                        })
+                        .is_ok()
+                    {
+                        self.inner.policy.release_frame_slot_exact(slot, token);
+                    }
                 }
                 Err(_) => {
                     self.inner.policy.record_slot_stall();
@@ -799,10 +810,27 @@ impl GpuContext {
                 }
                 return;
             }
+            // Entries leave on completion callbacks, which can run a poll
+            // late: check the oldest without blocking before counting a wait.
+            if let Some((index, done)) = &wait
+                && self
+                    .inner
+                    .device
+                    .poll(wgpu::PollType::Wait {
+                        submission_index: Some(index.clone()),
+                        timeout: Some(std::time::Duration::ZERO),
+                    })
+                    .is_ok()
+            {
+                done.store(true, Ordering::Release);
+                continue;
+            }
             if !waited {
                 waited = true;
                 budget.record_wait();
-                nana_diagnostics::metric!(nana_diagnostics::framework::gpu::SUBMISSION_BUDGET_WAITS);
+                nana_diagnostics::metric!(
+                    nana_diagnostics::framework::gpu::SUBMISSION_BUDGET_WAITS
+                );
             }
             match wait {
                 Some((index, done)) => {

@@ -693,7 +693,9 @@ impl<E: Copy + Eq + Send + Sync + 'static, M: Send + Sync + 'static> FrameExchan
         };
         self.sequence = sequence;
         let slot = &mut self.slots[index];
-        let Some(mut frame) = self.gpu.try_begin_producer_frame("NanaUI frame exchange copy")
+        let Some(mut frame) = self
+            .gpu
+            .try_begin_producer_frame("NanaUI frame exchange copy")
         else {
             slot.ownership.release(sequence);
             self.stats.pool_full += 1;

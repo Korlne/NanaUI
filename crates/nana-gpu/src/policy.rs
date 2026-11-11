@@ -206,8 +206,13 @@ struct FrameSlot {
 
 /// Why no slot was free.
 pub(crate) enum SlotWait {
-    /// Wait for this submission; its completion frees a slot.
-    Submitted(wgpu::SubmissionIndex),
+    /// Wait for this submission; its completion frees `slot`, held by the
+    /// frame `token`.
+    Submitted {
+        index: wgpu::SubmissionIndex,
+        slot: FrameSlotId,
+        token: u64,
+    },
     /// Every slot is held by a recording that has not been submitted.
     Unsubmitted,
 }
@@ -391,11 +396,19 @@ impl GpuDeviceState {
         Err(state
             .frame_slots
             .iter()
-            .flatten()
-            .filter_map(|slot| slot.submission.clone().map(|index| (slot.token, index)))
-            .min_by_key(|(token, _)| *token)
-            .map_or(SlotWait::Unsubmitted, |(_, index)| {
-                SlotWait::Submitted(index)
+            .enumerate()
+            .filter_map(|(slot, held)| {
+                let held = held.as_ref()?;
+                let index = held.submission.clone()?;
+                Some((held.token, slot, index))
+            })
+            .min_by_key(|(token, _, _)| *token)
+            .map_or(SlotWait::Unsubmitted, |(token, slot, index)| {
+                SlotWait::Submitted {
+                    index,
+                    slot: FrameSlotId(slot as u32),
+                    token,
+                }
             }))
     }
 
