@@ -3798,6 +3798,10 @@ pub struct AccessibilityState {
     /// itself does not take them, raise [`crate::SecondaryPress`] with
     /// `keyboard` set, as the `ContextMenu` key does.
     pub has_popup: bool,
+    /// Whether what this control discloses is open (`aria-expanded`): set
+    /// only on a control that shows and hides something in place, such as
+    /// a settings row's help button. `None` where nothing expands.
+    pub expanded: Option<bool>,
     pub multiline: bool,
     pub editable: bool,
     pub modal: bool,

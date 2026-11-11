@@ -1159,6 +1159,10 @@ pub struct IconButton {
     /// and ArrowUp / ArrowDown on it raise [`SecondaryPress`] with
     /// `keyboard` set. See [`AccessibilityState::has_popup`].
     pub has_popup: bool,
+    /// Shows and hides something in place (`aria-expanded`): `Some(open)`
+    /// tells assistive technology whether it is shown now. See
+    /// [`AccessibilityState::expanded`].
+    pub expanded: Option<bool>,
     pub style: NodeStyle,
 }
 
@@ -1226,6 +1230,7 @@ impl IconButton {
             tooltip_open: false,
             colors_from_style: false,
             has_popup: false,
+            expanded: None,
             style,
         }
     }
@@ -1316,6 +1321,13 @@ impl IconButton {
     /// The button opens a menu; see [`Self::has_popup`](field@Self::has_popup).
     pub fn has_popup(mut self, has_popup: bool) -> Self {
         self.has_popup = has_popup;
+        self
+    }
+
+    /// The button shows and hides something in place, shown now when
+    /// `expanded`; see [`Self::expanded`](field@Self::expanded).
+    pub fn expanded(mut self, expanded: bool) -> Self {
+        self.expanded = Some(expanded);
         self
     }
 
@@ -1416,6 +1428,7 @@ impl ComponentView for IconButton {
                 disabled: self.disabled,
                 selected: Some(selected),
                 has_popup: self.has_popup,
+                expanded: self.expanded,
                 ..AccessibilityState::default()
             },
         );
