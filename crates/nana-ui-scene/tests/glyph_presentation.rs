@@ -126,6 +126,44 @@ fn a_reveal_costs_no_text_work_and_asks_for_frames_only_until_it_ends() {
 }
 
 #[test]
+fn the_frame_that_ends_a_reveal_is_painted_again() {
+    for intro in [GlyphIntro::fade(0.1), GlyphIntro::fade(0.0)] {
+        let (mut runtime, view) = document(RichText::new("你好呀"));
+        let mut shaper = NanaTextEngineShaper::new(engine());
+        settle(&mut runtime, &mut shaper);
+        let reveal = RevealSchedule::uniform(Duration::from_secs(2), 3, 0.1).intro(intro);
+        runtime
+            .context_mut()
+            .set_rich_presentation(view, Vec::new(), Some(reveal))
+            .unwrap();
+        at(&mut runtime, &mut shaper, Duration::from_secs(2));
+        // The last glyph is due at 2.2 s: here it is still hidden, or has
+        // only begun to fade in.
+        at(&mut runtime, &mut shaper, Duration::from_millis(2190));
+        let (instance, epoch) = (
+            runtime.scene().instance_id(),
+            runtime.scene().presentation_epoch(),
+        );
+        assert!(runtime.compositor_needs_tick());
+        at(&mut runtime, &mut shaper, Duration::from_millis(2350));
+        assert!(!runtime.compositor_needs_tick());
+        assert!(
+            runtime.scene().instance_id() != instance
+                || runtime.scene().presentation_epoch() != epoch,
+            "the painter keys the frame it keeps on these: unchanged, the \
+             finished reveal would never be drawn"
+        );
+        let epoch = runtime.scene().presentation_epoch();
+        at(&mut runtime, &mut shaper, Duration::from_millis(2500));
+        assert_eq!(
+            runtime.scene().presentation_epoch(),
+            epoch,
+            "and a scene at rest stays painted"
+        );
+    }
+}
+
+#[test]
 fn a_looping_effect_keeps_presenting_and_clearing_it_stops() {
     let value = RichText::new("wavy text").with_span(0..4, RichSpanStyle::new().effect(0));
     let (mut runtime, view) = document(value);

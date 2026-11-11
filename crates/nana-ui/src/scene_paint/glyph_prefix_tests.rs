@@ -283,3 +283,59 @@ fn the_kept_prefix_is_released_once_the_glyphs_stop() {
         "a still frame holds no second copy of the dest"
     );
 }
+
+/// The frame whose clock reaches a reveal's end has nothing live left in it,
+/// and it is the only one that shows the last glyph fully entered.
+#[test]
+fn the_frame_that_ends_a_reveal_shows_it_finished() {
+    use nana_ui_core::{GlyphIntro, RevealSchedule};
+    let (device, queue) = test_device();
+    let format = wgpu::TextureFormat::Rgba8Unorm;
+    // The last of nine glyphs is due at 200.8 s. Just before the end it is
+    // part-way through its fade, or with no intro not shown yet.
+    for (intro, before) in [
+        (GlyphIntro::fade(0.1), 200_850u64),
+        (GlyphIntro::fade(0.0), 200_790),
+    ] {
+        let mut waving = Waving::new(false);
+        let view = waving
+            .runtime
+            .scene()
+            .primitives()
+            .find_map(|primitive| match &primitive.kind {
+                nana_ui_scene::ScenePrimitiveKind::Text {
+                    presentation: Some(_),
+                    ..
+                } => Some(primitive.node),
+                _ => None,
+            })
+            .expect("the presented text");
+        let reveal = RevealSchedule::uniform(Duration::from_secs(200), 9, 0.1).intro(intro);
+        waving
+            .runtime
+            .context_mut()
+            .set_rich_presentation(view, Vec::new(), Some(reveal))
+            .unwrap();
+        let mut painter = SceneWgpuPainter::for_test(format);
+        let mut last = Vec::new();
+        for millis in [200_000, before] {
+            let scene = waving.at(Duration::from_millis(millis));
+            assert!(scene.glyph_presentation_live());
+            last = paint(&device, &queue, &mut painter, scene).0;
+        }
+        let scene = waving.at(Duration::from_millis(201_000));
+        assert!(!scene.glyph_presentation_live());
+        let (pixels, _) = paint(&device, &queue, &mut painter, scene);
+        let (fresh, _) = paint(
+            &device,
+            &queue,
+            &mut SceneWgpuPainter::for_test(format),
+            scene,
+        );
+        assert!(fresh != last, "the last glyph was still entering");
+        assert!(
+            pixels == fresh,
+            "the finished reveal is painted, not the frame before it kept"
+        );
+    }
+}

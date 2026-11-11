@@ -359,10 +359,26 @@ impl UiScene {
         now: Duration,
         descriptors: Option<&MotionDescriptorStore>,
     ) {
+        let before = self.compositor.gpu.now;
         if let Some(store) = descriptors {
             self.compositor.sync_gpu_pack(store, now);
         } else {
             self.compositor.gpu.now = now;
+        }
+        // Glyph and chart presentation is live only while the clock is short
+        // of its end, and the frame that reaches the end is the one that
+        // shows it finished. Nothing else of the scene changes on that frame,
+        // so without a new epoch the painter would keep the frame before it:
+        // the last glyph part-way through its fade, or, with no intro to
+        // play, not yet shown at all.
+        let ended = |until: Duration| before < until && until <= now;
+        if self
+            .glyph_live
+            .values()
+            .any(|until| until.is_some_and(ended))
+            || self.chart_live.values().any(|until| ended(*until))
+        {
+            self.compositor.presentation_epoch = self.compositor.presentation_epoch.wrapping_add(1);
         }
         self.present_inline_objects(now);
         self.compositor.last_promoted = 0;
