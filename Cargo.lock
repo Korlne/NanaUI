@@ -2832,6 +2832,7 @@ name = "nana-wgpu-fork-tests"
 version = "0.0.0"
 dependencies = [
  "hashbrown 0.17.1",
+ "log",
  "pollster",
  "wgpu",
  "windows",

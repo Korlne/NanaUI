@@ -224,7 +224,8 @@ pub struct Surface {
 }
 
 impl Surface {
-    /// Destroy the retired swapchains whose presents are behind the GPU: those
+    /// Destroy the retired swapchains whose presents are done: those whose
+    /// present fences have signaled, or, where presents are not tracked, those
     /// for which a submission that drew to `current` (the swapchain that
     /// replaced them) has completed. That submission was made after their last
     /// present was queued. Never blocks.
@@ -244,11 +245,19 @@ impl Surface {
             if used != 0 {
                 entry.after.get_or_insert(used);
             }
-            let finished = entry
-                .after
-                .is_some_and(|after| unsafe { current.fence_reached(fence, after) });
+            let (finished, how) = match unsafe { entry.presents_finished() } {
+                Some(finished) => (finished, "present fences"),
+                None => (
+                    entry
+                        .after
+                        .is_some_and(|after| unsafe { current.fence_reached(fence, after) }),
+                    "successor submission",
+                ),
+            };
             if finished {
-                // SAFETY: a submission queued after its last present completed.
+                log::debug!("Vulkan retired swapchain released: {how}");
+                // SAFETY: its present fences signaled, or (untracked) a
+                // submission queued after its last present completed.
                 unsafe { retired.swap_remove(index).release() };
             } else {
                 index += 1;
@@ -363,6 +372,23 @@ struct DeviceExtensionFunctions {
     mesh_shading: Option<ext::mesh_shader::Device>,
     #[cfg_attr(not(unix), allow(dead_code))]
     external_memory_fd: Option<khr::external_memory_fd::Device>,
+    /// `VK_KHR_present_wait`, when [`PresentTracking::PresentWait`] (NanaUI fork).
+    present_wait: Option<khr::present_wait::Device>,
+}
+
+/// How a swapchain learns that a present is done with its resources, so a
+/// swapchain replaced by `configure` can be destroyed (NanaUI fork).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PresentTracking {
+    /// `VK_KHR_swapchain_maintenance1` / `VK_EXT_swapchain_maintenance1`: a
+    /// fence per present, signaled once its resources may be freed.
+    PresentFence,
+    /// `VK_KHR_present_id` + `VK_KHR_present_wait`: an id per present, polled
+    /// with a zero timeout.
+    PresentWait,
+    /// Neither: a submission queued after the last present completing is taken
+    /// to mean the present is done. See [`swapchain::RetiredSwapchain`].
+    Heuristic,
 }
 
 struct RayTracingDeviceExtensionFunctions {
@@ -552,6 +578,8 @@ struct DeviceShared {
     private_caps: PrivateCapabilities,
     workarounds: Workarounds,
     features: wgt::Features,
+    /// See [`PresentTracking`] (NanaUI fork).
+    present_tracking: PresentTracking,
     render_passes: Mutex<FastHashMap<RenderPassKey, vk::RenderPass>>,
     sampler_cache: Mutex<sampler::SamplerCache>,
     memory_allocations_counter: InternalCounter,

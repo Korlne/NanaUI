@@ -146,6 +146,17 @@ pub struct PhysicalDeviceFeatures {
     vulkan_memory_model: Option<vk::PhysicalDeviceVulkanMemoryModelFeaturesKHR<'static>>,
 
     shader_draw_parameters: Option<vk::PhysicalDeviceShaderDrawParametersFeatures<'static>>,
+
+    /// Features provided by `VK_KHR_swapchain_maintenance1` or
+    /// `VK_EXT_swapchain_maintenance1` (the same structure), used for present
+    /// fences (NanaUI fork).
+    swapchain_maintenance1: Option<vk::PhysicalDeviceSwapchainMaintenance1FeaturesEXT<'static>>,
+
+    /// Features provided by `VK_KHR_present_id` (NanaUI fork).
+    present_id: Option<vk::PhysicalDevicePresentIdFeaturesKHR<'static>>,
+
+    /// Features provided by `VK_KHR_present_wait` (NanaUI fork).
+    present_wait: Option<vk::PhysicalDevicePresentWaitFeaturesKHR<'static>>,
 }
 
 impl PhysicalDeviceFeatures {
@@ -235,6 +246,15 @@ impl PhysicalDeviceFeatures {
             info = info.push_next(feature);
         }
         if let Some(ref mut feature) = self.shader_draw_parameters {
+            info = info.push_next(feature);
+        }
+        if let Some(ref mut feature) = self.swapchain_maintenance1 {
+            info = info.push_next(feature);
+        }
+        if let Some(ref mut feature) = self.present_id {
+            info = info.push_next(feature);
+        }
+        if let Some(ref mut feature) = self.present_wait {
             info = info.push_next(feature);
         }
         info
@@ -645,6 +665,27 @@ impl PhysicalDeviceFeatures {
                     vk::PhysicalDeviceShaderDrawParametersFeatures::default()
                         .shader_draw_parameters(needed),
                 )
+            } else {
+                None
+            },
+            swapchain_maintenance1: if enabled_extensions
+                .contains(&super::swapchain::KHR_SWAPCHAIN_MAINTENANCE1)
+                || enabled_extensions.contains(&ext::swapchain_maintenance1::NAME)
+            {
+                Some(
+                    vk::PhysicalDeviceSwapchainMaintenance1FeaturesEXT::default()
+                        .swapchain_maintenance1(true),
+                )
+            } else {
+                None
+            },
+            present_id: if enabled_extensions.contains(&khr::present_id::NAME) {
+                Some(vk::PhysicalDevicePresentIdFeaturesKHR::default().present_id(true))
+            } else {
+                None
+            },
+            present_wait: if enabled_extensions.contains(&khr::present_wait::NAME) {
+                Some(vk::PhysicalDevicePresentWaitFeaturesKHR::default().present_wait(true))
             } else {
                 None
             },
@@ -2205,6 +2246,28 @@ impl super::InstanceShared {
                 features2 = features2.push_next(next);
             }
 
+            // Present tracking (NanaUI fork); see `Adapter::present_tracking`.
+            if capabilities.supports_extension(super::swapchain::KHR_SWAPCHAIN_MAINTENANCE1)
+                || capabilities.supports_extension(ext::swapchain_maintenance1::NAME)
+            {
+                let next = features
+                    .swapchain_maintenance1
+                    .insert(vk::PhysicalDeviceSwapchainMaintenance1FeaturesEXT::default());
+                features2 = features2.push_next(next);
+            }
+            if capabilities.supports_extension(khr::present_id::NAME) {
+                let next = features
+                    .present_id
+                    .insert(vk::PhysicalDevicePresentIdFeaturesKHR::default());
+                features2 = features2.push_next(next);
+            }
+            if capabilities.supports_extension(khr::present_wait::NAME) {
+                let next = features
+                    .present_wait
+                    .insert(vk::PhysicalDevicePresentWaitFeaturesKHR::default());
+                features2 = features2.push_next(next);
+            }
+
             unsafe { get_device_properties.get_physical_device_features2(phd, &mut features2) };
             features2.features
         } else {
@@ -2526,8 +2589,65 @@ impl super::Adapter {
             log::debug!("Missing extensions: {unsupported_extensions:?}");
         }
 
+        let mut supported_extensions = supported_extensions;
+        supported_extensions.extend(self.present_tracking().1);
+
         log::debug!("Supported extensions: {supported_extensions:?}");
         supported_extensions
+    }
+
+    /// How this adapter's swapchains can tell that a present is done with its
+    /// resources, and the device extensions that takes (NanaUI fork).
+    ///
+    /// Prefers `VK_EXT_swapchain_maintenance1` / `VK_KHR_swapchain_maintenance1`
+    /// present fences, then `VK_KHR_present_id` + `VK_KHR_present_wait`. Each
+    /// needs its instance and device extensions and features. The environment
+    /// variable `NANA_WGPU_VULKAN_PRESENT_TRACKING` (`fence`, `wait` or `none`)
+    /// limits the choice, to exercise the other paths in tests.
+    fn present_tracking(&self) -> (super::PresentTracking, Vec<&'static CStr>) {
+        use super::swapchain::{
+            EXT_SURFACE_MAINTENANCE1, KHR_SURFACE_MAINTENANCE1, KHR_SWAPCHAIN_MAINTENANCE1,
+        };
+        use super::PresentTracking;
+
+        let limit = std::env::var("NANA_WGPU_VULKAN_PRESENT_TRACKING").ok();
+        let allow = |name: &str| limit.as_deref().is_none_or(|limit| limit == name);
+        let instance_has = |name: &CStr| self.instance.extensions.contains(&name);
+        let device_has = |name: &CStr| self.phd_capabilities.supports_extension(name);
+        let features = &self.phd_features;
+
+        if allow("fence")
+            && features
+                .swapchain_maintenance1
+                .is_some_and(|f| f.swapchain_maintenance1 != 0)
+        {
+            // The EXT first: ash's structures carry its names, and validation
+            // layers check the chained structure against the EXT extension.
+            if instance_has(EXT_SURFACE_MAINTENANCE1)
+                && device_has(ext::swapchain_maintenance1::NAME)
+            {
+                return (
+                    PresentTracking::PresentFence,
+                    vec![ext::swapchain_maintenance1::NAME],
+                );
+            }
+            if instance_has(KHR_SURFACE_MAINTENANCE1) && device_has(KHR_SWAPCHAIN_MAINTENANCE1) {
+                return (
+                    PresentTracking::PresentFence,
+                    vec![KHR_SWAPCHAIN_MAINTENANCE1],
+                );
+            }
+        }
+        if allow("wait")
+            && features.present_id.is_some_and(|f| f.present_id != 0)
+            && features.present_wait.is_some_and(|f| f.present_wait != 0)
+        {
+            return (
+                PresentTracking::PresentWait,
+                vec![khr::present_id::NAME, khr::present_wait::NAME],
+            );
+        }
+        (PresentTracking::Heuristic, Vec::new())
     }
 
     /// Create a `PhysicalDeviceFeatures` for opening a logical device with
@@ -2614,6 +2734,22 @@ impl super::Adapter {
         } else {
             None
         };
+        // Present tracking (NanaUI fork): whichever extensions were enabled.
+        let present_tracking = if enabled_extensions
+            .contains(&super::swapchain::KHR_SWAPCHAIN_MAINTENANCE1)
+            || enabled_extensions.contains(&ext::swapchain_maintenance1::NAME)
+        {
+            super::PresentTracking::PresentFence
+        } else if enabled_extensions.contains(&khr::present_id::NAME)
+            && enabled_extensions.contains(&khr::present_wait::NAME)
+        {
+            super::PresentTracking::PresentWait
+        } else {
+            super::PresentTracking::Heuristic
+        };
+        log::debug!("Vulkan present tracking: {present_tracking:?}");
+        let present_wait_fn = (present_tracking == super::PresentTracking::PresentWait)
+            .then(|| khr::present_wait::Device::new(&self.instance.raw, &raw_device));
         let timeline_semaphore_fn = if enabled_extensions.contains(&khr::timeline_semaphore::NAME) {
             Some(super::ExtensionFn::Extension(
                 khr::timeline_semaphore::Device::new(&self.instance.raw, &raw_device),
@@ -2919,7 +3055,9 @@ impl super::Adapter {
                 ray_tracing_pipelines: ray_tracing_pipeline_fns,
                 mesh_shading: mesh_shading_fns,
                 external_memory_fd: external_memory_fd_fn,
+                present_wait: present_wait_fn,
             },
+            present_tracking,
             pipeline_cache_validation_key,
             vendor_id: self.phd_capabilities.properties.vendor_id,
             timestamp_period: self.phd_capabilities.properties.limits.timestamp_period,

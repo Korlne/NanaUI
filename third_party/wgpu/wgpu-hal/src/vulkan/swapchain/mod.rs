@@ -7,6 +7,16 @@ pub(super) use native::*;
 
 mod native;
 
+/// `VK_KHR_swapchain_maintenance1`, which ash 0.38 predates. Its structures and
+/// enums alias those of `VK_EXT_swapchain_maintenance1` (NanaUI fork).
+pub(super) const KHR_SWAPCHAIN_MAINTENANCE1: &core::ffi::CStr = c"VK_KHR_swapchain_maintenance1";
+/// `VK_KHR_surface_maintenance1`, the instance extension
+/// `VK_KHR_swapchain_maintenance1` depends on (NanaUI fork).
+pub(super) const KHR_SURFACE_MAINTENANCE1: &core::ffi::CStr = c"VK_KHR_surface_maintenance1";
+/// `VK_EXT_surface_maintenance1`, the instance extension
+/// `VK_EXT_swapchain_maintenance1` depends on (NanaUI fork).
+pub(super) const EXT_SURFACE_MAINTENANCE1: &core::ffi::CStr = c"VK_EXT_surface_maintenance1";
+
 /// Win32 `HWND`, handed to a Win32 [`NativeSurface`] at construction so it can
 /// build its [`DxgiHdrSource`](crate::auxil::dxgi::hdr::DxgiHdrSource) for the
 /// display-HDR query. Borrowed from the app's window.
@@ -74,6 +84,30 @@ pub(super) trait Swapchain: Send + Sync + 'static {
     /// reads as not reached.
     unsafe fn fence_reached(&self, fence: &super::Fence, value: crate::FenceValue) -> bool;
 
+    /// Called by `configure` right before this swapchain is retired. Returns
+    /// whether every present queued on it is now known to be done with its
+    /// resources, so it can be destroyed as soon as its successor exists.
+    ///
+    /// With [`PresentTracking::PresentWait`] this blocks, briefly and bounded,
+    /// until the last present is shown: `vkWaitForPresentKHR` cannot be used on
+    /// a retired swapchain. Otherwise it does not block.
+    ///
+    /// [`PresentTracking::PresentWait`]: super::PresentTracking::PresentWait
+    unsafe fn presents_finished_before_retire(&mut self) -> bool;
+
+    /// Whether every present queued on this swapchain is done with its
+    /// resources, without blocking: `Some` when the device tracks presents
+    /// with fences ([`PresentTracking::PresentFence`]), `None` when it cannot
+    /// tell.
+    ///
+    /// [`PresentTracking::PresentFence`]: super::PresentTracking::PresentFence
+    unsafe fn presents_finished(&mut self) -> Option<bool>;
+
+    /// Block, bounded, until every present queued on this swapchain is done
+    /// with its resources. Returns `false` when that cannot be tracked or did
+    /// not happen in time; the caller then waits for the device to go idle.
+    unsafe fn wait_presents(&mut self) -> bool;
+
     /// Acquires the next available surface texture for rendering.
     ///
     /// `timeout` specifies the maximum time to wait for an image to become available.
@@ -110,12 +144,21 @@ pub(super) trait Swapchain: Send + Sync + 'static {
 
 /// A swapchain replaced by `Surface::configure` (NanaUI fork).
 ///
-/// `vkCreateSwapchainKHR` retired it, but its presents may still be pending, and
-/// there is no portable way to wait for them short of the device going idle.
-/// Upstream waits for that on every reconfigure; the fork keeps the swapchain
-/// here instead, until a submission that drew to its successor completes:
-/// that submission was queued after its last present. Dropping it unreleased
-/// falls back to waiting for the device.
+/// `vkCreateSwapchainKHR` retired it, but its presents may still be pending.
+/// Upstream waits for the whole device to go idle on every reconfigure; the
+/// fork keeps the swapchain here instead, until its presents are known done:
+///
+/// - with `VK_KHR/EXT_swapchain_maintenance1`, once the fence of its last
+///   present signals (the extension's own answer to this problem);
+/// - with `VK_KHR_present_wait`, `configure` waits (bounded) for its last
+///   present before retiring it and frees it at once, keeping it here only if
+///   that wait ran out;
+/// - otherwise (and after such a timeout), once a submission that drew to its
+///   successor completes: that submission was queued after its last present.
+///   Vulkan does not promise this means the present is done; upstream's
+///   device-idle wait leans on a similar assumption.
+///
+/// Dropping it unreleased waits for its presents, or for the device.
 pub(in crate::vulkan) struct RetiredSwapchain {
     swapchain: Option<Box<dyn Swapchain>>,
     /// The fence value that, once reached, proves the presents done; `None`
@@ -128,6 +171,21 @@ impl RetiredSwapchain {
         Self {
             swapchain: Some(swapchain),
             after: None,
+        }
+    }
+
+    /// Whether its presents are done, by fence, without blocking: `None` when
+    /// the device cannot tell (see the type's documentation).
+    pub(in crate::vulkan) unsafe fn presents_finished(&mut self) -> Option<bool> {
+        let swapchain = self.swapchain.as_mut()?;
+        unsafe { swapchain.presents_finished() }
+    }
+
+    /// Block, bounded, for its presents; `false` if that cannot be tracked.
+    pub(in crate::vulkan) unsafe fn wait_presents(&mut self) -> bool {
+        match self.swapchain.as_mut() {
+            Some(swapchain) => unsafe { swapchain.wait_presents() },
+            None => true,
         }
     }
 
@@ -147,7 +205,9 @@ impl Drop for RetiredSwapchain {
     fn drop(&mut self) {
         if let Some(mut swapchain) = self.swapchain.take() {
             unsafe {
-                swapchain.wait_device_idle();
+                if !swapchain.wait_presents() {
+                    swapchain.wait_device_idle();
+                }
                 swapchain.release_resources();
             }
         }

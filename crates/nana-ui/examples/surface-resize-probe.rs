@@ -10,7 +10,9 @@
 //! and how many configures WGPU rejected.
 //!
 //! `--guard` serializes producer submits against configure with a lock, the
-//! way NanaUI's former submission guard did.
+//! way NanaUI's former submission guard did. `--validation` requests the
+//! backend's validation layer and reports the errors it logs, such as a
+//! swapchain or semaphore destroyed while a present still uses it.
 //!
 //! `--frame-context` (needs the `wgpu-interop` feature) routes both sides
 //! through `nana-gpu`: the producer records `begin_producer_frame` frames and
@@ -67,7 +69,34 @@ mod probe {
         producer: bool,
         guard: bool,
         frame_context: bool,
+        validation: bool,
     }
+
+    /// Counts the errors the backend logs (validation messages arrive as
+    /// `log` errors from `wgpu_hal`) and keeps the first few.
+    struct BackendErrors(Mutex<(usize, Vec<String>)>);
+
+    impl log::Log for BackendErrors {
+        fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
+            metadata.level() <= log::Level::Warn && metadata.target().starts_with("wgpu_hal")
+        }
+
+        fn log(&self, record: &log::Record<'_>) {
+            if record.level() == log::Level::Error && self.enabled(record.metadata()) {
+                let mut errors = self.0.lock().unwrap();
+                errors.0 += 1;
+                if errors.1.len() < 3 {
+                    errors.1.push(record.args().to_string());
+                }
+            } else if record.args().to_string().contains("unable to find layer") {
+                println!("{}", record.args());
+            }
+        }
+
+        fn flush(&self) {}
+    }
+
+    static BACKEND_ERRORS: BackendErrors = BackendErrors(Mutex::new((0, Vec::new())));
 
     fn options() -> Options {
         let mut options = Options {
@@ -77,6 +106,7 @@ mod probe {
             producer: true,
             guard: false,
             frame_context: false,
+            validation: false,
         };
         let mut args = std::env::args().skip(1);
         while let Some(arg) = args.next() {
@@ -94,6 +124,7 @@ mod probe {
                 "--no-producer" => options.producer = false,
                 "--guard" => options.guard = true,
                 "--frame-context" => options.frame_context = true,
+                "--validation" => options.validation = true,
                 other => panic!("unknown argument {other}"),
             }
         }
@@ -226,8 +257,15 @@ fn fs(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
         let window = create_window();
         pump();
 
+        let mut flags = wgpu::InstanceFlags::empty();
+        if options.validation {
+            log::set_logger(&BACKEND_ERRORS).unwrap();
+            log::set_max_level(log::LevelFilter::Warn);
+            flags = wgpu::InstanceFlags::VALIDATION | wgpu::InstanceFlags::DEBUG;
+        }
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: options.backend,
+            flags,
             ..wgpu::InstanceDescriptor::new_without_display_handle()
         });
         let mut handle = wgpu::rwh::Win32WindowHandle::new(
@@ -427,6 +465,15 @@ fn fs(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
             );
         }
         gpu.report();
+        if options.validation {
+            // Unconfigure and destroy too, so their waits are covered.
+            drop((surface, queue, device, adapter, instance));
+            let errors = BACKEND_ERRORS.0.lock().unwrap();
+            println!("backend errors (validation): {}", errors.0);
+            for error in &errors.1 {
+                println!("  {}", error.lines().next().unwrap_or_default());
+            }
+        }
         unsafe {
             let _ = DestroyWindow(window);
         }
