@@ -9900,7 +9900,10 @@ fn workspace_transitions_schedule_only_while_transitioning() {
     context
         .update_component(workspace, |workspace, _| {
             assert!(workspace.model.update(
-                WorkspaceMutation::SetRegionCollapsed(nana_ui_core::RegionId::Resources, true,),
+                nana_ui_core::WorkspaceMutation::SetRegionCollapsed(
+                    nana_ui_core::RegionId::Resources,
+                    true,
+                ),
                 Duration::ZERO,
             ));
         })

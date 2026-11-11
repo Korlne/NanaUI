@@ -356,7 +356,11 @@ impl ComponentView for SearchDropdown {
                 }
             })
         }),
-        hooks: Some(|hooks| hooks.search_dropdown = Some(&SEARCH_DROPDOWN_HOOKS)),
+        hooks: Some(|hooks| {
+            hooks.search_dropdown = Some(&SEARCH_DROPDOWN_HOOKS);
+            crate::framework::routes::option_list(hooks);
+            crate::framework::routes::search_dropdown(hooks);
+        }),
         editable: Some(&crate::framework::Editable::<Self>::HOOKS),
         pointer: Some(&crate::framework::SEARCH_DROPDOWN_MENU_POINTER),
         ..crate::TypeBehavior::NONE

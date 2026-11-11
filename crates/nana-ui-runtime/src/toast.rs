@@ -675,6 +675,10 @@ impl AppContext {
 
 impl ComponentView for Toast {
     const BEHAVIOR: crate::TypeBehavior<Self> = crate::TypeBehavior {
+        hooks: Some(|hooks| {
+            crate::framework::routes::toast_stack(hooks);
+            crate::framework::routes::toast(hooks);
+        }),
         assembler: Some(AppContext::reconcile_toast),
         ..crate::TypeBehavior::NONE
     };

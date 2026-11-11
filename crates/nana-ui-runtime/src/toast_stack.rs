@@ -155,6 +155,9 @@ impl ToastStack {
 
 impl ComponentView for ToastStack {
     const BEHAVIOR: crate::TypeBehavior<Self> = crate::TypeBehavior {
+        hooks: Some(|hooks| {
+            crate::framework::routes::toast_stack(hooks);
+        }),
         assembler: Some(AppContext::reconcile_toast_stack),
         ..crate::TypeBehavior::NONE
     };
@@ -231,6 +234,13 @@ pub(crate) struct ToastSlot {
 }
 
 impl ComponentView for ToastSlot {
+    const BEHAVIOR: crate::TypeBehavior<Self> = crate::TypeBehavior {
+        hooks: Some(|hooks| {
+            crate::framework::routes::toast_stack(hooks);
+        }),
+        ..crate::TypeBehavior::NONE
+    };
+
     fn node_kind(&self) -> NodeKind {
         NodeKind::Element {
             tag: "toast-slot".into(),

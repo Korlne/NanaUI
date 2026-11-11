@@ -226,6 +226,10 @@ impl ScrubField {
 
 impl ComponentView for ScrubField {
     const BEHAVIOR: crate::TypeBehavior<Self> = crate::TypeBehavior {
+        hooks: Some(|hooks| {
+            crate::framework::routes::scrub_field(hooks);
+            crate::framework::routes::number_input(hooks);
+        }),
         activation: Some(activate_scrub_field),
         assembler: Some(AppContext::assemble_scrub_field),
         pointer: Some(&SCRUB_POINTER),
@@ -542,6 +546,24 @@ impl AppContext {
         self.focus_node(document, parts.input)?;
         self.select_all_focused_text(document)?;
         Ok(true)
+    }
+
+    /// One step up or down by an assistive action, announced as a drag's
+    /// change is.
+    pub(crate) fn step_scrub_field(
+        &mut self,
+        entity: Entity<ScrubField>,
+        steps: i32,
+    ) -> Result<bool, FrameworkError> {
+        let step = self.read(entity, |field| field.spec.step)?;
+        let value = self.read(entity, |field| field.value)?;
+        let next = value + step * f64::from(steps.signum());
+        if self.set_scrub_field_value(entity, next, false)? {
+            let value = self.read(entity, |field| field.value)?;
+            self.update_component(entity, |_, view| view.emit(crate::ScrubChanged { value }))?;
+            return Ok(true);
+        }
+        Ok(false)
     }
 
     /// Leave typing on the field whose input has the focus (Enter committed

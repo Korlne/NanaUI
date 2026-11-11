@@ -377,6 +377,13 @@ impl AnchoredActionMenu {
 }
 
 impl crate::ComponentView for AnchoredActionMenu {
+    const BEHAVIOR: crate::TypeBehavior<Self> = crate::TypeBehavior {
+        hooks: Some(|hooks| {
+            crate::framework::routes::anchored_menu(hooks);
+        }),
+        ..crate::TypeBehavior::NONE
+    };
+
     fn share_layouts(
         &mut self,
         share: &mut dyn FnMut(&mut std::sync::Arc<nana_ui_core::LayoutStyle>),
@@ -769,6 +776,9 @@ fn context_menu_moved(
 
 impl crate::ComponentView for ContextMenu {
     const BEHAVIOR: crate::TypeBehavior<Self> = crate::TypeBehavior {
+        hooks: Some(|hooks| {
+            crate::framework::routes::context_menu(hooks);
+        }),
         activation: Some(crate::AppContext::dismiss_context_menu),
         activate_at: Some(crate::AppContext::activate_context_menu_at),
         editable: Some(&crate::framework::Editable::<Self>::HOOKS),

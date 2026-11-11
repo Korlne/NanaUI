@@ -2,6 +2,7 @@
 //! use the same handlers and HostServices as keyboard editing.
 use super::*;
 use crate::Entity;
+use crate::framework::via;
 use nana_ui_input::InputModifiers;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -103,7 +104,7 @@ impl AppContext {
             return Ok(false);
         }
         self.focus_node(document, node)?;
-        if let Some(handled) = self.rich_editor_key(
+        if let Some(handled) = via!(self.rich_editor_key(
             document,
             action.key(),
             None,
@@ -112,7 +113,7 @@ impl AppContext {
                 ..InputModifiers::default()
             },
             services,
-        )? {
+        ))? {
             return Ok(handled);
         }
         match action {

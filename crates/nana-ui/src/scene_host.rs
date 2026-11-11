@@ -42,7 +42,7 @@ use nana_ui_platform::{
     restore_window_geometry, window_resize_edge,
 };
 use nana_ui_runtime::{
-    AccessibilityUpdate, AppTitleBar, Entity, FrameworkError, LayoutViewport, StableNodeId, Task,
+    AccessibilityUpdate, Entity, FrameworkError, LayoutViewport, StableNodeId, Task,
 };
 #[cfg(target_os = "macos")]
 use nana_window::set_application_icon_png;

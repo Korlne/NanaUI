@@ -589,6 +589,9 @@ pub fn menu_shortcut_label(shortcut: &MenuShortcut) -> String {
 
 impl ComponentView for AppMenuBar {
     const BEHAVIOR: crate::TypeBehavior<Self> = crate::TypeBehavior {
+        hooks: Some(|hooks| {
+            crate::framework::routes::menu_bar(hooks);
+        }),
         assembler: Some(AppContext::assemble_app_menu_bar),
         // a press elsewhere lets go of a bar the keyboard holds; an open menu
         // closes on its own layer

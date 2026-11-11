@@ -663,7 +663,7 @@ impl AppContext {
         inside: Option<StableNodeId>,
         allows: fn(&Popover) -> bool,
     ) -> Result<bool, FrameworkError> {
-        self.close_open_popovers_within(None, inside, allows)
+        via!(self.close_open_popovers_within(None, inside, allows))
     }
 
     pub(super) fn close_open_popovers_within(
@@ -723,7 +723,7 @@ impl AppContext {
                 .view_entity::<crate::HoverCard>(target)
                 .and_then(|entity| self.read(entity, |card| card.close_on_escape).ok())
                 .unwrap_or(false);
-            if allows_escape && self.close_hover_card(target)? {
+            if allows_escape && via!(self.close_hover_card(target))? {
                 dismissed = true;
             }
         }
