@@ -548,6 +548,10 @@ impl RangeSpanField {
 
 impl ComponentView for RangeSpanField {
     const BEHAVIOR: crate::TypeBehavior<Self> = crate::TypeBehavior {
+        hooks: Some(|hooks| {
+            crate::framework::routes::range_span(hooks);
+            crate::framework::routes::number_input(hooks);
+        }),
         lifecycle: Some(crate::AppContext::sync_range_span),
         ..crate::TypeBehavior::NONE
     };

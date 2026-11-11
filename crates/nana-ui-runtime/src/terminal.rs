@@ -234,6 +234,9 @@ impl TerminalView {
 
 impl ComponentView for TerminalView {
     const BEHAVIOR: crate::TypeBehavior<Self> = crate::TypeBehavior {
+        hooks: Some(|hooks| {
+            crate::framework::routes::terminal(hooks);
+        }),
         lifecycle: Some(crate::framework::lifecycle_hooks::terminal),
         ..crate::TypeBehavior::NONE
     };

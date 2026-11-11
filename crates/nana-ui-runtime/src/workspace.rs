@@ -513,7 +513,10 @@ impl Default for Workspace {
 impl ComponentView for Workspace {
     const BEHAVIOR: crate::TypeBehavior<Self> = crate::TypeBehavior {
         lifecycle: Some(crate::framework::lifecycle_hooks::workspace),
-        hooks: Some(|hooks| hooks.workspace = Some(&WORKSPACE_HOOKS)),
+        hooks: Some(|hooks| {
+            hooks.workspace = Some(&WORKSPACE_HOOKS);
+            crate::framework::routes::workspace(hooks);
+        }),
         slot_assembler: Some(crate::AppContext::assemble_workspace),
         ..crate::TypeBehavior::NONE
     };

@@ -264,6 +264,9 @@ impl Default for Popover {
 
 impl crate::ComponentView for Popover {
     const BEHAVIOR: crate::TypeBehavior<Self> = crate::TypeBehavior {
+        hooks: Some(|hooks| {
+            crate::framework::routes::popover(hooks);
+        }),
         activation: Some(crate::AppContext::toggle_popover),
         activate_at: Some(crate::AppContext::activate_popover_at),
         lifecycle: Some(crate::AppContext::settle_popover),
@@ -429,6 +432,9 @@ impl crate::ComponentView for ActionMenu {
         true
     }
     const BEHAVIOR: crate::TypeBehavior<Self> = crate::TypeBehavior {
+        hooks: Some(|hooks| {
+            crate::framework::routes::popover(hooks);
+        }),
         activation: Some(crate::AppContext::toggle_action_menu),
         activate_at: Some(crate::AppContext::activate_action_menu_at),
         lifecycle: Some(crate::AppContext::settle_action_menu),
