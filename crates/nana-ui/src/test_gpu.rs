@@ -40,6 +40,19 @@ pub(crate) fn wrap_view(view: &wgpu::TextureView) -> GpuTexture {
     __framework::texture_from_wgpu(&context(), view.texture().clone())
 }
 
+/// The process-wide test device adopted again, as a context of its own: its
+/// policy counters and frame slots belong to the calling test alone. Tests
+/// running beside it share [`context`], so a test that counts what its own
+/// frames did, or must not wait on another test's frame, uses this one.
+pub(crate) fn private_context() -> GpuContext {
+    let gpu = context();
+    __framework::adopt(
+        __framework::adapter(&gpu).clone(),
+        __framework::device(&gpu).clone(),
+        __framework::queue(&gpu).clone(),
+    )
+}
+
 /// The process-wide test device as the GPU contract sees it.
 pub(crate) fn context() -> GpuContext {
     static CONTEXT: OnceLock<GpuContext> = OnceLock::new();
