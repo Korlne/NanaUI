@@ -616,36 +616,8 @@ impl RuntimeLayoutEngine {
             }
         }
         retained.placements.absorb(&mut nodes.placements);
-        // A first layout's plans all go to an empty table: size it once.
-        if retained.container_plans.is_empty() {
-            retained
-                .container_plans
-                .reserve(nodes.container_plans.len());
-        }
-        for (id, plan) in nodes.container_plans.drain() {
-            match plan {
-                Some(mut plan) => {
-                    // Gate E: one plan per container, entries are the direct
-                    // participants recorded this pass. A repeat edit replaces
-                    // the previous plan instead of appending another.
-                    bound_container_plan(&mut plan);
-                    if plan
-                        .overlay
-                        .iter()
-                        .any(|entry| !entry.fixed && !entry.in_container)
-                    {
-                        retained.remote_overlays.insert(id);
-                    } else {
-                        retained.remote_overlays.remove(&id);
-                    }
-                    retained.container_plans.insert(id, plan);
-                }
-                None => {
-                    retained.container_plans.remove(&id);
-                    retained.remote_overlays.remove(&id);
-                }
-            }
-        }
+        std::mem::take(&mut nodes.container_plans)
+            .merge_into(&mut retained.container_plans, &mut retained.remote_overlays);
         // The measure plans this pass answered from or recorded, by container
         // and the constraint each holds.
         let plan_key = |id: StableNodeId, available: Size| {
@@ -770,7 +742,7 @@ impl RuntimeLayoutEngine {
         for id in std::mem::take(&mut intrinsic.retired_facts) {
             retained.intrinsic_metrics.remove_content(id.get());
         }
-        retained.retain_intrinsic_metrics(intrinsic.cache.recorded(), retained_metric_budget);
+        retained.retain_intrinsic_metrics(&intrinsic.cache, retained_metric_budget);
         retained.materialized_inputs = nodes.materialized;
         retained.record_intrinsic_counters(intrinsic_counters);
         // Despawned ids linger in the retained maps; keep them bounded.
@@ -1425,14 +1397,16 @@ impl DocumentLayoutCache {
 
     fn retain_intrinsic_metrics(
         &mut self,
-        metrics: Vec<(crate::IntrinsicCacheKey, crate::IntrinsicMetrics)>,
+        facts: &crate::intrinsic_cache::PassIntrinsicFacts,
         max_entries: usize,
     ) {
         if self.intrinsic_metrics.len() == 0 {
             // Nothing held (a first layout): every content is new, and its
             // facts take the first generation, as the general path below
-            // gives a content it finds no variant of.
-            for (key, mut incoming) in metrics {
+            // gives a content it finds no variant of. They are read where
+            // the pass holds them: a list of them all first is 3 MB for a
+            // 21 001-box page.
+            for (key, mut incoming) in facts.recorded() {
                 incoming.generation = 1;
                 self.intrinsic_metrics.insert(key, incoming);
             }
@@ -1449,12 +1423,12 @@ impl DocumentLayoutCache {
         // produced for it carry the next generation. Dropping one content
         // leaves every other content's comparison as it was.
         let mut next_generation = HashMap::new();
-        for (key, incoming) in &metrics {
+        for (key, incoming) in facts.recorded() {
             if next_generation.contains_key(&key.content)
                 || self
                     .intrinsic_metrics
-                    .get(key)
-                    .is_some_and(|existing| !intrinsic_facts_changed(existing, *incoming))
+                    .get(&key)
+                    .is_some_and(|existing| !intrinsic_facts_changed(existing, incoming))
             {
                 continue;
             }
@@ -1465,7 +1439,7 @@ impl DocumentLayoutCache {
                 .unwrap_or(0);
             next_generation.insert(key.content, generation);
         }
-        for (key, mut incoming) in metrics {
+        for (key, mut incoming) in facts.recorded() {
             let Some(&previous) = next_generation.get(&key.content) else {
                 continue;
             };
@@ -2906,6 +2880,87 @@ impl<'a> PassScratch<'a> {
     }
 }
 
+/// What a pass decided about its containers' plans: the ones it rebuilt, and
+/// the containers whose retained plan it retires. A container is in one or
+/// neither.
+///
+/// The rebuilt plans sit in a table of the retained cache's own type, so a
+/// first layout hands the table over whole ([`Self::merge_into`]) instead of
+/// copying every plan into a second table of the same size and freeing this
+/// one: 3.1 MB a pass on a 21 001-box page, which the allocator then kept.
+#[derive(Default)]
+struct PassContainerPlans {
+    rebuilt: HashMap<StableNodeId, ContainerPlan>,
+    retired: crate::NodeSet,
+}
+
+impl PassContainerPlans {
+    fn reserve(&mut self, containers: usize) {
+        self.rebuilt.reserve(containers);
+    }
+
+    /// `plan` is `id`'s from this pass on.
+    fn rebuild(&mut self, id: StableNodeId, plan: ContainerPlan) {
+        self.retired.remove(&id);
+        self.rebuilt.insert(id, plan);
+    }
+
+    /// `id` keeps no plan: neither one this pass rebuilt nor the retained one.
+    fn retire(&mut self, id: StableNodeId) {
+        self.rebuilt.remove(&id);
+        self.retired.insert(id);
+    }
+
+    /// What this pass decided for `id`: `Some(None)` when it retired the
+    /// plan, `None` when it left the retained one alone.
+    fn get(&self, id: &StableNodeId) -> Option<Option<&ContainerPlan>> {
+        match self.rebuilt.get(id) {
+            Some(plan) => Some(Some(plan)),
+            None => self.retired.contains(id).then_some(None),
+        }
+    }
+
+    /// The plan this pass rebuilt for `id`, to add to.
+    fn rebuilt_mut(&mut self, id: &StableNodeId) -> Option<&mut ContainerPlan> {
+        self.rebuilt.get_mut(id)
+    }
+
+    /// Merges the pass's decisions into the retained plans and the set of
+    /// containers with an overlay placed outside them.
+    fn merge_into(
+        self,
+        retained: &mut HashMap<StableNodeId, ContainerPlan>,
+        remote_overlays: &mut crate::NodeSet,
+    ) {
+        for id in self.retired {
+            retained.remove(&id);
+            remote_overlays.remove(&id);
+        }
+        let mut rebuilt = self.rebuilt;
+        for (id, plan) in &mut rebuilt {
+            // Gate E: one plan per container, entries are the direct
+            // participants recorded this pass. A repeat edit replaces
+            // the previous plan instead of appending another.
+            bound_container_plan(plan);
+            if plan
+                .overlay
+                .iter()
+                .any(|entry| !entry.fixed && !entry.in_container)
+            {
+                remote_overlays.insert(*id);
+            } else {
+                remote_overlays.remove(id);
+            }
+        }
+        if retained.is_empty() {
+            // A first layout: the pass's table is the retained one.
+            *retained = rebuilt;
+        } else {
+            retained.extend(rebuilt);
+        }
+    }
+}
+
 /// On-demand `LayoutInput` cache. A miss loads exactly that id from `UiWorld`.
 struct LayoutInputMap<'a> {
     inline_objects: HashMap<StableNodeId, Arc<[nana_text::InlineObject]>>,
@@ -2940,9 +2995,9 @@ struct LayoutInputMap<'a> {
     contexts: crate::store::DenseNodeMap<crate::FormattingContextKind>,
     /// Container plans rebuilt this pass. Merged into the retained cache at the
     /// end; containers that took the fast path record nothing, so their
-    /// existing plan simply stays. `None` retires a plan recorded when the
-    /// container was still on the cacheable path.
-    container_plans: HashMap<StableNodeId, Option<ContainerPlan>>,
+    /// existing plan simply stays. A retired one drops a plan recorded when
+    /// the container was still on the cacheable path.
+    container_plans: PassContainerPlans,
     /// Measure plans rebuilt this pass, merged the same way. An entry that
     /// ends the pass empty retires the container's retained plans.
     measure_plans: crate::store::DenseNodeMap<MeasurePlanSlots>,
@@ -3067,7 +3122,7 @@ impl<'a> LayoutInputMap<'a> {
             used_padding: Default::default(),
             far_start: Default::default(),
             contexts: Default::default(),
-            container_plans: HashMap::new(),
+            container_plans: PassContainerPlans::default(),
             measure_plans: Default::default(),
             derived_baselines: HashMap::new(),
             line_boxes: RefCell::default(),

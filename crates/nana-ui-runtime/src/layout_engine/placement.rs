@@ -1166,7 +1166,7 @@ fn replay_grid(
         by_child
     };
     updated.entries = RefCell::new(recorded);
-    nodes.container_plans.insert(id, Some(updated));
+    nodes.container_plans.rebuild(id, updated);
     Ok(true)
 }
 
@@ -1688,7 +1688,7 @@ fn place_node_body<'a>(
         nodes
             .contexts
             .insert(id, crate::FormattingContextKind::Inline);
-        nodes.container_plans.insert(id, None);
+        nodes.container_plans.retire(id);
         nodes.measure_plans.insert(id, MeasurePlanSlots::default());
         return place_native_inline(
             id,
@@ -1800,9 +1800,9 @@ fn place_node_body<'a>(
         if had_plan {
             intrinsic.note_plan_rebuilt();
         }
-        nodes.container_plans.insert(
+        nodes.container_plans.rebuild(
             id,
-            Some(ContainerPlan {
+            ContainerPlan {
                 content_origin,
                 gap,
                 sequential: plan_sequential,
@@ -1835,7 +1835,7 @@ fn place_node_body<'a>(
                 cross_independent,
                 main_dependent,
                 overlay: Vec::new(),
-            }),
+            },
         );
     }
     for packed in &packed_floats.items {
@@ -1909,7 +1909,7 @@ fn place_node_body<'a>(
             recorded_overlay.push(entry);
         }
     }
-    if let Some(Some(plan)) = nodes.container_plans.get_mut(&id) {
+    if let Some(plan) = nodes.container_plans.rebuilt_mut(&id) {
         plan.overlay = recorded_overlay;
     }
     Ok(())
@@ -1988,7 +1988,7 @@ fn place_edited_child_list(
             // In before the overlay, which writes its geometry into it. The
             // edit moved no positioned child, so the old plan's overlay is
             // this one's.
-            nodes.container_plans.insert(id, Some(edited));
+            nodes.container_plans.rebuild(id, edited);
             finish_positioned_overlay(
                 id,
                 plan,
@@ -2472,7 +2472,7 @@ fn lay_out_children(
     if !cacheable {
         intrinsic.note_container_uncacheable();
         // Retire a plan recorded while this container was still cacheable.
-        nodes.container_plans.insert(id, None);
+        nodes.container_plans.retire(id);
     }
 
     let mut recorded_grid = None;
@@ -3953,7 +3953,7 @@ pub(super) fn place_remote_overlays(
                 nodes,
             );
             if !gone.is_empty() {
-                if let Some(Some(published)) = nodes.container_plans.get_mut(&id) {
+                if let Some(published) = nodes.container_plans.rebuilt_mut(&id) {
                     published
                         .overlay
                         .retain(|entry| !gone.contains(&entry.child));
@@ -4149,13 +4149,13 @@ fn publish_overlay_plan(
             }
         }
     };
-    if let Some(Some(existing)) = nodes.container_plans.get_mut(&id) {
+    if let Some(existing) = nodes.container_plans.rebuilt_mut(&id) {
         write(existing);
         return;
     }
     let mut updated = plan.clone();
     write(&mut updated);
-    nodes.container_plans.insert(id, Some(updated));
+    nodes.container_plans.rebuild(id, updated);
 }
 
 fn triggered_menu_overlay(

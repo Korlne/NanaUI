@@ -819,7 +819,12 @@ pub(crate) struct NodeStore {
     /// on purpose: a large relayout scope decides "no text work" for every
     /// candidate, and a table of small entries keeps that scan in cache where
     /// the full records would not.
-    text_nodes: HashMap<StableNodeId, crate::text_node::TextNodeState>,
+    ///
+    /// Indexed by id like the records, not hashed: an entry per node in a
+    /// hash table is every bucket touched (a quarter to a half of them empty)
+    /// and, each time the table grows, a whole new table beside the old one,
+    /// which the allocator then keeps.
+    text_nodes: DenseNodeMap<crate::text_node::TextNodeState>,
     /// Layouts retained by plain text nodes, addressed by
     /// [`crate::text_node::TextNodeState::layout`]. Released with the node.
     text_layouts: nana_text::TextLayoutStore,

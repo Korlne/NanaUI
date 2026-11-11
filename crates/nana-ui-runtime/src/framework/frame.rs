@@ -458,7 +458,7 @@ impl AppContext {
             completed(1);
             #[cfg(feature = "benchmark")]
             let mut phase = crate::layout_engine::plan_stats::PhaseClock::start();
-            let mut mutations = MutationQueue::new();
+            let mut placements = Vec::new();
             let mut scope = Vec::with_capacity(layouts.len());
             let mut context_children = Vec::new();
             for (id, layout) in layouts {
@@ -488,7 +488,7 @@ impl AppContext {
                     || self.world.local_layout_box(id) != Some(layout)
                     || self.world.layout_frame(id) != Some(frame)
                 {
-                    mutations.place_layout(id, layout, frame);
+                    placements.push(crate::mutation::LayoutPlacement { id, layout, frame });
                 }
             }
             #[cfg(feature = "benchmark")]
@@ -530,7 +530,8 @@ impl AppContext {
             // Every written box is in `scope`, which is published just below:
             // the commit leaves their results to that publish.
             self.world.set_pass_publishes_written_boxes(true);
-            let report = self.commit_mutations(mutations);
+            let report = self.commit_layout_placements(&placements);
+            drop(placements);
             self.world.set_pass_publishes_written_boxes(false);
             let report = report?;
             #[cfg(feature = "benchmark")]

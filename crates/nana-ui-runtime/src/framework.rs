@@ -1971,7 +1971,29 @@ impl AppContext {
     /// for layout writeback and platform state projection.
     pub fn commit_mutations(
         &mut self,
+        mutations: MutationQueue,
+    ) -> Result<crate::CommitReport, FrameworkError> {
+        self.commit_batch(mutations, &[])
+    }
+
+    /// Commit a layout pass's writeback: the boxes it moved, as one batch.
+    /// The same commit as [`Self::commit_mutations`] of those boxes queued as
+    /// [`crate::UiMutation::PlaceLayout`], without a queue to hold them.
+    pub(crate) fn commit_layout_placements(
+        &mut self,
+        placements: &[crate::mutation::LayoutPlacement],
+    ) -> Result<crate::CommitReport, FrameworkError> {
+        self.commit_batch(MutationQueue::new(), placements)
+    }
+
+    /// One batch: `mutations`, or a layout pass's `placements` with an empty
+    /// queue. Everything below that reads the batch looks for mutations a
+    /// placement is none of (focus, surfaces, removals, text), so it reads
+    /// the queue alone.
+    fn commit_batch(
+        &mut self,
         mut mutations: MutationQueue,
+        placements: &[crate::mutation::LayoutPlacement],
     ) -> Result<crate::CommitReport, FrameworkError> {
         let wheel_writes: Vec<_> = if self.component_lifecycle.wheel_scrolls.is_empty() {
             Vec::new()
@@ -2067,7 +2089,7 @@ impl AppContext {
         let captures_before = self.world.pointer_capture_change_count();
         let (report, parked, inserted) = self
             .world
-            .commit_with_mount_lifecycle(mutations)
+            .commit_with_mount_lifecycle(mutations, placements)
             .map_err(FrameworkError::from)?;
         let lost_captures: Vec<_> = self
             .world

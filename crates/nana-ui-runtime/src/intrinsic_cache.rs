@@ -1171,11 +1171,12 @@ impl PassIntrinsicFacts {
     }
 
     /// Every key's latest recording, in measuring order.
-    pub(crate) fn recorded(&self) -> Vec<(IntrinsicCacheKey, IntrinsicMetrics)> {
+    pub(crate) fn recorded(
+        &self,
+    ) -> impl Iterator<Item = (IntrinsicCacheKey, IntrinsicMetrics)> + '_ {
         self.facts
             .iter()
             .filter_map(|fact| Some((fact.key, fact.recorded?)))
-            .collect()
     }
 
     fn lookup(
