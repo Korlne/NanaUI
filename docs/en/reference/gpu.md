@@ -46,6 +46,66 @@ A Surface's HDR capability is determined by `SurfaceCapabilities::format_capabil
 - **Target attachment and pipeline reuse**: when switching between UI-only and mixed GPU-node content, only the 4x MSAA attachment is added or released; the linear color target, bindings, and group caches of the same size, format, and presentation profile are kept. Scaling must rebuild size-dependent textures, but on a device pipeline cache hit no shader module or pipeline layout is created again, so multi-target first frames do not parse WGSL repeatedly. Changing size, output format, or presentation profile still rebuilds the target under the original contract.
 
 
+### 5. Measured: wgpu-core validation share and input-to-present latency (2026-11-11)
+
+Two fork changes to `third_party/wgpu` were held until measured: (a) letting trusted framework passes skip wgpu-core's per-draw validation and resource tracking, and (b) frame pacing on the frame-latency waitable. Machine: Windows 11, RTX 5060 Ti, 60 Hz display, release build with `CARGO_PROFILE_RELEASE_DEBUG=limited`. Probes are measurement tools only (examples and a script); nothing was added to product frame paths.
+
+**Painter CPU.** `stack-sampler` suspends the bench's busiest thread every 2 ms for 8 s (one register read and stack copy, 25–37 µs per sample), walks the copy with dbghelp including inline frames, and `perf/stack_attribution.py` charges each sample to the leaf-most owned frame (`alloc`/`core`/heap/`memcpy` frames go to their caller). "Blocked" samples were inside a kernel wait. CPU per frame = thread CPU time / frames over the same window. "core in replay" = wgpu-core's own frames under `encode_render_pass`, where each recorded draw and `set_*` is validated, tracked and replayed: the most that skipping validation could save, since it also holds bookkeeping that must stay.
+
+| Scene | Backend | Draws/frame | CPU µs/frame | Blocked | NanaUI | wgpu-core | hal + driver | core in replay |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `ui-dense-2k` | DX12 | 4 | 275 | 91% | 10.0% | 13.3% | 70.5% | 11.9 µs |
+| `host-textures-64` | DX12 | 68 | 1405 | 32% | 6.4% | 12.2% | 76.5% | 110 µs |
+| `shader-nodes-256` | DX12 | 14 | 247 | 86% | 33.4% | 11.6% | 50.5% | 13.4 µs |
+| `text-paint-color` | DX12 | 3 | 3584 | 0% | 93.4% | 0.8% | 5.3% | 10.9 µs |
+| `text-constraint-resize` | DX12 | 2 | 19584 | 0% | 96.1% | 0.5% | 2.1% | 35 µs |
+| `ui-dense-2k` | Vulkan | 4 | 104 | 90% | 14.4% | 19.0% | 62.5% | 8.7 µs |
+| `host-textures-64` | Vulkan | 68 | 1322 | 32% | 8.3% | 14.2% | 74.8% | 117 µs |
+| `shader-nodes-256` | Vulkan | 14 | 182 | 84% | 36.1% | 11.1% | 50.0% | 9.5 µs |
+| `text-paint-color` | Vulkan | 3 | 3918 | 0% | 93.5% | 1.2% | 4.9% | 19.9 µs |
+| `text-constraint-resize` | Vulkan | 2 | 21690 | 0% | 97.2% | 0.5% | 1.4% | 22.1 µs |
+
+Shares are of non-blocked samples. The remainder is the `wgpu` front end (≤1.3%) and OS/other frames.
+
+- The painter batches 2,000 nodes into 4 draws, so per-draw validation has almost nothing to scale with. The UI scenes are GPU-bound: the main thread waits in `GpuContext::begin_frame` for a frame slot (`Device::maintain`).
+- `host-textures-64` is the many-small-passes case (the bench's 64 producer passes plus the UI pass). Its cost is driver work: 25% is the bench's own `queue.write_buffer` calls, and inside `command_encoder_finish`, 42% is wgpu-core opening a new hal command list per pass (`InnerCommandEncoder::open_pass` → `begin_encoding`, 290 µs/frame on DX12 and 528 µs on Vulkan). Only 19% of `finish` is wgpu-core's own code.
+- NanaUI's own work, by inclusive share of CPU: text is 3.5% in `ui-dense-2k`, 57% in `text-paint-color` (mostly `RuntimeDocument::flush`; the painter is 9.6%) and 84% in `text-constraint-resize`. Icons are 0.5% in `ui-dense-2k`. None of the `gpu-scene-*` scenarios draws vector paths, so this measurement does not cover path cost.
+
+**(a) Verdict: no-go.** Skipping validation would save at most 9–35 µs/frame in ordinary scenes and about 110–117 µs in the 65-pass synthetic. That is under 1% of CPU in text-heavy frames, where NanaUI's own work is 93–97%. Revisit only if a real scene shows hundreds of draws or passes per frame. Even then, the per-pass command-list opening is the larger target.
+
+**Input-to-present latency.** `input-latency-probe` opens an ordinary hosted window (Mailbox, `desired_maximum_frame_latency` 1, wgpu's default `Dx12UseFrameLatencyWaitableObject::Wait`). A driver thread posts `WM_LBUTTONDOWN` at random 120–250 ms intervals, and each press flips the window's color. Timestamps are all QPC: `post` before `PostMessageW`, `input` in `RuntimeProgram::input_event` (after lowering and routing), `prepare` and `presented` in the frame hooks (after `present` returned, with the host's stage gauges), and `screen`, the Desktop Duplication `LastPresentTime` of the first composed desktop frame showing the new color. wgpu exposes no `GetFrameStatistics` for the swapchain, so DWM's present time stands in for DXGI frame statistics. Samples where DWM folded more than one update into a frame were dropped. All values are in ms; n = 161–297 per row.
+
+| Window | Backend | post→input | input→prepare | prepare→presented | presented→screen | **post→screen p50 / p90 / p99** | `acquire` p50 |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| idle (on demand) | DX12 | 0.37 | 0.19 | 0.88 | 7.01 | **8.5 / 12.8 / 15.9** | 0.024 |
+| idle (on demand) | Vulkan | 0.37 | 0.20 | 0.75 | 5.55 | **7.0 / 11.0 / 15.2** | 0.039 |
+| continuous 60 fps | DX12 | 0.46 | 0.12 | 15.44 | 16.32 | **32.4 / 38.7 / 40.3** | 14.64 |
+| continuous 60 fps | Vulkan | 0.34 | 0.14 | 0.56 | 5.48 | **6.6 / 10.1 / 13.4** | 0.029 |
+| continuous 60, waitable `DontWait` (A/B) | DX12 | 0.33 | 0.12 | 0.69 | 55.66 | **59.3 / 68.1 / 74.1** | 0.019 |
+| continuous 60, waitable `None` (A/B) | DX12 | 0.34 | 0.12 | 0.64 | 53.55 | **56.5 / 66.7 / 72.2** | 0.019 |
+
+Each cell other than post→screen is a p50. The A/B rows came from a temporary, uncommitted patch that set `backend_options.dx12.latency_waitable_object` from `WGPU_DX12_USE_FRAME_LATENCY_WAITABLE_OBJECT` in `hosted_context::instance_descriptor`.
+
+- Idle UI, which is most NanaUI frames: the input reaches the screen in about 8.5 ms (DX12) or 7 ms (Vulkan) at p50. Of that, about 1.4 ms is NanaUI from post to present, and about 82% is DWM waiting for the next 60 Hz vblank to compose. Frame slots (`reserve` 0.004 ms), the swapchain and the waitable add nothing.
+- A continuously redrawing DX12 window is the case that queues. `acquire` blocks 14.6 ms on the frame-latency waitable after the frame has already applied the input, and the presented frame then waits another refresh for DWM. The waitable itself is required: with it disabled, DXGI queues about three frames and p50 rises to 56–59 ms. Vulkan on the same machine does not block (6.6 ms).
+
+**(b) Verdict: go for DX12, scoped to continuously redrawing windows.** Do not remove the wait; move it. Wait on the waitable at the start of the frame, before input is drained and the frame prepared, instead of inside `get_current_texture`. wgpu already creates the handle (`Dx12UseFrameLatencyWaitableObject::DontWait`, hal `dx12::Surface::waitable_handle()`), so the fork needs only an additive way for the host to wait on it. This is an estimate, not a measurement: input that arrives during the wait still waits for the rest of it, so the expected p50 gain is about half of the 14.6 ms block, roughly 32 → 25 ms. Reaching Vulkan's ~7 ms would also need phase alignment (presenting just before DWM composes). Idle on-demand UI gains nothing. Metal drawable timing was not measured (no macOS host), so it stays deferred.
+
+Commands (from the repository root; S is a scratch directory):
+
+```sh
+export CARGO_PROFILE_RELEASE_DEBUG=limited
+cargo build -j 12 --release -p nana-ui --bin nana-gpu-scene-benchmark --features gpu
+cargo build -j 12 --release -p nana-ui --example stack-sampler --example input-latency-probe --features hosted,bundled-fonts
+# per backend (dx12 | vulkan) and scene
+WGPU_BACKEND=dx12 target/release/examples/stack-sampler.exe --delay-ms 3000 --duration-ms 8000 --interval-us 2000 \
+  --out $S/dx12-ui-dense-2k.folded -- target/release/nana-gpu-scene-benchmark.exe \
+  --scenario perf/scenarios/gpu-scene-ui-dense-2k.json --sample-seconds 12 --output $S/dx12-ui-dense-2k.bench.json
+python perf/stack_attribution.py $S/dx12-ui-dense-2k.folded            # tables; --json for a summary
+WGPU_BACKEND=dx12 target/release/examples/input-latency-probe.exe --clicks 300 --output $S/lat-dx12.json
+WGPU_BACKEND=dx12 target/release/examples/input-latency-probe.exe --clicks 300 --continuous 60 --output $S/lat-dx12-c60.json
+```
+
 ## Mounting host textures (`HostTexture` + `GpuTextureView`)
 
 Shader output, preview viewports, and offscreen render textures are nodes in the UI tree just like ordinary buttons: they take part in layout, are clipped, and can be hit. For a first integration, use the default path: draw the content into a sampleable texture, mount a `GpuTextureView` in the tree, and register it in `host_textures()` under the same string slot name.
