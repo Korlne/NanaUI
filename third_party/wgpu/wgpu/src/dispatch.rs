@@ -180,6 +180,11 @@ pub trait DeviceInterface: CommonTraits {
         &self,
         desc: &crate::PipelineCacheDescriptor<'_>,
     ) -> DispatchPipelineCache;
+    /// NanaUI fork: see `Device::set_default_pipeline_cache`. Backends
+    /// without pipeline caches ignore it.
+    fn set_default_pipeline_cache(&self, cache: Option<&DispatchPipelineCache>) {
+        let _ = cache;
+    }
     fn create_buffer(&self, desc: &crate::BufferDescriptor<'_>) -> DispatchBuffer;
     fn create_texture(&self, desc: &crate::TextureDescriptor<'_>) -> DispatchTexture;
     fn create_external_texture(

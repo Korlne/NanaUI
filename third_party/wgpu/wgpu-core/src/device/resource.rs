@@ -251,6 +251,11 @@ pub struct Device {
     /// has been destroyed and its queues are empty.
     pub(crate) device_lost_closure: Mutex<Option<DeviceLostClosure>>,
 
+    /// NanaUI fork: the cache a pipeline created without one uses. Weak, so
+    /// the cache (which holds the device) does not keep the device alive; the
+    /// application keeps it alive for as long as it should apply.
+    pub(crate) default_pipeline_cache: Mutex<Option<Weak<pipeline::PipelineCache>>>,
+
     /// Stores the state of buffers and textures.
     pub(crate) trackers: Mutex<DeviceTracker>,
     pub(crate) tracker_indices: TrackerIndexAllocators,
@@ -541,6 +546,7 @@ impl Device {
             snatchable_lock: unsafe { SnatchLock::new(rank::DEVICE_SNATCHABLE_LOCK) },
             valid: AtomicBool::new(true),
             device_lost_closure: Mutex::new(rank::DEVICE_LOST_CLOSURE, None),
+            default_pipeline_cache: Mutex::new(rank::DEVICE_DEFAULT_PIPELINE_CACHE, None),
             trackers: Mutex::new(
                 rank::DEVICE_TRACKERS,
                 DeviceTracker::new(ordered_buffer_usages, ordered_texture_usages),
@@ -4105,7 +4111,7 @@ impl Device {
                 cache.same_device(self)?;
                 Some(cache)
             }
-            None => None,
+            None => self.default_pipeline_cache(),
         };
 
         let pipeline_desc = hal::ComputePipelineDescriptor {
@@ -4958,7 +4964,7 @@ impl Device {
                 cache.same_device(self)?;
                 Some(cache)
             }
-            None => None,
+            None => self.default_pipeline_cache(),
         };
 
         let is_mesh = mesh_stage.is_some();
@@ -5143,6 +5149,26 @@ impl Device {
         let cache = Arc::new(cache);
 
         Ok(cache)
+    }
+
+    /// NanaUI fork: make `cache` the one pipelines created without a cache
+    /// use, or stop using one with `None`. The device holds it weakly.
+    pub fn set_default_pipeline_cache(
+        &self,
+        cache: Option<&Arc<pipeline::PipelineCache>>,
+    ) -> Result<(), DeviceError> {
+        if let Some(cache) = cache {
+            cache.same_device(self)?;
+        }
+        *self.default_pipeline_cache.lock() = cache.map(Arc::downgrade);
+        Ok(())
+    }
+
+    fn default_pipeline_cache(&self) -> Option<Arc<pipeline::PipelineCache>> {
+        self.default_pipeline_cache
+            .lock()
+            .as_ref()
+            .and_then(Weak::upgrade)
     }
 
     fn get_texture_format_features(&self, format: TextureFormat) -> wgt::TextureFormatFeatures {

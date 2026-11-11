@@ -285,6 +285,7 @@ impl super::Device {
         layout: &super::PipelineLayout,
         naga_stage: naga::ShaderStage,
         fragment_stage: Option<&crate::ProgrammableStage<super::ShaderModule>>,
+        cache: Option<&super::PipelineCache>,
     ) -> Result<super::CompiledShader, crate::PipelineError> {
         let stage_bit = auxil::map_naga_stage(naga_stage);
 
@@ -407,31 +408,56 @@ impl super::Device {
             }
         };
 
-        {
-            let mut shader_cache = self.shader_cache.lock();
-            let nr_of_shaders_compiled = shader_cache.nr_of_shaders_compiled;
-            if let Some(value) = shader_cache.entries.get_mut(&key) {
-                value.last_used = nr_of_shaders_compiled;
-                return Ok(value.shader.clone());
-            }
-        }
-
-        let source_name = stage.module.raw_name.as_deref();
-
         let full_stage = format!(
             "{}_{}",
             naga::back::hlsl::shader_stage_to_hlsl_str(naga_stage),
             key.shader_model.to_str()
         );
 
-        let compiled_shader = self.compiler_container.compile(
-            self,
-            &key.source,
-            source_name,
-            &key.entry_point,
-            stage_bit,
-            &full_stage,
-        )?;
+        {
+            let mut shader_cache = self.shader_cache.lock();
+            let nr_of_shaders_compiled = shader_cache.nr_of_shaders_compiled;
+            if let Some(value) = shader_cache.entries.get_mut(&key) {
+                value.last_used = nr_of_shaders_compiled;
+                let shader = value.shader.clone();
+                drop(shader_cache);
+                // NanaUI fork: a stage compiled before this cache existed
+                // still belongs in it.
+                if let Some(cache) = cache {
+                    let persistent_key = self.persistent_shader_key(&key, &full_stage);
+                    let mut shaders = cache.shaders.lock();
+                    if shaders.get(&persistent_key).is_none() {
+                        shaders.insert(persistent_key, shader.bytes());
+                    }
+                }
+                return Ok(shader);
+            }
+        }
+
+        let source_name = stage.module.raw_name.as_deref();
+
+        // NanaUI fork: bytecode from the pipeline cache skips the compiler.
+        let persistent_key = cache.map(|_| self.persistent_shader_key(&key, &full_stage));
+        let cached = cache
+            .zip(persistent_key.as_ref())
+            .and_then(|(cache, key)| cache.shaders.lock().get(key));
+        let compiled_shader = match cached {
+            Some(bytes) => super::CompiledShader::Cached(bytes),
+            None => {
+                let compiled = self.compiler_container.compile(
+                    self,
+                    &key.source,
+                    source_name,
+                    &key.entry_point,
+                    stage_bit,
+                    &full_stage,
+                )?;
+                if let Some((cache, key)) = cache.zip(persistent_key) {
+                    cache.shaders.lock().insert(key, compiled.bytes());
+                }
+                compiled
+            }
+        };
 
         {
             let mut shader_cache = self.shader_cache.lock();
@@ -452,6 +478,34 @@ impl super::Device {
         }
 
         Ok(compiled_shader)
+    }
+
+    /// NanaUI fork: the [`super::PipelineCache`] key of a stage: everything
+    /// the compiler's output depends on besides the compiler itself, which
+    /// the cache's validation key covers.
+    fn persistent_shader_key(
+        &self,
+        key: &ShaderCacheKey,
+        full_stage: &str,
+    ) -> super::pipeline_cache::ShaderKey {
+        let caps = &self.shared.private_caps;
+        let debug = caps.instance_flags.contains(wgt::InstanceFlags::DEBUG);
+        let flags = [
+            u8::from(debug),
+            u8::from(caps.workarounds.avoid_shader_debug_info),
+            u8::from(
+                self.features
+                    .intersects(wgt::Features::SHADER_F16 | wgt::Features::SHADER_I16),
+            ),
+        ];
+        super::pipeline_cache::ShaderKey(
+            super::pipeline_cache::KeyHasher::new()
+                .field(key.source.as_bytes())
+                .field(key.entry_point.as_bytes())
+                .field(full_stage.as_bytes())
+                .field(&flags)
+                .finish(),
+        )
     }
 
     pub fn raw_device(&self) -> &Direct3D12::ID3D12Device {
@@ -1958,7 +2012,13 @@ impl crate::Device for super::Device {
         let blob_fs = match desc.fragment_stage {
             Some(ref stage) => {
                 shader_stages |= wgt::ShaderStages::FRAGMENT;
-                Some(self.load_shader(stage, desc.layout, naga::ShaderStage::Fragment, None)?)
+                Some(self.load_shader(
+                    stage,
+                    desc.layout,
+                    naga::ShaderStage::Fragment,
+                    None,
+                    desc.cache,
+                )?)
             }
             None => None,
         };
@@ -2071,6 +2131,7 @@ impl crate::Device for super::Device {
                     desc.layout,
                     naga::ShaderStage::Vertex,
                     desc.fragment_stage.as_ref(),
+                    desc.cache,
                 )?);
 
                 for (i, (stride, vbuf)) in vertex_strides.iter_mut().zip(vertex_buffers).enumerate()
@@ -2136,6 +2197,7 @@ impl crate::Device for super::Device {
                         desc.layout,
                         naga::ShaderStage::Task,
                         desc.fragment_stage.as_ref(),
+                        desc.cache,
                     )?)
                 } else {
                     None
@@ -2151,6 +2213,7 @@ impl crate::Device for super::Device {
                     desc.layout,
                     naga::ShaderStage::Mesh,
                     desc.fragment_stage.as_ref(),
+                    desc.cache,
                 )?);
                 stream_desc.task_shader = task_shader;
                 stream_desc.mesh_shader = blob_ms.as_ref().unwrap().create_native_shader();
@@ -2204,7 +2267,13 @@ impl crate::Device for super::Device {
         >,
     ) -> Result<super::ComputePipeline, crate::PipelineError> {
         let blob_cs =
-            self.load_shader(&desc.stage, desc.layout, naga::ShaderStage::Compute, None)?;
+            self.load_shader(
+                &desc.stage,
+                desc.layout,
+                naga::ShaderStage::Compute,
+                None,
+                desc.cache,
+            )?;
 
         let pair = {
             profiling::scope!("ID3D12Device::CreateComputePipelineState");
@@ -2268,11 +2337,30 @@ impl crate::Device for super::Device {
 
     unsafe fn create_pipeline_cache(
         &self,
-        _desc: &crate::PipelineCacheDescriptor<'_>,
+        desc: &crate::PipelineCacheDescriptor<'_>,
     ) -> Result<super::PipelineCache, crate::PipelineCacheError> {
-        Ok(super::PipelineCache)
+        // NanaUI fork: compiled shader bytecode, persisted across runs.
+        let shaders = desc
+            .data
+            .map(super::pipeline_cache::ShaderBlobCache::load)
+            .unwrap_or_default();
+        Ok(super::PipelineCache {
+            shaders: Mutex::new(shaders),
+        })
+    }
+    fn pipeline_cache_validation_key(&self) -> Option<[u8; 16]> {
+        // Bytecode depends on the compiler, not on the adapter or driver.
+        Some(
+            super::pipeline_cache::KeyHasher::new()
+                .field(b"NanaUI dx12 shader cache 1")
+                .field(self.compiler_container.identity().as_bytes())
+                .finish(),
+        )
     }
     unsafe fn destroy_pipeline_cache(&self, _: super::PipelineCache) {}
+    unsafe fn pipeline_cache_get_data(&self, cache: &super::PipelineCache) -> Option<Vec<u8>> {
+        Some(cache.shaders.lock().serialize())
+    }
 
     unsafe fn create_query_set(
         &self,
