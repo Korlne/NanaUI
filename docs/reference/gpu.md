@@ -189,7 +189,7 @@ python perf/stack_attribution.py --scope "upload::record" $S/dx12-text-mutate-1p
 
 - `wgpu-interop` 的裸 `queue.submit` 与 `GpuContext::flush_uploads` 不计入预算。逃生口按原样交出队列，调用方自己负责限速（最多 1–2 条在途，见 `AGENTS.md` 的 GPU 负载规则）。
 - 队列深度管不住**单条**跑几秒的绘制或计算。Windows 在约 2 秒后触发 TDR 重置设备；单次等待超过 5 秒的提交会照常放行并上报 `gpu.submission_budget_overrun`，不会把提交线程永远挂住。设备丢失后等待立即结束，宿主按 `is_lost()` 换上新的 `GpuContext`。
-- 已知缺口：fork 中 `wgpu::Device::poll` 在后端等待返回 `DeviceError::Lost` 时会 panic，而不是返回错误。DX12 在 TDR 后围栏读数为 `u64::MAX`，等待直接返回，不触发这条路径；Vulkan 的 `VK_ERROR_DEVICE_LOST` 会触发。框架内所有 `poll`（帧槽等待、提交预算、`GpuContext::poll`）都受影响，待在 fork 中修复。
+- 设备丢失由 `poll` 报告，不再 panic：fork 的 `wgpu::Device::poll` 在后端报设备丢失时（Vulkan 的 `VK_ERROR_DEVICE_LOST`；DX12 上围栏读出 `u64::MAX` 且 `GetDeviceRemovedReason` 报设备已移除）返回 `PollError::DeviceLost`，同时把设备标为无效、只调用一次设备丢失回调，并把所有提交当作已完成，挂起的完成回调都会执行；之后每次 `poll` 都再报这个错误（见 `third_party/wgpu/README.zh-CN.md`）。框架内的 `poll` 与等待（帧槽等待、提交预算、`GpuContext::poll`、场景宿主与 `FrameExchange` 的 poll）都经 `GpuContext` 进行，遇到这个错误就把上下文标为丢失，即使上下文由 `from_wgpu` 接管、没有安装丢失回调；上传环自己的 poll 忽略它，交给上下文的下一次 poll。测试用 fork 的 Vulkan 测试钩子与 D3D12 的 `RemoveDevice`，没有真实的 TDR 验证。
 
 实测（2026-11-11，RTX 5060 Ti，DX12，Mailbox，`surface-resize-probe --frame-context --resizes 200`，生产者连续提交、不自行等待，仅靠预算 2 限速；每档 20 秒上限，逐档加载，桌面始终可用）：
 

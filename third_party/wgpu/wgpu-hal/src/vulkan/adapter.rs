@@ -3058,6 +3058,7 @@ impl super::Adapter {
                 present_wait: present_wait_fn,
             },
             present_tracking,
+            simulated_device_lost: core::sync::atomic::AtomicBool::new(false),
             pipeline_cache_validation_key,
             vendor_id: self.phd_capabilities.properties.vendor_id,
             timestamp_period: self.phd_capabilities.properties.limits.timestamp_period,

@@ -69,7 +69,12 @@ other by path, so:
     `VK_LAYER_KHRONOS_validation` it checks the driver's messages only;
     `NANA_REQUIRE_VULKAN_VALIDATION=1` makes a missing layer fail;
   - `timed_poll` races zero-timeout waits against other threads' polls and
-    submissions on DX12 and Vulkan for a few seconds.
+    submissions on DX12 and Vulkan for a few seconds;
+  - `device_lost_poll` loses a device without a GPU reset (Vulkan through
+    the hal's test-only `simulate_device_lost`, DX12 through
+    `ID3D12Device5::RemoveDevice`) and checks that polls report
+    `PollError::DeviceLost`, the lost callback runs once and pending
+    callbacks resolve.
 
   A GPU test without an adapter skips; `NANA_REQUIRE_WGPU_FORK_TESTS=1`
   makes it fail instead, as the Windows CI job does for DX12.
@@ -185,3 +190,32 @@ least the wait submission index …") and panics. In `wgpu-core`'s
 `Device::maintain` the fork returns `QueueEmpty` only when the fence it read
 reached the wait target; otherwise the poll reports `Err(PollError::Timeout)`,
 which is what its own wait did. The `wgpu` API is unchanged.
+
+### A lost device is a poll error, not a panic
+
+Upstream `wgpu::Device::poll` panicked ("Error in Device::poll: Parent device
+is lost") when the backend's fence wait or fence read reported the device
+lost, as Vulkan does with `VK_ERROR_DEVICE_LOST` after a TDR or driver reset.
+On DX12 a removed device's fences read `u64::MAX`, which counted as "all work
+finished": polls succeeded and the loss went unnoticed.
+
+- **`wgpu::PollError::DeviceLost`** (new variant; a break for exhaustive
+  matches on `PollError`). `Device::poll` returns it for a device lost during
+  this poll or before; every later poll returns it again.
+- **`wgpu-core`**: `Device::maintain` no longer returns as soon as the fence
+  wait or read fails. `Device::handle_hal_error` already marked the device
+  invalid and ran the device-lost callback (once, with
+  `DeviceLostReason::Unknown`); the poll then counts every submission as
+  finished, so `on_submitted_work_done` and `map_async` callbacks run (a map
+  resolves with an error or on the lost device's memory), and the
+  invalid-and-empty path releases the device's resources. It reports the
+  loss last. `WaitIdleError::to_poll_error` maps `DeviceError::Lost` and
+  `OutOfMemory` (both lose the device there) to `PollError::DeviceLost`.
+  Submits on the lost device were already rejected without a panic.
+- **`wgpu-hal` DX12**: a fence that reads `u64::MAX` is checked against
+  `GetDeviceRemovedReason`; a removed device makes `get_fence_value` and
+  `wait` return `DeviceError::Lost`.
+- **`wgpu-hal` Vulkan**: `vulkan::Device::simulate_device_lost()`
+  (`#[doc(hidden)]`, tests only) waits for the device to go idle, then makes
+  fence waits, fence reads and queue submits return `DeviceError::Lost`, so
+  tests reach this path without a real reset.

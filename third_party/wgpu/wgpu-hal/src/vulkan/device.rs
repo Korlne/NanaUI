@@ -827,6 +827,19 @@ impl super::Device {
         &self.shared.raw
     }
 
+    /// NanaUI fork, for tests only: make this device behave as if the driver
+    /// reported `VK_ERROR_DEVICE_LOST`. Waits for the device to go idle first
+    /// (so no real GPU work outlives what wgpu-core then retires), then every
+    /// fence wait, fence read and queue submission returns
+    /// [`crate::DeviceError::Lost`]. It cannot be undone.
+    #[doc(hidden)]
+    pub fn simulate_device_lost(&self) {
+        let _ = unsafe { self.shared.raw.device_wait_idle() };
+        self.shared
+            .simulated_device_lost
+            .store(true, core::sync::atomic::Ordering::Release);
+    }
+
     pub fn raw_physical_device(&self) -> vk::PhysicalDevice {
         self.shared.physical_device
     }
@@ -2573,6 +2586,7 @@ impl crate::Device for super::Device {
         &self,
         fence: &super::Fence,
     ) -> Result<crate::FenceValue, crate::DeviceError> {
+        self.shared.check_simulated_device_lost()?;
         fence.get_latest(
             &self.shared.raw,
             self.shared.extension_fns.timeline_semaphore.as_ref(),
@@ -3042,6 +3056,18 @@ impl super::DeviceShared {
         }
     }
 
+    /// See [`super::Device::simulate_device_lost`] (NanaUI fork).
+    pub(super) fn check_simulated_device_lost(&self) -> Result<(), crate::DeviceError> {
+        if self
+            .simulated_device_lost
+            .load(core::sync::atomic::Ordering::Acquire)
+        {
+            Err(crate::DeviceError::Lost)
+        } else {
+            Ok(())
+        }
+    }
+
     pub(super) fn wait_for_fence(
         &self,
         fence: &super::Fence,
@@ -3049,6 +3075,7 @@ impl super::DeviceShared {
         timeout_ns: u64,
     ) -> Result<bool, crate::DeviceError> {
         profiling::scope!("Device::wait");
+        self.check_simulated_device_lost()?;
         match *fence {
             super::Fence::TimelineSemaphore(raw) => {
                 let semaphores = [raw];

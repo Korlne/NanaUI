@@ -38,6 +38,25 @@ use crate::{
 const NAGA_LOCATION_SEMANTIC: &[u8] = c"LOC".to_bytes();
 
 impl super::Device {
+    /// The fence's completed value, or [`crate::DeviceError::Lost`] once the
+    /// device was removed.
+    ///
+    /// NanaUI fork: a removed device's fences read `u64::MAX`, which upstream
+    /// took as "every submission finished", so polls succeeded and the loss
+    /// only surfaced on a later present or resource creation, if at all.
+    /// wgpu never signals `u64::MAX`, so that value is checked against
+    /// `GetDeviceRemovedReason`.
+    fn completed_fence_value(
+        &self,
+        fence: &super::Fence,
+    ) -> Result<crate::FenceValue, crate::DeviceError> {
+        let value = unsafe { fence.raw.GetCompletedValue() };
+        if value == u64::MAX {
+            unsafe { self.raw.GetDeviceRemovedReason() }.into_device_result("Device removed")?;
+        }
+        Ok(value)
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
         adapter: auxil::dxgi::factory::DxgiAdapter,
@@ -2416,7 +2435,7 @@ impl crate::Device for super::Device {
         &self,
         fence: &super::Fence,
     ) -> Result<crate::FenceValue, crate::DeviceError> {
-        Ok(unsafe { fence.raw.GetCompletedValue() })
+        self.completed_fence_value(fence)
     }
     unsafe fn wait(
         &self,
@@ -2427,7 +2446,7 @@ impl crate::Device for super::Device {
         let timeout = timeout.unwrap_or(Duration::MAX);
 
         // We first check if the fence has already reached the value we're waiting for.
-        let mut fence_value = unsafe { fence.raw.GetCompletedValue() };
+        let mut fence_value = self.completed_fence_value(fence)?;
         if fence_value >= value {
             return Ok(true);
         }
@@ -2489,7 +2508,7 @@ impl crate::Device for super::Device {
                 }
             };
 
-            fence_value = unsafe { fence.raw.GetCompletedValue() };
+            fence_value = self.completed_fence_value(fence)?;
             log::trace!("Wait complete! Fence actual value: {fence_value}");
 
             if fence_value >= value {

@@ -580,6 +580,9 @@ struct DeviceShared {
     features: wgt::Features,
     /// See [`PresentTracking`] (NanaUI fork).
     present_tracking: PresentTracking,
+    /// NanaUI fork: set by [`Device::simulate_device_lost`]; fence waits, fence
+    /// reads and queue submissions then report [`crate::DeviceError::Lost`].
+    simulated_device_lost: core::sync::atomic::AtomicBool,
     render_passes: Mutex<FastHashMap<RenderPassKey, vk::RenderPass>>,
     sampler_cache: Mutex<sampler::SamplerCache>,
     memory_allocations_counter: InternalCounter,
@@ -1439,6 +1442,7 @@ impl crate::Queue for Queue {
         surface_textures: &[&SurfaceTexture],
         (signal_fence, signal_value): (&Fence, crate::FenceValue),
     ) -> Result<(), crate::DeviceError> {
+        self.device.check_simulated_device_lost()?;
         let mut fence_raw = vk::Fence::null();
 
         let mut wait_semaphores = SemaphoreList::new(SemaphoreListMode::Wait);
