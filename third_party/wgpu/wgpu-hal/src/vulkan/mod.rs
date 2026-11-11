@@ -217,10 +217,45 @@ pub struct Instance {
 #[expect(missing_debug_implementations, reason = "TODO?")]
 pub struct Surface {
     swapchain: RwLock<Option<Box<dyn swapchain::Swapchain>>>,
+    /// Swapchains replaced by `configure` whose presents may still be in
+    /// flight (NanaUI fork). See [`swapchain::RetiredSwapchain`].
+    retired: Mutex<Vec<swapchain::RetiredSwapchain>>,
     inner: Box<dyn swapchain::Surface>,
 }
 
 impl Surface {
+    /// Destroy the retired swapchains whose presents are behind the GPU: those
+    /// for which a submission that drew to `current` (the swapchain that
+    /// replaced them) has completed. That submission was made after their last
+    /// present was queued. Never blocks.
+    ///
+    /// # Safety
+    ///
+    /// `current` is this surface's swapchain and `fence` the device fence.
+    unsafe fn release_finished_retired(&self, current: &dyn swapchain::Swapchain, fence: &Fence) {
+        let mut retired = self.retired.lock();
+        if retired.is_empty() {
+            return;
+        }
+        let used = current.last_used_fence_value();
+        let mut index = 0;
+        while index < retired.len() {
+            let entry = &mut retired[index];
+            if used != 0 {
+                entry.after.get_or_insert(used);
+            }
+            let finished = entry
+                .after
+                .is_some_and(|after| unsafe { current.fence_reached(fence, after) });
+            if finished {
+                // SAFETY: a submission queued after its last present completed.
+                unsafe { retired.swap_remove(index).release() };
+            } else {
+                index += 1;
+            }
+        }
+    }
+
     /// Returns the raw Vulkan surface handle.
     ///
     /// Returns `None` if the surface is a DXGI surface.

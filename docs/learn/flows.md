@@ -138,5 +138,5 @@ title: 端到端数据流
 ## 接着读
 
 - [保留树：UiWorld](/learn/runtime-tree) · [Scene 提取](/learn/scene-extraction)：汇合点与绘制图投影的内部细节
-- [GPU 与帧生命周期](/learn/gpu-frame)：`FrameContext`、上传环、提交守卫与 35 步重绘全序
+- [GPU 与帧生命周期](/learn/gpu-frame)：`FrameContext`、上传环、提交顺序与 35 步重绘全序
 - [框架如何运行（参考）](/reference/how-it-works)：面向应用开发者的同款运行模型

@@ -1,5 +1,5 @@
 use alloc::{borrow::ToOwned as _, boxed::Box, string::String, sync::Arc, vec, vec::Vec};
-use core::fmt;
+use core::{fmt, sync::atomic::AtomicU64};
 
 use hashbrown::HashMap;
 use thiserror::Error;
@@ -248,6 +248,7 @@ impl Instance {
             let surface = Surface {
                 presentation: Mutex::new(rank::SURFACE_PRESENTATION, None),
                 surface_per_backend,
+                last_submission: Arc::default(),
             };
 
             Ok(surface)
@@ -315,6 +316,7 @@ impl Instance {
             let surface = Surface {
                 presentation: Mutex::new(rank::SURFACE_PRESENTATION, None),
                 surface_per_backend,
+                last_submission: Arc::default(),
             };
 
             Ok(surface)
@@ -353,6 +355,7 @@ impl Instance {
         let surface = Surface {
             presentation: Mutex::new(rank::SURFACE_PRESENTATION, None),
             surface_per_backend: core::iter::once((Backend::Metal, raw_surface)).collect(),
+            last_submission: Arc::default(),
         };
 
         Ok(surface)
@@ -370,6 +373,7 @@ impl Instance {
         let surface = Surface {
             presentation: Mutex::new(rank::SURFACE_PRESENTATION, None),
             surface_per_backend: core::iter::once((Backend::Dx12, surface)).collect(),
+            last_submission: Arc::default(),
         };
 
         Ok(surface)
@@ -658,6 +662,10 @@ impl Instance {
 pub struct Surface {
     pub(crate) presentation: Mutex<Option<Presentation>>,
     pub surface_per_backend: HashMap<Backend, Box<dyn hal::DynSurface>>,
+    /// The index of the last submission that used one of this surface's
+    /// textures, 0 if none has. Reconfiguring waits for this submission only,
+    /// not for the whole device (NanaUI fork).
+    pub(crate) last_submission: Arc<AtomicU64>,
 }
 
 impl ResourceType for Surface {

@@ -6,8 +6,6 @@
 //! if the framework reached WGPU through `wgpu-interop`, every consumer would
 //! silently get the escape hatch too.
 
-use std::sync::{RwLockReadGuard, RwLockWriteGuard};
-
 use crate::{
     FrameContext, GpuContext, GpuDeviceLost, GpuRenderTarget, GpuSubmission, GpuTexture,
     GpuTextureFormat, GpuTextureUsages,
@@ -52,18 +50,6 @@ pub fn device(gpu: &GpuContext) -> &wgpu::Device {
 
 pub fn queue(gpu: &GpuContext) -> &wgpu::Queue {
     &gpu.inner.queue
-}
-
-/// Hold across a raw `submit` / `write_*` from any thread. Never across
-/// `poll(Wait)` or surface work, and never around a contract call that submits
-/// itself: the guard is not reentrant.
-pub fn lock_submission(gpu: &GpuContext) -> RwLockReadGuard<'_, ()> {
-    gpu.lock_submission()
-}
-
-/// Hold across `Surface::configure`.
-pub fn lock_reconfigure(gpu: &GpuContext) -> RwLockWriteGuard<'_, ()> {
-    gpu.lock_reconfigure()
 }
 
 /// Record a loss reported outside WGPU's callback (an embedder's own

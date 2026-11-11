@@ -23,7 +23,7 @@ Supporting boundaries:
 - \`nana-ui-css\` is the one CSS engine: stylesheet parse, cascade and the mapping onto the Style Model. The \`.vue\` compiler, \`view!\` and \`css!\` run it at build time and hand the runtime Style Model data. CSS parsing stays out of \`nana-ui-core\`, \`nana-ui-runtime\`, \`nana-ui-scene\` and \`nana-ui\`.
 - \`nana-ui-input\` owns the canonical input event, endpoint, sequencer, and \`HostServices\` contract; hosts lower native input into it and the per-\`AppContext\` router in \`nana-ui-runtime\` is its only consumer.
 - \`nana-ui-platform\` owns platform-neutral window contracts and re-exports the input contract; \`nana-window\` owns native handles, materials, title-bar chrome, scaling, and fullscreen behavior.
-- \`nana-gpu\` is the GPU backend contract: \`GpuContext\` (device, generation, capabilities, loss, textures, submission guard), \`FrameContext\` (one frame's encoder, submit/discard), and \`GpuTexture\`. WGPU is the only backend; \`wgpu-interop\` is the explicit escape hatch.
+- \`nana-gpu\` is the GPU backend contract: \`GpuContext\` (device, generation, capabilities, loss, textures, submission order), \`FrameContext\` (one frame's encoder, submit/discard), and \`GpuTexture\`. WGPU is the only backend; \`wgpu-interop\` is the explicit escape hatch.
 - \`nana-frame-exchange\` carries producer frames. It does not own the UI device or submission.
 
 The host owns Window, Surface, the \`GpuContext\`, each \`FrameContext\`, and frame scheduling. \`SceneWgpuPainter\` is built on that context and paints into the host's frames. GPU content is represented by \`CustomRenderNode\` or ordinary \`HostTexture\` nodes and remains in layout, clipping, hit testing, and document order.

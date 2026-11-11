@@ -6,7 +6,7 @@
 //! and one shared fence. Inside the producer's own [`FrameContext`] the pool
 //! copies a rendered texture into the next slot; [`FrameContext::submit`]
 //! signals the frame's *ready* value on the device queue right after the
-//! submit, under the submission guard. The consumer waits for that value on
+//! submit, under the submission-order lock. The consumer waits for that value on
 //! its own GPU timeline, reads the slot and signals the frame's *release*
 //! value. Reservation `k` (from 0) is ready at `2k + 1` and released at
 //! `2k + 2`. Discarded or abandoned reservations consume their values too;
@@ -147,7 +147,7 @@ const SIGNAL_DISCARDED: u8 = 3;
 /// free-threaded.
 struct SendQueue(ID3D12CommandQueue, ID3D12Fence);
 // SAFETY: `ID3D12CommandQueue::Signal` and the fence are documented as
-// free-threaded; the hook runs once, under the device's submission guard.
+// free-threaded; the hook runs once, under the device's submission-order lock.
 unsafe impl Send for SendQueue {}
 
 /// The exported handles. Closed when the pool and every token are gone.
@@ -186,10 +186,9 @@ impl Drop for SharedHandles {
 }
 
 impl SharedHandles {
-    /// Signal `value` on the device queue, under the submission guard: the
-    /// queue order puts it after everything already submitted.
+    /// Signal `value` on the device queue: the queue order puts it after
+    /// everything already submitted.
     fn signal(&self, value: u64) -> Result<(), NativeExportError> {
-        let _guard = self.gpu.lock_submission();
         // SAFETY: the fence and queue belong to the live device `gpu` holds.
         unsafe { self.queue.Signal(&self.fence, value) }.map_err(native("queue signal"))
     }

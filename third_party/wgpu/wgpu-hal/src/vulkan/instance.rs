@@ -555,6 +555,7 @@ impl super::Instance {
 
         super::Surface {
             swapchain: RwLock::new(None),
+            retired: Default::default(),
             inner: Box::new(native_surface),
         }
     }
@@ -1009,21 +1010,43 @@ impl crate::Surface for super::Surface {
         // SAFETY: `configure`'s contract guarantees there are no resources derived from the swapchain in use.
         let mut swap_chain = self.swapchain.write();
 
-        let mut old = swap_chain.take();
-        if let Some(ref mut old) = old {
-            unsafe { old.release_resources(device) };
+        let old = swap_chain.take();
+        let result = unsafe { self.inner.create_swapchain(device, config, old.as_deref()) };
+        // `configure`'s contract covers the work that used the old swapchain's
+        // images, but not its presents, which there is no portable way to wait
+        // for. Rather than waiting for the whole device to go idle (upstream),
+        // the old swapchain is retired: `oldSwapchain` retired it in any case,
+        // and it is destroyed once a frame of its successor has completed
+        // (NanaUI fork).
+        if let Some(old) = old {
+            self.retired
+                .lock()
+                .push(super::swapchain::RetiredSwapchain::new(old));
         }
-
-        let swapchain = unsafe { self.inner.create_swapchain(device, config, old)? };
-        *swap_chain = Some(swapchain);
+        *swap_chain = Some(result?);
 
         Ok(())
     }
 
     unsafe fn unconfigure(&self, device: &super::Device) {
-        if let Some(mut sc) = self.swapchain.write().take() {
+        let current = self.swapchain.write().take();
+        let retired = core::mem::take(&mut *self.retired.lock());
+        if current.is_none() && retired.is_empty() {
+            return;
+        }
+        // We need to also wait until all presentation work is done. Because there is no way to portably wait until
+        // the presentation work is done, we are forced to wait until the device is idle.
+        {
+            profiling::scope!("vkDeviceWaitIdle");
+            let _ = unsafe { device.shared.raw.device_wait_idle() };
+        }
+        if let Some(mut sc) = current {
             // SAFETY: `unconfigure`'s contract guarantees there are no resources derived from the swapchain in use.
-            unsafe { sc.release_resources(device) };
+            unsafe { sc.release_resources() };
+        }
+        for retired in retired {
+            // SAFETY: the device is idle.
+            unsafe { retired.release() };
         }
     }
 
@@ -1035,6 +1058,7 @@ impl crate::Surface for super::Surface {
         let mut swapchain = self.swapchain.write();
         let swapchain = swapchain.as_mut().unwrap();
 
+        unsafe { self.release_finished_retired(swapchain.as_ref(), fence) };
         unsafe { swapchain.acquire(timeout, fence) }
     }
 

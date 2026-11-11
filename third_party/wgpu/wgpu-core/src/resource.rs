@@ -6,6 +6,7 @@ use core::{
     num::NonZeroU64,
     ops::Range,
     ptr::NonNull,
+    sync::atomic::AtomicU64,
 };
 use smallvec::SmallVec;
 use thiserror::Error;
@@ -1385,6 +1386,11 @@ pub(crate) enum TextureInner {
     },
     Surface {
         raw: Box<dyn hal::DynSurfaceTexture>,
+        /// The owning surface's [`Surface::last_submission`], raised by every
+        /// submission that uses this texture.
+        ///
+        /// [`Surface::last_submission`]: crate::instance::Surface::last_submission
+        last_submission: Arc<AtomicU64>,
     },
 }
 

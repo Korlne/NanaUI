@@ -41,4 +41,13 @@
 
 ## 与上游的差异
 
-暂无：目前就是发布出来的 wgpu 30.0.1。
+### Surface 重配置只等这个 surface 的工作
+
+`Surface::configure`（窗口缩放）不再等整个设备空闲。上游会先等所有队列提交完成，等待期间另一个线程提交就以 `ConfigureSurfaceError::GpuWaitTimeout` 失败，所以应用只好让所有队列工作与缩放串行。fork 只等仍在使用这个 surface 交换链图像的工作；校验不变（仍持有已获取的输出时报 `PreviousOutputExists`）。
+
+- **`wgpu-core`**：每个 `Surface` 记下最后一次用到它纹理的提交序号（提交时盖章）。`configure_surface` 先取走 presentation，使等待期间不能再获取新纹理，然后只等这个序号，而不是 `wait_indefinitely`。期间其他线程的提交不再被等待，也不再让 configure 失败。`TextureInner::Surface` 多了 `last_submission` 字段（`wgpu-core` 的公开枚举；`wgpu` 不暴露它）。
+- **`wgpu-hal` DX12**：队列在每次 `Present` 之后立即 signal 一个围栏；`configure` / `unconfigure` 在 `ResizeBuffers` / 释放前只等这个值，不再排空整个队列（设备上的 present 队列 idler 已删除）。
+- **`wgpu-hal` Vulkan**：`configure` 不再调用 `vkDeviceWaitIdle`。旧交换链作为 `oldSwapchain` 传入后已退役，保留到绘制其后继交换链的某次提交完成为止（在下一次 acquire 时非阻塞检查）；`unconfigure` 与销毁仍未释放的退役交换链时仍等待设备空闲。
+- **Metal、GLES**：它们的 `configure` 本来不等待，只受 `wgpu-core` 改动影响。
+
+`wgpu` 的接口没有变化。`ConfigureSurfaceError::GpuWaitTimeout` 仍保留，在等待本身超时时返回。
