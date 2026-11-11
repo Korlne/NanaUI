@@ -947,21 +947,15 @@ impl Device {
 
         // Based on the queue empty status, and the current finished submission index, determine
         // the result of the poll.
-        let result = if queue_empty {
-            if let Some(wait_submission_index) = wait_submission_index {
-                // Assert to ensure that if we received a queue empty status, the fence shows the
-                // correct value. This is defensive, as this should never be hit.
-                assert!(
-                    current_finished_submission >= wait_submission_index,
-                    concat!(
-                        "If the queue is empty, the current submission index ",
-                        "({}) should be at least the wait submission index ({})",
-                    ),
-                    current_finished_submission,
-                    wait_submission_index,
-                );
-            }
-
+        // NanaUI fork: the queue can be empty while the fence value read above is
+        // below the wait target. A wait that timed out read the fence, then the GPU
+        // finished and another thread's poll triaged every submission before this
+        // one reached `queue.maintain`. Upstream asserts here and panics; this
+        // poll's own wait did time out, so it reports that.
+        let reached_wait = wait_submission_index.is_none_or(|wait_submission_index| {
+            current_finished_submission >= wait_submission_index
+        });
+        let result = if queue_empty && reached_wait {
             Ok(wgt::PollStatus::QueueEmpty)
         } else if let Some(wait_submission_index) = wait_submission_index {
             // This is theoretically possible to succeed more than checking on the poll result
