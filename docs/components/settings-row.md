@@ -29,9 +29,53 @@ settings_row("静音").control(switch("").checked(false))
 
 `SettingsRow::new(label)` 默认横排，不按宽度折行。`.hint` 写在标签下面。`.stacked(true)` 始终上下排列。
 
-横排时控件和整段文案上下居中，标签下面有提示或错误时也一样：控件对着标签与提示合起来的中线，左右两侧的视觉中心一致。
+横排时控件和整段文案上下居中，标签下面有提示时也一样：控件对着标签与提示合起来的中线，左右两侧的视觉中心一致。行下面的东西（问号展开的说明、提示行）不算在内：控件仍对着名称那一行。
 
 `.stack_below(width)` 按这一行实际布局宽度折行：窄于阈值时上下排，等于或宽于阈值时同行。无效阈值视为没开。控件节点不重建，宽度变化由布局回流处理。参考里的例子用 `480.0` 作为应用自己的阈值。
+
+## 说明的排法
+
+说明放在哪里看场合，由放行的容器决定，不由每一行自己选：
+
+- 设置页：来得少，来了要读懂。说明写在名称下面（`HintPlacement::Below`，默认）。
+- 属性卡、表单：常来，边看边调。说明收进名称后面的问号（`HintPlacement::Help`），行只占一行。
+
+在 `SettingsGroup` 或 `SettingsCard` 上写 `hint_placement`，里面的每一行都照着排；视图里 `settings_group(..)`、`group_block(..)` 有同名方法。容器往下一直管到里面所有的 `SettingsRow`：中间隔着内容线、带 key 的列表、`when` / `dynamic` 的容器或别的分组都一样，只有自己也写了排法的分组或卡片管它自己那一片。一张卡里放几个分组，在卡上（`SettingsCard`）或最外层的分组上写一次就够。行自己的 `.hint_placement(..)` 优先于容器；没有任何容器写时是 `Below`。容器改了排法，里面的行跟着改。
+
+```rust
+use nana_ui::runtime::HintPlacement;
+use nana_ui::runtime::view::{group_row, settings_group, settings_row};
+
+settings_group(Some("外观".into()), vec![
+    group_row(settings_row("不透明度").hint("只影响窗口里的画面，不影响输出").control(opacity)),
+    group_row(
+        settings_row("缓存文件夹")
+            .hint("优化后的模型放在这里")
+            .notice("重启后生效")
+            .control(folder),
+    ),
+])
+.inset()
+.hint_placement(HintPlacement::Help)
+```
+
+## 问号
+
+`Help` 排法下，有说明的行在名称后面放一个问号按钮（`HELP_CIRCLE`），排在标签附件之前；没有说明的行不放。问号的图形和正文一样高，按钮的命中区是标题工具那么大的方块（默认 24×24），上下左右都悬出名称那一行，所以不撑高行。问号的无障碍名字就是说明全文。
+
+- 鼠标停在问号上：浮出一张小卡片，预览说明全文。
+- 点问号（鼠标、触屏都一样）：说明在这一行下面原地展开，样式与名称下的说明相同，铺满内容线；再点收起。展开时不再浮出预览。触屏没有悬停，只能点开。
+- 键盘：焦点能停在问号上，Enter 或 Space 展开、收起；读屏读到它是否展开（`expanded`）。
+
+展开与否是行自己的状态，由框架管，应用不必持有。
+
+## 提示行
+
+`.notice(text)` 在行下面放一条提示：关于这一行的值，需要注意（`ValidationIntent::Warning`，默认）或者出了问题（`.notice_tone(ValidationIntent::Danger)`）。提示行属于这一行：画在名称那一行下面、`.divided(true)` 的发丝线上面，铺满内容线，与行内容左对齐；带一枚图标（提醒是警示三角，错误是圆叉）、语义色的淡底和同色文字，圆角是控件档（`RadiusTier::Sm`）。说明展开时排在提示行上面。`None` 或空串时不占位置，也不留间隙。
+
+提示行出现时，行尾的控件仍对着名称那一行（有名称下的说明时，对着名称与说明合起来的中线），不对着包括提示行在内的整体。
+
+提醒档读作行的描述；错误档和 `.error` 一样，行读作 invalid、读屏的值是提示文字。
 
 ## 视图函数的阈值
 
@@ -102,11 +146,11 @@ if let Some(row) = row.get() {
 
 ## 错误
 
-`.error(reason)` 说这一行的值哪里不对：必填项为空、端口被占用、身份码不正确。原因占提示的位置，画成 Danger 的 [ValidationMessage](https://github.com/sena-nana/NanaUI/blob/main/docs/components/validation-message.md)，提示先让开；写回 `None` 后提示回来。原因就在用户正看的那一行，有提示的行高度不变。
+`.error(reason)` 说这一行的值哪里不对：必填项为空、端口被占用、身份码不正确。原因画在行下面的提示行里，是错误档（Danger）；同时有 `.notice` 时先显示错误。名称下的说明照常显示；写回 `None` 后提示行回到 `.notice`，没有就收起。
 
 行本身读作 invalid，读屏的值是原因。控件自己的红框由控件的 `invalid` 管，行只说为什么：两样一起写。
 
-原因的槽在第一次有错误时建好，之后错误清掉也留着（隐藏），下一次出错不再重建。
+提示行在第一次有提示或错误时建好，之后清掉也留着（隐藏），下一次不再重建。
 
 已经在的一行新出现原因时（从没有到有），如果焦点在同一个文档里（比如刚点的提交按钮），焦点移到这一行的控件上：用户落在要改的地方，读屏读出字段和原因。带着错误建出来的行、焦点在别的窗口、只改了原因的措辞，都不动焦点。
 
@@ -119,8 +163,11 @@ if let Some(row) = row.get() {
 | 属性 | 类型 | 说明 |
 | --- | --- | --- |
 | `label` | — | `SettingsRow::new(label)`。默认横排，不按宽度折行。视图函数先 `new("")`，再把标签写上 |
-| `.hint` | — | 写在标签下面。可以随后 `update_component` 写成 `Some`，写成 `None` 就藏起来 |
-| `.error` | `Option<Arc<str>>` | 值哪里不对。设了就占提示的位置，画成 Danger 的 `ValidationMessage`，行读作 invalid；`None` 让提示回来。视图里可绑定 |
+| `.hint` | — | 说明。按排法写在标签下面，或收进名称后的问号。可以随后 `update_component` 写成 `Some`，写成 `None` 就藏起来 |
+| `.hint_placement` | `Option<HintPlacement>` | 这一行自己的说明排法，优先于容器。`None` 跟随最近写了排法的 `SettingsGroup` / `SettingsCard`，都没有时是 `Below`。视图里可绑定 |
+| `.notice` | `Option<Arc<str>>` | 行下面的提示行。`None` 或空串不占位。视图里可绑定 |
+| `.notice_tone` | `ValidationIntent` | 提示行的档：`Warning`（默认）或 `Danger`。视图里可绑定 |
+| `.error` | `Option<Arc<str>>` | 值哪里不对。设了就以错误档画进提示行，优先于 `.notice`，行读作 invalid。视图里可绑定 |
 | `.stacked` | — | `true` 始终上下排列 |
 | `.stack_below` | — | 窄于阈值时上下排，等于或宽于阈值时同行。无效阈值视为没开。视图函数用 `280.0`。参考里的例子用 `480.0` 作为应用自己的阈值 |
 | `.divided` | — | `true` 在行下画一条发丝线。一组的最后一行不要画，组自己的边已经收尾 |

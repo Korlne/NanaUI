@@ -39,6 +39,9 @@ pub(crate) struct ReactiveHost {
     /// Settings groups to mark once the flush has installed every node it
     /// patched ([`AppContext::defer_settings_group`]).
     settings_groups: Vec<StableNodeId>,
+    /// Settings rows to look up their hint placement for once the flush has
+    /// installed every node it patched ([`AppContext::defer_settings_row`]).
+    settings_rows: Vec<StableNodeId>,
 }
 
 struct Leaving {
@@ -67,6 +70,7 @@ impl Default for ReactiveHost {
             flips: Vec::new(),
             implicit: HashMap::default(),
             settings_groups: Vec::new(),
+            settings_rows: Vec::new(),
         }
     }
 }
@@ -447,6 +451,24 @@ impl AppContext {
         true
     }
 
+    /// Whether a flush is patching nodes now; see
+    /// [`Self::defer_settings_group`].
+    pub(crate) fn reactive_flushing(&self) -> bool {
+        self.reactive.flushing
+    }
+
+    /// [`Self::defer_settings_group`] for a settings row looking up the hint
+    /// placement its containers give it: they may not hold it yet.
+    pub(crate) fn defer_settings_row(&mut self, row: StableNodeId) -> bool {
+        if !self.reactive.flushing {
+            return false;
+        }
+        if !self.reactive.settings_rows.contains(&row) {
+            self.reactive.settings_rows.push(row);
+        }
+        true
+    }
+
     pub(crate) fn mark_deferred_settings_groups(&mut self) -> Result<(), FrameworkError> {
         let mut outcome = Ok(());
         for group in std::mem::take(&mut self.reactive.settings_groups) {
@@ -455,6 +477,11 @@ impl AppContext {
                     self,
                     Entity::from_stable_id(group),
                 ));
+            }
+        }
+        for row in std::mem::take(&mut self.reactive.settings_rows) {
+            if self.world.contains(row) {
+                outcome = outcome.and(crate::settings::resolve_row_hint_placement_now(self, row));
             }
         }
         outcome

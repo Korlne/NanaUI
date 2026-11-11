@@ -8,6 +8,10 @@
 //!     .control(switch("").checked(mipmaps).on_change(|e| set_mipmaps(e.checked)))
 //! ```
 //!
+//! Where the hint goes (`.hint_placement`) is usually left to the row's
+//! group or card ([`crate::HintPlacement`]); `.notice` puts a line under
+//! the row, Warning by default, Danger with `.notice_tone`.
+//!
 //! The row builds its copy (label over hint) and orders its children itself
 //! (`TypeBehavior::slot_assembler`), as [`AppContext::mount_settings_leaf_row`]
 //! does for a row built by hand; a view never calls
@@ -48,7 +52,10 @@ pub mod settings_row {
     pub struct label;
     pub struct hint;
     pub struct hint_is_path;
+    pub struct hint_placement;
     pub struct error;
+    pub struct notice;
+    pub struct notice_tone;
     pub struct divided;
     pub struct stacked;
     pub struct first_in_group;
@@ -87,7 +94,10 @@ row_fields! {
     label: Arc<str>,
     hint: Option<Arc<str>>,
     hint_is_path: bool,
+    hint_placement: Option<crate::HintPlacement>,
     error: Option<Arc<str>>,
+    notice: Option<Arc<str>>,
+    notice_tone: nana_ui_core::ValidationIntent,
     divided: bool,
     stacked: bool,
     first_in_group: bool,
@@ -525,6 +535,340 @@ mod tests {
         assert_eq!(children(&cx, copy), [label, hint]);
         let style = cx.world().node_style(label).unwrap();
         assert_eq!(style.layout.width, Some(nana_ui_core::LengthSpec::Fill));
+    }
+
+    mod help_and_notice {
+        use super::*;
+        use crate::view::{IntoView, column, group_row_on_line, settings_group, text as pill};
+        use crate::{HintPlacement, IconButton, SettingsCard, SettingsGroup};
+        use nana_ui_core::ValidationIntent;
+
+        fn row(cx: &AppContext, id: StableNodeId) -> Entity<SettingsRow> {
+            let entity = Entity::<SettingsRow>::from_stable_id(id);
+            cx.read(entity, |_| ()).expect("a settings row");
+            entity
+        }
+
+        fn placement(cx: &AppContext, id: StableNodeId) -> HintPlacement {
+            cx.read(row(cx, id), |row| row.effective_hint_placement())
+                .unwrap()
+        }
+
+        fn help_of(cx: &AppContext, id: StableNodeId) -> Option<StableNodeId> {
+            cx.read(row(cx, id), |row| row.help_slot).unwrap()
+        }
+
+        /// Every settings row under `id`, in order.
+        fn rows_under(cx: &AppContext, id: StableNodeId, out: &mut Vec<StableNodeId>) {
+            for child in children(cx, id) {
+                if cx
+                    .read(Entity::<SettingsRow>::from_stable_id(child), |_| ())
+                    .is_ok()
+                {
+                    out.push(child);
+                } else {
+                    rows_under(cx, child, out);
+                }
+            }
+        }
+
+        /// A group or card says where the hints of the rows inside go, down
+        /// through any container and nested group; a row's own choice wins,
+        /// and a row in no such container keeps its hint under its name. A
+        /// container that changes its mind takes its rows along.
+        #[test]
+        fn a_container_hands_its_hint_placement_to_the_rows_inside() {
+            let document = DocumentId::new(1).unwrap();
+            let mut cx = AppContext::new();
+            let view = cx
+                .mount_view_root(document, || {
+                    column()
+                        .children((
+                            widget(SettingsGroup::new().hint_placement(HintPlacement::Help))
+                                .children((
+                                    settings_row("a").hint("x"),
+                                    settings_row("b")
+                                        .hint("y")
+                                        .hint_placement(HintPlacement::Below),
+                                )),
+                            settings_group(
+                                None,
+                                vec![group_row_on_line(settings_row("c").hint("z"))],
+                            )
+                            .hint_placement(HintPlacement::Help),
+                            widget(SettingsCard::new("").hint_placement(HintPlacement::Help))
+                                .children(
+                                    widget(SettingsGroup::new())
+                                        .children(settings_row("d").hint("w")),
+                                ),
+                            settings_row("e").hint("v"),
+                        ))
+                        .into_any()
+                })
+                .unwrap();
+            let mut rows = Vec::new();
+            rows_under(&cx, view.roots()[0], &mut rows);
+            let [a, b, c, d, e] = rows[..] else {
+                panic!("five rows, got {rows:?}");
+            };
+            let placements: Vec<_> = rows.iter().map(|&id| placement(&cx, id)).collect();
+            use HintPlacement::{Below, Help};
+            assert_eq!(placements, [Help, Below, Help, Help, Below]);
+            for (id, has) in [(a, true), (b, false), (c, true), (d, true), (e, false)] {
+                assert_eq!(help_of(&cx, id).is_some(), has, "{id:?}");
+            }
+
+            // the group takes its placement back: its rows go with it
+            let group = Entity::<SettingsGroup>::from_stable_id(cx.world().parent_id(a).unwrap());
+            cx.update_component(group, |group, _| group.hint_placement = None)
+                .unwrap();
+            assert_eq!(placement(&cx, a), Below);
+            assert_eq!(help_of(&cx, a), None, "the button goes");
+            let (_, _, hint, _) = row_parts(&cx, a);
+            assert!(!cx.world().node_style(hint).unwrap().layout.hidden);
+            cx.update_component(group, |group, _| {
+                group.hint_placement = Some(Help);
+            })
+            .unwrap();
+            assert_eq!(placement(&cx, a), Help);
+            assert!(help_of(&cx, a).is_some(), "and comes back");
+        }
+
+        /// Behind a help button a row with a hint carries the button after
+        /// its name, before an accessory, and stays one line tall; a row
+        /// without a hint has no button. The hint is not under the name.
+        #[test]
+        fn a_help_row_has_a_button_only_with_a_hint_and_stays_one_line() {
+            let document = DocumentId::new(1).unwrap();
+            let mut cx = AppContext::new();
+            let view = cx
+                .mount_view_root(document, || {
+                    widget(SettingsGroup::new().hint_placement(HintPlacement::Help))
+                        .children((
+                            settings_row("水印去除")
+                                .hint("去掉输出画面角落的标记")
+                                .label_accessory(pill("尚未购买"))
+                                .control(switch("")),
+                            settings_row("水印去除").control(switch("")),
+                        ))
+                        .into_any()
+                })
+                .unwrap();
+            lay_out(&mut cx, document, 480.0);
+            let rows = children(&cx, view.roots()[0]);
+            let (with, without) = (rows[0], rows[1]);
+
+            let help = help_of(&cx, with).expect("a help button");
+            let (copy, label, hint, line) = row_parts(&cx, with);
+            let line = line.expect("the name's line holds the button");
+            let accessory = cx
+                .read(row(&cx, with), |row| row.label_accessory.unwrap())
+                .unwrap();
+            assert_eq!(children(&cx, line), [label, help, accessory]);
+            assert_eq!(children(&cx, copy), [line, hint]);
+            assert!(cx.world().node_style(hint).unwrap().layout.hidden);
+            assert!(
+                cx.read(Entity::<IconButton>::from_stable_id(help), |button| {
+                    button.label.clone()
+                })
+                .unwrap()
+                .as_ref()
+                    == "去掉输出画面角落的标记",
+                "named by the hint"
+            );
+
+            assert_eq!(help_of(&cx, without), None);
+            assert_eq!(row_parts(&cx, without).3, None, "no line either");
+
+            let (with_box, without_box) = (bounds(&cx, with), bounds(&cx, without));
+            assert!(
+                (with_box.height - without_box.height).abs() < 0.5,
+                "the button does not raise the row: {} vs {}",
+                with_box.height,
+                without_box.height
+            );
+            let (label_box, help_box) = (bounds(&cx, label), bounds(&cx, help));
+            let centre = |b: crate::LayoutBox| b.y + b.height / 2.0;
+            assert!((centre(label_box) - centre(help_box)).abs() < 0.5);
+            // the glyph follows the name at the line's gap; its target
+            // hangs out around it
+            let glyph_left = help_box.x + (help_box.width - nana_ui_core::type_scale::BODY) / 2.0;
+            let gap = glyph_left - (label_box.x + label_box.width);
+            assert!((gap - nana_ui_core::space::XS).abs() < 0.5, "{gap}");
+            assert_eq!((help_box.width, help_box.height), (24.0, 24.0));
+        }
+
+        /// The hint opened from the button and the notice stand under the
+        /// row's main line, the hint above the notice, both above the row's
+        /// divider and across the row; the control stays centred on the
+        /// name.
+        #[test]
+        fn the_opened_hint_and_the_notice_stand_under_the_row() {
+            let document = DocumentId::new(1).unwrap();
+            let mut cx = AppContext::new();
+            let view = cx
+                .mount_view_root(document, || {
+                    column()
+                        .children(
+                            settings_row("端口")
+                                .hint("编辑器在这个端口上监听")
+                                .hint_placement(HintPlacement::Help)
+                                .notice("改了以后要重启编辑器")
+                                .divided(true)
+                                .control(switch("")),
+                        )
+                        .into_any()
+                })
+                .unwrap();
+            let id = children(&cx, view.roots()[0])[0];
+            let entity = row(&cx, id);
+            let help = help_of(&cx, id).unwrap();
+            assert!(
+                cx.activate_icon_button(Entity::<IconButton>::from_stable_id(help))
+                    .unwrap()
+            );
+            lay_out(&mut cx, document, 480.0);
+            let (main, opened, notice, control, label) = cx
+                .read(entity, |row| {
+                    (
+                        row.main_slot.unwrap(),
+                        row.help_text_slot.unwrap(),
+                        row.notice_slot.unwrap(),
+                        row.control.unwrap(),
+                        row.label_slot.unwrap(),
+                    )
+                })
+                .unwrap();
+            assert!(cx.read(entity, |row| row.help_open).unwrap());
+            assert_eq!(children(&cx, id), [main, opened, notice]);
+            assert!(!cx.world().node_style(opened).unwrap().layout.hidden);
+            assert_eq!(cx.world().text(opened), Some("编辑器在这个端口上监听"));
+
+            let (row_box, main_box) = (bounds(&cx, id), bounds(&cx, main));
+            let (opened_box, notice_box) = (bounds(&cx, opened), bounds(&cx, notice));
+            assert!(opened_box.y >= main_box.y + main_box.height - 0.5);
+            assert!(notice_box.y >= opened_box.y + opened_box.height - 0.5);
+            let divider = cx
+                .world()
+                .node_style(id)
+                .unwrap()
+                .layout
+                .border_bottom_width
+                .expect("a divided row rules its bottom edge");
+            assert!(
+                notice_box.y + notice_box.height <= row_box.y + row_box.height - divider + 0.5,
+                "above the divider"
+            );
+            assert!((notice_box.x - row_box.x).abs() < 0.5);
+            assert!(
+                (notice_box.width - row_box.width).abs() < 0.5,
+                "across the row"
+            );
+            assert!((opened_box.width - row_box.width).abs() < 0.5);
+            let centre = |b: crate::LayoutBox| b.y + b.height / 2.0;
+            let offset = centre(bounds(&cx, control)) - centre(bounds(&cx, label));
+            assert!(
+                offset.abs() <= 1.0,
+                "the control stays on the name: {offset}"
+            );
+
+            assert!(
+                cx.activate_icon_button(Entity::<IconButton>::from_stable_id(help))
+                    .unwrap()
+            );
+            assert!(!cx.read(entity, |row| row.help_open).unwrap());
+            assert!(cx.world().node_style(opened).unwrap().layout.hidden);
+        }
+
+        /// A row without a notice keeps no room for one, before it has had
+        /// one and after; an error takes the notice line over, in Danger,
+        /// and gives it back when it clears.
+        #[test]
+        fn a_notice_takes_room_only_while_there_is_one() {
+            let document = DocumentId::new(1).unwrap();
+            let mut cx = AppContext::new();
+            let notice = signal(None::<Arc<str>>);
+            let error = signal(None::<Arc<str>>);
+            let view = cx
+                .mount_view_root(document, move || {
+                    column()
+                        .children((
+                            settings_row("缓存文件夹")
+                                .notice(notice)
+                                .error(error)
+                                .divided(true)
+                                .control(switch("")),
+                            settings_row("缓存文件夹").divided(true).control(switch("")),
+                        ))
+                        .into_any()
+                })
+                .unwrap();
+            lay_out(&mut cx, document, 480.0);
+            let rows = children(&cx, view.roots()[0]);
+            let (id, plain) = (rows[0], rows[1]);
+            let height = |cx: &AppContext, id: StableNodeId| bounds(cx, id).height;
+            let slots = |cx: &AppContext| {
+                cx.read(row(cx, id), |row| {
+                    (row.notice_slot, row.notice_glyph_slot, row.notice_text_slot)
+                })
+                .unwrap()
+            };
+            assert_eq!(slots(&cx).0, None);
+            assert!((height(&cx, id) - height(&cx, plain)).abs() < 0.5);
+
+            notice.set(Some("重启后生效".into()));
+            cx.flush_reactive().unwrap();
+            lay_out(&mut cx, document, 480.0);
+            let (slot, glyph, text) = slots(&cx);
+            let (slot, glyph, text) = (slot.unwrap(), glyph.unwrap(), text.unwrap());
+            assert!(height(&cx, id) > height(&cx, plain) + 8.0);
+            assert_eq!(cx.world().text(text), Some("重启后生效"));
+            let tone = |cx: &AppContext| cx.world().node_style(text).unwrap().foreground;
+            assert_eq!(tone(&cx), Some(nana_ui_core::SemanticColorRole::Warning));
+            let icon = |cx: &AppContext| match cx.world().standard_visual(glyph) {
+                Some(crate::StandardVisual::Icon { icon, .. }) => icon,
+                other => panic!("a glyph, got {other:?}"),
+            };
+            assert_eq!(icon(&cx), nana_ui_core::Icon::AlertTriangle);
+            let spoken = cx.world().accessibility(id).unwrap();
+            assert!(!spoken.invalid, "a caution is no error");
+            assert_eq!(spoken.description.as_deref(), Some("重启后生效"));
+
+            error.set(Some("文件夹不可写".into()));
+            cx.flush_reactive().unwrap();
+            assert_eq!(
+                cx.world().text(text),
+                Some("文件夹不可写"),
+                "the error first"
+            );
+            assert_eq!(tone(&cx), Some(nana_ui_core::SemanticColorRole::Danger));
+            assert_eq!(icon(&cx), nana_ui_core::Icon::CircleX);
+            assert!(cx.world().accessibility(id).unwrap().invalid);
+
+            cx.update_component(row(&cx, id), |row, _| {
+                row.notice_tone = ValidationIntent::Danger;
+            })
+            .unwrap();
+            error.set(None);
+            cx.flush_reactive().unwrap();
+            assert_eq!(cx.world().text(text), Some("重启后生效"));
+            assert!(
+                cx.world().accessibility(id).unwrap().invalid,
+                "a Danger notice reads as one"
+            );
+
+            notice.set(None);
+            cx.flush_reactive().unwrap();
+            lay_out(&mut cx, document, 480.0);
+            assert_eq!(slots(&cx).0, Some(slot), "kept");
+            assert!(cx.world().node_style(slot).unwrap().layout.hidden);
+            assert!(
+                (height(&cx, id) - height(&cx, plain)).abs() < 0.5,
+                "no room, no gap: {} vs {}",
+                height(&cx, id),
+                height(&cx, plain)
+            );
+        }
     }
 
     mod flash {

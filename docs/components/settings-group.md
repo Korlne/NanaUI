@@ -41,6 +41,18 @@ settings_group(Some("连接".into()), vec![
 
 自己拼标题、或者块里放的不是 `group_row` 时，直接用 `group_block(children)`：它是同一块浅底，里面一层 `SettingsGroup` 管首末与细线；`.quiet()` 去掉底色和内边距，`.gap(step)` 给成员之间的间距。
 
+## 说明的排法
+
+`.hint_placement(HintPlacement::Help)` 让组里每一行的说明收进名称后面的问号，行只占一行；属性卡、表单这类边看边调的地方用它，设置页保持默认（说明在名称下面）。它写在组里的 `SettingsGroup` 上，往下管到里面所有的设置行，详见 [SettingsRow 的说明排法](https://github.com/sena-nana/NanaUI/blob/main/docs/components/settings-row.md#说明的排法)。一张卡里放几个分组时，在卡（`SettingsCard`）或包住它们的分组上写一次，里面的分组不用再写；行自己的排法优先。
+
+```rust
+use nana_ui::runtime::HintPlacement;
+
+settings_group(Some("变换".into()), rows).hint_placement(HintPlacement::Help)
+```
+
+手工建组时写 `SettingsGroup::new().hint_placement(HintPlacement::Help)`；`group_block(..)` 也有同名方法。
+
 ## 分组自己的动作
 
 `.footer(view)` 放在卡片或块下面，离它和标题离它一样近（凸起卡片 `Md`，浅底块 `Attach`），读起来属于这一组而不是下一组。推进任务的按钮放这里，不放进标题工具。
@@ -70,6 +82,7 @@ settings_group(Some("连接".into()), vec![
 | `content_line(view)` | 把任意视图放到内容线上（只加水平内边距） |
 | `.inset()` | 浅底块代替凸起卡片，标题与行文字同线，行用 `group_row` |
 | `.footer(view)` | 分组自己的动作，紧跟在卡片或块下面 |
+| `.hint_placement(placement)` | 组里设置行的说明排法（`SettingsGroupView`、`GroupBlock`、`SettingsGroup`、`SettingsCard` 都有）；见上 |
 | `group_block(children)` | 不带标题的浅底块；`.quiet()`、`.gap(step)` |
 | `CONTENT_INSET` / `content_inset()` | 内容线的档位 / **只在默认度量下**成立的像素值：主题改了间距，内容线跟着档位走，这个数字不变。能写档位的地方写 `CONTENT_INSET`（`Divider::inset_step`、主题内边距） |
 

@@ -690,6 +690,7 @@ pub fn group_block(children: impl IntoView) -> GroupBlock {
         children: children.into_any(),
         quiet: false,
         gap: None,
+        hint_placement: None,
     }
 }
 
@@ -698,6 +699,7 @@ pub struct GroupBlock {
     children: AnyView,
     quiet: bool,
     gap: Option<SpacingStep>,
+    hint_placement: Option<crate::HintPlacement>,
 }
 
 impl GroupBlock {
@@ -714,6 +716,13 @@ impl GroupBlock {
         self.gap = Some(step.into());
         self
     }
+
+    /// Where the hints of the rows in the block go; see
+    /// [`crate::SettingsGroup::hint_placement`](field@crate::SettingsGroup::hint_placement).
+    pub fn hint_placement(mut self, placement: crate::HintPlacement) -> Self {
+        self.hint_placement = Some(placement);
+        self
+    }
 }
 
 impl IntoView for GroupBlock {
@@ -722,6 +731,7 @@ impl IntoView for GroupBlock {
             children,
             quiet,
             gap,
+            hint_placement,
         } = self;
         let mut plate = Stack::column(0.0).width(LengthSpec::Fill);
         if !quiet {
@@ -734,6 +744,7 @@ impl IntoView for GroupBlock {
         if let Some(gap) = gap {
             group = group.gap(nana_ui_core::SpacingTokens::DEFAULT.resolve(gap));
         }
+        group.hint_placement = hint_placement;
         widget(plate)
             .children(widget(group).children(children))
             .build(vb)
@@ -797,6 +808,7 @@ pub fn settings_group(title: Option<String>, rows: Vec<GroupRow>) -> SettingsGro
         container: ContainerStyle::default(),
         inset: false,
         footer: None,
+        hint_placement: None,
     }
 }
 
@@ -807,6 +819,7 @@ pub struct SettingsGroupView {
     container: ContainerStyle,
     inset: bool,
     footer: Option<AnyView>,
+    hint_placement: Option<crate::HintPlacement>,
 }
 
 impl SettingsGroupView {
@@ -831,6 +844,14 @@ impl SettingsGroupView {
         self.footer = Some(footer.into_any());
         self
     }
+
+    /// Where the hints of the group's rows go: [`crate::HintPlacement::Help`]
+    /// for an inspector or a form, whose rows stay one line tall; see
+    /// [`crate::SettingsGroup::hint_placement`](field@crate::SettingsGroup::hint_placement).
+    pub fn hint_placement(mut self, placement: crate::HintPlacement) -> Self {
+        self.hint_placement = Some(placement);
+        self
+    }
 }
 
 impl IntoView for SettingsGroupView {
@@ -841,6 +862,7 @@ impl IntoView for SettingsGroupView {
             container,
             inset,
             footer,
+            hint_placement,
         } = self;
         let mut members: Vec<AnyView> = Vec::new();
         for (i, GroupRow { view, visible }) in rows.into_iter().enumerate() {
@@ -873,14 +895,18 @@ impl IntoView for SettingsGroupView {
             nana_ui_core::space::XS
         };
         let card = if inset {
-            group_block(members).into_any()
+            let mut block = group_block(members);
+            block.hint_placement = hint_placement;
+            block.into_any()
         } else {
+            let mut group = crate::SettingsGroup::new();
+            group.hint_placement = hint_placement;
             widget(
                 Stack::column(0.0)
                     .radius(RadiusTier::Lg)
                     .painter(RaisedSurfacePainter(RadiusTier::Lg)),
             )
-            .children(widget(crate::SettingsGroup::new()).children(members))
+            .children(widget(group).children(members))
             .into_any()
         };
         container

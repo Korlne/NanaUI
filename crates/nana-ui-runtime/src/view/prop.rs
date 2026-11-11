@@ -306,6 +306,9 @@ const_props! {
     nana_ui_core::Icon => Option<nana_ui_core::Icon>, |v| Some(v);
     Option<nana_ui_core::Icon> => Option<nana_ui_core::Icon>, |v| v;
     nana_ui_core::StatusTone => nana_ui_core::StatusTone, |v| v;
+    nana_ui_core::ValidationIntent => nana_ui_core::ValidationIntent, |v| v;
+    crate::HintPlacement => Option<crate::HintPlacement>, |v| Some(v);
+    Option<crate::HintPlacement> => Option<crate::HintPlacement>, |v| v;
     nana_ui_core::ButtonKind => nana_ui_core::ButtonKind, |v| v;
     crate::ListItemRole => crate::ListItemRole, |v| v;
     crate::RangeSpanOrientation => crate::RangeSpanOrientation, |v| v;
