@@ -7,6 +7,11 @@ use alloc::{
 };
 use core::{marker::PhantomData, mem::ManuallyDrop, num::NonZeroU32};
 
+#[cfg(supports_64bit_atomics)]
+use core::sync::atomic::AtomicU64;
+#[cfg(not(supports_64bit_atomics))]
+use portable_atomic::AtomicU64;
+
 use arrayvec::ArrayVec;
 use naga::error::ShaderError;
 use thiserror::Error;
@@ -439,6 +444,17 @@ pub struct PipelineCache {
     pub(crate) device: Arc<Device>,
     /// The `label` from the descriptor used to create the resource.
     pub(crate) label: String,
+    /// NanaUI fork: pipelines created through this cache (named in the
+    /// descriptor or as the device default), so a host can skip
+    /// `get_data` when nothing new could have been added.
+    pub(crate) pipelines_built: AtomicU64,
+}
+
+impl PipelineCache {
+    pub(crate) fn note_pipeline_built(&self) {
+        self.pipelines_built
+            .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+    }
 }
 
 impl Drop for PipelineCache {

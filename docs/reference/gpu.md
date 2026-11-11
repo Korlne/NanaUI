@@ -54,8 +54,19 @@ Surface 的 HDR 能力由 `SurfaceCapabilities::format_capabilities` 决定，�
 
 - `GpuContext::pipeline_cache_key()` 说明字节属于谁；`file_stem()` 为 `dx12`（字节码与适配器无关）或 `vulkan-<vendor>-<device>`。
 - `load_pipeline_cache(&bytes)` 在建 painter 之前替换缓存；`pipeline_cache_data()` 返回要保存的字节。`restore_pipeline_cache` / `persist_pipeline_cache` 经由 `PipelineCacheStore`（`load` / `save`）做同样的事。
-- 宿主应用用 `NanaApplicationBuilder::pipeline_cache(store)`（或 `StartupOptions::pipeline_cache`）交出存储：`nana-startup-gpu` 线程在 painter 编译前恢复、建完后保存。设备丢失后替换的新设备从空缓存开始。
+- 宿主应用用 `NanaApplicationBuilder::pipeline_cache(store)`（或 `StartupOptions::pipeline_cache`）交出存储：`nana-startup-gpu` 线程在 painter 编译前恢复、建完后保存。
+- 之后编译的管线（材质、图表、按需建的家族）由 `PipelineCacheSaver` 保存：它在自己的线程上每 `PipelineCacheSaver::DEFAULT_INTERVAL`（10 s）看一次设备缓存经手的管线数（fork 的 `wgpu::PipelineCache::pipelines_built`），一批编译停下来之后（相邻两次计数相同）才保存，且只在缓存确实变长时保存（`GpuContext::persist_pipeline_cache_if_grown`）：命中缓存的管线和空闲都不写；空闲时一次检查只读一个计数。宿主正常退出时（`WindowManager` 析构，与存储的最终刷写同一处）再保存一次增长的部分。丢失的设备不保存。
+- 设备丢失后，宿主在换上新设备、painter 与程序渲染器重建之前从同一存储恢复缓存（`switch_gpu`），所以 TDR 之后的重建与热启动一样跳过编译器；这次读取在事件线程上，和恢复本身阻塞等待新设备是同一段，不在帧路径上。没有用 `pipeline_cache(store)` 的宿主自己调用上面几个接口即可，`PipelineCacheSaver::spawn(&gpu, store, interval)` 也可直接使用。
 - 保存的字节在 wgpu 自己的头部与校验键之外再包一层信封（魔数、键、长度、校验和），DX12 载荷逐条校验。不是缓存、属于别的键、被截断或损坏、或被后端拒绝的字节一律拒收（`PipelineCacheLoad::Refused`），设备照常编译，就像什么都没载入；不会产生后端校验错误。驱动更新会在 wgpu/驱动内部使 Vulkan 数据失效，DXC 更新经校验键使 DX12 数据失效，两者都静默重编。
+
+#### 种子缓存取代预编译 DXIL 的设计说明
+
+未实现，只是取舍。随包附带一份种子缓存，让首次启动也是热的，从而去掉 `crates/nana-ui/src/scene_paint/precompiled/` 里 passthrough 的 DXIL？DX12 缓存条目的键是 naga 写出的 HLSL、入口点、目标 profile（阶段与 shader model）和编译选项（`InstanceFlags::DEBUG`、去调试信息的 workaround、设备是否开了 `SHADER_F16`/`SHADER_I16`）的哈希，整份字节又由校验键绑定到编译器（种类、版本、DXC 提交）。种子要在用户机器上命中，这些量就都得在构建时定下来：
+
+- **固定 shader model。** naga 本身支持 SM 6.0（`naga::back::hlsl::ShaderModel::V6_0`，预编译 DXIL 就是 `*_6_0`），不需要改 fork：wgpu 已有 `Dx12BackendOptions::force_shader_model`（`unsafe ForceShaderModelToken::with_shader_model`），wgpu-hal 取 `min(适配器上限, 指定值)`，指定 `V6_0` 后在每个能跑 DXIL 的适配器上都写 SM 6.0。代价在整台设备：需要更高 SM 的特性（`SHADER_F16` 要 6.2，网格着色器与光线查询要 6.5，64 位原子要 6.6）随之消失，应用经由 `shared_device_features` 请求的也一样；框架自己的管线不需要它们。这个指定只能在用 DXC 时设：FXC 没有上限，指定值会让它去编 SM 6.0，而 FXC 只到 5.1。另外调试与发布的选项不同，种子得按发布构建的标志生成。
+- **随包附带 `dxcompiler.dll`。** wgpu 只加载这一个文件（`Dx12Compiler::DynamicDxc { dxc_path }`）。DXC v1.8.2502 的 x64 `dxcompiler.dll` 是 17 986 592 字节（约 17.2 MiB），而预编译的 11 个 DXIL 阶段加生成代码一共约 195 KB。种子只对生成它的那个 DLL 构建命中，应用自带别的 DXC 版本时整份被校验键丢弃。
+- **FXC 回退。** FXC 的身份是固定的 `fxc d3dcompiler_47`，shader model 恒为 5.1，所以 FXC 种子反而在任何 Windows 上都能命中，什么都不用附带。但缓存键的文件名 `dx12` 对两种编译器相同，一份存储只能放一种字节，另一种被校验键拒收后整份重编；要覆盖两者就得随包附带两份种子，按设备实际拿到的编译器挑一份。预编译 DXIL 则在两种编译器下都以 passthrough 载入。
+- **建议：保留预编译 DXIL，不做种子缓存，也不在框架层固定 shader model。** 预编译路径不依赖编译器、不需要 17 MB 的 DLL、不削减设备特性；运行期缓存已让第二次起的启动对其余管线（材质、图表、按需建的家族）也是热的。若以后确有首启需求，种子应作为应用层选项：已自带 DXC 的应用在自己的构建里用同一个 DLL、发布标志和 `force_shader_model = V6_0` 生成种子；或为不带 DXC 的应用只做一份 FXC 种子，覆盖预编译之外的框架家族——两者都先实测再定。
 
 ### 6. 实测：wgpu-core 校验占比与输入到呈现延迟（2026-11-11）
 

@@ -766,6 +766,11 @@ impl<Program: RuntimeProgram> WindowManager<Program> {
             }
         }
         self.graphics = graphics;
+        // Before the painters and the program's renderers rebuild: they
+        // compile through the cache the store restores here.
+        if let Some(cache) = &mut self.pipeline_cache {
+            cache.replace_device(self.graphics.gpu());
+        }
         self.reset_startup_latch();
         // A replacement device can be on a different backend than the one this
         // process started on. Whether a window opened from now on can reach a
@@ -880,6 +885,13 @@ impl<Program: RuntimeProgram> WindowManager<Program> {
             .expect("painter was just inserted")
     }
 
+    /// Starts saving pipelines compiled from now on to the host's store.
+    pub(super) fn watch_pipeline_cache(&mut self) {
+        if let Some(cache) = &mut self.pipeline_cache {
+            cache.watch(self.graphics.gpu());
+        }
+    }
+
     /// Takes the painter the startup thread built, once it has, waiting for it
     /// when `wait`. Returns whether none is still to come.
     pub(super) fn take_startup_painter(&mut self, wait: bool) -> bool {
@@ -899,10 +911,14 @@ impl<Program: RuntimeProgram> WindowManager<Program> {
             // The thread stopped without one; a painter is built when needed.
             Err(mpsc::TryRecvError::Disconnected) => {
                 self.startup_painter = None;
+                self.watch_pipeline_cache();
                 return true;
             }
         };
         self.startup_painter = None;
+        // The startup thread restored and saved the cache before sending
+        // the painter; saves from here on cannot race its restore.
+        self.watch_pipeline_cache();
         startup::record_device_start(&self.startup.handle, None, Some(built.build));
         let profile = built.painter.presentation();
         if !self.painters.contains_key(&profile) {

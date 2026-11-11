@@ -34,7 +34,7 @@
 - 这些目录不在工作区成员里：它们自己的测试和 dev-dependencies 不在这里构建。每个清单末尾都有一个空的 `[workspace]`（由 `scripts/vendor-wgpu.py` 加上），让 cargo 把每个库当作独立的工作区根，不再往上找。少了它，在嵌套于另一个 NanaUI 检出里的检出（`.claude/worktrees/` 下的 agent worktree）中，`cargo fmt --all` 会失败：外层工作区认领了这个库，却没把它列为成员。`cargo fmt --all` 也会检查这些库；它们符合 rustfmt，fork 的改动也要保持如此。
 - 每项 fork 改动的测试写在 `third_party/wgpu-fork-tests`（工作区成员，`cargo test --workspace` 会跑它）：
   - `dx12_cache_format` 直接把 `wgpu-hal/src/dx12/pipeline_cache.rs` 编译进来，该模块自带的单元测试也在这里跑，所有系统都跑；
-  - `pipeline_cache` 通过 `wgpu` 接口测试 DX12 缓存与 `set_default_pipeline_cache`；
+  - `pipeline_cache` 通过 `wgpu` 接口测试 DX12 缓存、`set_default_pipeline_cache` 与 `PipelineCache::pipelines_built`；
   - `surface_reconfigure`（Windows）在另一个线程提交的同时，对一个小窗口的 surface 在 DX12 与 Vulkan 上反复重配置；
   - `vulkan_present_tracking`（Windows）在 Vulkan 上、带着在途帧反复缩放窗口，适配器支持的每种 present 跟踪方式各跑一遍，并请求校验层；后端记下任何错误即失败。没有 `VK_LAYER_KHRONOS_validation` 时只检查驱动自己的消息；设 `NANA_REQUIRE_VULKAN_VALIDATION=1` 则缺少校验层就失败；
   - `timed_poll` 在 DX12 与 Vulkan 上让零超时的等待与其他线程的 poll、提交竞争几秒。
@@ -81,6 +81,13 @@
   字节码与适配器无关，所以 `wgpu-core` 的头部在 DX12 上用固定的适配器键，校验键写的是编译器
   （种类、版本和 DXC 提交）：缓存字节可以换适配器使用，不能换编译器。不缓存 PSO
   （`ID3D12PipelineLibrary`），驱动自有缓存。
+
+- **`wgpu::PipelineCache::pipelines_built() -> Option<u64>`**（新增）。经过这个缓存创建的管线数，
+  无论是描述符里指名的还是作为设备默认缓存；命中缓存的也算。自上次 `get_data` 以来计数不变，
+  就说明不可能新增了条目，宿主可以不取数据、不保存。`wgpu-core` 在它的 `PipelineCache`
+  上放一个原子计数，渲染或计算管线用它创建成功后加一，并提供
+  `Global::pipeline_cache_pipelines_built`；dispatch trait 上的方法默认返回 `None`，
+  自定义后端与 WebGPU 后端照样编译。
 
 ### 带超时的 poll 与别的线程的 poll 竞争时报超时
 

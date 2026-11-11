@@ -88,6 +88,18 @@ impl PipelineCache {
         self.inner.get_data()
     }
 
+    /// How many pipelines were created through this cache so far: named in
+    /// their descriptor or, with [`Device::set_default_pipeline_cache`], as
+    /// the device default. A count that has not moved since the last
+    /// [`Self::get_data`] means no stage could have been added, so a host
+    /// can skip fetching and saving the data. A pipeline that hit the cache
+    /// counts too. `None` on backends without pipeline caches.
+    ///
+    /// This is a NanaUI fork addition, not part of upstream `wgpu`.
+    pub fn pipelines_built(&self) -> Option<u64> {
+        self.inner.pipelines_built()
+    }
+
     #[cfg(custom)]
     /// Returns custom implementation of PipelineCache (if custom backend and is internally T)
     pub fn as_custom<T: custom::PipelineCacheInterface>(&self) -> Option<&T> {

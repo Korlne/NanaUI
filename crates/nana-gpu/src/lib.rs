@@ -61,7 +61,8 @@ pub use frame::{
     FrameAcquisition, FrameContext, FrameId, FrameLane, GpuSubmission, RetainedWrites,
 };
 pub use pipeline_cache::{
-    PipelineCacheKey, PipelineCacheLoad, PipelineCacheRefusal, PipelineCacheStore,
+    PipelineCacheKey, PipelineCacheLoad, PipelineCacheRefusal, PipelineCacheSaver,
+    PipelineCacheStore,
 };
 pub use policy::{FrameSlotId, GpuDeviceState, GpuPolicyStats, PipelineKey, TransientResourceKey};
 pub use realization::{GpuBuffer, GpuBufferDescriptor, GpuBufferUsages, GpuSampler};

@@ -1,5 +1,6 @@
 //! The DX12 pipeline cache and `Device::set_default_pipeline_cache`, through
-//! the public `wgpu` API on a real DX12 adapter (WARP counts).
+//! the public `wgpu` API on a real DX12 adapter (WARP counts), and
+//! `PipelineCache::pipelines_built`.
 //!
 //! The bytes `PipelineCache::get_data` returns are wgpu-core's 64-byte header
 //! (the validation key, which names the shader compiler, at 32..48) followed
@@ -176,4 +177,29 @@ fn damaged_bytes_are_refused_or_lose_only_the_damaged_stage() {
     *flipped.last_mut().unwrap() ^= 0x5a;
     let loaded = unsafe { cache(&device, Some(&flipped), false) };
     assert_eq!(entries(&loaded), stages - 1);
+}
+
+#[test]
+fn pipelines_built_counts_pipelines_through_the_cache() {
+    let Some(device) = dx12("pipelines_built_counts_pipelines_through_the_cache") else {
+        return;
+    };
+    let default = unsafe { cache(&device, None, false) };
+    let named = unsafe { cache(&device, None, false) };
+    assert_eq!(default.pipelines_built(), Some(0));
+
+    device.set_default_pipeline_cache(Some(&default));
+    pipeline(&device, 21, None);
+    assert_eq!(default.pipelines_built(), Some(1));
+    // A hit counts too: the count says a pipeline went through, not that
+    // the cache grew.
+    pipeline(&device, 21, None);
+    assert_eq!(default.pipelines_built(), Some(2));
+    // A pipeline naming another cache counts there only.
+    pipeline(&device, 22, Some(&named));
+    assert_eq!(default.pipelines_built(), Some(2));
+    assert_eq!(named.pipelines_built(), Some(1));
+    // Fetching the data does not move it.
+    let _ = default.get_data();
+    assert_eq!(default.pipelines_built(), Some(2));
 }
