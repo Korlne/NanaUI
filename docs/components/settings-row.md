@@ -71,7 +71,7 @@ settings_group(Some("外观".into()), vec![
 
 ## 提示行
 
-`.notice(text)` 在行下面放一条提示：关于这一行的值，需要注意（`ValidationIntent::Warning`，默认）或者出了问题（`.notice_tone(ValidationIntent::Danger)`）。提示行属于这一行：画在名称那一行下面、`.divided(true)` 的发丝线上面，铺满内容线，与行内容左对齐；带一枚图标（提醒是警示三角，错误是圆叉）、语义色的淡底和同色文字，圆角是控件档（`RadiusTier::Sm`）。说明展开时排在提示行上面。`None` 或空串时不占位置，也不留间隙。
+`.notice(text)` 在行下面放一条提示：关于这一行的值，需要注意（`ValidationIntent::Warning`，默认）或者出了问题（`.notice_tone(ValidationIntent::Danger)`）。提示行属于这一行：画在名称那一行下面、`.divided(true)` 的发丝线上面，铺满内容线，与行内容左对齐；带一枚语义色图标（提醒是警示三角，错误是圆叉）和语义色的淡底；错误的文字也是错误色，提醒的文字用正文色（警示色多是亮黄，小字在它自己的淡底上读不清），圆角是控件档（`RadiusTier::Sm`）。说明展开时排在提示行上面。`None` 或空串时不占位置，也不留间隙。
 
 提示行出现时，行尾的控件仍对着名称那一行（有名称下的说明时，对着名称与说明合起来的中线），不对着包括提示行在内的整体。
 

@@ -71,7 +71,7 @@ Whether it is open is the row's own state, kept by the framework; the applicatio
 
 ## Notice line
 
-`.notice(text)` puts a line under the row about its value: something to be aware of (`ValidationIntent::Warning`, the default) or a problem (`.notice_tone(ValidationIntent::Danger)`). The notice belongs to the row: it is drawn under the name's line and above the hairline of `.divided(true)`, spans the content line, and lines up with the row's content at the start; it carries an icon (a warning triangle, or a circled cross for a problem), a faint tint of the semantic color and text in that color, with the control radius (`RadiusTier::Sm`). An opened hint stands above the notice. `None` or an empty string takes no room and leaves no gap.
+`.notice(text)` puts a line under the row about its value: something to be aware of (`ValidationIntent::Warning`, the default) or a problem (`.notice_tone(ValidationIntent::Danger)`). The notice belongs to the row: it is drawn under the name's line and above the hairline of `.divided(true)`, spans the content line, and lines up with the row's content at the start; it carries an icon in the semantic color (a warning triangle, or a circled cross for a problem), and a faint tint of the semantic color; a problem’s text is in the danger color too, a warning’s in the body text color (a warning color is often a bright yellow, which small text on its own tint does not read in), with the control radius (`RadiusTier::Sm`). An opened hint stands above the notice. `None` or an empty string takes no room and leaves no gap.
 
 When a notice shows, the control at the end of the row still faces the name's line (with a hint under the name, the combined center line of name and hint), not the whole including the notice.
 

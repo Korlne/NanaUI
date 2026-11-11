@@ -824,7 +824,11 @@ mod tests {
             assert!(height(&cx, id) > height(&cx, plain) + 8.0);
             assert_eq!(cx.world().text(text), Some("重启后生效"));
             let tone = |cx: &AppContext| cx.world().node_style(text).unwrap().foreground;
-            assert_eq!(tone(&cx), Some(nana_ui_core::SemanticColorRole::Warning));
+            assert_eq!(
+                tone(&cx),
+                Some(nana_ui_core::SemanticColorRole::Text),
+                "a caution reads in the text colour"
+            );
             let icon = |cx: &AppContext| match cx.world().standard_visual(glyph) {
                 Some(crate::StandardVisual::Icon { icon, .. }) => icon,
                 other => panic!("a glyph, got {other:?}"),

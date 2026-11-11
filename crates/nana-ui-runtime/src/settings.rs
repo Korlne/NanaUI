@@ -711,8 +711,8 @@ fn label_slot_style(hidden: bool, on_line: bool, column: bool) -> NodeStyle {
     style
 }
 
-/// The colour a notice of `tone` takes, for its glyph, its text and,
-/// faintly, its box.
+/// The colour a notice of `tone` takes, for its glyph, an error's text
+/// and, faintly, its box.
 fn notice_role(tone: nana_ui_core::ValidationIntent) -> SemanticColorRole {
     match tone {
         nana_ui_core::ValidationIntent::Warning => SemanticColorRole::Warning,
@@ -764,10 +764,16 @@ fn notice_glyph(tone: nana_ui_core::ValidationIntent) -> crate::IconGlyph {
     glyph
 }
 
-/// The notice's words, in the tone's colour at the hint's size, wrapping.
+/// The notice's words at the hint's size, wrapping. An error's are in the
+/// danger colour; a caution's in the text colour, the glyph and the tint
+/// carrying its tone: a caution colour is a bright one (yellow), which
+/// small words on its own tint do not read in.
 fn notice_text(value: &str, tone: nana_ui_core::ValidationIntent) -> Text {
     let mut style = hint_slot_style(false);
-    style.foreground = Some(notice_role(tone));
+    style.foreground = Some(match tone {
+        nana_ui_core::ValidationIntent::Warning => SemanticColorRole::Text,
+        nana_ui_core::ValidationIntent::Danger => notice_role(tone),
+    });
     {
         let layout = Arc::make_mut(&mut style.layout);
         layout.width = None;
