@@ -2429,6 +2429,13 @@ impl<Program: RuntimeProgram> WindowManager<Program> {
                             reply.finish(Err(crate::WindowError::WindowClosed));
                         }
                     }
+                    Request::PointerPosition(id, generation, reply) => {
+                        reply.finish(if self.windows.is_current(id, generation) {
+                            Ok(self.sample_client_pointer(id))
+                        } else {
+                            Err(crate::WindowError::WindowClosed)
+                        });
+                    }
                     Request::Material(id, generation, effect, reply) => {
                         if !self.windows.is_current(id, generation) {
                             reply.finish(Err(crate::WindowError::WindowClosed));

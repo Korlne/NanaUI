@@ -104,6 +104,9 @@ pub struct HeadlessTurn {
 struct WindowState {
     window: HeadlessWindow,
     input: Option<HeadlessInput>,
+    /// What `WindowHandle::pointer_position` answers: where the last pointer
+    /// input was, or what [`HeadlessRuntime::set_pointer`] put.
+    pointer: Option<(f32, f32)>,
 }
 
 type QuietMessages<M> = Box<dyn Fn(&M) -> bool>;
@@ -161,6 +164,7 @@ impl<P: RuntimeProgram> HeadlessRuntime<P> {
                     content_zoom: 1.0,
                 },
                 input: None,
+                pointer: None,
             },
         );
         let startup = StartupHandle::detached();
@@ -409,6 +413,21 @@ impl<P: RuntimeProgram> HeadlessRuntime<P> {
         work
     }
 
+    /// Where the pointer is over `id` without telling the window: what a
+    /// click-through window's own sampling ([`WindowHandle::pointer_position`])
+    /// finds while its events go to what lies behind it.
+    ///
+    /// [`WindowHandle::pointer_position`]: crate::WindowHandle::pointer_position
+    pub fn set_pointer(&mut self, id: WindowId, position: Option<(f32, f32)>) {
+        if let Some(state) = self.windows.get_mut(&id) {
+            state.pointer = position;
+        }
+    }
+
+    fn pointer_position(&self, id: WindowId) -> Option<(f32, f32)> {
+        self.windows.get(&id).and_then(|state| state.pointer)
+    }
+
     /// Route `payload` into `id` as the window's input source does, then show
     /// it to the program. A key press is followed by the `text` it types.
     pub fn input(
@@ -417,6 +436,11 @@ impl<P: RuntimeProgram> HeadlessRuntime<P> {
         payload: InputPayload,
         text: Option<&str>,
     ) -> Result<(), FrameworkError> {
+        match &payload {
+            InputPayload::Pointer(pointer) => self.set_pointer(id, Some((pointer.x, pointer.y))),
+            InputPayload::PointerLeave { .. } => self.set_pointer(id, None),
+            _ => {}
+        }
         let now = self.clock.runtime_time(Instant::now());
         let mut input = self.bound_input(id)?;
         input.set_now(now.max(input.now()));
@@ -711,6 +735,14 @@ impl<P: RuntimeProgram> HeadlessRuntime<P> {
                     };
                     reply.finish(Err(error));
                 }
+                Request::PointerPosition(id, generation, reply) => {
+                    reply.finish(if self.service.is_current(id, generation) {
+                        // The pointer as the last injected input left it.
+                        Ok(self.pointer_position(id))
+                    } else {
+                        Err(WindowError::WindowClosed)
+                    });
+                }
                 Request::Material(_, _, _, reply) => reply.finish(Err(WindowError::Unsupported(
                     "a headless window has no material".into(),
                 ))),
@@ -765,6 +797,7 @@ impl<P: RuntimeProgram> HeadlessRuntime<P> {
             WindowState {
                 window,
                 input: None,
+                pointer: None,
             },
         );
         if let Err(error) = self.program.initialize_window(id, &self.context_for(id)) {

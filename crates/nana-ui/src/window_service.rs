@@ -216,6 +216,7 @@ pub(crate) enum Request {
     ),
     Displays(Reply<Vec<DisplayInfo>>),
     SurfaceInfo(WindowId, u64, Reply<WindowSurfaceInfo>),
+    PointerPosition(WindowId, u64, Reply<Option<(f32, f32)>>),
     // Boxed, like `Control` below: each is several hundred bytes, and the
     // queue reserves room for a thousand of whichever request is largest
     // (400 KiB before, for a queue that rarely holds two).
@@ -229,6 +230,7 @@ impl Request {
             Self::Material(_, _, _, reply) => reply.finish(Err(error)),
             Self::Displays(reply) => reply.finish(Err(error)),
             Self::SurfaceInfo(_, _, reply) => reply.finish(Err(error)),
+            Self::PointerPosition(_, _, reply) => reply.finish(Err(error)),
             Self::Create(_, reply) => reply.finish(Err(error)),
             Self::Control(_, _, _, reply) => reply.finish(Err(error)),
             Self::Native(_, _, callback) => {
@@ -326,6 +328,19 @@ impl WindowHandle {
         let (request, reply) = WindowRequest::pair(self.service.host_thread);
         self.service
             .submit(Request::SurfaceInfo(self.id, self.generation, reply));
+        request
+    }
+
+    /// Where the pointer is over this window, in its logical client pixels;
+    /// `None` while it is elsewhere or the platform cannot say (Wayland). It
+    /// is sampled from the system, not from this window's events, so it also
+    /// answers while mouse passthrough hands every event to what lies behind:
+    /// a click-through window can still follow the pointer over itself.
+    /// Another window on top is not accounted for.
+    pub fn pointer_position(&self) -> WindowRequest<Option<(f32, f32)>> {
+        let (request, reply) = WindowRequest::pair(self.service.host_thread);
+        self.service
+            .submit(Request::PointerPosition(self.id, self.generation, reply));
         request
     }
 
@@ -814,6 +829,26 @@ mod tests {
             service.handle(WindowId(1)).close().wait(),
             Err(WindowError::HostThreadWait)
         );
+    }
+
+    #[test]
+    fn pointer_queries_are_generation_bound_and_fail_when_the_host_stops() {
+        let (service, rx) = WindowService::channel(Arc::new(|| {}));
+        let id = WindowId(18);
+        service.register(id);
+        let handle = service.handle(id);
+        let mut answered = handle.pointer_position();
+        let Request::PointerPosition(queried, generation, reply) = rx.try_recv().unwrap() else {
+            panic!("pointer query expected");
+        };
+        assert_eq!(queried, id);
+        assert!(service.is_current(id, generation));
+        reply.finish(Ok(Some((12.0, 34.0))));
+        assert_eq!(answered.try_take(), Some(Ok(Some((12.0, 34.0)))));
+
+        let mut dropped = handle.pointer_position();
+        drop(rx);
+        assert_eq!(dropped.try_take(), Some(Err(WindowError::HostStopped)));
     }
 
     #[test]
