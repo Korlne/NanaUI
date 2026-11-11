@@ -360,7 +360,7 @@ impl Drop for Retirement {
         let _ = std::thread::Builder::new()
             .name("nana-frame-exchange-retire".into())
             .spawn(move || {
-                let _ = __framework::device(&gpu).poll(wgpu::PollType::wait_indefinitely());
+                let _ = __framework::poll(&gpu, wgpu::PollType::wait_indefinitely());
                 drop(textures);
                 drop(gpu);
             });
@@ -784,7 +784,7 @@ impl<E: Copy + Eq + Send + Sync + 'static, M: Send + Sync + 'static> FrameExchan
             __framework::queue(&self.gpu)
                 .on_submitted_work_done(move || ownership.release(sequence));
         }
-        let _ = __framework::device(&self.gpu).poll(wgpu::PollType::Poll);
+        self.gpu.poll();
         let epoch = self.epoch;
         let completed = |pending: &PendingCopy<E, M>| pending.completed.load(Ordering::Acquire);
         let newest = self

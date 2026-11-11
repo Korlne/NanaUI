@@ -152,13 +152,13 @@ fn epoch_ns() -> u64 {
 /// Non-blocking poll that delivers the watched submission's completion
 /// callback. Called at redraw start while metrics are on; free when nothing
 /// is watched.
-pub(crate) fn poll_completions(device: &wgpu::Device) {
+pub(crate) fn poll_completions(gpu: &nana_gpu::GpuContext) {
     if !WATCHING.load(Ordering::Relaxed) {
         return;
     }
     let now = epoch_ns();
     PREVIOUS_POLL_NS.store(POLL_NS.swap(now, Ordering::Relaxed), Ordering::Relaxed);
-    let _ = device.poll(wgpu::PollType::Poll);
+    gpu.poll();
 }
 
 /// Time the submission just made until the host observes it complete,

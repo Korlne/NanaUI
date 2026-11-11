@@ -691,9 +691,7 @@ impl GpuContext {
                     // run without one. The callback's release is then a no-op
                     // (it matches the exact token).
                     if self
-                        .inner
-                        .device
-                        .poll(wgpu::PollType::Wait {
+                        .poll_device(wgpu::PollType::Wait {
                             submission_index: Some(index),
                             timeout: Some(std::time::Duration::from_secs(1)),
                         })
@@ -763,7 +761,7 @@ impl GpuContext {
     pub fn try_begin_producer_frame(&self, label: &'static str) -> Option<FrameContext> {
         let lane = &self.inner.policy.lanes.producer;
         if lane.has_room(None).is_err() {
-            let _ = self.inner.device.poll(wgpu::PollType::Poll);
+            let _ = self.poll_device(wgpu::PollType::Poll);
             lane.has_room(None).ok()?;
         }
         let id = FrameId::new(self.inner.next_frame.fetch_add(1, Ordering::Relaxed));
@@ -818,9 +816,7 @@ impl GpuContext {
             // late: check the oldest without blocking before counting a wait.
             if let Some((index, done)) = &wait
                 && self
-                    .inner
-                    .device
-                    .poll(wgpu::PollType::Wait {
+                    .poll_device(wgpu::PollType::Wait {
                         submission_index: Some(index.clone()),
                         timeout: Some(std::time::Duration::ZERO),
                     })
@@ -842,9 +838,7 @@ impl GpuContext {
                     // marks entries done; marking here covers a callback that
                     // was registered late.
                     if self
-                        .inner
-                        .device
-                        .poll(wgpu::PollType::Wait {
+                        .poll_device(wgpu::PollType::Wait {
                             submission_index: Some(index),
                             timeout: Some(BUDGET_POLL),
                         })
@@ -882,7 +876,26 @@ impl GpuContext {
     /// `PollType::Wait` and therefore cannot serialize a producer with a
     /// consumer just to sample a completed frame.
     pub fn poll(&self) {
-        let _ = self.inner.device.poll(wgpu::PollType::Poll);
+        let _ = self.poll_device(wgpu::PollType::Poll);
+    }
+
+    /// Every framework poll and wait goes through here. A poll that finds the
+    /// device lost (the fork's `PollError::DeviceLost`, e.g. a Vulkan
+    /// `VK_ERROR_DEVICE_LOST`) marks this context lost, whether or not it owns
+    /// the device-lost callback; WGPU has already run that callback and
+    /// retired every submission, so completion callbacks waiting on them ran.
+    pub(crate) fn poll_device(
+        &self,
+        poll_type: wgpu::PollType,
+    ) -> Result<wgpu::PollStatus, wgpu::PollError> {
+        let result = self.inner.device.poll(poll_type);
+        if let Err(wgpu::PollError::DeviceLost) = result {
+            self.mark_lost(GpuDeviceLost {
+                reason: GpuLossReason::Unknown,
+                message: "the device was lost while polling".into(),
+            });
+        }
+        result
     }
 
     fn make_frame(

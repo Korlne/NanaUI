@@ -287,7 +287,9 @@ impl UploadRing {
         if let Some(chunk) = self.take_free(size) {
             return chunk;
         }
-        // Chunks come back through map callbacks, which run in poll.
+        // Chunks come back through map callbacks, which run in poll. A lost
+        // device's error is sticky: the context's next poll reports and marks
+        // it, so the ring ignores it here.
         let _ = device.poll(wgpu::PollType::Poll);
         if let Some(chunk) = self.take_free(size) {
             return chunk;

@@ -58,6 +58,15 @@ pub fn mark_lost(gpu: &GpuContext, report: GpuDeviceLost) {
     gpu.mark_lost(report);
 }
 
+/// Poll or wait on the device. A lost device is reported as
+/// `PollError::DeviceLost` and marks `gpu` lost (see [`GpuContext::poll`]).
+pub fn poll(
+    gpu: &GpuContext,
+    poll_type: wgpu::PollType,
+) -> Result<wgpu::PollStatus, wgpu::PollError> {
+    gpu.poll_device(poll_type)
+}
+
 pub fn encoder(frame: &mut FrameContext) -> &mut wgpu::CommandEncoder {
     frame.encoder_mut()
 }

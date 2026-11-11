@@ -12,7 +12,7 @@ use crate::hosted_context::SurfaceFrame;
 fn reserve_scene_host_frame(gpu: &nana_gpu::GpuContext) -> Option<nana_gpu::FrameContext> {
     const LABEL: &str = "NanaUI scene host frame";
     gpu.try_begin_frame(LABEL).or_else(|| {
-        let _ = gpu.raw_device().poll(wgpu::PollType::Poll);
+        gpu.poll();
         gpu.try_begin_frame(LABEL)
     })
 }
@@ -140,7 +140,7 @@ impl<Program: RuntimeProgram> WindowManager<Program> {
             // Deliver completion callbacks of earlier submissions for
             // `gpu.completion`. Before the device-lost check, so a loss this
             // poll reports is handled in this frame either way.
-            crate::host_diagnostics::poll_completions(self.graphics.gpu().raw_device());
+            crate::host_diagnostics::poll_completions(self.graphics.gpu());
         }
         if self.graphics.take_device_lost() {
             self.recover_device(event_loop);
@@ -800,7 +800,7 @@ impl<Program: RuntimeProgram> WindowManager<Program> {
     pub(super) fn suspend_surface(&mut self, id: WindowId, error: HostedGpuError) {
         // WGPU delivers a destroyed device's callback during polling, after its
         // submissions finish. Surface failure alone must not decide its scope.
-        let _ = self.graphics.gpu().raw_device().poll(wgpu::PollType::Poll);
+        self.graphics.gpu().poll();
         // A lost device fails every surface; leave it to process-wide recovery
         // instead of reporting per-window surface failures.
         if !self.embedded && self.graphics.is_device_lost() {

@@ -245,6 +245,13 @@ pub enum PollError {
     Timeout,
     /// The requested Wait was given a wrong submission index.
     WrongSubmissionIndex(u64, u64),
+    /// The device was lost: during this poll (a backend wait or fence read
+    /// reported it) or before. The device-lost callback has run (once, for the
+    /// first such poll); every submission counts as finished, so completion
+    /// and mapping callbacks have run as well. Later polls report this again.
+    ///
+    /// NanaUI fork: upstream `wgpu::Device::poll` panicked here instead.
+    DeviceLost,
 }
 
 // This impl could be derived by `thiserror`, but by not doing so, we can reduce the number of
@@ -261,6 +268,7 @@ impl fmt::Display for PollError {
                 that has not been returned by a successful submission \
                 (last successful submission: {successful}"
             ),
+            PollError::DeviceLost => f.write_str("The device was lost."),
         }
     }
 }

@@ -37,7 +37,8 @@
   - `pipeline_cache` 通过 `wgpu` 接口测试 DX12 缓存、`set_default_pipeline_cache` 与 `PipelineCache::pipelines_built`；
   - `surface_reconfigure`（Windows）在另一个线程提交的同时，对一个小窗口的 surface 在 DX12 与 Vulkan 上反复重配置；
   - `vulkan_present_tracking`（Windows）在 Vulkan 上、带着在途帧反复缩放窗口，适配器支持的每种 present 跟踪方式各跑一遍，并请求校验层；后端记下任何错误即失败。没有 `VK_LAYER_KHRONOS_validation` 时只检查驱动自己的消息；设 `NANA_REQUIRE_VULKAN_VALIDATION=1` 则缺少校验层就失败；
-  - `timed_poll` 在 DX12 与 Vulkan 上让零超时的等待与其他线程的 poll、提交竞争几秒。
+  - `timed_poll` 在 DX12 与 Vulkan 上让零超时的等待与其他线程的 poll、提交竞争几秒；
+  - `device_lost_poll` 不重置 GPU 就让设备丢失（Vulkan 用 hal 的测试专用 `simulate_device_lost`，DX12 用 `ID3D12Device5::RemoveDevice`），检查 poll 报 `PollError::DeviceLost`、丢失回调只调一次、挂起的回调都有结果。
 
   没有适配器时 GPU 测试会跳过；设 `NANA_REQUIRE_WGPU_FORK_TESTS=1` 则改为失败，Windows CI 对 DX12 就是这样跑的。这些测试里的 GPU 负载要小且有上限。
 
@@ -92,3 +93,12 @@
 ### 带超时的 poll 与别的线程的 poll 竞争时报超时
 
 `Device::poll` 的 `Wait` 超时后先读围栏，再整理队列。若这期间 GPU 完成、另一个线程的 poll 把所有提交都整理掉了，队列为空，而这次 poll 读到的围栏值仍低于它等待的序号。上游断言这不可能发生（"If the queue is empty, the current submission index … should be at least the wait submission index …"）并 panic。fork 在 `wgpu-core` 的 `Device::maintain` 里只有读到的围栏达到等待序号时才返回 `QueueEmpty`，否则报 `Err(PollError::Timeout)`，也就是它自己那次等待的结果。`wgpu` 的接口没有变化。
+
+### 设备丢失是 poll 的错误，不再 panic
+
+上游的 `wgpu::Device::poll` 在后端等围栏或读围栏报设备丢失时 panic（"Error in Device::poll: Parent device is lost"），Vulkan 在 TDR 或驱动重置后返回 `VK_ERROR_DEVICE_LOST` 就是这样。DX12 上被移除的设备围栏读出 `u64::MAX`，被当成"工作全部完成"：poll 成功，丢失无人察觉。
+
+- **`wgpu::PollError::DeviceLost`**（新增变体；对 `PollError` 做穷尽匹配的代码需要改）。设备在这次 poll 中或之前丢失时 `Device::poll` 返回它，之后每次 poll 都再返回它。
+- **`wgpu-core`**：`Device::maintain` 在等围栏或读围栏失败时不再立即返回。`Device::handle_hal_error` 已把设备标为无效并调用设备丢失回调（只一次，原因为 `DeviceLostReason::Unknown`）；随后这次 poll 把所有提交当作已完成，`on_submitted_work_done` 与 `map_async` 的回调都会执行（映射以错误结束，或映射到丢失设备的内存上），"无效且队列为空"的路径释放设备的资源，最后报告丢失。`WaitIdleError::to_poll_error` 把 `DeviceError::Lost` 与 `OutOfMemory`（两者在这里都会让设备丢失）映射为 `PollError::DeviceLost`。丢失设备上的提交本来就会被拒绝，不会 panic。
+- **`wgpu-hal` DX12**：围栏读出 `u64::MAX` 时查 `GetDeviceRemovedReason`；设备已被移除则 `get_fence_value` 与 `wait` 返回 `DeviceError::Lost`。
+- **`wgpu-hal` Vulkan**：`vulkan::Device::simulate_device_lost()`（`#[doc(hidden)]`，仅供测试）先等设备空闲，之后等围栏、读围栏与队列提交都返回 `DeviceError::Lost`，测试不必真的重置就能走到这条路径。

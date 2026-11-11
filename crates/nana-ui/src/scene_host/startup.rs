@@ -927,7 +927,7 @@ impl<Program: RuntimeProgram> WindowManager<Program> {
     ) -> Option<Instant> {
         let latch = self.startup.active.as_ref()?.latch.as_ref()?;
         if !latch.load(Ordering::Acquire) {
-            let _ = self.graphics.gpu().raw_device().poll(wgpu::PollType::Poll);
+            self.graphics.gpu().poll();
         }
         if latch.load(Ordering::Acquire) {
             self.startup_handed_off(event_loop);

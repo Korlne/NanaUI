@@ -151,6 +151,11 @@ impl WaitIdleError {
             &WaitIdleError::WrongSubmissionIndex(a, b) => {
                 Some(wgt::PollError::WrongSubmissionIndex(a, b))
             }
+            // NanaUI fork: every hal error a poll meets loses the device
+            // (`Device::handle_hal_error`), so it is reported, not fatal.
+            WaitIdleError::Device(DeviceError::Lost | DeviceError::OutOfMemory) => {
+                Some(wgt::PollError::DeviceLost)
+            }
             _ => None,
         }
     }

@@ -869,6 +869,9 @@ impl Device {
             wgt::PollType::Poll => None,
         };
 
+        // A hal error that lost the device during this poll.
+        let mut lost = None;
+
         // Wait for the submission index if requested.
         if let Some(target_submission_index) = wait_submission_index {
             log::trace!("Device::maintain: waiting for submission index {target_submission_index}");
@@ -888,19 +891,39 @@ impl Device {
             // This error match is only about `DeviceErrors`. At this stage we do not care if
             // the wait succeeded or not, and the `Ok(bool)`` variant is ignored.
             if let Err(e) = wait_result {
-                let hal_error: WaitIdleError = self.handle_hal_error(e).into();
-                return (user_closures, Err(hal_error));
+                match self.handle_hal_error(e) {
+                    DeviceError::Lost => lost = Some(DeviceError::Lost),
+                    // The GPU may still be running: retire nothing (upstream).
+                    error => return (user_closures, Err(error.into())),
+                }
             }
         }
 
         // Get the currently finished submission index. This may be higher than the requested
         // wait, or it may be less than the requested wait if the wait failed.
-        let fence_value_result = unsafe { self.raw().get_fence_value(self.fence.as_ref()) };
-        let current_finished_submission = match fence_value_result {
-            Ok(fence_value) => fence_value,
-            Err(e) => {
-                let hal_error: WaitIdleError = self.handle_hal_error(e).into();
-                return (user_closures, Err(hal_error));
+        //
+        // NanaUI fork: a hal error here (or in the wait above) loses the device:
+        // `handle_hal_error` marks it invalid and fires the device-lost callback
+        // once. Upstream returned at once, so a `Lost` device never retired a
+        // submission again and `wgpu::Device::poll` panicked on the error. A
+        // lost device finishes nothing more, so every submission counts as done
+        // (as DX12's fence reads after removal): completion and mapping
+        // callbacks run, the invalid-and-empty path below releases resources,
+        // and the poll reports the loss.
+        let current_finished_submission = if lost.is_some() {
+            self.last_successful_submission_index
+                .load(Ordering::Acquire)
+        } else {
+            match unsafe { self.raw().get_fence_value(self.fence.as_ref()) } {
+                Ok(fence_value) => fence_value,
+                Err(e) => match self.handle_hal_error(e) {
+                    DeviceError::Lost => {
+                        lost = Some(DeviceError::Lost);
+                        self.last_successful_submission_index
+                            .load(Ordering::Acquire)
+                    }
+                    error => return (user_closures, Err(error.into())),
+                },
             }
         };
 
@@ -955,7 +978,9 @@ impl Device {
         let reached_wait = wait_submission_index.is_none_or(|wait_submission_index| {
             current_finished_submission >= wait_submission_index
         });
-        let result = if queue_empty && reached_wait {
+        let result = if let Some(error) = lost {
+            Err(WaitIdleError::Device(error))
+        } else if queue_empty && reached_wait {
             Ok(wgt::PollStatus::QueueEmpty)
         } else if let Some(wait_submission_index) = wait_submission_index {
             // This is theoretically possible to succeed more than checking on the poll result
