@@ -3729,6 +3729,12 @@ impl UiWorld {
             .collect::<Vec<_>>();
         let (pending, theirs): (Vec<_>, Vec<_>) =
             pending.into_iter().partition(|(id, _)| ours(self, *id));
+        // Another document's stay for its own drain; a node that has left
+        // the world belongs to none and has nothing to lay out.
+        let theirs = theirs
+            .into_iter()
+            .filter(|(id, _)| self.nodes.contains(*id))
+            .collect::<Vec<_>>();
         self.pending_layout_invalidations.extend(theirs);
         let mut remaining = pending
             .into_iter()
@@ -7955,6 +7961,7 @@ mod issue398;
 mod line_box_memo;
 mod list_item_tooltip;
 mod mount_under_narrow_row;
+mod pending_causes;
 mod reflow_oracle;
 mod result_chain_memo;
 #[cfg(test)]

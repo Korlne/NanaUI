@@ -1548,6 +1548,11 @@ impl UiWorld {
                     });
                     self.dirty_entities.remove(&id);
                     self.non_scroll_hit_dirty.remove(&id);
+                    // A cause queued for a node that is gone seeds nothing,
+                    // and a drain for one document keeps what it cannot place
+                    // in it: left here, every node ever removed stayed in
+                    // the table and was looked at again each frame.
+                    self.pending_layout_invalidations.remove(&id);
                     self.remove_document_root(snapshot.document, id);
                     if self.input.focused.get(&snapshot.document) == Some(&id) {
                         self.input.focused.remove(&snapshot.document);
