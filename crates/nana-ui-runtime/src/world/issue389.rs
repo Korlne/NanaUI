@@ -48,8 +48,8 @@ fn children(world: &UiWorld) -> Vec<StableNodeId> {
     let children = world.node(node(PARENT)).unwrap().children.to_vec();
     for (index, id) in children.iter().enumerate() {
         assert_eq!(
-            world.nodes.get(*id).unwrap().hierarchy.index_in_parent as usize,
-            index,
+            world.recorded_child_index(node(PARENT), *id),
+            Some(index),
             "{id:?}'s recorded index"
         );
     }

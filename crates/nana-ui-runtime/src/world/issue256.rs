@@ -378,8 +378,8 @@ fn issue256_child_indices_follow_inserts_moves_and_removals() {
             let children = world.nodes.get(list).unwrap().hierarchy.children.clone();
             for (index, child) in children.iter().enumerate() {
                 assert_eq!(
-                    world.nodes.get(*child).unwrap().hierarchy.index_in_parent as usize,
-                    index,
+                    world.recorded_child_index(list, *child),
+                    Some(index),
                     "{child:?} in {children:?}"
                 );
             }

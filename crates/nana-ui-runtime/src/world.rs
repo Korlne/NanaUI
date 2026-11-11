@@ -1,6 +1,7 @@
 mod accessibility;
 mod animation;
 mod block_reads;
+mod child_numbering;
 pub(crate) mod child_order;
 mod clip_chain;
 mod extraction;
@@ -75,6 +76,12 @@ use crate::{
     store::{Hierarchy, NodeRecord, NodeStore, ResolvedStyle, intern_empty_children},
     text_editing::clamp_boundary,
 };
+/// `index` as a child records it: numbers wrap, and a list is far shorter
+/// than they are wide.
+fn child_number(index: usize) -> u32 {
+    index as u32
+}
+
 /// Stable external node identity. Zero is reserved so missing/default IDs
 /// cannot accidentally address a live node.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -1197,9 +1204,13 @@ pub struct UiWorld {
     /// list, in one pass; their own mutations skip that edit (#389).
     unlinked_ahead: NodeSet,
     /// Parents whose children the commit being applied has still to number,
-    /// each from the lowest index one of its edits shifted; `None` outside
-    /// its apply loop. See [`Self::renumber_children_from`].
-    renumber_later: Option<NodeMap<usize>>,
+    /// each with how many children at the start and at the end of its list
+    /// none of its edits reached; `None` outside its apply loop. See
+    /// [`Self::renumber_children_between`].
+    renumber_later: Option<NodeMap<(usize, usize)>>,
+    /// Children given a number, for cost tests.
+    #[cfg(test)]
+    children_numbered: u64,
     /// The result chains the commit being applied has walked; `None`
     /// outside its apply loop. See [`ResultChainMemo`].
     result_chain_memo: Option<ResultChainMemo>,
@@ -1425,6 +1436,8 @@ impl UiWorld {
             block_read_steps: 0,
             unlinked_ahead: NodeSet::default(),
             renumber_later: None,
+            #[cfg(test)]
+            children_numbered: 0,
             result_chain_memo: None,
             #[cfg(test)]
             result_chain_steps: 0,
@@ -6615,9 +6628,15 @@ impl UiWorld {
         &mut self.record_mut(id).hierarchy
     }
 
-    /// Give `parent`'s children from `from` on the index they now have. The
-    /// list edit that shifted them already moved them, so this keeps that
-    /// edit's cost.
+    /// Number `parent`'s children again after an edit of its list that left
+    /// the first `head` and the last `tail` of them alone.
+    ///
+    /// A child records its place counted from a number its parent keeps
+    /// ([`Hierarchy::children_base`]), so the children an edit shifted as one
+    /// block need not be written: moving the base renumbers all of them. The
+    /// longer of the two sides the edit left alone keeps its numbers and the
+    /// rest is written, so a row put first among 100,000 writes one number
+    /// where it wrote 100,000, and an edit in the middle at most half.
     ///
     /// While a commit is being applied the numbering waits for its last
     /// mutation: a commit that moves many children of one parent (a list
@@ -6625,51 +6644,71 @@ impl UiWorld {
     /// list after every one of them, and reversing 16,000 rows took 0.6 s.
     /// An index that is behind in the meantime is found out and scanned
     /// for ([`Self::child_index`]), so nothing reads a wrong one.
-    pub(crate) fn renumber_children_from(&mut self, parent: StableNodeId, from: usize) {
+    pub(crate) fn renumber_children_between(
+        &mut self,
+        parent: StableNodeId,
+        head: usize,
+        tail: usize,
+    ) {
         if let Some(later) = &mut self.renumber_later {
             later
                 .entry(parent)
-                .and_modify(|first| *first = (*first).min(from))
-                .or_insert(from);
+                .and_modify(|kept| *kept = (kept.0.min(head), kept.1.min(tail)))
+                .or_insert((head, tail));
             return;
         }
-        self.renumber_children_now(parent, from);
+        self.renumber_children_now(parent, head, tail);
     }
 
     /// Numbers the children the commit just applied left behind.
     pub(crate) fn renumber_children_left(&mut self) {
-        for (parent, from) in self.renumber_later.take().into_iter().flatten() {
-            self.renumber_children_now(parent, from);
+        for (parent, (head, tail)) in self.renumber_later.take().into_iter().flatten() {
+            self.renumber_children_now(parent, head, tail);
         }
     }
 
-    fn renumber_children_now(&mut self, parent: StableNodeId, from: usize) {
-        self.renumber_children_within(parent, from..usize::MAX);
-    }
-
-    /// Give `parent`'s children at `range` the index they have, at once: for
-    /// an edit that leaves the children after it where they were.
-    pub(crate) fn renumber_children_within(
-        &mut self,
-        parent: StableNodeId,
-        range: std::ops::Range<usize>,
-    ) {
-        let Some(children) = self
-            .nodes
-            .get(parent)
-            .map(|record| Arc::clone(&record.hierarchy.children))
-        else {
+    fn renumber_children_now(&mut self, parent: StableNodeId, head: usize, tail: usize) {
+        let Some((children, base)) = self.nodes.get(parent).map(|record| {
+            (
+                Arc::clone(&record.hierarchy.children),
+                record.hierarchy.children_base,
+            )
+        }) else {
             return;
         };
-        let range = range.start.min(children.len())..range.end.min(children.len());
+        let head = head.min(children.len());
+        let tail = tail.min(children.len() - head);
+        let edited_end = children.len() - tail;
+        // What the base has to be for the children after the edit to be
+        // numbered as they already are.
+        let tail_base = children[edited_end..]
+            .first()
+            .and_then(|first| self.nodes.get(*first))
+            .map(|record| {
+                record
+                    .hierarchy
+                    .index_in_parent
+                    .wrapping_sub(child_number(edited_end))
+            });
+        let (base, written) = match tail_base {
+            // The list is as long as it was: both sides keep their numbers.
+            Some(tail_base) if head > 0 && tail_base == base => (base, head..edited_end),
+            Some(tail_base) if tail > head => (tail_base, 0..edited_end),
+            _ if head > 0 => (base, head..children.len()),
+            _ => (0, 0..children.len()),
+        };
         #[cfg(test)]
         {
-            self.child_list_steps += range.len() as u64;
+            self.child_list_steps += written.len() as u64;
+            self.children_numbered += written.len() as u64;
         }
-        for index in range {
+        for index in written {
             if let Some(record) = self.nodes.get_mut(children[index]) {
-                record.hierarchy.index_in_parent = u32::try_from(index).unwrap_or(u32::MAX);
+                record.hierarchy.index_in_parent = base.wrapping_add(child_number(index));
             }
+        }
+        if let Some(record) = self.nodes.get_mut(parent) {
+            record.hierarchy.children_base = base;
         }
     }
 
@@ -6684,26 +6723,35 @@ impl UiWorld {
         };
         self.link_block_extent_reads(parent, child, false);
         let hierarchy = self.hierarchy_mut(parent);
-        #[cfg(test)]
-        let shifted = (hierarchy.children.len() - index - 1) as u64;
         Arc::make_mut(&mut hierarchy.children).remove(index);
+        let after = hierarchy.children.len() - index;
         intern_empty_children(&mut hierarchy.children);
         #[cfg(test)]
         {
-            self.child_list_steps += shifted;
+            self.child_list_steps += after as u64;
         }
-        self.renumber_children_from(parent, index);
+        self.renumber_children_between(parent, index, after);
     }
 
     /// `child`'s index among `parent`'s children, without scanning them
     /// while the retained index is current.
     pub(crate) fn child_index(&self, parent: StableNodeId, child: StableNodeId) -> Option<usize> {
         let children = &self.nodes.get(parent)?.hierarchy.children;
-        let index = self.nodes.get(child)?.hierarchy.index_in_parent as usize;
-        if children.get(index) == Some(&child) {
-            return Some(index);
-        }
-        children.iter().position(|id| *id == child)
+        self.recorded_child_index(parent, child)
+            .or_else(|| children.iter().position(|id| *id == child))
+    }
+
+    /// `child`'s index among `parent`'s children by the number it records,
+    /// if that number is current.
+    pub(crate) fn recorded_child_index(
+        &self,
+        parent: StableNodeId,
+        child: StableNodeId,
+    ) -> Option<usize> {
+        let hierarchy = &self.nodes.get(parent)?.hierarchy;
+        let number = self.nodes.get(child)?.hierarchy.index_in_parent;
+        let index = number.wrapping_sub(hierarchy.children_base) as usize;
+        (hierarchy.children.get(index) == Some(&child)).then_some(index)
     }
 
     fn mark(&mut self, id: StableNodeId, bits: u16) -> bool {

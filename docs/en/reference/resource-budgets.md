@@ -900,7 +900,7 @@ The 5.8 ms in the last row is about what declaring the remaining 15 900 children
 
 `nana-ui-runtime/tests/tree_size_cost.rs` guards these: dropping 60 children takes as many commits as dropping one, and the other two are held against a ratio of sizes rather than a budget: a child among 3 200 allocates no more than 3 times what a child among 200 does (10 times before, 1.003 times now); the shortest removal of one node among 32 000 takes no more than 8 times that among 1 000 (39 times before in a debug build, 1.15 times now). In the runtime's own tests `forget_subtree` re-checks itself with the old full walk every time, confirming that nothing the old implementation would have dropped is left.
 
-Not changed: removing a child that is not the last still moves the siblings after it (about 0.25 ms to remove the first of 100 000 siblings; the world's child order).
+Not changed: removing a child that is not the last still moves the siblings after it (about 0.25 ms to remove the first of 100 000 siblings; the world's child order). Most of that was renumbering the siblings after it, which no longer happens (see "Child numbers are written on the shorter side only" below); what is left is shifting the `Vec`.
 
 **A reactive list changed in one place no longer visits every key (2026-11-11).** Every change to an `each` list put all keys into hash sets to find the added and removed ones and looked every row's roots up again, and `reconcile_children` then checked every child for existence and repeats, so inserting or removing one row cost the length of the list. The head and tail the old and new key orders share are now found by comparing, and only the part between is hashed (`Changes::between`; it falls back to the whole list when a head or tail key shows up in between), the unchanged rows' roots are taken in one piece from the previous result, and `reconcile_children` checks and reorders only the children between the common head and tail. Release, aarch64 macOS, minimum read, per operation when inserting and then removing one row:
 
@@ -910,7 +910,7 @@ Not changed: removing a child that is not the last still moves the siblings afte
 | 10 000 | 280 µs | 15 µs | 300 µs | 32 µs |
 | 100 000 | 4 628 µs | 109 µs | 5 575 µs | 489 µs |
 
-What still follows the row count is reading the keys, comparing them and a few `memcpy`s (about 1 ns per row); inserting at the start also renumbers the siblings after it (below). The unit tests of `view::structural` hold the partial comparison against the whole-list one over 20 000 random edits, and assert that inserting one row in the middle of 1 000 looks the row table up once.
+What still follows the row count is reading the keys, comparing them and a few `memcpy`s (about 1 ns per row); inserting at the start also renumbered the siblings after it then; now only the shorter side is written (below). The unit tests of `view::structural` hold the partial comparison against the whole-list one over 20 000 random edits, and assert that inserting one row in the middle of 1 000 looks the row table up once.
 
 Two more in the same batch:
 
@@ -930,6 +930,23 @@ Two more in the same batch:
 | Turn all of 100 000 children round | not measured (about 100 000 `Insert`s) | 3.0 ms |
 
 What is left of the fill, 20 ms, is creating those 8 000 rows (about 2 µs each). In test builds the reads and writes of a child list are bounded: reversing, shuffling and filling in 4 000 children each stay within 6 times the list's length, where an `Insert` per child took 40 million steps.
+
+**Child numbers are written on the shorter side only (2026-11-11).** Every node records its index in its parent, and putting a child first, or removing the first, wrote the index of every sibling after it: inserting the first of 100 000 siblings spent 83% of its time writing indices, the rest shifting the `Vec`. A child now records a number counted from a base its parent keeps (`Hierarchy::children_base`), and its index is the number minus the base (wrapping `u32`): siblings shifted as one block are not rewritten one by one, because moving the base renumbers all of them. Of the stretch at the start and the stretch at the end that an edit left alone, the longer keeps its numbers and the rest is written; when the list is as long as it was (a reorder, one child taken out and one put in), both keep theirs and only the middle is written. So an insertion or removal at either end writes only the child it changed, and an edit in the middle writes at most half the list (it wrote everything after it). During a commit the range is still only recorded and the numbering happens once at the end: per parent, how many children at the start and at the end no edit reached (`renumber_children_between`). The base sits in alignment padding `NodeRecord` already had, which stays 256 B. Release, aarch64 macOS, minimum, old and new alternating; unless noted, the total for inserting one child among 100 000 siblings and removing it again:
+
+| Operation | Before | After |
+| --- | ---: | ---: |
+| At the start | 526 µs | 76 µs |
+| At one quarter | 337 µs | 133 µs |
+| In the middle | 265 µs | 285 µs |
+| At three quarters | 196 µs | 201 µs |
+| At the end | 13 µs | 13 µs |
+| One commit removing the middle child and putting one in its place | 229 µs | 136 µs |
+| Moving the first child to the end (once) | 346 µs | 358 µs |
+| `each` list of 100 000 rows, inserting or removing a row at the start (once) | 499 µs | 172 µs |
+
+The middle, three quarters and "first to the end" write as many numbers as before; their differences are noise. Inserting and removing at the start of 10 000 siblings 29 µs → 9.3 µs, of 1 000 siblings 5.4 µs → 3.2 µs. Not solved: an edit in the middle still writes half the list (about 2 ns each, about 0.1 ms per edit among 100 000 siblings); moving a child from one end to the other shifts everything between by one, and those are still rewritten one by one (only the untouched start and end are recorded, not that the middle moved as a block); what is left of an insertion at the start is shifting the `Vec` (172 µs for `each` against 108 µs at the end).
+
+`world/child_numbering.rs` holds this: with 4 000 children, each kind of edit asserts how many numbers it wrote (1 for an insertion at the start or the end, 0 for removing the first or the last, 1 001 at one quarter, 1 for a child replaced in place); and 40 random edit sequences (400 commits each, mixing insertions, moves within and across parents, removals in runs and scattered, and stretches reversed in one commit) check after every commit that every child is found at its index by its number, without the scanning fallback.
 
 ## To do
 

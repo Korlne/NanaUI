@@ -1423,14 +1423,12 @@ impl UiWorld {
                     .and_then(|before| siblings.iter().position(|id| *id == before))
                     .unwrap_or(siblings.len());
                 siblings.insert(index, *child);
-                #[cfg(test)]
-                let shifted = (siblings.len() - index - 1) as u64;
-                let _parent_hierarchy = parent_hierarchy;
+                let after = siblings.len() - index - 1;
                 #[cfg(test)]
                 {
-                    self.child_list_steps += shifted;
+                    self.child_list_steps += after as u64;
                 }
-                self.renumber_children_from(*parent, index);
+                self.renumber_children_between(*parent, index, after);
                 self.hierarchy_mut(*child).parent = Some(*parent);
                 let below = self.record(*parent).hierarchy.depth.saturating_add(1);
                 self.set_subtree_depth(*child, below);
@@ -3317,17 +3315,28 @@ impl UiWorld {
         #[cfg(test)]
         let filtered = hierarchy.children.len() as u64;
         let children = Arc::make_mut(&mut hierarchy.children);
-        let first = children
-            .iter()
-            .position(|child| leaving.contains(child))
-            .expect("a run's roots are their parent's children");
-        children.retain(|child| !leaving.contains(child));
+        // How many children stay before the first one leaving, and after
+        // the last.
+        let (mut head, mut tail) = (None, 0);
+        let mut seen = 0;
+        children.retain(|child| {
+            let leaves = leaving.contains(child);
+            if leaves {
+                head.get_or_insert(seen);
+                tail = 0;
+            } else {
+                tail += 1;
+            }
+            seen += 1;
+            !leaves
+        });
+        let head = head.expect("a run's roots are their parent's children");
         intern_empty_children(&mut hierarchy.children);
         #[cfg(test)]
         {
             self.child_list_steps += filtered;
         }
-        self.renumber_children_from(parent, first);
+        self.renumber_children_between(parent, head, tail);
         self.unlinked_ahead = leaving;
         roots.len()
     }

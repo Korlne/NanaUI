@@ -50,10 +50,15 @@ pub(crate) fn intern_empty_children(children: &mut Arc<Vec<StableNodeId>>) {
 pub(crate) struct Hierarchy {
     pub parent: Option<StableNodeId>,
     pub children: Arc<Vec<StableNodeId>>,
-    /// This node's index in its parent's `children`. Every edit of a child
-    /// list renumbers the children it shifted, which that edit already moves,
-    /// so finding a sibling never scans the list.
+    /// This node's index in its parent's `children`, counted from the
+    /// parent's [`Self::children_base`] and wrapping: finding a sibling
+    /// reads it instead of scanning the list
+    /// (`UiWorld::renumber_children_between` keeps it).
     pub index_in_parent: u32,
+    /// What this node's first child records as its `index_in_parent`. An
+    /// edit that shifts a block of the children moves this instead of
+    /// writing each of them a new number.
+    pub children_base: u32,
     /// Levels from the root down to this node, counting it: 1 for a root.
     /// Moving a subtree renumbers it (`UiWorld::set_subtree_depth`), so
     /// checking an insert against `MAX_TREE_DEPTH` reads its parent's depth
@@ -67,6 +72,7 @@ impl Default for Hierarchy {
             parent: None,
             children: Arc::clone(&EMPTY_CHILDREN),
             index_in_parent: 0,
+            children_base: 0,
             depth: 1,
         }
     }

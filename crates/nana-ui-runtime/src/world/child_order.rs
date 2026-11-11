@@ -158,9 +158,7 @@ impl UiWorld {
         {
             self.child_list_steps += between.len() as u64;
         }
-        // The children after them are where they were, so this does not
-        // wait for the commit's last mutation as an edit that shifts does.
-        self.renumber_children_within(parent, between.clone());
+        self.renumber_children_between(parent, between.start, order.len() - between.end);
         for &child in &moved {
             // The subtree goes with its root and keeps what it inherits and
             // its own geometry until layout writes back what changed.
@@ -260,8 +258,8 @@ mod tests {
         let children = world.node(node(PARENT)).unwrap().children.to_vec();
         for (index, id) in children.iter().enumerate() {
             assert_eq!(
-                world.nodes.get(*id).unwrap().hierarchy.index_in_parent as usize,
-                index,
+                world.recorded_child_index(node(PARENT), *id),
+                Some(index),
                 "{id:?}'s recorded index"
             );
         }

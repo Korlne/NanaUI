@@ -31,7 +31,7 @@ title: 运行时保留树
 | `StableNodeId` | `crates/nana-ui-runtime/src/world.rs:70` | 对外稳定节点身份（`u64` 包装，`0` 保留为空，已销毁 ID 永不复用） |
 | `NodeStore` | `crates/nana-ui-runtime/src/store.rs:379` | 稠密节点表 + 稀疏侧表（替代早期的 `bevy_ecs::World`） |
 | `NodeRecord` | `crates/nana-ui-runtime/src/store.rs:81` | 单节点稠密记录：`hierarchy`、`style`、`resolved_layout`、`layout`、`interaction`、`dirty` 等 |
-| `Hierarchy` | `crates/nana-ui-runtime/src/store.rs:46` | `parent` / `children: Arc<Vec<StableNodeId>>` / `index_in_parent` |
+| `Hierarchy` | `crates/nana-ui-runtime/src/store.rs:46` | `parent` / `children: Arc<Vec<StableNodeId>>` / `index_in_parent` / `children_base` |
 | `NodeKind` | `crates/nana-ui-runtime/src/world.rs` | `Document` / `Element` / `Text` / `Comment` 四种节点类别 |
 | `UiMutation` | `crates/nana-ui-runtime/src/mutation.rs:15` | 保留树原子变异枚举（涵盖创建、插入、卸载、样式、文本、焦点、动画等） |
 | `MutationQueue` | `crates/nana-ui-runtime/src/mutation.rs:306` | 帧局部命令队列，供声明式视图、组件装配器与宿主适配器写入 |
@@ -51,7 +51,7 @@ title: 运行时保留树
 `store.rs` 采用**「高频字段进稠密表、特定功能字段进稀疏侧表」**的双层布局（`crates/nana-ui-runtime/src/store.rs:300-445`）：
 
 - **稠密表 `NodeTable`（`:300`）**：由 `dense: Vec<Option<NodeRecord>>` 与 `overflow: HashMap` 组成。当节点 ID $\le 65,536$（`DENSE_LIMIT`）且距当前表尾不超过 `1024`（`DENSE_GAP`）时直接走 $O(1)$ 数组下标寻址，其余大跨度 ID 自动落入 `overflow` 哈希表。
-- **`NodeRecord`（`:81`）与写时解析策略**：存放每个节点最常访问的字段，包括 `hierarchy`（自带 `index_in_parent` 以避免找兄弟时线性扫表）、`mount: MountState`、作者原始 `style: NodeStyle` 以及预解析好的 `resolved_layout: Arc<LayoutStyle>`。由于 `LayoutStyle` 结构体约 4.8 KB，框架在写入样式或切换主题时预先解析一次存入 `Arc`，后续布局与抽取阶段只需廉价克隆 `Arc` 指针（`:87`）。
+- **`NodeRecord`（`:81`）与写时解析策略**：存放每个节点最常访问的字段，包括 `hierarchy`（自带 `index_in_parent` 以避免找兄弟时线性扫表；它从父节点的 `children_base` 数起，整段兄弟平移时只改基数）、`mount: MountState`、作者原始 `style: NodeStyle` 以及预解析好的 `resolved_layout: Arc<LayoutStyle>`。由于 `LayoutStyle` 结构体约 4.8 KB，框架在写入样式或切换主题时预先解析一次存入 `Arc`，后续布局与抽取阶段只需廉价克隆 `Arc` 指针（`:87`）。
 - **稀疏侧表（`NodeStore` 其余字段，`:379-445`）**：按需存放 `visuals`、`custom_render`、`event_listeners`、`component_types`、`overlay_hosts`、`editors` 以及单独成表的 `text_nodes` 与 `text_layouts`（使大范围重排能快速遍历小表跳过无文本工作的节点）。
 
 ### 2. 批式变异提交：`UiMutation` / `MutationQueue` / `commit`

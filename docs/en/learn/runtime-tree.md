@@ -31,7 +31,7 @@ This chapter goes into the heart of `nana-ui-runtime`: **how the `UiWorld` retai
 | `StableNodeId` | `crates/nana-ui-runtime/src/world.rs:70` | Stable external node identity (`u64` wrapper, `0` reserved for empty, destroyed IDs are never reused) |
 | `NodeStore` | `crates/nana-ui-runtime/src/store.rs:379` | Dense node table + sparse side tables (replaces the earlier `bevy_ecs::World`) |
 | `NodeRecord` | `crates/nana-ui-runtime/src/store.rs:81` | Dense per-node record: `hierarchy`, `style`, `resolved_layout`, `layout`, `interaction`, `dirty`, and more |
-| `Hierarchy` | `crates/nana-ui-runtime/src/store.rs:46` | `parent` / `children: Arc<Vec<StableNodeId>>` / `index_in_parent` |
+| `Hierarchy` | `crates/nana-ui-runtime/src/store.rs:46` | `parent` / `children: Arc<Vec<StableNodeId>>` / `index_in_parent` / `children_base` |
 | `NodeKind` | `crates/nana-ui-runtime/src/world.rs` | Four node kinds: `Document` / `Element` / `Text` / `Comment` |
 | `UiMutation` | `crates/nana-ui-runtime/src/mutation.rs:15` | Enum of atomic retained-tree mutations (covering create, insert, unmount, style, text, focus, animation, and more) |
 | `MutationQueue` | `crates/nana-ui-runtime/src/mutation.rs:306` | Frame-local command queue written by declarative views, component assemblers, and host adapters |
@@ -51,7 +51,7 @@ This chapter goes into the heart of `nana-ui-runtime`: **how the `UiWorld` retai
 `store.rs` uses a two-tier layout: **"hot fields go in the dense table, feature-specific fields go in sparse side tables"** (`crates/nana-ui-runtime/src/store.rs:300-445`):
 
 - **Dense table `NodeTable` (`:300`)**: made of `dense: Vec<Option<NodeRecord>>` and `overflow: HashMap`. When a node ID is $\le 65,536$ (`DENSE_LIMIT`) and no more than `1024` (`DENSE_GAP`) past the current end of the table, it uses $O(1)$ array indexing. Other far-ranging IDs fall into the `overflow` hash table automatically.
-- **`NodeRecord` (`:81`) and resolve-on-write**: stores each node's most frequently accessed fields, including `hierarchy` (with its own `index_in_parent` to avoid a linear scan when finding siblings), `mount: MountState`, the author's original `style: NodeStyle`, and the pre-resolved `resolved_layout: Arc<LayoutStyle>`. Because the `LayoutStyle` struct is about 4.8 KB, the framework resolves it once when a style is written or the theme is switched and stores it in an `Arc`; later layout and extraction phases only need a cheap `Arc` pointer clone (`:87`).
+- **`NodeRecord` (`:81`) and resolve-on-write**: stores each node's most frequently accessed fields, including `hierarchy` (with its own `index_in_parent` to avoid a linear scan when finding siblings; it counts from the parent's `children_base`, so siblings shifted as a block only move the base), `mount: MountState`, the author's original `style: NodeStyle`, and the pre-resolved `resolved_layout: Arc<LayoutStyle>`. Because the `LayoutStyle` struct is about 4.8 KB, the framework resolves it once when a style is written or the theme is switched and stores it in an `Arc`; later layout and extraction phases only need a cheap `Arc` pointer clone (`:87`).
 - **Sparse side tables (the remaining `NodeStore` fields, `:379-445`)**: store `visuals`, `custom_render`, `event_listeners`, `component_types`, `overlay_hosts`, `editors` on demand, plus the separate `text_nodes` and `text_layouts` tables (so a wide relayout can walk the small tables quickly and skip nodes with no text work).
 
 ### 2. Batched mutation commit: `UiMutation` / `MutationQueue` / `commit`
