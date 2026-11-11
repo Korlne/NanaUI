@@ -22,6 +22,8 @@ pub(super) struct CompilerFxc {
 
 pub(super) struct CompilerDynamicDxc {
     max_shader_model: wgt::DxcShaderModel,
+    /// NanaUI fork: what produced the bytecode; see [`CompilerContainer::identity`].
+    identity: String,
     compiler: Dxc::IDxcCompiler3,
     // Has to be held onto for the lifetime of the device otherwise shaders will fail to compile.
     // Only needed when using dynamic linking.
@@ -30,6 +32,7 @@ pub(super) struct CompilerDynamicDxc {
 
 pub(super) struct CompilerStaticDxc {
     max_shader_model: wgt::DxcShaderModel,
+    identity: String,
     compiler: Dxc::IDxcCompiler3,
 }
 
@@ -62,6 +65,7 @@ impl CompilerContainer {
 
         Ok(Self::DynamicDxc(CompilerDynamicDxc {
             max_shader_model: wgt::DxcShaderModel::from_dxc_version(major, minor),
+            identity: dxc_identity("dynamic-dxc", &compiler),
             compiler,
             _dxc: dxc,
         }))
@@ -82,6 +86,7 @@ impl CompilerContainer {
 
                 Ok(CompilerContainer::StaticDxc(CompilerStaticDxc {
                     max_shader_model: wgt::DxcShaderModel::V6_7,
+                    identity: dxc_identity("static-dxc", &compiler),
                     compiler,
                 }))
             }
@@ -101,6 +106,16 @@ impl CompilerContainer {
             | CompilerContainer::StaticDxc(CompilerStaticDxc {
                 max_shader_model, ..
             }) => Some(max_shader_model.clone()),
+        }
+    }
+
+    /// NanaUI fork: names the compiler and its build, so cached bytecode is
+    /// only reused with the compiler that produced it.
+    pub(super) fn identity(&self) -> &str {
+        match self {
+            CompilerContainer::Fxc(..) => "fxc d3dcompiler_47",
+            CompilerContainer::DynamicDxc(CompilerDynamicDxc { identity, .. })
+            | CompilerContainer::StaticDxc(CompilerStaticDxc { identity, .. }) => identity,
         }
     }
 
@@ -135,6 +150,25 @@ impl CompilerContainer {
             ),
         }
     }
+}
+
+/// `kind`, the DXC version and, where DXC reports it, its commit.
+fn dxc_identity(kind: &str, compiler: &Dxc::IDxcCompiler3) -> String {
+    let (mut major, mut minor) = (1, 0);
+    if let Ok(version_info) = compiler.cast::<Dxc::IDxcVersionInfo>() {
+        let _ = unsafe { version_info.GetVersion(&mut major, &mut minor) };
+    }
+    let mut identity = format!("{kind} {major}.{minor}");
+    if let Ok(version_info) = compiler.cast::<Dxc::IDxcVersionInfo2>() {
+        let mut count = 0;
+        let mut hash: *mut i8 = core::ptr::null_mut();
+        if unsafe { version_info.GetCommitInfo(&mut count, &mut hash) }.is_ok() && !hash.is_null() {
+            let commit = unsafe { CStr::from_ptr(hash.cast()) };
+            identity.push_str(&format!(" {count} {}", commit.to_string_lossy()));
+            unsafe { windows::Win32::System::Com::CoTaskMemFree(Some(hash.cast_const().cast())) };
+        }
+    }
+    identity
 }
 
 type D3DCompileFn = unsafe extern "system" fn(

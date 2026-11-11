@@ -609,6 +609,9 @@ impl ApplicationState for App {
 
 - 内置控件只注册**标识**（类型名、标签、TypeId）。节点照常带上组件类型标记。按标签也能解析出类型名。
 - 每个类型的行为写在 `ComponentView::BEHAVIOR`（`TypeBehavior`：激活、组装器、在某一点上激活、关闭弹出的选项、写入后的维护、输入路由钩子 `TypeHooks`）。在该类型第一个节点被创建时安装。所有创建路径都经过这一步（`stamp_component_type`、复合控件的 `install_view`、按标签绑定的 `finish_semantic_binding`）。程序没创建过的类型。这些代码一处都不被引用。输入路由经 `hooked!` 调用子系统。钩子没装时的结果和文档里没有这种节点时一样。
+- 中心路径（指针与键盘分发、提交、帧循环里的动画推进、焦点与悬停、无障碍动作）不点名控件专属的方法。它们写 `via!(self.method(..))`，查「路由调用表」（`TypeHooks::calls`，类型 `RoutedCalls`），表里每一项以它代表的 `AppContext` 方法命名。类型在 `BEHAVIOR.hooks` 里调用 `framework/routes.rs` 中自己的函数，用 `route!` 把用到的条目填进去。没填时调用回答 `Absent`（`Ok(false)`、`None`、`Ok(())`、空表）。这与文档里没有这种节点时方法自己的回答相同。新增一处控件专属的中心调用要做三件事：给 `routed_calls!` 加一项、写进 `routes.rs` 里该类型的函数、调用处写 `via!`。宿主对齐标题栏最大化状态走 `AppContext::sync_title_bars_maximized`，不再自己点名 `AppTitleBar`。
+- `routes.rs` 的两条测试守着这张表：每一项都有类型带来（否则那项功能对所有程序都是死的）；只有文字、输入框和按钮的表单一项都不带。
+- 实测（2026-11-11，`examples/reactive-sfc`，fat LTO、`codegen-units = 1`、`panic = "abort"`、strip，aarch64 macOS）：最小窗口 16.52 MiB → 15.80 MiB。符号名里带着未创建控件类型的代码 550 KiB → 61 KiB。剩下的主要是绘制器里的图表管线（15.6 KiB）和提示框（4.5 KiB：任何控件都能带提示，切不开）。
 - 模式必须在编译期确定：`ApplicationState::BUILTINS` 是关联常量。宿主按常量选择。另一个分支在 release 里被删掉。在运行时二选一会把两种模式都链接进来。
 - 精简模式下。按标签构造内置控件（`bind_semantic`）返回 `FrameworkError::InvalidComponentType`。按标签构造控件的宿主继续用完整模式。
 

@@ -1608,6 +1608,21 @@ impl dispatch::DeviceInterface for CoreDevice {
         .into()
     }
 
+    fn set_default_pipeline_cache(&self, cache: Option<&dispatch::DispatchPipelineCache>) {
+        let cache_id = cache.map(|cache| cache.as_core().id);
+        if let Err(cause) = self
+            .context
+            .0
+            .device_set_default_pipeline_cache(self.id, cache_id)
+        {
+            self.context.handle_error_nolabel(
+                &self.error_sink,
+                cause,
+                "Device::set_default_pipeline_cache",
+            );
+        }
+    }
+
     fn create_buffer(&self, desc: &crate::BufferDescriptor<'_>) -> dispatch::DispatchBuffer {
         let (id, error) = self.context.0.device_create_buffer(
             self.id,

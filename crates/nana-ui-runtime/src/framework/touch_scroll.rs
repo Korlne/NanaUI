@@ -654,7 +654,8 @@ impl AppContext {
         y: f32,
     ) -> Result<bool, FrameworkError> {
         if let Some(owner) = self.world.pointer_capture(document, pointer_id) {
-            let range = self.is_range_field(owner) || self.range_span_target(owner).is_some();
+            let range =
+                via!(self.is_range_field(owner)) || via!(self.range_span_target(owner)).is_some();
             let text = self
                 .text_edit
                 .text_pointer_drag
@@ -667,8 +668,8 @@ impl AppContext {
                     .get(&(document, pointer_id))
                     == Some(&owner);
             if range && axis == Axis::Vertical {
-                self.end_range_drag(document, pointer_id, true)?;
-                self.end_range_span_drag(document, pointer_id, true)?;
+                via!(self.end_range_drag(document, pointer_id, true))?;
+                via!(self.end_range_span_drag(document, pointer_id, true))?;
             } else if text {
                 self.text_editor_pointer_release(pointer_id);
                 #[cfg(feature = "rich-text")]
@@ -765,7 +766,7 @@ impl AppContext {
                             last: current,
                         },
                     );
-                    self.hold_scrollbars(id)?;
+                    via!(self.hold_scrollbars(id))?;
                     return Ok(());
                 }
                 None if position != edge => {

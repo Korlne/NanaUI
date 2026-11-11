@@ -311,6 +311,9 @@ impl Default for SegmentedControl {
 
 impl ComponentView for SegmentedControl {
     const BEHAVIOR: crate::TypeBehavior<Self> = crate::TypeBehavior {
+        hooks: Some(|hooks| {
+            crate::framework::routes::segmented(hooks);
+        }),
         slot_assembler: Some(crate::AppContext::assemble_segmented_control),
         ..crate::TypeBehavior::NONE
     };
@@ -689,6 +692,9 @@ fn segmented_option_style(size: ControlSize, chrome: SelectionChrome, fill: bool
 
 impl ComponentView for SegmentedOption {
     const BEHAVIOR: crate::TypeBehavior<Self> = crate::TypeBehavior {
+        hooks: Some(|hooks| {
+            crate::framework::routes::segmented(hooks);
+        }),
         activation: Some(crate::AppContext::activate_segmented_option),
         slot_assembler: Some(crate::AppContext::assemble_segmented_option),
         ..crate::TypeBehavior::NONE

@@ -48,7 +48,27 @@ other by path, so:
   shaders must regenerate the precompiled DXIL in `nana-ui`'s
   `scene_paint::precompiled`: its wgpu version check cannot see fork changes.
 - These directories are excluded from the workspace: their own tests and
-  dev-dependencies do not build here.
+  dev-dependencies do not build here. Each manifest ends in an empty
+  `[workspace]` (added by `scripts/vendor-wgpu.py`), so cargo treats every
+  crate as its own workspace root and does not look further up. Without it,
+  `cargo fmt --all` fails in a checkout nested inside another NanaUI checkout
+  (agent worktrees under `.claude/worktrees/`): the outer workspace claims
+  the crate without listing it. `cargo fmt --all` checks these crates too;
+  they are rustfmt-clean, and fork edits keep them so.
+- Test each fork change in `third_party/wgpu-fork-tests` (a workspace member,
+  so `cargo test --workspace` runs it):
+  - `dx12_cache_format` compiles `wgpu-hal/src/dx12/pipeline_cache.rs` in
+    directly, so that module's own unit tests run there, on every OS;
+  - `pipeline_cache` covers the DX12 cache and `set_default_pipeline_cache`
+    through the `wgpu` API;
+  - `surface_reconfigure` (Windows) reconfigures a small window's surface on
+    DX12 and Vulkan while another thread submits;
+  - `timed_poll` races zero-timeout waits against other threads' polls and
+    submissions on DX12 and Vulkan for a few seconds.
+
+  A GPU test without an adapter skips; `NANA_REQUIRE_WGPU_FORK_TESTS=1`
+  makes it fail instead, as the Windows CI job does for DX12.
+  Keep any GPU load in these tests small and bounded.
 
 ## Moving to a new upstream version
 
@@ -88,3 +108,39 @@ validation is unchanged (an output still acquired is `PreviousOutputExists`).
 
 The `wgpu` API is unchanged. `ConfigureSurfaceError::GpuWaitTimeout` stays and
 is still returned when the wait itself times out.
+
+### Shader and pipeline cache on DX12
+
+- **`wgpu::Device::set_default_pipeline_cache(Option<&PipelineCache>)`** (new).
+  A pipeline created with `cache: None` uses the device's default cache. The
+  device holds it weakly (a `PipelineCache` holds its device), so it applies
+  while the application keeps the handle. A cache from another device is a
+  validation error; backends without caches ignore the call. Behind it:
+  `wgpu-core` `Device::set_default_pipeline_cache` /
+  `Global::device_set_default_pipeline_cache` and lock rank
+  `DEVICE_DEFAULT_PIPELINE_CACHE`; the dispatch trait method has a no-op
+  default, so custom backends still compile.
+- **`Features::PIPELINE_CACHE` on DX12.** `wgpu-hal`'s DX12 `PipelineCache` holds
+  compiled shader bytecode (DXIL from DXC, DXBC from FXC) keyed by a 128-bit
+  hash of the HLSL naga wrote, the entry point, the target profile and the
+  compile flags. A stage found there skips the compiler; a stage compiled is
+  added to it (also one the device's in-memory cache already had).
+  `create_pipeline_cache` with `data` loads it and `PipelineCache::get_data`
+  saves it (format in `wgpu-hal/src/dx12/pipeline_cache.rs`: per-entry
+  checksums, unused entries dropped after 8 saves). Bytecode does not depend
+  on the adapter, so `wgpu-core`'s header uses a constant adapter key on DX12
+  and the validation key names the compiler (kind, version and DXC commit):
+  cache bytes move between adapters but not between compilers. PSOs are not
+  cached (`ID3D12PipelineLibrary`); drivers keep their own.
+
+### A timed poll racing another thread's poll reports a timeout
+
+`Device::poll` with a `Wait` that times out reads the fence, then triages the
+queue. If the GPU finishes and another thread's poll triages every
+submission in between, the queue is empty while the fence value this poll
+read is still below its wait target. Upstream asserts that this cannot
+happen ("If the queue is empty, the current submission index … should be at
+least the wait submission index …") and panics. In `wgpu-core`'s
+`Device::maintain` the fork returns `QueueEmpty` only when the fence it read
+reached the wait target; otherwise the poll reports `Err(PollError::Timeout)`,
+which is what its own wait did. The `wgpu` API is unchanged.

@@ -1,6 +1,8 @@
 //! Dense node table plus sparse side maps. Replaces `bevy_ecs::World` inside
 //! [`crate::UiWorld`]. Public identity stays [`crate::StableNodeId`].
 
+mod paged;
+
 use hashbrown::HashMap;
 use std::sync::{Arc, LazyLock};
 
@@ -371,30 +373,42 @@ impl EditorRecord {
     }
 }
 
+/// Ids below this index slots. A larger one, which the
+/// allocator reaches only after sixteen million nodes and a caller can
+/// otherwise only make up, stays in the overflow map: the directory of pages
+/// is as long as the span of ids in use, and this bounds it at 2 MB.
+const PAGED_IDS: u64 = 1 << 24;
+
+/// The paged slot `id` has, if it has one.
+#[inline]
+fn paged_index(id: StableNodeId) -> Option<usize> {
+    let raw = id.get();
+    (raw < PAGED_IDS).then_some(raw as usize)
+}
+
 /// A map keyed by node, laid out as [`NodeTable`] lays out the records:
-/// ids up to [`DENSE_LIMIT`] index a vector, the rest fall back to a hash
-/// map. A pass looks the same nodes up many times over, and indexing
-/// costs neither a hash nor a probe; a walk in id order (the order nodes
-/// are created in) reads the table front to back instead of at random.
+/// ids index slots ([`paged::Slots`]: one run while they are close together,
+/// pages once they are not), the few past [`PAGED_IDS`] fall back to a hash
+/// map. A pass looks the same nodes up many times over,
+/// and indexing costs neither a hash nor a probe; a walk in id order (the
+/// order nodes are created in) reads the table front to back instead of at
+/// random.
 ///
 /// The API follows `HashMap<StableNodeId, V>`, so a table holding about one
 /// entry per node can change type without its users changing. Iteration is
-/// in id order, then the overflow's; nothing may depend on either. Keep a
-/// table that holds a few nodes out of many a hash map: iterating or
-/// clearing this one costs the highest id it has held.
+/// in id order, then the overflow's; nothing may depend on either. What it
+/// holds follows the entries in it, not the highest id it has seen.
 #[derive(Clone)]
 pub(crate) struct DenseNodeMap<V> {
-    dense: Vec<Option<(StableNodeId, V)>>,
+    paged: paged::Slots<(StableNodeId, V)>,
     overflow: crate::NodeMap<V>,
-    len: usize,
 }
 
 impl<V> Default for DenseNodeMap<V> {
     fn default() -> Self {
         Self {
-            dense: Vec::new(),
+            paged: paged::Slots::default(),
             overflow: crate::NodeMap::default(),
-            len: 0,
         }
     }
 }
@@ -407,119 +421,101 @@ impl<V: std::fmt::Debug> std::fmt::Debug for DenseNodeMap<V> {
 
 impl<V: PartialEq> PartialEq for DenseNodeMap<V> {
     fn eq(&self, other: &Self) -> bool {
-        self.len == other.len && self.iter().all(|(id, value)| other.get(id) == Some(value))
+        self.len() == other.len() && self.iter().all(|(id, value)| other.get(id) == Some(value))
     }
 }
 
 impl<V> DenseNodeMap<V> {
-    /// Room for ids up to `highest` without growing.
-    pub(crate) fn with_highest(highest: StableNodeId) -> Self {
+    /// A map about to hold `ids`, with room for them when they are close
+    /// enough together to be held as one run.
+    pub(crate) fn with_highest_of(ids: &[StableNodeId]) -> Self {
         let mut map = Self::default();
-        // Ids past the limit live in the overflow.
-        let index = highest.get().min(DENSE_LIMIT) as usize;
-        map.dense.resize_with(index + 1, || None);
+        if let Some(&highest) = ids.iter().max() {
+            map.reserve_through(highest, ids.len());
+        }
         map
     }
 
-    /// Room for every id of `ids` without growing.
-    pub(crate) fn with_highest_of(ids: &[StableNodeId]) -> Self {
-        ids.iter()
-            .max()
-            .map_or_else(Self::default, |&highest| Self::with_highest(highest))
-    }
-
     pub(crate) fn len(&self) -> usize {
-        self.len
+        self.paged.len() + self.overflow.len()
     }
 
     pub(crate) fn is_empty(&self) -> bool {
-        self.len == 0
+        self.len() == 0
     }
 
+    #[inline(always)]
     pub(crate) fn get(&self, id: &StableNodeId) -> Option<&V> {
-        if let Some(Some((_, value))) = self.dense.get(id.get() as usize) {
-            return Some(value);
+        match self.paged.run_slot(id.get() as usize) {
+            Some(slot) => slot.as_ref().map(|(_, value)| value),
+            None => self.past_run(id),
         }
-        // An id put in the overflow before the vector grew past it.
-        if self.overflow.is_empty() {
-            return None;
-        }
-        self.overflow.get(id)
     }
 
+    /// [`Self::get`] for an id the run does not reach.
+    #[inline(never)]
+    fn past_run(&self, id: &StableNodeId) -> Option<&V> {
+        match paged_index(*id) {
+            Some(index) => self.paged.past_run(index).map(|(_, value)| value),
+            None => self.overflow.get(id),
+        }
+    }
+
+    #[inline(always)]
     pub(crate) fn get_mut(&mut self, id: &StableNodeId) -> Option<&mut V> {
-        if let Some(Some((_, value))) = self.dense.get_mut(id.get() as usize) {
-            return Some(value);
+        let raw = id.get() as usize;
+        if self.paged.run_slot(raw).is_some() {
+            return self
+                .paged
+                .run_slot_mut(raw)
+                .and_then(|slot| slot.as_mut())
+                .map(|(_, value)| value);
         }
-        if self.overflow.is_empty() {
-            return None;
+        self.past_run_mut(id)
+    }
+
+    #[inline(never)]
+    fn past_run_mut(&mut self, id: &StableNodeId) -> Option<&mut V> {
+        match paged_index(*id) {
+            Some(index) => self.paged.past_run_mut(index).map(|(_, value)| value),
+            None => self.overflow.get_mut(id),
         }
-        self.overflow.get_mut(id)
     }
 
     pub(crate) fn contains_key(&self, id: &StableNodeId) -> bool {
         self.get(id).is_some()
     }
 
-    /// The vector slot `id` lives in, grown to reach it, or `None` when it
-    /// belongs in the overflow.
-    fn slot(&mut self, id: StableNodeId) -> Option<&mut Option<(StableNodeId, V)>> {
-        let raw = id.get();
-        let index = raw as usize;
-        if !self.overflow.is_empty() && self.overflow.contains_key(&id) {
-            return None;
-        }
-        if index >= self.dense.len() {
-            if raw > DENSE_LIMIT || index > self.dense.len().saturating_add(DENSE_GAP) {
-                return None;
-            }
-            self.dense.resize_with(index + 1, || None);
-        }
-        Some(&mut self.dense[index])
-    }
-
     pub(crate) fn insert(&mut self, id: StableNodeId, value: V) -> Option<V> {
-        let previous = match self.slot(id) {
-            Some(slot) => slot.replace((id, value)).map(|(_, value)| value),
+        match paged_index(id) {
+            Some(index) => self
+                .paged
+                .insert(index, (id, value))
+                .map(|(_, value)| value),
             None => self.overflow.insert(id, value),
-        };
-        if previous.is_none() {
-            self.len += 1;
         }
-        previous
     }
 
     pub(crate) fn remove(&mut self, id: &StableNodeId) -> Option<V> {
-        let removed = match self.dense.get_mut(id.get() as usize) {
-            Some(slot @ Some(_)) => slot.take().map(|(_, value)| value),
-            _ if self.overflow.is_empty() => None,
-            _ => self.overflow.remove(id),
-        };
-        if removed.is_some() {
-            self.len -= 1;
+        match paged_index(*id) {
+            Some(index) => self.paged.remove(index).map(|(_, value)| value),
+            None => self.overflow.remove(id),
         }
-        removed
     }
 
     pub(crate) fn entry(&mut self, id: StableNodeId) -> DenseEntry<'_, V> {
         DenseEntry { map: self, id }
     }
 
-    /// Room for `additional` more ids above those held without moving the
-    /// vector: ids are handed out in order, so that many more slots.
-    pub(crate) fn reserve(&mut self, additional: usize) {
-        self.dense.reserve(additional);
-    }
-
-    /// Room for every id up to `highest` (those the vector holds) without
-    /// growing. A table of every node of a document indexes ids from 1 to
-    /// the highest, which is more slots than nodes ([`Self::reserve`] for as
-    /// many ids as nodes falls one short and doubles the vector at its last
-    /// insert).
-    pub(crate) fn reserve_through(&mut self, highest: StableNodeId) {
-        // Ids past the limit live in the overflow.
-        let slots = highest.get().min(DENSE_LIMIT) as usize + 1;
-        self.dense.reserve(slots.saturating_sub(self.dense.len()));
+    /// Room for every id up to `highest` without growing, for a table
+    /// about to hold `entries` nodes: a table of every node of a document
+    /// indexes ids from its first to the highest, which is more slots than
+    /// nodes. Nothing is set aside when the ids are too far apart for one
+    /// run of slots, or the table is on pages.
+    pub(crate) fn reserve_through(&mut self, highest: StableNodeId, entries: usize) {
+        if let Some(highest) = paged_index(highest) {
+            self.paged.reserve_through(highest, entries);
+        }
     }
 
     /// Move every entry of `from` into this map: the whole table when this
@@ -540,20 +536,16 @@ impl<V> DenseNodeMap<V> {
     }
 
     pub(crate) fn clear(&mut self) {
-        self.dense.clear();
+        self.paged.clear();
         self.overflow.clear();
-        self.len = 0;
     }
 
     pub(crate) fn iter(&self) -> DenseIter<'_, V> {
-        fn entry<V>(slot: &Option<(StableNodeId, V)>) -> Option<(&StableNodeId, &V)> {
-            slot.as_ref().map(|(id, value)| (id, value))
+        fn entry<V>((_, slot): (usize, &(StableNodeId, V))) -> (&StableNodeId, &V) {
+            (&slot.0, &slot.1)
         }
-        let entry: fn(&Option<(StableNodeId, V)>) -> Option<(&StableNodeId, &V)> = entry::<V>;
-        self.dense
-            .iter()
-            .filter_map(entry)
-            .chain(self.overflow.iter())
+        let entry: fn((usize, &(StableNodeId, V))) -> (&StableNodeId, &V) = entry::<V>;
+        self.paged.iter().map(entry).chain(self.overflow.iter())
     }
 
     #[cfg(test)]
@@ -562,18 +554,8 @@ impl<V> DenseNodeMap<V> {
     }
 
     pub(crate) fn retain(&mut self, mut keep: impl FnMut(&StableNodeId, &mut V) -> bool) {
-        let mut len = 0;
-        for slot in &mut self.dense {
-            if let Some((id, value)) = slot {
-                if keep(id, value) {
-                    len += 1;
-                } else {
-                    *slot = None;
-                }
-            }
-        }
+        self.paged.retain(|(id, value)| keep(id, value));
         self.overflow.retain(|id, value| keep(id, value));
-        self.len = len + self.overflow.len();
     }
 
     /// The value at `id`, inserting what `make` gives when there is none;
@@ -642,20 +624,20 @@ impl<V> FromIterator<(StableNodeId, V)> for DenseNodeMap<V> {
 impl<V> IntoIterator for DenseNodeMap<V> {
     type Item = (StableNodeId, V);
     type IntoIter = std::iter::Chain<
-        std::iter::Flatten<std::vec::IntoIter<Option<(StableNodeId, V)>>>,
+        paged::SlotsIntoIter<(StableNodeId, V)>,
         <crate::NodeMap<V> as IntoIterator>::IntoIter,
     >;
 
     fn into_iter(self) -> Self::IntoIter {
-        self.dense.into_iter().flatten().chain(self.overflow)
+        self.paged.into_iter().chain(self.overflow)
     }
 }
 
 /// [`DenseNodeMap::iter`].
 pub(crate) type DenseIter<'a, V> = std::iter::Chain<
-    std::iter::FilterMap<
-        std::slice::Iter<'a, Option<(StableNodeId, V)>>,
-        fn(&'a Option<(StableNodeId, V)>) -> Option<(&'a StableNodeId, &'a V)>,
+    std::iter::Map<
+        paged::SlotsIter<'a, (StableNodeId, V)>,
+        fn((usize, &'a (StableNodeId, V))) -> (&'a StableNodeId, &'a V),
     >,
     <&'a crate::NodeMap<V> as IntoIterator>::IntoIter,
 >;
@@ -669,87 +651,83 @@ impl<'a, V> IntoIterator for &'a DenseNodeMap<V> {
     }
 }
 
-/// Ids at or below this value live in a contiguous table. A jump of more than
-/// [`DENSE_GAP`] empty slots, or any larger id, stays in the overflow map so a
-/// sparse handle cannot allocate a multi-megabyte hole.
-const DENSE_LIMIT: u64 = 65_536;
-const DENSE_GAP: usize = 1024;
-
+/// The node records, by id: slots for ids below [`PAGED_IDS`]
+/// ([`paged::Slots`]), a hash map for the rest. What it holds follows the nodes alive, not the
+/// highest id the session has reached.
 #[derive(Default)]
 struct NodeTable {
-    dense: Vec<Option<NodeRecord>>,
-    overflow: HashMap<StableNodeId, NodeRecord>,
-    len: usize,
+    paged: paged::Slots<NodeRecord>,
+    overflow: crate::NodeMap<NodeRecord>,
 }
 
 impl NodeTable {
+    #[inline(always)]
     fn get(&self, id: StableNodeId) -> Option<&NodeRecord> {
-        let index = id.get() as usize;
-        if let Some(Some(record)) = self.dense.get(index) {
-            return Some(record);
+        match self.paged.run_slot(id.get() as usize) {
+            Some(slot) => slot.as_ref(),
+            None => self.past_run(id),
         }
-        self.overflow.get(&id)
     }
 
-    fn get_mut(&mut self, id: StableNodeId) -> Option<&mut NodeRecord> {
-        let index = id.get() as usize;
-        if let Some(Some(record)) = self.dense.get_mut(index) {
-            return Some(record);
+    /// [`Self::get`] for an id the run does not reach.
+    #[inline(never)]
+    fn past_run(&self, id: StableNodeId) -> Option<&NodeRecord> {
+        match paged_index(id) {
+            Some(index) => self.paged.past_run(index),
+            None => self.overflow.get(&id),
         }
-        self.overflow.get_mut(&id)
+    }
+
+    #[inline(always)]
+    fn get_mut(&mut self, id: StableNodeId) -> Option<&mut NodeRecord> {
+        let raw = id.get() as usize;
+        if self.paged.run_slot(raw).is_some() {
+            return self.paged.run_slot_mut(raw).and_then(|slot| slot.as_mut());
+        }
+        self.past_run_mut(id)
+    }
+
+    #[inline(never)]
+    fn past_run_mut(&mut self, id: StableNodeId) -> Option<&mut NodeRecord> {
+        match paged_index(id) {
+            Some(index) => self.paged.past_run_mut(index),
+            None => self.overflow.get_mut(&id),
+        }
     }
 
     fn contains(&self, id: StableNodeId) -> bool {
         self.get(id).is_some()
     }
 
+    fn len(&self) -> usize {
+        self.paged.len() + self.overflow.len()
+    }
+
     fn insert(&mut self, id: StableNodeId, record: NodeRecord) {
-        let raw = id.get();
-        let index = raw as usize;
-        let dense = raw <= DENSE_LIMIT && index <= self.dense.len().saturating_add(DENSE_GAP);
-        if dense {
-            if index >= self.dense.len() {
-                self.dense.resize_with(index + 1, || None);
-            }
-            let replaced_overflow =
-                !self.overflow.is_empty() && self.overflow.remove(&id).is_some();
-            let replaced_dense = self.dense[index].replace(record).is_some();
-            if !replaced_overflow && !replaced_dense {
-                self.len += 1;
-            }
-        } else {
-            let replaced_dense = index < self.dense.len() && self.dense[index].take().is_some();
-            let replaced_overflow = self.overflow.insert(id, record).is_some();
-            if !replaced_dense && !replaced_overflow {
-                self.len += 1;
-            }
-        }
+        match paged_index(id) {
+            Some(index) => self.paged.insert(index, record),
+            None => self.overflow.insert(id, record),
+        };
     }
 
     fn remove(&mut self, id: StableNodeId) -> Option<NodeRecord> {
-        let index = id.get() as usize;
-        let record = if index < self.dense.len() {
-            self.dense[index].take()
-        } else {
-            None
+        match paged_index(id) {
+            Some(index) => self.paged.remove(index),
+            None => self.overflow.remove(&id),
         }
-        .or_else(|| self.overflow.remove(&id))?;
-        self.len -= 1;
-        Some(record)
     }
 
     fn records(&self) -> impl Iterator<Item = &NodeRecord> + '_ {
-        self.dense
+        self.paged
             .iter()
-            .filter_map(Option::as_ref)
+            .map(|(_, record)| record)
             .chain(self.overflow.values())
     }
 
     fn keys(&self) -> impl Iterator<Item = StableNodeId> + '_ {
-        self.dense
+        self.paged
             .iter()
-            .enumerate()
-            .filter_map(|(index, slot)| slot.as_ref().and_then(|_| StableNodeId::new(index as u64)))
+            .filter_map(|(index, _)| StableNodeId::new(index as u64))
             .chain(self.overflow.keys().copied())
     }
 }
@@ -880,11 +858,11 @@ impl NodeStore {
     }
 
     pub fn len(&self) -> usize {
-        self.nodes.len
+        self.nodes.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.nodes.len == 0
+        self.nodes.len() == 0
     }
 
     pub fn contains(&self, id: StableNodeId) -> bool {

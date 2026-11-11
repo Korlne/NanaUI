@@ -85,15 +85,18 @@ fn child_number(index: usize) -> u32 {
 /// Stable external node identity. Zero is reserved so missing/default IDs
 /// cannot accidentally address a live node.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct StableNodeId(u64);
+pub struct StableNodeId(std::num::NonZeroU64);
 
 impl StableNodeId {
     pub const fn new(value: u64) -> Option<Self> {
-        if value == 0 { None } else { Some(Self(value)) }
+        match std::num::NonZeroU64::new(value) {
+            Some(value) => Some(Self(value)),
+            None => None,
+        }
     }
 
     pub const fn get(self) -> u64 {
-        self.0
+        self.0.get()
     }
 }
 
@@ -3726,6 +3729,12 @@ impl UiWorld {
             .collect::<Vec<_>>();
         let (pending, theirs): (Vec<_>, Vec<_>) =
             pending.into_iter().partition(|(id, _)| ours(self, *id));
+        // Another document's stay for its own drain; a node that has left
+        // the world belongs to none and has nothing to lay out.
+        let theirs = theirs
+            .into_iter()
+            .filter(|(id, _)| self.nodes.contains(*id))
+            .collect::<Vec<_>>();
         self.pending_layout_invalidations.extend(theirs);
         let mut remaining = pending
             .into_iter()
@@ -7952,6 +7961,7 @@ mod issue398;
 mod line_box_memo;
 mod list_item_tooltip;
 mod mount_under_narrow_row;
+mod pending_causes;
 mod reflow_oracle;
 mod result_chain_memo;
 #[cfg(test)]

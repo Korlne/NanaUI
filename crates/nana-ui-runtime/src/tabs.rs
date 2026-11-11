@@ -383,6 +383,9 @@ impl Default for Tabs {
 
 impl ComponentView for Tabs {
     const BEHAVIOR: crate::TypeBehavior<Self> = crate::TypeBehavior {
+        hooks: Some(|hooks| {
+            crate::framework::routes::segmented(hooks);
+        }),
         activation: Some(crate::AppContext::activate_tabs),
         lifecycle: Some(crate::AppContext::sync_tabs_options),
         ..crate::TypeBehavior::NONE

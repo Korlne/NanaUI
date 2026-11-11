@@ -251,6 +251,11 @@ pub struct Device {
     /// has been destroyed and its queues are empty.
     pub(crate) device_lost_closure: Mutex<Option<DeviceLostClosure>>,
 
+    /// NanaUI fork: the cache a pipeline created without one uses. Weak, so
+    /// the cache (which holds the device) does not keep the device alive; the
+    /// application keeps it alive for as long as it should apply.
+    pub(crate) default_pipeline_cache: Mutex<Option<Weak<pipeline::PipelineCache>>>,
+
     /// Stores the state of buffers and textures.
     pub(crate) trackers: Mutex<DeviceTracker>,
     pub(crate) tracker_indices: TrackerIndexAllocators,
@@ -541,6 +546,7 @@ impl Device {
             snatchable_lock: unsafe { SnatchLock::new(rank::DEVICE_SNATCHABLE_LOCK) },
             valid: AtomicBool::new(true),
             device_lost_closure: Mutex::new(rank::DEVICE_LOST_CLOSURE, None),
+            default_pipeline_cache: Mutex::new(rank::DEVICE_DEFAULT_PIPELINE_CACHE, None),
             trackers: Mutex::new(
                 rank::DEVICE_TRACKERS,
                 DeviceTracker::new(ordered_buffer_usages, ordered_texture_usages),
@@ -941,21 +947,15 @@ impl Device {
 
         // Based on the queue empty status, and the current finished submission index, determine
         // the result of the poll.
-        let result = if queue_empty {
-            if let Some(wait_submission_index) = wait_submission_index {
-                // Assert to ensure that if we received a queue empty status, the fence shows the
-                // correct value. This is defensive, as this should never be hit.
-                assert!(
-                    current_finished_submission >= wait_submission_index,
-                    concat!(
-                        "If the queue is empty, the current submission index ",
-                        "({}) should be at least the wait submission index ({})",
-                    ),
-                    current_finished_submission,
-                    wait_submission_index,
-                );
-            }
-
+        // NanaUI fork: the queue can be empty while the fence value read above is
+        // below the wait target. A wait that timed out read the fence, then the GPU
+        // finished and another thread's poll triaged every submission before this
+        // one reached `queue.maintain`. Upstream asserts here and panics; this
+        // poll's own wait did time out, so it reports that.
+        let reached_wait = wait_submission_index.is_none_or(|wait_submission_index| {
+            current_finished_submission >= wait_submission_index
+        });
+        let result = if queue_empty && reached_wait {
             Ok(wgt::PollStatus::QueueEmpty)
         } else if let Some(wait_submission_index) = wait_submission_index {
             // This is theoretically possible to succeed more than checking on the poll result
@@ -4105,7 +4105,7 @@ impl Device {
                 cache.same_device(self)?;
                 Some(cache)
             }
-            None => None,
+            None => self.default_pipeline_cache(),
         };
 
         let pipeline_desc = hal::ComputePipelineDescriptor {
@@ -4958,7 +4958,7 @@ impl Device {
                 cache.same_device(self)?;
                 Some(cache)
             }
-            None => None,
+            None => self.default_pipeline_cache(),
         };
 
         let is_mesh = mesh_stage.is_some();
@@ -5143,6 +5143,26 @@ impl Device {
         let cache = Arc::new(cache);
 
         Ok(cache)
+    }
+
+    /// NanaUI fork: make `cache` the one pipelines created without a cache
+    /// use, or stop using one with `None`. The device holds it weakly.
+    pub fn set_default_pipeline_cache(
+        &self,
+        cache: Option<&Arc<pipeline::PipelineCache>>,
+    ) -> Result<(), DeviceError> {
+        if let Some(cache) = cache {
+            cache.same_device(self)?;
+        }
+        *self.default_pipeline_cache.lock() = cache.map(Arc::downgrade);
+        Ok(())
+    }
+
+    fn default_pipeline_cache(&self) -> Option<Arc<pipeline::PipelineCache>> {
+        self.default_pipeline_cache
+            .lock()
+            .as_ref()
+            .and_then(Weak::upgrade)
     }
 
     fn get_texture_format_features(&self, format: TextureFormat) -> wgt::TextureFormatFeatures {

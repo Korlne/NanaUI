@@ -1,4 +1,5 @@
-//! Stack samples of the watched thread on Windows x64.
+//! Stack samples of the watched thread on Windows x64, and the stack walk
+//! and symbolization the native crash writer shares.
 //!
 //! The thread is suspended only long enough to read its registers and copy
 //! its stack: while it is suspended it may hold the heap or loader lock, so
@@ -28,7 +29,7 @@ use windows_sys::Win32::System::Threading::{
     SuspendThread,
 };
 
-const MAX_FRAMES: usize = 64;
+pub(crate) const MAX_FRAMES: usize = 64;
 /// Zeroed bytes past the copied stack, so an unwind step that reads a few
 /// words beyond the last frame stays inside the buffer.
 const SLACK_WORDS: usize = 512;
@@ -143,7 +144,6 @@ impl Thread {
 
         let words = (self.stack_high - rsp) / 8;
         let base = copy.as_ptr() as u64;
-        let end = base + (words * 8) as u64;
         let (original_low, original_high) = (rsp as u64, self.stack_high as u64);
         let translate = |value: u64| {
             if (original_low..original_high).contains(&value) {
@@ -157,6 +157,7 @@ impl Thread {
         }
         let context = &mut context.0;
         context.Rsp = base;
+        let end = base + (words * 8) as u64;
         for register in [
             &mut context.Rbp,
             &mut context.Rbx,
@@ -170,56 +171,9 @@ impl Thread {
             *register = translate(*register);
         }
 
-        let inside = |address: u64| address >= base && address.saturating_add(8) <= end;
-        for depth in 0..MAX_FRAMES {
-            let pc = context.Rip;
-            if pc == 0 || !inside(context.Rsp) {
-                break;
-            }
-            frames.push(pc);
-            // A return address may sit just past its call's function.
-            let lookup = if depth == 0 { pc } else { pc - 1 };
-            let mut image_base = 0u64;
-            // SAFETY: lookups read only the loaded image's unwind tables.
-            let entry =
-                unsafe { RtlLookupFunctionEntry(lookup, &mut image_base, std::ptr::null_mut()) };
-            if entry.is_null() {
-                if depth > 0 {
-                    break;
-                }
-                // A leaf function: the return address is on top.
-                // SAFETY: `inside` checked the word.
-                context.Rip = unsafe { *(context.Rsp as *const u64) };
-                context.Rsp += 8;
-                continue;
-            }
-            // A frame that addresses its locals through a frame register is
-            // unwound from that register: it has to point into the copy.
-            // SAFETY: the entry and its unwind info belong to a loaded image.
-            let frame_register = unsafe {
-                let entry: &IMAGE_RUNTIME_FUNCTION_ENTRY = &*entry;
-                let info = (image_base + u64::from(entry.Anonymous.UnwindData)) as *const u8;
-                *info.add(3) & 0x0f
-            };
-            if frame_register != 0 && !inside(register(context, frame_register)) {
-                break;
-            }
-            let mut handler_data = std::ptr::null_mut();
-            let mut establisher_frame = 0u64;
-            // SAFETY: the context's stack pointers all point into `copy`.
-            unsafe {
-                RtlVirtualUnwind(
-                    UNW_FLAG_NHANDLER,
-                    image_base,
-                    pc,
-                    entry,
-                    context,
-                    &mut handler_data,
-                    &mut establisher_frame,
-                    std::ptr::null_mut(),
-                );
-            }
-        }
+        let mut found = [0u64; MAX_FRAMES];
+        let count = unwind(context, base, end, &mut found);
+        frames.extend_from_slice(&found[..count]);
         !frames.is_empty()
     }
 }
@@ -231,6 +185,69 @@ impl Drop for Thread {
             unsafe { CloseHandle(self.handle) };
         }
     }
+}
+
+/// Walk `context` outwards, innermost frame first, into `frames`; returns
+/// how many were found. Reads only the words in `[low, high)`, which must be
+/// readable and not change meanwhile (a copy, or the stack of a thread that
+/// is blocked), and stops at the first frame it cannot follow inside it. No
+/// allocation, no lock: the native crash writer runs it while the crashed
+/// thread may hold the heap lock.
+pub(crate) fn unwind(context: &mut CONTEXT, low: u64, high: u64, frames: &mut [u64]) -> usize {
+    let inside = |address: u64| address >= low && address.saturating_add(8) <= high;
+    let mut count = 0;
+    for depth in 0..frames.len() {
+        let pc = context.Rip;
+        if pc == 0 || !inside(context.Rsp) {
+            break;
+        }
+        frames[count] = pc;
+        count += 1;
+        // A return address may sit just past its call's function.
+        let lookup = if depth == 0 { pc } else { pc - 1 };
+        let mut image_base = 0u64;
+        // SAFETY: lookups read only the loaded image's unwind tables.
+        let entry =
+            unsafe { RtlLookupFunctionEntry(lookup, &mut image_base, std::ptr::null_mut()) };
+        if entry.is_null() {
+            if depth > 0 {
+                break;
+            }
+            // A leaf function: the return address is on top.
+            // SAFETY: `inside` checked the word.
+            context.Rip = unsafe { *(context.Rsp as *const u64) };
+            context.Rsp += 8;
+            continue;
+        }
+        // A frame that addresses its locals through a frame register is
+        // unwound from that register: it has to point into the copy.
+        // SAFETY: the entry and its unwind info belong to a loaded image.
+        let frame_register = unsafe {
+            let entry: &IMAGE_RUNTIME_FUNCTION_ENTRY = &*entry;
+            let info = (image_base + u64::from(entry.Anonymous.UnwindData)) as *const u8;
+            *info.add(3) & 0x0f
+        };
+        if frame_register != 0 && !inside(register(context, frame_register)) {
+            break;
+        }
+        let mut handler_data = std::ptr::null_mut();
+        let mut establisher_frame = 0u64;
+        // SAFETY: the context's stack pointers all point into [low, high),
+        // which the caller vouches is readable.
+        unsafe {
+            RtlVirtualUnwind(
+                UNW_FLAG_NHANDLER,
+                image_base,
+                pc,
+                entry,
+                context,
+                &mut handler_data,
+                &mut establisher_frame,
+                std::ptr::null_mut(),
+            );
+        }
+    }
+    count
 }
 
 /// An x64 unwind register number's value in `context`.
@@ -264,7 +281,7 @@ struct Symbol {
 /// One line per frame: `module+0xoffset` (what a symbol server resolves
 /// offline), then the symbol when this machine has it (a PDB beside the
 /// module, or a DLL's exports).
-pub(super) fn describe(frames: &[u64], out: &mut String) {
+pub(crate) fn describe(frames: &[u64], out: &mut String) {
     let modules: Vec<Option<(String, u64)>> = frames.iter().map(|&pc| module(pc)).collect();
     // Rust links PDBs by file name alone (`/PDBALTPATH:%_PDB%`), so dbghelp
     // looks for them beside each module.

@@ -65,7 +65,7 @@ impl AppContext {
         let mut outcome = Ok(());
         for id in std::mem::take(&mut self.pending_modal_syncs) {
             if self.world.contains(id) {
-                outcome = outcome.and(self.sync_modal_open_at(id));
+                outcome = outcome.and(via!(self.sync_modal_open_at(id)));
             }
         }
         outcome
@@ -343,9 +343,9 @@ impl AppContext {
         self.commit_mutations(motion)?;
         self.prepare_blocking_overlay_activation(overlay_node.document, final_active);
         if let Some(replaced) = previous.active.filter(|replaced| *replaced != final_active) {
-            self.note_modal_open(replaced, false)?;
+            via!(self.note_modal_open(replaced, false))?;
         }
-        self.note_modal_open(final_active, true)?;
+        via!(self.note_modal_open(final_active, true))?;
         Ok(true)
     }
 
@@ -392,7 +392,7 @@ impl AppContext {
             )?;
         }
         // A modal surface's own `open` says the host closed it.
-        self.note_modal_open(root, false)?;
+        via!(self.note_modal_open(root, false))?;
         // A context menu keeps its own `open` flag, so an exit driven by the
         // host has to reach the view as well. Without this the surface closes
         // while the component still reports itself open and the application
@@ -402,8 +402,10 @@ impl AppContext {
             .get(&root)
             .is_some_and(|view| view.downcast_ref::<ContextMenu>().is_some())
         {
-            self.dismiss_context_menu(Entity::from_stable_id(root))?;
+            via!(self.dismiss_context_menu(Entity::from_stable_id(root)))?;
         }
+        // So does a menu built from components.
+        via!(self.note_anchored_menu_dismissed(root))?;
         Ok(true)
     }
 
@@ -436,6 +438,24 @@ impl AppContext {
         root: StableNodeId,
         trigger: nana_ui_core::DialogCloseTrigger,
     ) -> Result<bool, FrameworkError> {
+        via!(self.announce_close_request(root, trigger))?;
+        let Some(host) = self.world.parent_id(root).filter(|host| {
+            self.world
+                .overlay_host(*host)
+                .is_some_and(|state| state.active == Some(root))
+        }) else {
+            return Ok(false);
+        };
+        self.request_dialog_close(Entity::from_stable_id(host), trigger)
+    }
+
+    /// A dialog, confirmation or drawer hears that a gesture asked it to
+    /// close.
+    pub(crate) fn announce_close_request(
+        &mut self,
+        root: StableNodeId,
+        trigger: nana_ui_core::DialogCloseTrigger,
+    ) -> Result<(), FrameworkError> {
         let request = crate::DialogCloseRequested { trigger };
         if self.view_is::<crate::Dialog>(root) {
             self.update(Entity::<crate::Dialog>::from_stable_id(root), |_, cx| {
@@ -451,14 +471,19 @@ impl AppContext {
                 cx.emit(request)
             })?;
         }
-        let Some(host) = self.world.parent_id(root).filter(|host| {
-            self.world
-                .overlay_host(*host)
-                .is_some_and(|state| state.active == Some(root))
-        }) else {
-            return Ok(false);
-        };
-        self.request_dialog_close(Entity::from_stable_id(host), trigger)
+        Ok(())
+    }
+
+    /// A confirmation hears which of its actions was chosen.
+    pub(crate) fn announce_confirm_intent(
+        &mut self,
+        root: StableNodeId,
+        intent: crate::ConfirmIntent,
+    ) -> Result<(), FrameworkError> {
+        self.update_component(
+            Entity::<crate::ConfirmDialog>::from_stable_id(root),
+            |_confirm, cx| cx.emit(intent),
+        )
     }
 
     pub fn request_dialog_close(

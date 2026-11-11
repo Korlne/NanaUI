@@ -31,7 +31,14 @@
 - 公开的 `wgpu::` 接口尽量只增不改；不兼容的改动放在 `wgpu-core` / `wgpu-hal` 内部和新接口上。
 - 每一处公开接口的改动都记在下面的"与上游的差异"里。
 - 改动 naga 的 HLSL 输出，或 `wgpu-hal` 的 DX12 后端编译着色器的方式时，必须重新生成 `nana-ui` 里 `scene_paint::precompiled` 的预编译 DXIL：它的 wgpu 版本检查看不到 fork 的改动。
-- 这些目录不在工作区成员里：它们自己的测试和 dev-dependencies 不在这里构建。
+- 这些目录不在工作区成员里：它们自己的测试和 dev-dependencies 不在这里构建。每个清单末尾都有一个空的 `[workspace]`（由 `scripts/vendor-wgpu.py` 加上），让 cargo 把每个库当作独立的工作区根，不再往上找。少了它，在嵌套于另一个 NanaUI 检出里的检出（`.claude/worktrees/` 下的 agent worktree）中，`cargo fmt --all` 会失败：外层工作区认领了这个库，却没把它列为成员。`cargo fmt --all` 也会检查这些库；它们符合 rustfmt，fork 的改动也要保持如此。
+- 每项 fork 改动的测试写在 `third_party/wgpu-fork-tests`（工作区成员，`cargo test --workspace` 会跑它）：
+  - `dx12_cache_format` 直接把 `wgpu-hal/src/dx12/pipeline_cache.rs` 编译进来，该模块自带的单元测试也在这里跑，所有系统都跑；
+  - `pipeline_cache` 通过 `wgpu` 接口测试 DX12 缓存与 `set_default_pipeline_cache`；
+  - `surface_reconfigure`（Windows）在另一个线程提交的同时，对一个小窗口的 surface 在 DX12 与 Vulkan 上反复重配置；
+  - `timed_poll` 在 DX12 与 Vulkan 上让零超时的等待与其他线程的 poll、提交竞争几秒。
+
+  没有适配器时 GPU 测试会跳过；设 `NANA_REQUIRE_WGPU_FORK_TESTS=1` 则改为失败，Windows CI 对 DX12 就是这样跑的。这些测试里的 GPU 负载要小且有上限。
 
 ## 升级到新的上游版本
 
@@ -51,3 +58,24 @@
 - **Metal、GLES**：它们的 `configure` 本来不等待，只受 `wgpu-core` 改动影响。
 
 `wgpu` 的接口没有变化。`ConfigureSurfaceError::GpuWaitTimeout` 仍保留，在等待本身超时时返回。
+
+### DX12 上的着色器与管线缓存
+
+- **`wgpu::Device::set_default_pipeline_cache(Option<&PipelineCache>)`**（新增）。
+  以 `cache: None` 创建的管线改用设备的默认缓存。设备只弱引用它（`PipelineCache`
+  本身持有设备），应用留着句柄它才生效。别的设备的缓存是校验错误；没有缓存的后端忽略这个调用。
+  背后是 `wgpu-core` 的 `Device::set_default_pipeline_cache` /
+  `Global::device_set_default_pipeline_cache` 与锁等级 `DEVICE_DEFAULT_PIPELINE_CACHE`；
+  dispatch trait 上的方法带空的默认实现，自定义后端照样编译。
+- **DX12 上的 `Features::PIPELINE_CACHE`。** `wgpu-hal` 的 DX12 `PipelineCache`
+  存放编译好的着色器字节码（DXC 的 DXIL、FXC 的 DXBC），键是 naga 写出的 HLSL、入口点、
+  目标 profile 与编译选项的 128 位哈希。缓存里有的阶段不再经过编译器；编译出来的阶段加进去
+  （设备内存缓存里已有的也加）。`create_pipeline_cache` 带 `data` 时载入，`PipelineCache::get_data`
+  导出（格式见 `wgpu-hal/src/dx12/pipeline_cache.rs`：逐条校验和，连续 8 次保存未用到的条目丢弃）。
+  字节码与适配器无关，所以 `wgpu-core` 的头部在 DX12 上用固定的适配器键，校验键写的是编译器
+  （种类、版本和 DXC 提交）：缓存字节可以换适配器使用，不能换编译器。不缓存 PSO
+  （`ID3D12PipelineLibrary`），驱动自有缓存。
+
+### 带超时的 poll 与别的线程的 poll 竞争时报超时
+
+`Device::poll` 的 `Wait` 超时后先读围栏，再整理队列。若这期间 GPU 完成、另一个线程的 poll 把所有提交都整理掉了，队列为空，而这次 poll 读到的围栏值仍低于它等待的序号。上游断言这不可能发生（"If the queue is empty, the current submission index … should be at least the wait submission index …"）并 panic。fork 在 `wgpu-core` 的 `Device::maintain` 里只有读到的围栏达到等待序号时才返回 `QueueEmpty`，否则报 `Err(PollError::Timeout)`，也就是它自己那次等待的结果。`wgpu` 的接口没有变化。

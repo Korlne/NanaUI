@@ -322,11 +322,28 @@ pub struct GpuDeviceLost {
 #[derive(Default)]
 struct LossState {
     lost: AtomicBool,
+    /// The first report of this loss has been recorded.
+    recorded: AtomicBool,
     report: Mutex<Option<GpuDeviceLost>>,
 }
 
 impl LossState {
+    /// Runs on whichever thread WGPU noticed the loss on (or an embedder's).
+    /// The first report is recorded as a `gpu.device_lost` fault with a
+    /// `device-lost` snapshot before this returns: a driver reset is often
+    /// the last thing a process does, so it must not wait for the
+    /// diagnostics worker's next poll.
     fn mark(&self, report: GpuDeviceLost) {
+        if !self.recorded.swap(true, Ordering::AcqRel) {
+            let reason = u64::from(report.reason == GpuLossReason::Destroyed);
+            let message = format!("{:?}: {}", report.reason, report.message);
+            let _ = nana_diagnostics::fault_with_snapshot(
+                &nana_diagnostics::framework::gpu::DEVICE_LOST,
+                &[nana_diagnostics::Field::new("reason", reason)],
+                Some(&message),
+                "device-lost",
+            );
+        }
         if let Ok(mut slot) = self.report.lock() {
             slot.get_or_insert(report);
         }
@@ -354,6 +371,11 @@ pub(crate) struct GpuInner {
     /// Writes made outside a frame (and those of discarded frames), landed
     /// by the next submission on this device.
     pub(crate) pending_uploads: Mutex<crate::upload::UploadBatch>,
+    /// What the device's pipeline cache is saved under; `None` without one.
+    pub(crate) pipeline_cache_key: Option<crate::PipelineCacheKey>,
+    /// The device's default pipeline cache (`wgpu::Device::set_default_pipeline_cache`
+    /// holds it weakly, so it lives here).
+    pub(crate) pipeline_cache: Mutex<Option<wgpu::PipelineCache>>,
 }
 
 /// The one device a process renders with. Cloning is cheap and keeps the
@@ -406,6 +428,23 @@ impl GpuContext {
                 .contains(wgpu::DownlevelFlags::WEBGPU_TEXTURE_FORMAT_SUPPORT);
         let generation = DeviceGeneration::next();
         let policy = GpuDeviceState::new(generation);
+        // Every pipeline on the device, the framework's or not, goes through
+        // one cache the host can persist (see `pipeline_cache`).
+        let pipeline_cache_key = device
+            .features()
+            .contains(wgpu::Features::PIPELINE_CACHE)
+            .then(|| {
+                crate::PipelineCacheKey::new(
+                    capabilities.backend,
+                    capabilities.vendor_id,
+                    capabilities.device_id,
+                )
+            })
+            .flatten();
+        let pipeline_cache = pipeline_cache_key
+            .as_ref()
+            .and_then(|_| crate::pipeline_cache::create(&device, None));
+        let pipeline_cache_key = pipeline_cache.as_ref().and(pipeline_cache_key);
         Self {
             inner: Arc::new(GpuInner {
                 generation,
@@ -422,6 +461,8 @@ impl GpuContext {
                 policy,
                 upload_ring: crate::upload::UploadRing::new(),
                 pending_uploads: Mutex::new(crate::upload::UploadBatch::default()),
+                pipeline_cache_key,
+                pipeline_cache: Mutex::new(pipeline_cache),
             }),
         }
     }

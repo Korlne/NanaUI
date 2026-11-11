@@ -1324,6 +1324,9 @@ impl IconButton {
 
 impl ComponentView for IconButton {
     const BEHAVIOR: crate::TypeBehavior<Self> = crate::TypeBehavior {
+        hooks: Some(|hooks| {
+            crate::framework::routes::icon_button(hooks);
+        }),
         activation: Some(crate::AppContext::activate_icon_button),
         ..crate::TypeBehavior::NONE
     };
@@ -1671,6 +1674,13 @@ impl Default for Card {
 }
 
 impl ComponentView for Card {
+    const BEHAVIOR: crate::TypeBehavior<Self> = crate::TypeBehavior {
+        hooks: Some(|hooks| {
+            crate::framework::routes::card(hooks);
+        }),
+        ..crate::TypeBehavior::NONE
+    };
+
     fn share_layouts(
         &mut self,
         share: &mut dyn FnMut(&mut std::sync::Arc<nana_ui_core::LayoutStyle>),
@@ -2386,6 +2396,9 @@ fn assemble_list_item_slots(
 
 impl ComponentView for ListItem {
     const BEHAVIOR: crate::TypeBehavior<Self> = crate::TypeBehavior {
+        hooks: Some(|hooks| {
+            crate::framework::routes::tools_row(hooks);
+        }),
         activation: Some(crate::AppContext::activate_list_item),
         slot_assembler: Some(assemble_list_item_slots),
         assembler: Some(assemble_list_item_bands),
@@ -3294,6 +3307,9 @@ impl NumberInput {
 
 impl ComponentView for NumberInput {
     const BEHAVIOR: crate::TypeBehavior<Self> = crate::TypeBehavior {
+        hooks: Some(|hooks| {
+            crate::framework::routes::number_input(hooks);
+        }),
         editable: Some(&crate::framework::Editable::<Self>::EDITOR_HOOKS),
         ..crate::TypeBehavior::NONE
     };
@@ -4007,6 +4023,9 @@ impl TextArea {
 
 impl ComponentView for TextArea {
     const BEHAVIOR: crate::TypeBehavior<Self> = crate::TypeBehavior {
+        hooks: Some(|hooks| {
+            crate::framework::routes::text_area(hooks);
+        }),
         editable: Some(&crate::framework::Editable::<Self>::EDITOR_HOOKS),
         slot_assembler: Some(crate::AppContext::assemble_text_area),
         lifecycle: Some(crate::AppContext::refresh_text_area_action_slot),
@@ -4695,6 +4714,9 @@ impl Dialog {
 
 impl ComponentView for Dialog {
     const BEHAVIOR: crate::TypeBehavior<Self> = crate::TypeBehavior {
+        hooks: Some(|hooks| {
+            crate::framework::routes::modal(hooks);
+        }),
         slot_assembler: Some(crate::AppContext::assemble_modal_slots::<Self>),
         lifecycle: Some(crate::AppContext::sync_modal_open::<Self>),
         ..crate::TypeBehavior::NONE
@@ -5350,6 +5372,9 @@ impl Switch {
 
 impl ComponentView for Switch {
     const BEHAVIOR: crate::TypeBehavior<Self> = crate::TypeBehavior {
+        hooks: Some(|hooks| {
+            crate::framework::routes::switch(hooks);
+        }),
         activation: Some(crate::AppContext::toggle_switch),
         ..crate::TypeBehavior::NONE
     };
@@ -5924,6 +5949,10 @@ impl RangeField {
 
 impl ComponentView for RangeField {
     const BEHAVIOR: crate::TypeBehavior<Self> = crate::TypeBehavior {
+        hooks: Some(|hooks| {
+            crate::framework::routes::range_field(hooks);
+            crate::framework::routes::number_input(hooks);
+        }),
         activation: Some(crate::AppContext::activate_range_field),
         assembler: Some(crate::AppContext::assemble_range_field),
         ..crate::TypeBehavior::NONE
@@ -6411,6 +6440,9 @@ impl ScrollView {
 
 impl ComponentView for ScrollView {
     const BEHAVIOR: crate::TypeBehavior<Self> = crate::TypeBehavior {
+        hooks: Some(|hooks| {
+            crate::framework::routes::scroll_view(hooks);
+        }),
         lifecycle: Some(crate::framework::lifecycle_hooks::scroll_view),
         ..crate::TypeBehavior::NONE
     };
@@ -7024,6 +7056,13 @@ impl Table {
 }
 
 impl ComponentView for Table {
+    const BEHAVIOR: crate::TypeBehavior<Self> = crate::TypeBehavior {
+        hooks: Some(|hooks| {
+            crate::framework::routes::table(hooks);
+        }),
+        ..crate::TypeBehavior::NONE
+    };
+
     fn share_layouts(
         &mut self,
         share: &mut dyn FnMut(&mut std::sync::Arc<nana_ui_core::LayoutStyle>),

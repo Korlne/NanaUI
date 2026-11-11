@@ -757,6 +757,33 @@ pub mod diagnostics {
         Severity::Warn,
         &[F::u64("stalled_ms")],
     );
+    /// Fault recorded at start-up for each earlier session of the app that
+    /// never shut down (its run marker was left behind): killed, powered
+    /// off, or crashed. The message has the session's version, times, any
+    /// native exception its crash writer recorded, and its crash snapshot.
+    pub static UNCLEAN_EXIT: EventDescriptor = EventDescriptor::new(
+        D,
+        4,
+        "diagnostics.unclean_exit",
+        Severity::Error,
+        &[
+            F::u64("session_id"),
+            F::u64("pid"),
+            F::u64("start_unix_ns"),
+            F::u64("last_write_unix_ns"),
+        ],
+    );
+    /// Fault written by the native crash handler (Windows x64): an unhandled
+    /// exception (`code` is the NTSTATUS, `address` where it was raised) or
+    /// C `abort()` (`code` 0x40000015, STATUS_FATAL_APP_EXIT). `os_thread`
+    /// is the crashed thread's OS id. The message carries the stack of the crashed thread.
+    pub static NATIVE_CRASH: EventDescriptor = EventDescriptor::new(
+        D,
+        5,
+        "diagnostics.native_crash",
+        Severity::Fatal,
+        &[F::u64("code"), F::u64("address"), F::u64("os_thread")],
+    );
 }
 
 pub mod resource {

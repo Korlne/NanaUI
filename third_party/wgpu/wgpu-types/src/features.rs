@@ -1164,9 +1164,9 @@ bitflags_array! {
         ///
         /// Supported platforms:
         /// - Vulkan
+        /// - DX12 (NanaUI fork: caches compiled shader bytecode)
         ///
         /// Unimplemented Platforms:
-        /// - DX12
         /// - Metal
         #[name("wgpu-pipeline-cache")]
         const PIPELINE_CACHE = 1 << 41;
