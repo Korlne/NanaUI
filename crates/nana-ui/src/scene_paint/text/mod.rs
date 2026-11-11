@@ -34,6 +34,8 @@ mod entry;
 mod gamma;
 mod glyph;
 mod pipeline;
+#[cfg(test)]
+pub(super) use self::pipeline::precompiled_inputs;
 mod raster;
 mod raster_cache;
 #[cfg(windows)]
@@ -833,12 +835,14 @@ impl TextProgram {
         format: wgpu::TextureFormat,
         atlas_layout: &wgpu::BindGroupLayout,
         policy: &nana_gpu::GpuDeviceState,
+        precompiled: bool,
     ) -> Self {
         Self(TextGpu::new_with_policy(
             device,
             format,
             atlas_layout,
             Some(policy),
+            precompiled,
         ))
     }
 }
@@ -912,7 +916,7 @@ impl TextPipeline {
         _queue: &wgpu::Queue,
         format: wgpu::TextureFormat,
     ) -> Self {
-        Self::with_atlas_limits_policy(device, format, GlyphAtlasLimits::default(), None)
+        Self::with_atlas_limits_policy(device, format, GlyphAtlasLimits::default(), None, false)
     }
 
     pub(super) fn new_with_policy(
@@ -920,8 +924,15 @@ impl TextPipeline {
         _queue: &wgpu::Queue,
         format: wgpu::TextureFormat,
         policy: &nana_gpu::GpuDeviceState,
+        precompiled: bool,
     ) -> Self {
-        Self::with_atlas_limits_policy(device, format, GlyphAtlasLimits::default(), Some(policy))
+        Self::with_atlas_limits_policy(
+            device,
+            format,
+            GlyphAtlasLimits::default(),
+            Some(policy),
+            precompiled,
+        )
     }
 
     /// A pipeline whose atlas is one `page_edge` page within `byte_budget`,
@@ -944,6 +955,7 @@ impl TextPipeline {
                 byte_budget,
             },
             Some(policy),
+            false,
         )
     }
 
@@ -953,7 +965,7 @@ impl TextPipeline {
         format: wgpu::TextureFormat,
         limits: GlyphAtlasLimits,
     ) -> Self {
-        Self::with_atlas_limits_policy(device, format, limits, None)
+        Self::with_atlas_limits_policy(device, format, limits, None, false)
     }
 
     fn with_atlas_limits_policy(
@@ -961,10 +973,11 @@ impl TextPipeline {
         format: wgpu::TextureFormat,
         limits: GlyphAtlasLimits,
         policy: Option<&nana_gpu::GpuDeviceState>,
+        precompiled: bool,
     ) -> Self {
         let raster = GlyphRasterCache::default();
         let atlas = GlyphAtlasManager::new(device, raster.generation(), limits, policy);
-        let gpu = TextGpu::new_with_policy(device, format, atlas.layout(), policy);
+        let gpu = TextGpu::new_with_policy(device, format, atlas.layout(), policy, precompiled);
         let target = TextPipelineTarget::new(gpu.new_target(device));
         Self {
             engine: crate::text_engine::nana_text_engine(),

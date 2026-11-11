@@ -98,9 +98,215 @@ pub(super) fn joined(files: &[&str]) -> String {
     files.join("\n")
 }
 
-/// The program [`joined`] from `files`, as a module's source.
-pub(super) fn source(files: &[&str]) -> wgpu::ShaderSource<'static> {
-    wgpu::ShaderSource::Wgsl(std::borrow::Cow::Owned(joined(files)))
+/// A framework program, handed to the device as naga IR one entry point at a
+/// time.
+///
+/// Given a WGSL module with several entry points, wgpu compiles every
+/// pipeline stage from a copy of the whole module that it cuts down to the
+/// stage's entry point, and the pipeline keeps the whole module alive (on
+/// Metal its IR, since MSL is written per pipeline). Here the program is
+/// parsed and validated once, when its first stage is wanted, and each entry
+/// point becomes a module of its own that holds only what that entry point
+/// reaches (`naga::compact`). Pipelines sharing an entry point share its
+/// module, the device validates only the cut-down IR, and a pipeline keeps
+/// only its own stages' code.
+///
+/// A program that does not parse or validate here (none of the framework's
+/// does; the tests compile them all) goes to the device as WGSL, whole,
+/// which then reports the error as it always has.
+pub(crate) struct Program {
+    label: &'static str,
+    source: std::borrow::Cow<'static, str>,
+    ir: std::cell::OnceCell<Option<naga::Module>>,
+    stages: std::cell::RefCell<Vec<(String, Stage)>>,
+    whole: std::cell::OnceCell<wgpu::ShaderModule>,
+    /// DXIL compiled from this program, while the device takes it; cleared
+    /// when the device refuses it.
+    #[cfg(target_os = "windows")]
+    precompiled: std::cell::Cell<Option<&'static super::precompiled::Family>>,
+}
+
+/// One entry point's module, from [`Program::stage`].
+#[derive(Clone)]
+pub(crate) struct Stage {
+    pub(crate) module: wgpu::ShaderModule,
+    /// The overrides the module still declares; `None` for the whole program.
+    overrides: Option<Vec<String>>,
+}
+
+impl Stage {
+    /// `constants` less those the stage does not use: a cut-down module no
+    /// longer declares them, and a pipeline may only set what its module
+    /// declares.
+    pub(super) fn constants<'a>(&self, constants: &[(&'a str, f64)]) -> Vec<(&'a str, f64)> {
+        constants
+            .iter()
+            .copied()
+            .filter(|(name, _)| {
+                self.overrides
+                    .as_ref()
+                    .is_none_or(|declared| declared.iter().any(|declared| declared == name))
+            })
+            .collect()
+    }
+}
+
+impl Program {
+    pub(crate) fn new(
+        label: &'static str,
+        source: impl Into<std::borrow::Cow<'static, str>>,
+    ) -> Self {
+        Self {
+            label,
+            source: source.into(),
+            ir: std::cell::OnceCell::new(),
+            stages: std::cell::RefCell::new(Vec::new()),
+            whole: std::cell::OnceCell::new(),
+            #[cfg(target_os = "windows")]
+            precompiled: std::cell::Cell::new(None),
+        }
+    }
+
+    /// The program, whose pipelines load `family`'s DXIL when `runs` (the
+    /// device takes precompiled stages, [`super::precompiled::runs_on`]) and
+    /// the family was compiled from this very program laid out as `layout`.
+    /// Only a Windows build names a family, which keeps the DXIL out of
+    /// other targets' binaries.
+    #[cfg(target_os = "windows")]
+    pub(super) fn precompiled(
+        self,
+        family: &'static super::precompiled::Family,
+        runs: bool,
+        layout: impl FnOnce() -> u64,
+    ) -> Self {
+        if runs && family.fresh(&self.source, layout()) {
+            self.precompiled.set(Some(family));
+        }
+        self
+    }
+
+    /// The pipeline `build` makes from the stages for `vertex` and
+    /// `fragment`, with `constants` for the fragment stage: the precompiled
+    /// ones when there are, else cut from the program ([`Self::stage`]).
+    /// `build` gets the constants the fragment module takes (none for a
+    /// precompiled stage, which was compiled with them).
+    pub(super) fn pipeline(
+        &self,
+        device: &wgpu::Device,
+        vertex: &str,
+        fragment: &str,
+        constants: &[(&str, f64)],
+        build: impl Fn(&wgpu::ShaderModule, &wgpu::ShaderModule, &[(&str, f64)]) -> wgpu::RenderPipeline,
+    ) -> wgpu::RenderPipeline {
+        #[cfg(target_os = "windows")]
+        if let Some(family) = self.precompiled.get()
+            && family.stage(vertex, &[]).is_some()
+            && family.stage(fragment, constants).is_some()
+        {
+            match super::precompiled::pipeline(
+                device,
+                family,
+                [(vertex, &[]), (fragment, constants)],
+                |[vertex, fragment]| build(vertex, fragment, &[]),
+            ) {
+                Some(pipeline) => return pipeline,
+                // Refused once, refused for every pipeline of the program.
+                None => self.precompiled.set(None),
+            }
+        }
+        #[cfg(all(test, target_os = "windows"))]
+        super::precompiled::tests::requesting(&self.source, vertex, fragment, constants);
+        let vertex = self.stage(device, vertex);
+        let fragment = self.stage(device, fragment);
+        build(
+            &vertex.module,
+            &fragment.module,
+            &fragment.constants(constants),
+        )
+    }
+
+    /// The program [`joined`] from `files`.
+    pub(super) fn joined(label: &'static str, files: &[&str]) -> Self {
+        Self::new(label, joined(files))
+    }
+
+    /// The program's text, as the device would parse it.
+    #[cfg(test)]
+    pub(super) fn source(&self) -> &str {
+        &self.source
+    }
+
+    fn ir(&self) -> Option<&naga::Module> {
+        self.ir
+            .get_or_init(|| {
+                let module = naga::front::wgsl::parse_str(&self.source).ok()?;
+                // Compaction requires a valid module. The device validates
+                // each stage again against its own capabilities.
+                naga::valid::Validator::new(
+                    naga::valid::ValidationFlags::all(),
+                    naga::valid::Capabilities::all(),
+                )
+                .validate(&module)
+                .ok()?;
+                Some(module)
+            })
+            .as_ref()
+    }
+
+    /// The module for the stage whose entry point is `entry`: only what it
+    /// reaches, or the whole program as WGSL when that cannot be cut out.
+    pub(crate) fn stage(&self, device: &wgpu::Device, entry: &str) -> Stage {
+        if let Some((_, stage)) = self.stages.borrow().iter().find(|(name, _)| name == entry) {
+            return stage.clone();
+        }
+        let stage = match self.ir().and_then(|ir| cut(ir, entry)) {
+            Some(ir) => {
+                let overrides = ir
+                    .overrides
+                    .iter()
+                    .filter_map(|(_, declared)| declared.name.clone())
+                    .collect();
+                Stage {
+                    module: device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                        label: Some(self.label),
+                        source: wgpu::ShaderSource::Naga(std::borrow::Cow::Owned(ir)),
+                    }),
+                    overrides: Some(overrides),
+                }
+            }
+            None => Stage {
+                module: self.whole(device),
+                overrides: None,
+            },
+        };
+        self.stages
+            .borrow_mut()
+            .push((entry.to_owned(), stage.clone()));
+        stage
+    }
+
+    fn whole(&self, device: &wgpu::Device) -> wgpu::ShaderModule {
+        self.whole
+            .get_or_init(|| {
+                device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some(self.label),
+                    source: wgpu::ShaderSource::Wgsl(self.source.clone()),
+                })
+            })
+            .clone()
+    }
+}
+
+/// `module` with `entry` its only entry point and nothing it does not
+/// reach; `None` when it has no such entry point.
+pub(super) fn cut(module: &naga::Module, entry: &str) -> Option<naga::Module> {
+    let mut module = module.clone();
+    module.entry_points.retain(|point| point.name == entry);
+    if module.entry_points.is_empty() {
+        return None;
+    }
+    naga::compact::compact(&mut module, naga::compact::KeepUnused::No);
+    Some(module)
 }
 
 #[cfg(test)]
@@ -146,5 +352,120 @@ mod tests {
                 assert_eq!(kept, line.split("//").next().unwrap().trim_end());
             }
         }
+    }
+
+    /// The scene's programs with more than one entry point, joined as their
+    /// families join them.
+    fn programs() -> Vec<(&'static str, Program)> {
+        vec![
+            (
+                "quad",
+                Program::joined(
+                    "quad",
+                    &[
+                        MOTION,
+                        COLOR,
+                        QUAD,
+                        VERTEX,
+                        QUAD_PAINT_DATA,
+                        QUAD_PAINT,
+                        QUAD_SOLID,
+                    ],
+                ),
+            ),
+            (
+                "mesh",
+                Program::joined("mesh", &[TRIANGLE, TRIANGLE_SOLID, PATH, COLOR]),
+            ),
+            ("chart", Program::joined("chart", &[CHART, COLOR])),
+            (
+                "group blend",
+                Program::joined("group blend", &[COLOR, LAYER, LAYER_BLEND]),
+            ),
+            ("group", Program::joined("group", &[COLOR, LAYER])),
+            ("blit", Program::new("blit", BLIT)),
+            ("motion", Program::new("motion", MOTION)),
+            (
+                "backdrop composite",
+                Program::joined(
+                    "backdrop composite",
+                    &[COLOR, QUAD_PAINT_DATA, BACKDROP_COMPOSITE],
+                ),
+            ),
+        ]
+    }
+
+    fn size(module: &naga::Module) -> usize {
+        module
+            .functions
+            .iter()
+            .map(|(_, function)| function.expressions.len())
+            .chain(
+                module
+                    .entry_points
+                    .iter()
+                    .map(|point| point.function.expressions.len()),
+            )
+            .sum()
+    }
+
+    /// Every entry point of every program becomes a valid module of its
+    /// own, smaller than the program, with nothing it does not reach.
+    #[test]
+    fn every_entry_point_cuts_to_a_valid_module_of_its_own() {
+        for (name, program) in programs() {
+            let ir = program
+                .ir()
+                .unwrap_or_else(|| panic!("{name} parses and validates"));
+            assert!(ir.entry_points.len() > 1, "{name}");
+            for point in &ir.entry_points {
+                let stage = cut(ir, &point.name).unwrap();
+                assert_eq!(stage.entry_points.len(), 1);
+                naga::valid::Validator::new(
+                    naga::valid::ValidationFlags::all(),
+                    naga::valid::Capabilities::all(),
+                )
+                .validate(&stage)
+                .unwrap_or_else(|error| panic!("{name}::{}: {error:?}", point.name));
+                assert!(
+                    size(&stage) < size(ir),
+                    "{name}::{} carries the whole program",
+                    point.name
+                );
+            }
+            assert!(cut(ir, "no_such_entry").is_none());
+        }
+    }
+
+    /// The program text each family hands the device is the files joined.
+    #[test]
+    fn a_joined_program_is_its_files_in_a_row() {
+        let program = Program::joined("group", &[COLOR, LAYER]);
+        assert_eq!(program.source(), format!("{COLOR}\n{LAYER}"));
+    }
+
+    /// A stage keeps only the pipeline constants its module still declares;
+    /// a program that cannot be cut keeps them all, for the device to judge.
+    #[test]
+    fn a_stage_keeps_only_the_constants_it_declares() {
+        let (device, _queue) = crate::test_gpu::device();
+        let mesh = Program::joined("mesh", &[TRIANGLE, TRIANGLE_SOLID, PATH, COLOR]);
+        let samples = [("PATH_SAMPLES", 4.0)];
+        assert_eq!(
+            mesh.stage(&device, "path_fs_main").constants(&samples),
+            samples
+        );
+        assert!(
+            mesh.stage(&device, "path_keep_fs_main")
+                .constants(&samples)
+                .is_empty()
+        );
+        let broken = Program::new("broken", "fn nope( {");
+        let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
+        assert_eq!(
+            broken.stage(&device, "fs_main").constants(&samples),
+            samples
+        );
+        assert!(pollster::block_on(scope.pop()).is_some());
     }
 }

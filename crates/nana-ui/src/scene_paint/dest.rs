@@ -348,14 +348,14 @@ fn reading_blend_pipeline(
             },
         ],
     });
-    let group_blend_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("nana-ui.scene.group.blend.shader"),
-        source: super::wgsl::source(&[
+    let group_blend_shader = super::wgsl::Program::joined(
+        "nana-ui.scene.group.blend.shader",
+        &[
             super::wgsl::COLOR,
             super::wgsl::LAYER,
             super::wgsl::LAYER_BLEND,
-        ]),
-    });
+        ],
+    );
     let group_blend_pipeline_layout =
         device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("nana-ui.scene.group.blend.pipeline"),
@@ -370,13 +370,13 @@ fn reading_blend_pipeline(
                     label: Some("nana-ui.scene.group.pipeline.blend"),
                     layout: Some(&group_blend_pipeline_layout),
                     vertex: wgpu::VertexState {
-                        module: &group_blend_shader,
+                        module: &group_blend_shader.stage(device, "vs_main").module,
                         entry_point: Some("vs_main"),
                         buffers: &[],
                         compilation_options: wgpu::PipelineCompilationOptions::default(),
                     },
                     fragment: Some(wgpu::FragmentState {
-                        module: &group_blend_shader,
+                        module: &group_blend_shader.stage(device, "fs_blend").module,
                         entry_point: Some("fs_blend"),
                         // The shader already composited against the backdrop copy.
                         targets: &[Some(wgpu::ColorTargetState {
@@ -401,7 +401,7 @@ fn make_group_pipeline(
     device: &wgpu::Device,
     pipeline_cache: Option<&wgpu::PipelineCache>,
     layout: &wgpu::PipelineLayout,
-    shader: &wgpu::ShaderModule,
+    shader: &super::wgsl::Program,
     format: wgpu::TextureFormat,
     blend: wgpu::BlendState,
     label: &'static str,
@@ -410,13 +410,13 @@ fn make_group_pipeline(
         label: Some(label),
         layout: Some(layout),
         vertex: wgpu::VertexState {
-            module: shader,
+            module: &shader.stage(device, "vs_main").module,
             entry_point: Some("vs_main"),
             buffers: &[],
             compilation_options: wgpu::PipelineCompilationOptions::default(),
         },
         fragment: Some(wgpu::FragmentState {
-            module: shader,
+            module: &shader.stage(device, "fs_main").module,
             entry_point: Some("fs_main"),
             targets: &[Some(wgpu::ColorTargetState {
                 format,
@@ -609,10 +609,8 @@ impl DestPipelines {
         let blit_program = OnceCell::new();
         let make_blit = |entry_point: &str, label: &str, blend: Option<wgpu::BlendState>| {
             let (shader, pipeline_layout) = blit_program.get_or_init(|| {
-                let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                    label: Some("nana-ui.scene.dest.blit.shader"),
-                    source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(super::wgsl::BLIT)),
-                });
+                let shader =
+                    super::wgsl::Program::new("nana-ui.scene.dest.blit.shader", super::wgsl::BLIT);
                 let pipeline_layout =
                     device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                         label: Some("nana-ui.scene.dest.blit.pipeline"),
@@ -625,13 +623,13 @@ impl DestPipelines {
                 label: Some(label),
                 layout: Some(pipeline_layout),
                 vertex: wgpu::VertexState {
-                    module: shader,
+                    module: &shader.stage(device, "vs_main").module,
                     entry_point: Some("vs_main"),
                     buffers: &[],
                     compilation_options: wgpu::PipelineCompilationOptions::default(),
                 },
                 fragment: Some(wgpu::FragmentState {
-                    module: shader,
+                    module: &shader.stage(device, entry_point).module,
                     entry_point: Some(entry_point),
                     targets: &[Some(wgpu::ColorTargetState {
                         format: target_format,
@@ -739,10 +737,10 @@ impl DestPipelines {
         let group_program = OnceCell::new();
         let make_group = |blend, label| {
             let (shader, layout) = group_program.get_or_init(|| {
-                let group_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                    label: Some("nana-ui.scene.group.shader"),
-                    source: super::wgsl::source(&[super::wgsl::COLOR, super::wgsl::LAYER]),
-                });
+                let group_shader = super::wgsl::Program::joined(
+                    "nana-ui.scene.group.shader",
+                    &[super::wgsl::COLOR, super::wgsl::LAYER],
+                );
                 let group_pipeline_layout =
                     device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                         label: Some("nana-ui.scene.group.pipeline"),

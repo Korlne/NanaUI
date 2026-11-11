@@ -77,7 +77,7 @@ icons-tabler = ["dep:nana-icons-tabler"]
 # manifest, and answer `NANA_PACKAGE_VALIDATE` self-checks. Opt-in: embedded
 # hosts that do their own packaging never link `nana-package`.
 packaged-resources = ["dep:nana-package"]
-gpu = ["dep:naga", "dep:bytemuck", "dep:nana-frame-exchange", "dep:nana-gpu", "dep:base64", "dep:etagere", "dep:image", "dep:pollster", "nana-text/raster", "nana-ui-platform/fetch", "dep:wgpu", "dep:windows"]
+gpu = ["dep:naga", "wgpu?/naga-ir", "dep:bytemuck", "dep:nana-frame-exchange", "dep:nana-gpu", "dep:base64", "dep:etagere", "dep:image", "dep:pollster", "nana-text/raster", "nana-ui-platform/fetch", "dep:wgpu", "dep:windows"]
 # Explicit escape hatch to the WGPU objects behind the GPU contract
 # (`GpuContext::wgpu()`, `FrameContext::wgpu_encoder()`, `nana_ui::wgpu`, …).
 # Hosts that bring their own device and renderers that record their own

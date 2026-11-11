@@ -117,10 +117,10 @@ impl ChartPipeline {
         format: wgpu::TextureFormat,
         motion_layout: &wgpu::BindGroupLayout,
     ) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("nana-ui.scene.chart.shader"),
-            source: super::wgsl::source(&[super::wgsl::CHART, super::wgsl::COLOR]),
-        });
+        let shader = super::wgsl::Program::joined(
+            "nana-ui.scene.chart.shader",
+            &[super::wgsl::CHART, super::wgsl::COLOR],
+        );
         let both = wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT;
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("nana-ui.scene.chart.layout"),
@@ -143,13 +143,13 @@ impl ChartPipeline {
                 label: Some("nana-ui.scene.chart"),
                 layout: Some(&pipeline_layout),
                 vertex: wgpu::VertexState {
-                    module: &shader,
+                    module: &shader.stage(device, vs).module,
                     entry_point: Some(vs),
                     buffers: &[],
                     compilation_options: wgpu::PipelineCompilationOptions::default(),
                 },
                 fragment: Some(wgpu::FragmentState {
-                    module: &shader,
+                    module: &shader.stage(device, fs).module,
                     // Every edge is analytic coverage; MSAA samples
                     // geometry only, so both sample counts share it.
                     entry_point: Some(fs),

@@ -1,57 +1,68 @@
 //! Framework shader stages compiled to DXIL ahead of time.
 //!
 //! On DX12 a pipeline family's WGSL becomes HLSL (naga) and then DXIL (DXC)
-//! when its pipelines are created. For the quad family that is about two
-//! seconds, on every launch, since DXC keeps nothing between runs, and the
-//! first frame waits for it. The families every application and skin share
-//! are compiled here instead (see `tests::regenerate`) and their stages load
-//! as passthrough DXIL: the driver then only lowers DXIL to its own code,
-//! which it caches across launches.
+//! when its pipelines are created. For the quad family that is over a
+//! second, for mesh and text a few hundred milliseconds each, on every
+//! launch, since DXC keeps nothing between runs, and the first frame waits
+//! for the slowest. The families every application and skin share are
+//! compiled here instead (see `tests::regenerate`) and their stages load as
+//! passthrough DXIL: the driver then only lowers DXIL to its own code, which
+//! it caches across launches.
 //!
 //! Only framework shaders, and only from the binary. A passthrough module is
 //! neither parsed nor validated by naga, so DXIL never comes from a file, a
 //! skin or a plugin, and nothing outside this module creates one. A family
 //! records what its DXIL was compiled from; the stages are used only while
-//! the WGSL and resource layout still match (see [`Family::fresh`]; tests hold
-//! the wgpu version), and when the driver refuses them the family compiles
-//! its WGSL as it always did.
+//! the program and resource layout still match (see [`Family::fresh`]; tests
+//! hold the wgpu version), and when the driver refuses them the family
+//! compiles its program as it always did.
 
 mod generated;
 
 #[cfg(test)]
 pub(super) mod tests;
 
-pub(super) use generated::QUAD;
+pub(super) use generated::{MESH, QUAD, TEXT, TEXT_DUAL_SOURCE};
 
 /// One stage of a family, compiled for shader model 6.0, so any DX12 device
 /// with DXIL support runs it.
 pub(super) struct Stage {
     pub(super) entry: &'static str,
+    /// The pipeline constants it was specialized with, as the family's
+    /// pipeline passes them.
+    pub(super) constants: &'static [(&'static str, f64)],
     pub(super) dxil: &'static [u8],
 }
 
 pub(super) struct Family {
-    /// [`fnv1a`] of the WGSL the stages were compiled from.
+    /// [`fnv1a`] of the program the stages were compiled from, as the
+    /// device is given it (the embedded WGSL, without comments).
     pub(super) wgsl: u64,
     /// The family's resource layout key when they were.
     pub(super) layout: u64,
-    pub(super) vertex: Stage,
-    pub(super) fragment: Stage,
+    pub(super) stages: &'static [Stage],
 }
 
 impl Family {
     /// Whether the stages were compiled from `wgsl` laid out as `layout`.
-    #[cfg(test)]
     pub(super) fn fresh(&self, wgsl: &str, layout: u64) -> bool {
-        self.fresh_hash(fnv1a(wgsl.as_bytes()), layout)
+        !self.stages.is_empty()
+            && self.stages.iter().all(|stage| !stage.dxil.is_empty())
+            && self.wgsl == fnv1a(wgsl.as_bytes())
+            && self.layout == layout
     }
 
-    /// [`Self::fresh`] for a source whose [`fnv1a`] is known already.
-    pub(super) fn fresh_hash(&self, wgsl: u64, layout: u64) -> bool {
-        !self.vertex.dxil.is_empty()
-            && !self.fragment.dxil.is_empty()
-            && self.wgsl == wgsl
-            && self.layout == layout
+    /// The stage for `entry` specialized with `constants`.
+    pub(super) fn stage(&self, entry: &str, constants: &[(&str, f64)]) -> Option<&Stage> {
+        self.stages.iter().find(|stage| {
+            stage.entry == entry
+                && stage.constants.len() == constants.len()
+                && stage
+                    .constants
+                    .iter()
+                    .zip(constants)
+                    .all(|(a, b)| a.0 == b.0 && a.1 == b.1)
+        })
     }
 }
 
@@ -82,18 +93,24 @@ pub(super) fn runs_on(gpu: &nana_gpu::GpuContext, device: &wgpu::Device) -> bool
             .contains(wgpu::Features::PASSTHROUGH_SHADERS)
 }
 
-/// The pipeline `build` makes from `family`'s stages, or `None` when the
-/// device refused them; the caller then compiles the family's WGSL.
-pub(super) fn pipeline(
+/// The pipeline `build` makes from `family`'s stages for `stages` (entry
+/// point and pipeline constants each), or `None` when the family has no such
+/// stage or the device refused them; the caller then compiles the program.
+pub(super) fn pipeline<const N: usize>(
     device: &wgpu::Device,
     family: &Family,
-    build: impl FnOnce(&wgpu::ShaderModule, &wgpu::ShaderModule) -> wgpu::RenderPipeline,
+    stages: [(&str, &[(&str, f64)]); N],
+    build: impl FnOnce([&wgpu::ShaderModule; N]) -> wgpu::RenderPipeline,
 ) -> Option<wgpu::RenderPipeline> {
+    let mut found = [None; N];
+    for (slot, (entry, constants)) in found.iter_mut().zip(stages) {
+        *slot = Some(family.stage(entry, constants)?);
+    }
     let oom = device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
     let internal = device.push_error_scope(wgpu::ErrorFilter::Internal);
     let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
     let module = |stage: &Stage| {
-        // SAFETY: the DXIL is the framework's own, compiled from the WGSL
+        // SAFETY: the DXIL is the framework's own, compiled from the program
         // `Family::fresh` matched, built into the binary and never replaced.
         unsafe {
             device.create_shader_module_passthrough(wgpu::ShaderModuleDescriptorPassthrough {
@@ -107,7 +124,8 @@ pub(super) fn pipeline(
             })
         }
     };
-    let pipeline = build(&module(&family.vertex), &module(&family.fragment));
+    let modules = found.map(|stage| module(stage.expect("every stage was found")));
+    let pipeline = build(modules.each_ref());
     #[cfg(test)]
     tests::LOADED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let refused = [

@@ -215,7 +215,7 @@ Five lines of mixed Chinese, English, Japanese, Korean and emoji text laid out w
 | System font metadata (names and weights of 929 faces) | 0.6 MiB |
 | Reserved queues (input, diagnostics, window requests) | 0.3 MiB |
 
-The first two rows are the system frameworks', and any AppKit window has them; the rest holds no waste of the kind the system fonts had. One thing was changed in this round: the window service's request queue reserves 1 024 places of the largest request, and the two requests that create and control a window were over three hundred bytes each, 400 KiB in all; their contents are now boxed and the queue is about 50 KiB. The shader IR follows the total WGSL joined into each module (`color.wgsl` goes into nine modules); reducing it would mean giving each module only the functions it uses, which was not done.
+The first two rows are the system frameworks', and any AppKit window has them; the rest holds no waste of the kind the system fonts had. One thing was changed in this round: the window service's request queue reserves 1 024 places of the largest request, and the two requests that create and control a window were over three hundred bytes each, 400 KiB in all; their contents are now boxed and the queue is about 50 KiB. The shader IR follows the total WGSL joined into each module (`color.wgsl` goes into nine modules). Since then each entry point is a module of its own holding only the functions it reaches (see [Startup · Shader IR cut per entry point](./startup.md#shader-ir-cut-per-entry-point)); this row has not been measured again on macOS.
 
 ## CPU time
 

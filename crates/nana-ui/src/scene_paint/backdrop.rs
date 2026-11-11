@@ -306,26 +306,22 @@ impl BackdropPipeline {
                 ],
             })
         };
-        let copy_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("nana-ui.scene.backdrop.copy.shader"),
-            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(
-                super::wgsl::BACKDROP_COPY,
-            )),
-        });
-        let blur_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("nana-ui.scene.backdrop.blur.shader"),
-            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(
-                super::wgsl::BACKDROP_BLUR,
-            )),
-        });
-        let composite_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("nana-ui.scene.backdrop.composite.shader"),
-            source: super::wgsl::source(&[
+        let copy_shader = super::wgsl::Program::new(
+            "nana-ui.scene.backdrop.copy.shader",
+            super::wgsl::BACKDROP_COPY,
+        );
+        let blur_shader = super::wgsl::Program::new(
+            "nana-ui.scene.backdrop.blur.shader",
+            super::wgsl::BACKDROP_BLUR,
+        );
+        let composite_shader = super::wgsl::Program::joined(
+            "nana-ui.scene.backdrop.composite.shader",
+            &[
                 super::wgsl::COLOR,
                 super::wgsl::QUAD_PAINT_DATA,
                 super::wgsl::BACKDROP_COMPOSITE,
-            ]),
-        });
+            ],
+        );
         let copy_pipeline = cached_fullscreen_pipeline(policy, format, 1, || {
             Self::fullscreen_pipeline(
                 device,
@@ -357,13 +353,13 @@ impl BackdropPipeline {
                     label: Some("nana-ui.scene.backdrop.composite.pipeline"),
                     layout: Some(&composite_pipeline_layout),
                     vertex: wgpu::VertexState {
-                        module: &composite_shader,
+                        module: &composite_shader.stage(device, "vs_main").module,
                         entry_point: Some("vs_main"),
                         buffers: &[],
                         compilation_options: wgpu::PipelineCompilationOptions::default(),
                     },
                     fragment: Some(wgpu::FragmentState {
-                        module: &composite_shader,
+                        module: &composite_shader.stage(device, "fs_main").module,
                         entry_point: Some("fs_main"),
                         targets: &[Some(wgpu::ColorTargetState {
                             format,
@@ -523,7 +519,7 @@ impl BackdropPipeline {
 
     fn fullscreen_pipeline(
         device: &wgpu::Device,
-        shader: &wgpu::ShaderModule,
+        shader: &super::wgsl::Program,
         bind_layout: &wgpu::BindGroupLayout,
         format: wgpu::TextureFormat,
         label: &str,
@@ -537,13 +533,13 @@ impl BackdropPipeline {
             label: Some(&format!("{label}.pipeline")),
             layout: Some(&layout),
             vertex: wgpu::VertexState {
-                module: shader,
+                module: &shader.stage(device, "vs_main").module,
                 entry_point: Some("vs_main"),
                 buffers: &[],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             },
             fragment: Some(wgpu::FragmentState {
-                module: shader,
+                module: &shader.stage(device, "fs_main").module,
                 entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
                     format,

@@ -9,14 +9,89 @@ pub(super) const WGPU: &str = "30.0.1";
 pub(super) const DXC: &str = "1.8 (4792, 23992152)";
 
 pub(in crate::scene_paint) const QUAD: Family = Family {
-    wgsl: 0xab7dfcb18916e589,
+    wgsl: 0x5cfbd622d787c095,
     layout: 0x2cec81ab9701c664,
-    vertex: Stage {
-        entry: "solid_vs_main",
-        dxil: include_bytes!("quad.vs.dxil"),
-    },
-    fragment: Stage {
-        entry: "solid_fs_main",
-        dxil: include_bytes!("quad.fs.dxil"),
-    },
+    stages: &[
+        Stage {
+            entry: "solid_fs_main",
+            constants: &[],
+            dxil: include_bytes!("quad.solid_fs_main.dxil"),
+        },
+        Stage {
+            entry: "solid_vs_main",
+            constants: &[],
+            dxil: include_bytes!("quad.solid_vs_main.dxil"),
+        },
+    ],
+};
+
+pub(in crate::scene_paint) const MESH: Family = Family {
+    wgsl: 0x6240de245976304c,
+    layout: 0xb38f9f07724bd99f,
+    stages: &[
+        Stage {
+            entry: "path_fs_main",
+            constants: &[("PATH_SAMPLES", 1.0)],
+            dxil: include_bytes!("mesh.path_fs_main.PATH_SAMPLES1.dxil"),
+        },
+        Stage {
+            entry: "path_fs_main",
+            constants: &[("PATH_SAMPLES", 4.0)],
+            dxil: include_bytes!("mesh.path_fs_main.PATH_SAMPLES4.dxil"),
+        },
+        Stage {
+            entry: "path_keep_fs_main",
+            constants: &[("PATH_SAMPLES", 1.0)],
+            dxil: include_bytes!("mesh.path_keep_fs_main.PATH_SAMPLES1.dxil"),
+        },
+        Stage {
+            entry: "path_vs_main",
+            constants: &[],
+            dxil: include_bytes!("mesh.path_vs_main.dxil"),
+        },
+        Stage {
+            entry: "solid_fs_main",
+            constants: &[],
+            dxil: include_bytes!("mesh.solid_fs_main.dxil"),
+        },
+        Stage {
+            entry: "solid_vs_main",
+            constants: &[],
+            dxil: include_bytes!("mesh.solid_vs_main.dxil"),
+        },
+    ],
+};
+
+pub(in crate::scene_paint) const TEXT: Family = Family {
+    wgsl: 0xcad88d0b4822a7f6,
+    layout: 0x695dc8be9d79aaeb,
+    stages: &[
+        Stage {
+            entry: "fs_main",
+            constants: &[],
+            dxil: include_bytes!("text.fs_main.dxil"),
+        },
+        Stage {
+            entry: "vs_main",
+            constants: &[],
+            dxil: include_bytes!("text.vs_main.dxil"),
+        },
+    ],
+};
+
+pub(in crate::scene_paint) const TEXT_DUAL_SOURCE: Family = Family {
+    wgsl: 0x359491dcd7ba6395,
+    layout: 0x695dc8be9d79aaeb,
+    stages: &[
+        Stage {
+            entry: "fs_main",
+            constants: &[],
+            dxil: include_bytes!("text_dual_source.fs_main.dxil"),
+        },
+        Stage {
+            entry: "vs_main",
+            constants: &[],
+            dxil: include_bytes!("text.vs_main.dxil"),
+        },
+    ],
 };

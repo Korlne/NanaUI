@@ -350,6 +350,26 @@ fn text_shader(dual_source: bool) -> String {
     .concat()
 }
 
+/// [`text_shader`] as a program, whose pipelines load the precompiled stages
+/// when `precompiled` (the device runs them) and they are current.
+fn text_program(dual_source: bool, precompiled: bool) -> super::super::wgsl::Program {
+    let program =
+        super::super::wgsl::Program::new("nana-ui.scene.text.shader", text_shader(dual_source));
+    #[cfg(target_os = "windows")]
+    let program = program.precompiled(
+        if dual_source {
+            &super::super::precompiled::TEXT_DUAL_SOURCE
+        } else {
+            &super::super::precompiled::TEXT
+        },
+        precompiled,
+        text_layout_key,
+    );
+    #[cfg(not(target_os = "windows"))]
+    let _ = precompiled;
+    program
+}
+
 /// The program for targets that blend one output. Subpixel glyphs are never
 /// resolved for it; were one drawn, it would paint as grayscale.
 const TEXT_FRAGMENT: &str = super::super::wgsl::stripped!(
@@ -490,6 +510,14 @@ pub(super) struct TextPresentationGpu {
     translate: [f32; 2],
 }
 
+/// What the precompiled text stages must have been compiled from: the
+/// program for one output or, with `dual_source`, for subpixel text, and the
+/// resource layout key.
+#[cfg(test)]
+pub(in crate::scene_paint) fn precompiled_inputs(dual_source: bool) -> (String, u64) {
+    (text_shader(dual_source), text_layout_key())
+}
+
 fn text_layout_key() -> u64 {
     let vertex_fragment = &[
         nana_gpu::ShaderStage::Vertex,
@@ -626,6 +654,8 @@ pub(super) struct TextGpu {
     /// applies as well as the buffer one — 128 MiB, about 5.6 million slots,
     /// under WebGPU's defaults.
     instance_slots: u32,
+    /// The device runs precompiled stages ([`super::super::precompiled`]).
+    precompiled: bool,
 }
 
 impl TextGpu {
@@ -637,8 +667,9 @@ impl TextGpu {
         format: wgpu::TextureFormat,
         atlas_layout: &wgpu::BindGroupLayout,
         policy: Option<&nana_gpu::GpuDeviceState>,
+        precompiled: bool,
     ) -> Self {
-        Self::new_inner(device, format, atlas_layout, policy)
+        Self::new_inner(device, format, atlas_layout, policy, precompiled)
     }
 
     fn new_inner(
@@ -646,6 +677,7 @@ impl TextGpu {
         format: wgpu::TextureFormat,
         atlas_layout: &wgpu::BindGroupLayout,
         policy: Option<&nana_gpu::GpuDeviceState>,
+        precompiled: bool,
     ) -> Self {
         let globals_layout = if let Some(policy) = policy {
             let vertex_fragment = &[
@@ -734,7 +766,7 @@ impl TextGpu {
                 device,
                 &layout,
                 format,
-                &text_shader(false),
+                &text_program(false, precompiled),
                 wgpu::BlendState::ALPHA_BLENDING,
             )
         };
@@ -784,6 +816,7 @@ impl TextGpu {
             contrast: TextContrast::system(),
             policy: policy.cloned(),
             instance_slots: u32::try_from(instance_bytes / INSTANCE_BYTES).unwrap_or(u32::MAX),
+            precompiled,
         }
     }
 
@@ -922,7 +955,8 @@ fn shade(input:VsOut)->TextShade {
                 let [globals, atlas, materials] = &layouts;
                 let layout=device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {label:Some("text color and transition materials"),bind_group_layouts:&[Some(globals),Some(atlas),Some(materials)],immediate_size:0});
                 let blend=if dual {let c=wgpu::BlendComponent{src_factor:wgpu::BlendFactor::Src1,dst_factor:wgpu::BlendFactor::OneMinusSrc1,operation:wgpu::BlendOperation::Add};wgpu::BlendState{color:c,alpha:c}}else{wgpu::BlendState::ALPHA_BLENDING};
-                Some(build_pipeline(&device,&layout,format,&source,blend))
+                let program = super::super::wgsl::Program::new("nana-ui.scene.text.shader", source);
+                Some(build_pipeline(&device,&layout,format,&program,blend))
             });
             // Still compiling: the glyphs draw natively until it is ready.
             if let super::super::material::MaterialPipeline::Ready(pipeline) = built {
@@ -1001,7 +1035,7 @@ fn shade(input:VsOut)->TextShade {
                 device,
                 &self.layout,
                 self.format,
-                &text_shader(true),
+                &text_program(true, self.precompiled),
                 wgpu::BlendState {
                     color: per_channel,
                     alpha: per_channel,
@@ -1435,44 +1469,42 @@ fn build_pipeline(
     device: &wgpu::Device,
     layout: &wgpu::PipelineLayout,
     format: wgpu::TextureFormat,
-    source: &str,
+    program: &super::super::wgsl::Program,
     blend: wgpu::BlendState,
 ) -> wgpu::RenderPipeline {
-    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("nana-ui.scene.text.shader"),
-        source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(source)),
-    });
-    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("nana-ui.scene.text.pipeline"),
-        layout: Some(layout),
-        vertex: wgpu::VertexState {
-            module: &shader,
-            entry_point: Some("vs_main"),
-            buffers: &[Some(wgpu::VertexBufferLayout {
-                array_stride: INDEX_BYTES,
-                step_mode: wgpu::VertexStepMode::Instance,
-                attributes: &wgpu::vertex_attr_array!(0 => Uint32),
-            })],
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-        },
-        fragment: Some(wgpu::FragmentState {
-            module: &shader,
-            entry_point: Some("fs_main"),
-            targets: &[Some(wgpu::ColorTargetState {
-                format,
-                blend: Some(blend),
-                write_mask: wgpu::ColorWrites::ALL,
-            })],
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-        }),
-        primitive: wgpu::PrimitiveState {
-            topology: wgpu::PrimitiveTopology::TriangleStrip,
-            ..Default::default()
-        },
-        depth_stencil: None,
-        multisample: wgpu::MultisampleState::default(),
-        multiview_mask: None,
-        cache: None,
+    program.pipeline(device, "vs_main", "fs_main", &[], |vertex, fragment, _| {
+        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("nana-ui.scene.text.pipeline"),
+            layout: Some(layout),
+            vertex: wgpu::VertexState {
+                module: vertex,
+                entry_point: Some("vs_main"),
+                buffers: &[Some(wgpu::VertexBufferLayout {
+                    array_stride: INDEX_BYTES,
+                    step_mode: wgpu::VertexStepMode::Instance,
+                    attributes: &wgpu::vertex_attr_array!(0 => Uint32),
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: fragment,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format,
+                    blend: Some(blend),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleStrip,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        })
     })
 }
 

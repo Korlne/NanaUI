@@ -4,15 +4,31 @@ use super::*;
 pub(in crate::scene_paint) static LOADED: std::sync::atomic::AtomicUsize =
     std::sync::atomic::AtomicUsize::new(0);
 
-/// A family whose WGSL or layout changed without its DXIL being regenerated
-/// quietly compiles its WGSL again, and the startup is slow again.
+/// Each precompiled family, with the program and layout key it has now.
+fn families() -> Vec<(&'static str, &'static Family, String, u64)> {
+    let (quad, quad_layout, _) = crate::scene_paint::quad::precompiled_inputs();
+    let (mesh, mesh_layout) = crate::scene_paint::mesh::precompiled_inputs();
+    let (text, text_layout) = crate::scene_paint::text::precompiled_inputs(false);
+    let (dual, dual_layout) = crate::scene_paint::text::precompiled_inputs(true);
+    vec![
+        ("quad", &QUAD, quad, quad_layout),
+        ("mesh", &MESH, mesh, mesh_layout),
+        ("text", &TEXT, text, text_layout),
+        ("text_dual_source", &TEXT_DUAL_SOURCE, dual, dual_layout),
+    ]
+}
+
+/// A family whose program or layout changed without its DXIL being
+/// regenerated quietly compiles its program again, and the startup is slow
+/// again.
 #[test]
-fn precompiled_stages_are_current_with_the_wgsl_and_layout() {
-    let (wgsl, layout, _) = crate::scene_paint::quad::precompiled_inputs();
-    assert!(
-        QUAD.fresh(&wgsl, layout),
-        "the quad family changed: regenerate its DXIL (see generated.rs)"
-    );
+fn precompiled_stages_are_current_with_their_programs_and_layouts() {
+    for (name, family, program, layout) in families() {
+        assert!(
+            family.fresh(&program, layout),
+            "the {name} family changed: regenerate its DXIL (see generated.rs)"
+        );
+    }
 }
 
 /// The stages were generated from a Windows checkout; one with LF endings
@@ -22,6 +38,33 @@ fn precompiled_hash_ignores_line_endings() {
     let (wgsl, _, _) = crate::scene_paint::quad::precompiled_inputs();
     let crlf = wgsl.replace("\r\n", "\n").replace('\n', "\r\n");
     assert_eq!(fnv1a(crlf.as_bytes()), fnv1a(wgsl.as_bytes()));
+}
+
+/// Every stage a family's pipelines ask for is precompiled: a missing one
+/// would compile its program after all.
+#[test]
+fn every_stage_the_families_ask_for_is_precompiled() {
+    let constants = |samples: f64| [("PATH_SAMPLES", samples)];
+    for (family, entry, constants) in [
+        (&QUAD, "solid_vs_main", &[][..]),
+        (&QUAD, "solid_fs_main", &[]),
+        (&MESH, "solid_vs_main", &[]),
+        (&MESH, "solid_fs_main", &[]),
+        (&MESH, "path_vs_main", &[]),
+        (&MESH, "path_fs_main", &constants(1.0)),
+        (&MESH, "path_fs_main", &constants(4.0)),
+        (&MESH, "path_keep_fs_main", &constants(1.0)),
+        (&TEXT, "vs_main", &[]),
+        (&TEXT, "fs_main", &[]),
+        (&TEXT_DUAL_SOURCE, "vs_main", &[]),
+        (&TEXT_DUAL_SOURCE, "fs_main", &[]),
+    ] {
+        assert!(
+            family.stage(entry, constants).is_some(),
+            "{entry} {constants:?}"
+        );
+    }
+    assert!(MESH.stage("path_fs_main", &constants(2.0)).is_none());
 }
 
 /// naga writes the HLSL the DXIL is compiled from, with wgpu's binding
@@ -53,10 +96,41 @@ fn locked_wgpu() -> String {
     panic!("wgpu is not in Cargo.lock")
 }
 
-/// Rebuilds the precompiled stages: compiles each family's WGSL the way wgpu
-/// does on DX12, keeps the HLSL naga wrote for it, compiles that with DXC for
-/// shader model 6.0, validates and reflects the DXIL, and writes it with
-/// `generated.rs`. `NANA_DXC_PATH` names `dxcompiler.dll`. Run alone:
+/// The pipeline a program is compiling stages for from its IR: the
+/// program's [`fnv1a`], its vertex and fragment entry points, and the
+/// fragment stage's constants. Regeneration reads it to tell whose HLSL
+/// wgpu-hal is writing.
+#[cfg(target_os = "windows")]
+type Request = (u64, String, String, Vec<(String, f64)>);
+
+#[cfg(target_os = "windows")]
+static REQUEST: std::sync::Mutex<Option<Request>> = std::sync::Mutex::new(None);
+
+/// Called by [`crate::scene_paint::wgsl::Program::pipeline`] before it
+/// builds a pipeline from its IR.
+#[cfg(target_os = "windows")]
+pub(in crate::scene_paint) fn requesting(
+    program: &str,
+    vertex: &str,
+    fragment: &str,
+    constants: &[(&str, f64)],
+) {
+    *REQUEST.lock().unwrap() = Some((
+        fnv1a(program.as_bytes()),
+        vertex.to_owned(),
+        fragment.to_owned(),
+        constants
+            .iter()
+            .map(|(name, value)| ((*name).to_owned(), *value))
+            .collect(),
+    ));
+}
+
+/// Rebuilds the precompiled stages: builds each family's pipelines from its
+/// program the way wgpu does on DX12, keeps the HLSL naga wrote for each
+/// stage, compiles that with DXC for shader model 6.0, validates and
+/// reflects the DXIL, and writes it with `generated.rs`. `NANA_DXC_PATH`
+/// names `dxcompiler.dll`. Run alone:
 ///
 /// `cargo test -p nana-ui --lib --features gpu,hosted,full -- --ignored regenerate_precompiled_dxil --test-threads=1`
 #[cfg(target_os = "windows")]
@@ -66,9 +140,20 @@ mod regenerate {
     use windows::Win32::Graphics::Direct3D::Dxc;
     use windows::core::{GUID, HRESULT, HSTRING, Interface, PCWSTR, s, w};
 
-    static CAPTURED: Mutex<Vec<String>> = Mutex::new(Vec::new());
+    /// One stage wgpu-hal wrote HLSL for.
+    struct Captured {
+        program: u64,
+        entry: String,
+        /// `vs` or `ps`.
+        kind: &'static str,
+        constants: Vec<(String, f64)>,
+        hlsl: String,
+    }
 
-    /// Keeps the HLSL wgpu-hal's DX12 backend writes for each stage.
+    static CAPTURED: Mutex<Vec<Captured>> = Mutex::new(Vec::new());
+
+    /// Keeps the HLSL wgpu-hal's DX12 backend writes for each stage, with
+    /// the program and constants [`REQUEST`] names.
     struct Capture;
     impl log::Log for Capture {
         fn enabled(&self, metadata: &log::Metadata) -> bool {
@@ -76,22 +161,31 @@ mod regenerate {
         }
         fn log(&self, record: &log::Record) {
             let text = record.args().to_string();
-            if text.starts_with("Naga generated shader") {
-                CAPTURED.lock().unwrap().push(text);
-            }
+            let Some(rest) = text.strip_prefix("Naga generated shader for \"") else {
+                return;
+            };
+            let (entry, rest) = rest.split_once('"').expect("an entry point");
+            let (header, hlsl) = rest.split_once(":\n").expect("a header line");
+            let request = REQUEST.lock().unwrap();
+            let (program, vertex, fragment, constants) =
+                request.as_ref().expect("a program is building a pipeline");
+            let (kind, constants) = if header.contains("Vertex") {
+                assert_eq!(entry, vertex);
+                ("vs", Vec::new())
+            } else {
+                assert!(header.contains("Fragment"), "{header}");
+                assert_eq!(entry, fragment);
+                ("ps", constants.clone())
+            };
+            CAPTURED.lock().unwrap().push(Captured {
+                program: *program,
+                entry: entry.to_owned(),
+                kind,
+                constants,
+                hlsl: hlsl.to_owned(),
+            });
         }
         fn flush(&self) {}
-    }
-
-    /// The HLSL captured for `entry`, the latest first.
-    fn captured(entry: &str) -> String {
-        let captured = CAPTURED.lock().unwrap();
-        let text = captured
-            .iter()
-            .rev()
-            .find(|text| text.starts_with(&format!("Naga generated shader for \"{entry}\"")))
-            .unwrap_or_else(|| panic!("no HLSL for {entry} among {}", captured.len()));
-        text.split_once(":\n").expect("a header line").1.to_owned()
     }
 
     /// A DX12 device compiling its WGSL with `dxc`, with release flags.
@@ -277,6 +371,15 @@ mod regenerate {
         output.expect("an output")
     }
 
+    /// `stage` of `family`, with its constants, as a file name.
+    fn file_name(family: &str, stage: &Captured) -> String {
+        let mut name = format!("{family}.{}", stage.entry);
+        for (constant, value) in &stage.constants {
+            name.push_str(&format!(".{constant}{value}"));
+        }
+        name + ".dxil"
+    }
+
     #[test]
     #[ignore = "writes the precompiled stages; needs DX12 and NANA_DXC_PATH"]
     fn regenerate_precompiled_dxil() {
@@ -286,54 +389,109 @@ mod regenerate {
         let compiler = Compiler::load(&dxc_path);
         let gpu = dx12(&dxc_path);
         let device = nana_gpu::__framework::device(&gpu);
+        let queue = nana_gpu::__framework::queue(&gpu);
+        let policy = gpu.policy();
         let format = wgpu::TextureFormat::Rgba8Unorm;
 
-        // The quad family, from its WGSL: the HLSL wgpu writes for it is what
-        // the DXIL is compiled from.
+        // Every precompiled family, from its program, one after another on
+        // this thread: the HLSL wgpu writes for each stage is what its DXIL
+        // is compiled from.
         drop(crate::scene_paint::quad::QuadPipeline::new_with_policy(
             device,
             format,
-            Some(gpu.policy()),
+            Some(policy),
             false,
         ));
-        let (wgsl, layout, attributes) = crate::scene_paint::quad::precompiled_inputs();
-        let vertex = compiler.compile(&captured("solid_vs_main"), "solid_vs_main", "vs_6_0");
-        let fragment = compiler.compile(&captured("solid_fs_main"), "solid_fs_main", "ps_6_0");
-        assert_eq!(
-            compiler.vertex_inputs(&vertex) as usize,
-            attributes,
-            "the quad vertex stage reads every instance attribute"
+        drop(crate::scene_paint::mesh::MeshPipeline::new_with_policy(
+            device,
+            format,
+            Some(policy),
+            false,
+        ));
+        assert!(
+            device
+                .features()
+                .contains(wgpu::Features::DUAL_SOURCE_BLENDING),
+            "the subpixel text program needs dual-source blending"
         );
+        let mut text = crate::scene_paint::text::TextPipeline::new_with_policy(
+            device, queue, format, policy, false,
+        );
+        text.prewarm_subpixel(device);
+        drop(text);
 
         let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/src/scene_paint/precompiled");
-        std::fs::write(format!("{dir}/quad.vs.dxil"), &vertex).unwrap();
-        std::fs::write(format!("{dir}/quad.fs.dxil"), &fragment).unwrap();
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path
+                .extension()
+                .is_some_and(|extension| extension == "dxil")
+            {
+                std::fs::remove_file(path).unwrap();
+            }
+        }
+        let captured = CAPTURED.lock().unwrap();
+        let mut families_source = String::new();
+        // A stage whose DXIL another already has (the two text programs
+        // share their vertex stage) names that one's file.
+        let mut written: Vec<(Vec<u8>, String)> = Vec::new();
+        for (name, _, program, layout) in families() {
+            let hash = fnv1a(program.as_bytes());
+            let mut stages: Vec<&Captured> = captured
+                .iter()
+                .filter(|stage| stage.program == hash)
+                .collect();
+            let order = |stage: &Captured| {
+                (
+                    stage.entry.clone(),
+                    stage.kind,
+                    format!("{:?}", stage.constants),
+                )
+            };
+            stages.sort_by_key(|stage| order(stage));
+            stages.dedup_by_key(|stage| order(stage));
+            assert!(stages.len() >= 2, "{name} built no stages");
+            let mut entries = String::new();
+            for stage in stages {
+                let dxil =
+                    compiler.compile(&stage.hlsl, &stage.entry, &format!("{}_6_0", stage.kind));
+                if name == "quad" && stage.kind == "vs" {
+                    let (_, _, attributes) = crate::scene_paint::quad::precompiled_inputs();
+                    assert_eq!(
+                        compiler.vertex_inputs(&dxil) as usize,
+                        attributes,
+                        "the quad vertex stage reads every instance attribute"
+                    );
+                }
+                let file = match written.iter().find(|(bytes, _)| *bytes == dxil) {
+                    Some((_, file)) => file.clone(),
+                    None => {
+                        let file = file_name(name, stage);
+                        std::fs::write(format!("{dir}/{file}"), &dxil).unwrap();
+                        written.push((dxil, file.clone()));
+                        file
+                    }
+                };
+                let constants = stage
+                    .constants
+                    .iter()
+                    .map(|(constant, value)| format!("({constant:?}, {value:?})"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                entries.push_str(&format!(
+                    "        Stage {{\n            entry: {entry:?},\n            constants: &[{constants}],\n            dxil: include_bytes!({file:?}),\n        }},\n",
+                    entry = stage.entry,
+                ));
+            }
+            families_source.push_str(&format!(
+                "\npub(in crate::scene_paint) const {constant}: Family = Family {{\n    wgsl: {hash:#018x},\n    layout: {layout:#018x},\n    stages: &[\n{entries}    ],\n}};\n",
+                constant = name.to_uppercase(),
+            ));
+        }
         let generated = format!(
-            "// Generated by `cargo test -p nana-ui --lib --features gpu,hosted,full --\n\
-             // --ignored regenerate_precompiled_dxil`; do not edit.\n\
-             use super::{{Family, Stage}};\n\
-             \n\
-             /// The wgpu, and the DXC, the stages were compiled with: the checks read them.\n\
-             #[allow(dead_code)]\n\
-             pub(super) const WGPU: &str = {wgpu:?};\n\
-             #[allow(dead_code)]\n\
-             pub(super) const DXC: &str = {dxc:?};\n\
-             \n\
-             pub(in crate::scene_paint) const QUAD: Family = Family {{\n    \
-                 wgsl: {wgsl:#018x},\n    \
-                 layout: {layout:#018x},\n    \
-                 vertex: Stage {{\n        \
-                     entry: \"solid_vs_main\",\n        \
-                     dxil: include_bytes!(\"quad.vs.dxil\"),\n    \
-                 }},\n    \
-                 fragment: Stage {{\n        \
-                     entry: \"solid_fs_main\",\n        \
-                     dxil: include_bytes!(\"quad.fs.dxil\"),\n    \
-                 }},\n\
-             }};\n",
+            "// Generated by `cargo test -p nana-ui --lib --features gpu,hosted,full --\n// --ignored regenerate_precompiled_dxil`; do not edit.\nuse super::{{Family, Stage}};\n\n/// The wgpu, and the DXC, the stages were compiled with: the checks read them.\n#[allow(dead_code)]\npub(super) const WGPU: &str = {wgpu:?};\n#[allow(dead_code)]\npub(super) const DXC: &str = {dxc:?};\n{families_source}",
             wgpu = locked_wgpu(),
             dxc = compiler.version(),
-            wgsl = fnv1a(wgsl.as_bytes()),
         );
         std::fs::write(format!("{dir}/generated.rs"), generated).unwrap();
     }

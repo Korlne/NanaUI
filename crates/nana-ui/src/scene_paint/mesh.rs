@@ -20,6 +20,21 @@ const BUTT_CAP: f32 = 1.0;
 const MIN_SEGMENT_LEN_SQ: f32 = f32::EPSILON * f32::EPSILON;
 const MESH_VERTEX: &[ShaderStage] = &[ShaderStage::Vertex];
 const MESH_FRAGMENT: &[ShaderStage] = &[ShaderStage::Fragment];
+/// What the precompiled mesh stages must have been compiled from: the
+/// program and its resource layout key.
+#[cfg(test)]
+pub(super) fn precompiled_inputs() -> (String, u64) {
+    (
+        super::wgsl::joined(&[
+            super::wgsl::TRIANGLE,
+            super::wgsl::TRIANGLE_SOLID,
+            super::wgsl::PATH,
+            super::wgsl::COLOR,
+        ]),
+        mesh_layout_key(),
+    )
+}
+
 fn mesh_layout_key() -> u64 {
     ResourceTable::new(vec![
         LogicalBinding::new(0, LogicalBindingType::UniformBuffer, MESH_VERTEX)
@@ -661,16 +676,21 @@ impl MeshPipeline {
         device: &wgpu::Device,
         format: wgpu::TextureFormat,
         policy: Option<&nana_gpu::GpuDeviceState>,
+        precompiled: bool,
     ) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("nana-ui.scene.triangle.solid.shader"),
-            source: super::wgsl::source(&[
+        let shader = super::wgsl::Program::joined(
+            "nana-ui.scene.triangle.solid.shader",
+            &[
                 super::wgsl::TRIANGLE,
                 super::wgsl::TRIANGLE_SOLID,
                 super::wgsl::PATH,
                 super::wgsl::COLOR,
-            ]),
-        });
+            ],
+        );
+        #[cfg(target_os = "windows")]
+        let shader = shader.precompiled(&super::precompiled::MESH, precompiled, mesh_layout_key);
+        #[cfg(not(target_os = "windows"))]
+        let _ = precompiled;
         let bind_layout = if let Some(policy) = policy {
             let table = ResourceTable::new(vec![
                 LogicalBinding::new(0, LogicalBindingType::UniformBuffer, MESH_VERTEX)
@@ -1307,7 +1327,7 @@ fn mesh_bind_group(
 fn cached_mesh_pipeline(
     policy: Option<&nana_gpu::GpuDeviceState>,
     device: &wgpu::Device,
-    shader: &wgpu::ShaderModule,
+    shader: &super::wgsl::Program,
     layout: &wgpu::PipelineLayout,
     format: wgpu::TextureFormat,
     sample_count: u32,
@@ -1340,7 +1360,7 @@ fn cached_mesh_pipeline(
 fn cached_path_pipeline(
     policy: Option<&nana_gpu::GpuDeviceState>,
     device: &wgpu::Device,
-    shader: &wgpu::ShaderModule,
+    shader: &super::wgsl::Program,
     layout: &wgpu::PipelineLayout,
     format: wgpu::TextureFormat,
     sample_count: u32,
@@ -1382,122 +1402,138 @@ fn cached_path_pipeline(
 
 fn create_path_pipeline(
     device: &wgpu::Device,
-    shader: &wgpu::ShaderModule,
+    shader: &super::wgsl::Program,
     layout: &wgpu::PipelineLayout,
     format: wgpu::TextureFormat,
     sample_count: u32,
     fragment_entry: &str,
     blend: wgpu::BlendState,
 ) -> wgpu::RenderPipeline {
-    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("nana-ui.scene.path.pipeline"),
-        layout: Some(layout),
-        vertex: wgpu::VertexState {
-            module: shader,
-            entry_point: Some("path_vs_main"),
-            buffers: &[Some(wgpu::VertexBufferLayout {
-                array_stride: std::mem::size_of::<GpuPathVertex>() as u64,
-                step_mode: wgpu::VertexStepMode::Vertex,
-                attributes: &wgpu::vertex_attr_array!(
-                    0 => Float32x2,
-                    1 => Float32x2,
-                    2 => Float32,
-                    3 => Uint32,
-                    4 => Float32x4,
-                    5 => Float32x2,
-                    6 => Uint32,
-                    7 => Uint32,
-                ),
-            })],
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
+    shader.pipeline(
+        device,
+        "path_vs_main",
+        fragment_entry,
+        &[("PATH_SAMPLES", f64::from(sample_count))],
+        |vertex, fragment, constants| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("nana-ui.scene.path.pipeline"),
+                layout: Some(layout),
+                vertex: wgpu::VertexState {
+                    module: vertex,
+                    entry_point: Some("path_vs_main"),
+                    buffers: &[Some(wgpu::VertexBufferLayout {
+                        array_stride: std::mem::size_of::<GpuPathVertex>() as u64,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: &wgpu::vertex_attr_array!(
+                            0 => Float32x2,
+                            1 => Float32x2,
+                            2 => Float32,
+                            3 => Uint32,
+                            4 => Float32x4,
+                            5 => Float32x2,
+                            6 => Uint32,
+                            7 => Uint32,
+                        ),
+                    })],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: fragment,
+                    entry_point: Some(fragment_entry),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format,
+                        blend: Some(blend),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: wgpu::PipelineCompilationOptions {
+                        constants,
+                        ..Default::default()
+                    },
+                }),
+                // Tessellated triangles come in either winding.
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState {
+                    count: sample_count,
+                    mask: !0,
+                    alpha_to_coverage_enabled: false,
+                },
+                multiview_mask: None,
+                cache: None,
+            })
         },
-        fragment: Some(wgpu::FragmentState {
-            module: shader,
-            entry_point: Some(fragment_entry),
-            targets: &[Some(wgpu::ColorTargetState {
-                format,
-                blend: Some(blend),
-                write_mask: wgpu::ColorWrites::ALL,
-            })],
-            compilation_options: wgpu::PipelineCompilationOptions {
-                constants: &[("PATH_SAMPLES", f64::from(sample_count))],
-                ..Default::default()
-            },
-        }),
-        // Tessellated triangles come in either winding.
-        primitive: wgpu::PrimitiveState {
-            topology: wgpu::PrimitiveTopology::TriangleList,
-            cull_mode: None,
-            ..Default::default()
-        },
-        depth_stencil: None,
-        multisample: wgpu::MultisampleState {
-            count: sample_count,
-            mask: !0,
-            alpha_to_coverage_enabled: false,
-        },
-        multiview_mask: None,
-        cache: None,
-    })
+    )
 }
 
 fn mesh_pipeline(
     device: &wgpu::Device,
-    shader: &wgpu::ShaderModule,
+    shader: &super::wgsl::Program,
     layout: &wgpu::PipelineLayout,
     format: wgpu::TextureFormat,
     sample_count: u32,
 ) -> wgpu::RenderPipeline {
-    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("nana-ui.scene.triangle.solid.pipeline"),
-        layout: Some(layout),
-        vertex: wgpu::VertexState {
-            module: shader,
-            entry_point: Some("solid_vs_main"),
-            buffers: &[Some(wgpu::VertexBufferLayout {
-                array_stride: std::mem::size_of::<MeshInstance>() as u64,
-                step_mode: wgpu::VertexStepMode::Instance,
-                attributes: &wgpu::vertex_attr_array!(
-                    0 => Float32x4,
-                    1 => Float32x2,
-                    2 => Float32x2,
-                    3 => Float32x2,
-                    4 => Uint32,
-                    5 => Float32,
-                    6 => Float32x4,
-                    7 => Float32x2,
-                ),
-            })],
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
+    shader.pipeline(
+        device,
+        "solid_vs_main",
+        "solid_fs_main",
+        &[],
+        |vertex, fragment, _| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("nana-ui.scene.triangle.solid.pipeline"),
+                layout: Some(layout),
+                vertex: wgpu::VertexState {
+                    module: vertex,
+                    entry_point: Some("solid_vs_main"),
+                    buffers: &[Some(wgpu::VertexBufferLayout {
+                        array_stride: std::mem::size_of::<MeshInstance>() as u64,
+                        step_mode: wgpu::VertexStepMode::Instance,
+                        attributes: &wgpu::vertex_attr_array!(
+                            0 => Float32x4,
+                            1 => Float32x2,
+                            2 => Float32x2,
+                            3 => Float32x2,
+                            4 => Uint32,
+                            5 => Float32,
+                            6 => Float32x4,
+                            7 => Float32x2,
+                        ),
+                    })],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: fragment,
+                    // Both sample counts share the analytic-coverage fragment: MSAA
+                    // samples geometry, not the SDF, so it cannot own the edge.
+                    entry_point: Some("solid_fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format,
+                        // Premultiplied alpha, not BlendState::MAX (MAX would also
+                        // combine against dest quads in this pass).
+                        blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    front_face: wgpu::FrontFace::Cw,
+                    ..Default::default()
+                },
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState {
+                    count: sample_count,
+                    mask: !0,
+                    alpha_to_coverage_enabled: false,
+                },
+                multiview_mask: None,
+                cache: None,
+            })
         },
-        fragment: Some(wgpu::FragmentState {
-            module: shader,
-            // Both sample counts share the analytic-coverage fragment: MSAA
-            // samples geometry, not the SDF, so it cannot own the edge.
-            entry_point: Some("solid_fs_main"),
-            targets: &[Some(wgpu::ColorTargetState {
-                format,
-                // Premultiplied alpha, not BlendState::MAX (MAX would also
-                // combine against dest quads in this pass).
-                blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
-                write_mask: wgpu::ColorWrites::ALL,
-            })],
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-        }),
-        primitive: wgpu::PrimitiveState {
-            topology: wgpu::PrimitiveTopology::TriangleList,
-            front_face: wgpu::FrontFace::Cw,
-            ..Default::default()
-        },
-        depth_stencil: None,
-        multisample: wgpu::MultisampleState {
-            count: sample_count,
-            mask: !0,
-            alpha_to_coverage_enabled: false,
-        },
-        multiview_mask: None,
-        cache: None,
-    })
+    )
 }
 
 /// Graph / TimeSeries (`pattern: None`: empty dash, empty colors, cap != Square)

@@ -34,7 +34,7 @@ pub use self::text::SubpixelOrder;
 pub use self::text::TextGlyphCounters;
 pub(crate) mod url_texture_cache;
 mod validate;
-mod wgsl;
+pub(crate) mod wgsl;
 
 /// What a painter's image caches hold, beside the glyph atlas that
 /// [`TextGlyphCounters`] reports. Bytes are texels as allocated by the
@@ -728,16 +728,18 @@ impl SceneWgpuPainter {
         // otherwise compile them while a window waits: the dest's blits and
         // group composites, and the subpixel text program. Both stay in the
         // device's pipeline registry for that frame to find.
+        let precompiled = precompiled::runs_on(gpu, device);
         let (quads, meshes, icons, text, host_textures, backdrop, dest_pipelines) =
             std::thread::scope(|scope| {
                 let meshes = beside!(scope, "nana-paint-mesh", {
-                    MeshPipeline::new_with_policy(device, format, Some(policy))
+                    MeshPipeline::new_with_policy(device, format, Some(policy), precompiled)
                 });
                 let icons = beside!(scope, "nana-paint-icon", {
                     IconPipeline::new_with_policy(device, format, Some(policy))
                 });
                 let text = beside!(scope, "nana-paint-text", {
-                    let mut text = TextPipeline::new_with_policy(device, queue, format, policy);
+                    let mut text =
+                        TextPipeline::new_with_policy(device, queue, format, policy, precompiled);
                     text.prewarm_subpixel(device);
                     text
                 });
@@ -757,12 +759,8 @@ impl SceneWgpuPainter {
                 let backdrop = beside!(scope, "nana-paint-backdrop", {
                     BackdropPipeline::new(device, format, policy)
                 });
-                let quads = QuadPipeline::new_with_policy(
-                    device,
-                    format,
-                    Some(policy),
-                    precompiled::runs_on(gpu, device),
-                );
+                let quads =
+                    QuadPipeline::new_with_policy(device, format, Some(policy), precompiled);
                 (
                     quads,
                     meshes.join(),
@@ -880,12 +878,13 @@ impl SceneWgpuPainter {
         let gpu = &self.gpu;
         let policy = gpu.policy();
         let atlas_layout = self.text.atlas_layout();
+        let precompiled = precompiled::runs_on(gpu, device);
         std::thread::scope(|scope| {
             let meshes = beside!(scope, "nana-paint-mesh", {
-                MeshPipeline::new_with_policy(device, format, Some(policy))
+                MeshPipeline::new_with_policy(device, format, Some(policy), precompiled)
             });
             let text = beside!(scope, "nana-paint-text", {
-                TextProgram::new(device, format, atlas_layout, policy)
+                TextProgram::new(device, format, atlas_layout, policy, precompiled)
             });
             let host_textures = beside!(scope, "nana-paint-host-texture", {
                 HostTexturePipeline::new(device, queue, format, policy, gpu)
@@ -893,12 +892,7 @@ impl SceneWgpuPainter {
             let backdrop = beside!(scope, "nana-paint-backdrop", {
                 BackdropPipeline::new(device, format, policy)
             });
-            let quads = QuadPipeline::new_with_policy(
-                device,
-                format,
-                Some(policy),
-                precompiled::runs_on(gpu, device),
-            );
+            let quads = QuadPipeline::new_with_policy(device, format, Some(policy), precompiled);
             let icons = self.icons.pipeline_for(device, format, Some(policy));
             PipelineSet {
                 quads,

@@ -89,6 +89,18 @@ startup.cancel_takeover(ticket)?;    // 撤回接管请求并使旧 ticket 作�
 - 当可执行文件（`.exe`）同目录下存在 x64 的 `dxcompiler.dll`（建议 DXC `v1.8.2502` 或更新版本，来自 [DirectXShaderCompiler releases](https://github.com/microsoft/DirectXShaderCompiler/releases) 或 Windows SDK `10.0.26100`，无需附带 `dxil.dll`）时，宿主会按完整绝对路径优先加载它（不受 `PATH` 或当前工作目录污染）；
 - 未携带 `dxcompiler.dll` 时自动回退到系统内置的 FXC，也可通过环境变量 `WGPU_DX12_COMPILER`（`fxc` / `dxc` / `staticdxc` / `auto`）显式指定。
 
+### 预编译的 DXIL
+
+quad、mesh/path 与 text（含双源混合的子像素程序）三个家族的着色器阶段在框架内预先编译成 DXIL（shader model 6.0），随二进制发布（`scene_paint::precompiled`）。宿主在 DX12 适配器支持时请求 `PASSTHROUGH_SHADERS`，这些家族就直接加载 DXIL，不再经过 naga → HLSL → DXC；驱动只把 DXIL 降为自己的代码并跨启动缓存。实测（RTX 5060 Ti，release，DXC）：quad 家族 `1.26–1.30 s` → `1.4–1.6 ms`，mesh `199–248 ms` → `2 ms`，text `126–160 ms` → `2 ms`；painter 整体从全部编译 WGSL 的 `1.40–1.74 s`、只预编译 quad 时的约 `250 ms` 降到 `75–84 ms`，此时最慢的是 backdrop 与 dest 家族（约 `90–105 ms`）。
+
+- 只用框架自己的、编进二进制的 DXIL：passthrough 模块不经 naga 解析与校验，所以 DXIL 从不来自文件、皮肤或插件，应用与皮肤的着色器仍是 WGSL。
+- 每个家族记录 DXIL 是从哪段程序（设备实际拿到的、去掉注释的 WGSL 的哈希）和哪个资源布局编出来的；不一致、找不到对应阶段（入口点加管线常量），或驱动拒绝时，该家族照常编译 WGSL。测试同时锁定 wgpu 版本。
+- 着色器或布局改了之后重新生成：`NANA_DXC_PATH=<dxcompiler.dll> cargo test -p nana-ui --lib --features gpu,hosted,full -- --ignored regenerate_precompiled_dxil --test-threads=1`。它按 wgpu 在 DX12 上的方式逐家族建管线、截下 naga 写出的 HLSL、用 DXC 编译并经 DXIL 校验器检查，再写出 `generated.rs`；`precompiled_families_paint_what_their_programs_paint`（`--ignored`，需要 DX12）确认 DXIL 与 WGSL 画出的像素一致。
+
+### 按入口点裁剪的着色器 IR
+
+所有平台上，框架的场景程序（quad、mesh、text、icon、chart、backdrop、dest、HostTexture、运动求值，以及表面/文字材质程序）都由 `scene_paint::wgsl::Program` 交给设备：程序在第一次要用时解析、校验一次，每个入口点各自成为一个只含它能到达的函数、类型与常量的 naga 模块（`naga::compact`），以 `ShaderSource::Naga` 交给 wgpu。共用入口点的管线共用模块；设备只校验裁剪后的 IR；wgpu-hal 不再为每个管线阶段克隆、裁剪并重新校验整个模块；每条管线只留着自己阶段的代码（Metal 按管线生成 MSL，模块要一直留着）。例如 blit 程序有 39 个入口点、658 个表达式，一个阶段只带 5–424 个；mesh 一个阶段 53–737 个（整个程序 1 518 个），chart 411–1 282 个（2 593 个）。切下的模块不再声明它用不到的覆盖常量，管线只设置该阶段仍声明的常量（`Stage::constants`）。程序在这里解析或校验失败时（框架自己的不会，测试逐个编译）整体以 WGSL 交给设备，由设备照旧报错。
+
 ## 时间线观测指标
 
 `StartupStatus::timeline` 记录从宿主入口（`run_runtime`）起算的六个关键里程碑：`splash_committed` → `ui_ready` → `takeover_requested` → `first_frame_submitted` → `handoff_completed` → `splash_released`；`StartupStatus::work` 与 `nana_diagnostics::framework::host`（`STARTUP_PHASE`、`SPLASH_OUTCOME`、`host.startup.device_request`、`host.startup.painter_build` 等）同步记录事件线程最长单次阻塞、设备请求耗时、painter 编译耗时与存活原生资源数（交接完成后 `SplashWork::live_resources` 严格归零）。

@@ -16,37 +16,6 @@ use super::{
 };
 use crate::{PhysicalRect, gpu_work::ManagedBuffer};
 
-/// The quad program as its files spell it, comments included. The
-/// precompiled stages record a hash of this text (`precompiled/generated.rs`),
-/// so it stays the identity of what they were compiled from whatever the
-/// build strips out of the copy it embeds.
-#[cfg(any(test, target_os = "windows"))]
-macro_rules! quad_source {
-    () => {
-        concat!(
-            include_str!("shader/motion.wgsl"),
-            "\n",
-            include_str!("shader/color.wgsl"),
-            "\n",
-            include_str!("shader/quad.wgsl"),
-            "\n",
-            include_str!("shader/vertex.wgsl"),
-            "\n",
-            include_str!("shader/quad_paint_data.wgsl"),
-            "\n",
-            include_str!("shader/quad_paint.wgsl"),
-            "\n",
-            include_str!("shader/quad_solid.wgsl"),
-        )
-    };
-}
-
-/// [`quad_source`]'s hash, worked out when this crate is compiled: the text
-/// itself is not in the binary.
-#[cfg(target_os = "windows")]
-#[allow(long_running_const_eval)]
-const QUAD_SOURCE_HASH: u64 = super::precompiled::fnv1a(quad_source!().as_bytes());
-
 /// The quad program, joined from its files.
 fn quad_shader() -> String {
     super::wgsl::joined(&[
@@ -79,27 +48,12 @@ const PAINT_URL_PREMULT: u32 = 512;
 const PAINT_GRADIENT_SRGB: u32 = 1024;
 const QUAD_VERTEX_FRAGMENT: &[ShaderStage] = &[ShaderStage::Vertex, ShaderStage::Fragment];
 const QUAD_FRAGMENT: &[ShaderStage] = &[ShaderStage::Fragment];
-/// What the precompiled quad stages must have been compiled from: the WGSL,
-/// its resource layout key, and the instance attributes its vertex stage reads.
+/// What the precompiled quad stages must have been compiled from: the
+/// program, its resource layout key, and the instance attributes its vertex
+/// stage reads.
 #[cfg(test)]
 pub(super) fn precompiled_inputs() -> (String, u64, usize) {
-    (
-        quad_source!().to_owned(),
-        quad_layout_key(),
-        SOLID_ATTRIBUTES.len(),
-    )
-}
-
-/// The program a device compiles is the source the precompiled stages
-/// answer for, less its comments: the two lists of files are the same.
-#[cfg(test)]
-#[test]
-fn the_embedded_quad_program_is_its_source_without_comments() {
-    let source = quad_source!();
-    let len = super::wgsl::strip::<0>(source.as_bytes()).1;
-    let (bytes, written) = super::wgsl::strip::<{ 128 * 1024 }>(source.as_bytes());
-    assert_eq!(written, len);
-    assert_eq!(std::str::from_utf8(&bytes[..len]).unwrap(), quad_shader());
+    (quad_shader(), quad_layout_key(), SOLID_ATTRIBUTES.len())
 }
 
 fn quad_layout_key() -> u64 {
@@ -274,26 +228,12 @@ impl QuadPipeline {
         policy: Option<&nana_gpu::GpuDeviceState>,
         precompiled: bool,
     ) -> Self {
-        // Only a Windows build names the stages, which is what keeps their
-        // DXIL out of other targets' binaries. A `cfg!` in this condition did
-        // not: `precompiled` is read again inside the closures below, where
-        // the optimizer no longer knows it is false, and the stages stayed
-        // linked (61 KiB on macOS).
+        // Parsed only when a pipeline compiles from WGSL after all.
+        let program = super::wgsl::Program::new("nana-ui.scene.quad.solid.shader", quad_shader());
         #[cfg(target_os = "windows")]
-        let precompiled =
-            precompiled && super::precompiled::QUAD.fresh_hash(QUAD_SOURCE_HASH, quad_layout_key());
+        let program = program.precompiled(&super::precompiled::QUAD, precompiled, quad_layout_key);
         #[cfg(not(target_os = "windows"))]
         let _ = precompiled;
-        // Parsed only when a pipeline compiles from WGSL after all.
-        let shader = std::cell::OnceCell::new();
-        let wgsl = || {
-            shader.get_or_init(|| {
-                device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                    label: Some("nana-ui.scene.quad.solid.shader"),
-                    source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Owned(quad_shader())),
-                })
-            })
-        };
         // Trilinear. A default (`ImageSampling::Resample`) texture has one
         // level at its painted size, so this is plain bilinear for it; only an
         // `ImageSampling::Mipmap` texture has levels to blend.
@@ -461,18 +401,7 @@ impl QuadPipeline {
             bind_group_layouts: &[Some(&bind_layout), Some(&motion_layout)],
             immediate_size: 0,
         });
-        let solid = |samples| {
-            #[cfg(target_os = "windows")]
-            if precompiled
-                && let Some(pipeline) =
-                    super::precompiled::pipeline(device, &super::precompiled::QUAD, |vs, fs| {
-                        solid_pipeline_from(device, vs, fs, &layout, format, samples)
-                    })
-            {
-                return pipeline;
-            }
-            solid_pipeline(device, wgsl(), &layout, format, samples)
-        };
+        let solid = |samples| solid_pipeline(device, &program, &layout, format, samples);
         let pipeline = cached_solid_pipeline(policy, format, 1, 1, || solid(1));
         let pipeline_msaa = cached_solid_pipeline(policy, format, 4, 2, || solid(4));
         let instance_capacity = INITIAL_INSTANCES;
@@ -578,8 +507,8 @@ impl QuadPipeline {
                 // material only uses one slot; bind a live instance to the other.
                 let [bind, motion, material] = &layouts;
                 let layout=device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label:Some("surface material"), bind_group_layouts:&[Some(bind), Some(motion), Some(material), Some(material)], immediate_size:0 });
-                let shader=device.create_shader_module(wgpu::ShaderModuleDescriptor { label:Some("surface material"), source:wgpu::ShaderSource::Wgsl(source.into()) });
-                Some(solid_pipeline(&device, &shader, &layout, format, samples))
+                let program = super::wgsl::Program::new("surface material", source);
+                Some(solid_pipeline(&device, &program, &layout, format, samples))
             });
             // Still compiling: paint natively and ask again next frame.
             if let super::material::MaterialPipeline::Ready(pipeline) = built {
@@ -2185,12 +2114,20 @@ fn cached_solid_pipeline(
 
 fn solid_pipeline(
     device: &wgpu::Device,
-    shader: &wgpu::ShaderModule,
+    program: &super::wgsl::Program,
     layout: &wgpu::PipelineLayout,
     format: wgpu::TextureFormat,
     sample_count: u32,
 ) -> wgpu::RenderPipeline {
-    solid_pipeline_from(device, shader, shader, layout, format, sample_count)
+    program.pipeline(
+        device,
+        "solid_vs_main",
+        "solid_fs_main",
+        &[],
+        |vertex, fragment, _| {
+            solid_pipeline_from(device, vertex, fragment, layout, format, sample_count)
+        },
+    )
 }
 
 /// One [`SolidInstance`], as the solid vertex stage reads it.

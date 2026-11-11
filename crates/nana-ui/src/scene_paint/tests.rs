@@ -14267,22 +14267,83 @@ mod precompiled_quads {
         readback_rgba(device, queue, encoder, &texture, 200, 120)
     }
 
+    /// A node painting filled and stroked paths: the mesh family.
+    fn paths_scene() -> UiScene {
+        use nana_ui_runtime::Stack;
+        let mut context = AppContext::new();
+        let document = DocumentId::new(1).unwrap();
+        let node = context
+            .create_component(
+                document,
+                Stack::column(0.0)
+                    .with_layout(|layout| {
+                        layout.width = Some(LengthSpec::Px(200.0));
+                        layout.height = Some(LengthSpec::Px(120.0));
+                    })
+                    .painter(PaintFn(|cx: &mut nana_ui_runtime::PaintContext<'_>| {
+                        let mut disc = nana_ui_runtime::PaintPath::new();
+                        disc.ellipse(LayoutBox {
+                            x: 20.0,
+                            y: 20.0,
+                            width: 80.0,
+                            height: 80.0,
+                        });
+                        cx.fill_path(&disc, [0.9, 0.3, 0.2, 1.0]);
+                        cx.translate(140.0, 60.0);
+                        cx.rotate(0.4);
+                        let mut square = nana_ui_runtime::PaintPath::new();
+                        square.rect(LayoutBox {
+                            x: -30.0,
+                            y: -30.0,
+                            width: 60.0,
+                            height: 60.0,
+                        });
+                        cx.fill_path(
+                            &square,
+                            nana_ui_runtime::Gradient::linear([-30.0, 0.0], [30.0, 0.0])
+                                .stop(0.0, [0.1, 0.4, 0.9, 1.0])
+                                .stop(1.0, [0.9, 0.9, 0.2, 0.7]),
+                        );
+                    })),
+            )
+            .unwrap();
+        context.resolve_styles(&[node.stable_id()]).unwrap();
+        context
+            .layout_document(document, nana_ui_runtime::LayoutViewport::new(200.0, 120.0))
+            .unwrap();
+        let mut scene = UiScene::new();
+        scene.apply_delta(context.world().extract_document(document), []);
+        scene
+    }
+
     #[test]
     #[ignore = "needs a DX12 adapter that takes passthrough shaders"]
-    fn precompiled_quads_paint_what_wgsl_quads_paint() {
-        let scene = quads_scene();
+    fn precompiled_families_paint_what_their_programs_paint() {
         let loaded =
             || super::super::precompiled::tests::LOADED.load(std::sync::atomic::Ordering::Relaxed);
-        let before = loaded();
-        let from_dxil = paint(&dx12(true), &scene);
-        assert!(loaded() > before, "the precompiled quad stages were used");
-        let from_wgsl = paint(&dx12(false), &scene);
-        let differing = from_wgsl
-            .chunks(4)
-            .zip(from_dxil.chunks(4))
-            .filter(|(a, b)| a.iter().zip(b.iter()).any(|(x, y)| x.abs_diff(*y) > 1))
-            .count();
-        assert_eq!(differing, 0, "of {} pixels", from_wgsl.len() / 4);
+        for (name, scene) in [
+            ("quads", quads_scene()),
+            ("paths", paths_scene()),
+            ("label", label_scene("Precompiled text")),
+        ] {
+            let before = loaded();
+            let from_dxil = paint(&dx12(true), &scene);
+            // Quad, mesh and text pipelines, the subpixel text one included
+            // where the adapter blends two sources.
+            assert!(
+                loaded() - before >= 10,
+                "{name}: the precompiled stages were used ({} pipelines)",
+                loaded() - before
+            );
+            let from_wgsl = paint(&dx12(false), &scene);
+            assert!(from_wgsl.chunks(4).any(|pixel| pixel != [0, 0, 0, 255]));
+            let differing = from_wgsl
+                .chunks(4)
+                .zip(from_dxil.chunks(4))
+                .filter(|(a, b)| a.iter().zip(b.iter()).any(|(x, y)| x.abs_diff(*y) > 1))
+                .count();
+            assert_eq!(differing, 0, "{name}: of {} pixels", from_wgsl.len() / 4);
+        }
     }
 }
 

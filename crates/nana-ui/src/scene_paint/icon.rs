@@ -291,17 +291,15 @@ fn icon_pipeline(
         immediate_size: 0,
     });
     let create_pipeline = || {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("nana-ui.scene.icon.shader"),
-            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Owned(
-                [super::wgsl::COLOR, ICON_STAGES].concat(),
-            )),
-        });
+        let shader = super::wgsl::Program::new(
+            "nana-ui.scene.icon.shader",
+            [super::wgsl::COLOR, ICON_STAGES].concat(),
+        );
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("nana-ui.scene.icon.pipeline"),
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {
-                module: &shader,
+                module: &shader.stage(device, "vs_main").module,
                 entry_point: Some("vs_main"),
                 buffers: &[Some(wgpu::VertexBufferLayout {
                     array_stride: std::mem::size_of::<IconVertex>() as u64,
@@ -319,7 +317,7 @@ fn icon_pipeline(
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             },
             fragment: Some(wgpu::FragmentState {
-                module: &shader,
+                module: &shader.stage(device, "fs_main").module,
                 entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
                     format,

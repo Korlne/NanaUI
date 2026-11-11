@@ -1487,10 +1487,7 @@ impl GpuTexturePipeline {
         policy: Option<&nana_gpu::GpuDeviceState>,
         gpu: Option<&GpuContext>,
     ) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("nana-ui host texture shader"),
-            source: wgpu::ShaderSource::Wgsl(SOURCE.into()),
-        });
+        let shader = crate::scene_paint::wgsl::Program::new("nana-ui host texture shader", SOURCE);
         let logical_layout = gpu.map(|gpu| {
             let table = ResourceTable::new(
                 [
@@ -1574,13 +1571,13 @@ impl GpuTexturePipeline {
                 label: Some("nana-ui host texture pipeline"),
                 layout: Some(&pipeline_layout),
                 vertex: wgpu::VertexState {
-                    module: &shader,
+                    module: &shader.stage(device, "vertex_main").module,
                     entry_point: Some("vertex_main"),
                     buffers: &[],
                     compilation_options: wgpu::PipelineCompilationOptions::default(),
                 },
                 fragment: Some(wgpu::FragmentState {
-                    module: &shader,
+                    module: &shader.stage(device, "fragment_main").module,
                     entry_point: Some("fragment_main"),
                     targets: &[Some(wgpu::ColorTargetState {
                         format,

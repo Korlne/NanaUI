@@ -615,10 +615,7 @@ fn create_eval_pipeline(
     motion: &wgpu::BindGroupLayout,
     format: wgpu::TextureFormat,
 ) -> Option<wgpu::RenderPipeline> {
-    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("nana-ui.scene.motion.eval.shader"),
-        source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(super::wgsl::MOTION)),
-    });
+    let shader = super::wgsl::Program::new("nana-ui.scene.motion.eval.shader", super::wgsl::MOTION);
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("nana-ui.scene.motion.eval.pipeline"),
         bind_group_layouts: &[Some(dummy), Some(motion)],
@@ -629,13 +626,13 @@ fn create_eval_pipeline(
             label: Some("nana-ui.scene.motion.eval"),
             layout: Some(&layout),
             vertex: wgpu::VertexState {
-                module: &shader,
+                module: &shader.stage(device, "motion_eval_vs").module,
                 entry_point: Some("motion_eval_vs"),
                 buffers: &[],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             },
             fragment: Some(wgpu::FragmentState {
-                module: &shader,
+                module: &shader.stage(device, "motion_eval_fs").module,
                 entry_point: Some("motion_eval_fs"),
                 targets: &[Some(wgpu::ColorTargetState {
                     format,
