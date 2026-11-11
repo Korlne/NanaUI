@@ -2507,6 +2507,7 @@ impl AppContext {
     pub(crate) fn share_layouts<C: ComponentView>(&mut self, component: &mut C) {
         component.fit_framework_limits();
         component.share_layouts(&mut |layout| self.world.share_layout(layout));
+        component.share_style(&mut |style| self.world.share_node_style(style));
     }
 
     /// Bind a typed component view onto an existing world node.

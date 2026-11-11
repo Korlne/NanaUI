@@ -561,6 +561,13 @@ impl UiWorld {
         self.layouts.intern(layout);
     }
 
+    /// Replace `style` with an equal one recently written, or remember it:
+    /// a component that holds its style as an `Arc` and the record written
+    /// from it then hold one between them.
+    pub(crate) fn share_node_style(&mut self, style: &mut Arc<NodeStyle>) {
+        self.node_styles.intern(style);
+    }
+
     /// Write a node's authored style and keep its effective style and
     /// resolved layout in step.
     ///
@@ -1337,19 +1344,93 @@ impl NodeStyleInterner {
     /// `style` as a record holds it: an equal recent one, or a new `Arc`
     /// remembered.
     pub(crate) fn share(&mut self, style: NodeStyle) -> Arc<NodeStyle> {
-        if let Some(kept) = self
+        if let Some(kept) = self.find(&style) {
+            return kept;
+        }
+        let style = Arc::new(style);
+        self.remember(&style);
+        style
+    }
+
+    /// [`Self::share`] for a style already in an `Arc`.
+    pub(crate) fn intern(&mut self, style: &mut Arc<NodeStyle>) {
+        if self
             .recent
             .iter()
             .flatten()
-            .find(|kept| Arc::ptr_eq(&kept.layout, &style.layout) && ***kept == style)
+            .any(|kept| Arc::ptr_eq(kept, style))
         {
-            return Arc::clone(kept);
+            return;
         }
-        let style = Arc::new(style);
-        self.recent[self.next] = Some(Arc::clone(&style));
-        self.next = (self.next + 1) % RECENT_STYLES;
-        style
+        match self.find(style) {
+            Some(kept) => *style = kept,
+            None => self.remember(style),
+        }
     }
+
+    fn find(&self, style: &NodeStyle) -> Option<Arc<NodeStyle>> {
+        self.recent
+            .iter()
+            .flatten()
+            .find(|kept| same_style_on_one_layout(kept, style))
+            .cloned()
+    }
+
+    fn remember(&mut self, style: &Arc<NodeStyle>) {
+        self.recent[self.next] = Some(Arc::clone(style));
+        self.next = (self.next + 1) % RECENT_STYLES;
+    }
+}
+
+/// Whether `kept` and `style` are equal, given that they hold the very same
+/// layout `Arc`: the layout is not compared again (`Arc<LayoutStyle>`'s `==`
+/// compares what it points to), the rest field by field. The pattern names
+/// every field, so a field added to [`NodeStyle`] has to be added here.
+fn same_style_on_one_layout(kept: &NodeStyle, style: &NodeStyle) -> bool {
+    let NodeStyle {
+        layout,
+        foreground,
+        background,
+        border,
+        ring,
+        radius,
+        corner_radii,
+        shape,
+        control_height,
+        control_padding_x,
+        control_padding_y,
+        surface_padding,
+        square,
+        type_role,
+        type_weight,
+        gap_step,
+        padding_step,
+        interaction,
+        text_horizontal_alignment,
+        text_vertical_alignment,
+        painter,
+    } = kept;
+    Arc::ptr_eq(layout, &style.layout)
+        && *foreground == style.foreground
+        && *background == style.background
+        && *border == style.border
+        && *ring == style.ring
+        && *radius == style.radius
+        && *corner_radii == style.corner_radii
+        && *shape == style.shape
+        && *control_height == style.control_height
+        && *control_padding_x == style.control_padding_x
+        && *control_padding_y == style.control_padding_y
+        && *surface_padding == style.surface_padding
+        && *square == style.square
+        && *type_role == style.type_role
+        && *type_weight == style.type_weight
+        && *gap_step == style.gap_step
+        && *padding_step == style.padding_step
+        && *interaction == style.interaction
+        && *text_horizontal_alignment == style.text_horizontal_alignment
+        && *text_vertical_alignment == style.text_vertical_alignment
+        && *painter == style.painter
 }
 
 /// How many recent layouts a world keeps to share. Siblings built alike

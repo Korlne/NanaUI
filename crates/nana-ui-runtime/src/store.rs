@@ -386,6 +386,13 @@ fn paged_index(id: StableNodeId) -> Option<usize> {
     (raw < PAGED_IDS).then_some(raw as usize)
 }
 
+/// The id whose slot `index` is: [`paged_index`] backwards. A slot holds a
+/// value only at an id's index, and ids are never zero.
+#[inline]
+fn slot_id(index: usize) -> StableNodeId {
+    StableNodeId::new(index as u64).expect("a held slot is an id's")
+}
+
 /// A map keyed by node, laid out as [`NodeTable`] lays out the records:
 /// ids index slots ([`paged::Slots`]: one run while they are close together,
 /// pages once they are not), the few past [`PAGED_IDS`] fall back to a hash
@@ -395,12 +402,17 @@ fn paged_index(id: StableNodeId) -> Option<usize> {
 /// random.
 ///
 /// The API follows `HashMap<StableNodeId, V>`, so a table holding about one
-/// entry per node can change type without its users changing. Iteration is
-/// in id order, then the overflow's; nothing may depend on either. What it
-/// holds follows the entries in it, not the highest id it has seen.
+/// entry per node can change type without its users changing, except that
+/// iteration hands out ids by value. Iteration is in id order, then the
+/// overflow's; nothing may depend on either. What it holds follows the
+/// entries in it, not the highest id it has seen.
+///
+/// A slot holds the value alone: its index is the id. Holding the id beside
+/// it took 8 bytes a slot in every table, and more where the value is small
+/// (a context kind of one byte took a slot of 16).
 #[derive(Clone)]
 pub(crate) struct DenseNodeMap<V> {
-    paged: paged::Slots<(StableNodeId, V)>,
+    paged: paged::Slots<V>,
     overflow: crate::NodeMap<V>,
 }
 
@@ -421,7 +433,7 @@ impl<V: std::fmt::Debug> std::fmt::Debug for DenseNodeMap<V> {
 
 impl<V: PartialEq> PartialEq for DenseNodeMap<V> {
     fn eq(&self, other: &Self) -> bool {
-        self.len() == other.len() && self.iter().all(|(id, value)| other.get(id) == Some(value))
+        self.len() == other.len() && self.iter().all(|(id, value)| other.get(&id) == Some(value))
     }
 }
 
@@ -447,7 +459,7 @@ impl<V> DenseNodeMap<V> {
     #[inline(always)]
     pub(crate) fn get(&self, id: &StableNodeId) -> Option<&V> {
         match self.paged.run_slot(id.get() as usize) {
-            Some(slot) => slot.as_ref().map(|(_, value)| value),
+            Some(slot) => slot.as_ref(),
             None => self.past_run(id),
         }
     }
@@ -456,7 +468,7 @@ impl<V> DenseNodeMap<V> {
     #[inline(never)]
     fn past_run(&self, id: &StableNodeId) -> Option<&V> {
         match paged_index(*id) {
-            Some(index) => self.paged.past_run(index).map(|(_, value)| value),
+            Some(index) => self.paged.past_run(index),
             None => self.overflow.get(id),
         }
     }
@@ -465,11 +477,7 @@ impl<V> DenseNodeMap<V> {
     pub(crate) fn get_mut(&mut self, id: &StableNodeId) -> Option<&mut V> {
         let raw = id.get() as usize;
         if self.paged.run_slot(raw).is_some() {
-            return self
-                .paged
-                .run_slot_mut(raw)
-                .and_then(|slot| slot.as_mut())
-                .map(|(_, value)| value);
+            return self.paged.run_slot_mut(raw).and_then(|slot| slot.as_mut());
         }
         self.past_run_mut(id)
     }
@@ -477,7 +485,7 @@ impl<V> DenseNodeMap<V> {
     #[inline(never)]
     fn past_run_mut(&mut self, id: &StableNodeId) -> Option<&mut V> {
         match paged_index(*id) {
-            Some(index) => self.paged.past_run_mut(index).map(|(_, value)| value),
+            Some(index) => self.paged.past_run_mut(index),
             None => self.overflow.get_mut(id),
         }
     }
@@ -488,17 +496,14 @@ impl<V> DenseNodeMap<V> {
 
     pub(crate) fn insert(&mut self, id: StableNodeId, value: V) -> Option<V> {
         match paged_index(id) {
-            Some(index) => self
-                .paged
-                .insert(index, (id, value))
-                .map(|(_, value)| value),
+            Some(index) => self.paged.insert(index, value),
             None => self.overflow.insert(id, value),
         }
     }
 
     pub(crate) fn remove(&mut self, id: &StableNodeId) -> Option<V> {
         match paged_index(*id) {
-            Some(index) => self.paged.remove(index).map(|(_, value)| value),
+            Some(index) => self.paged.remove(index),
             None => self.overflow.remove(id),
         }
     }
@@ -541,11 +546,10 @@ impl<V> DenseNodeMap<V> {
     }
 
     pub(crate) fn iter(&self) -> DenseIter<'_, V> {
-        fn entry<V>((_, slot): (usize, &(StableNodeId, V))) -> (&StableNodeId, &V) {
-            (&slot.0, &slot.1)
+        DenseIter {
+            paged: self.paged.iter(),
+            overflow: self.overflow.iter(),
         }
-        let entry: fn((usize, &(StableNodeId, V))) -> (&StableNodeId, &V) = entry::<V>;
-        self.paged.iter().map(entry).chain(self.overflow.iter())
     }
 
     #[cfg(test)]
@@ -554,7 +558,8 @@ impl<V> DenseNodeMap<V> {
     }
 
     pub(crate) fn retain(&mut self, mut keep: impl FnMut(&StableNodeId, &mut V) -> bool) {
-        self.paged.retain(|(id, value)| keep(id, value));
+        self.paged
+            .retain(|index, value| keep(&slot_id(index), value));
         self.overflow.retain(|id, value| keep(id, value));
     }
 
@@ -624,26 +629,39 @@ impl<V> FromIterator<(StableNodeId, V)> for DenseNodeMap<V> {
 impl<V> IntoIterator for DenseNodeMap<V> {
     type Item = (StableNodeId, V);
     type IntoIter = std::iter::Chain<
-        paged::SlotsIntoIter<(StableNodeId, V)>,
+        std::iter::Map<paged::SlotsIntoIter<V>, fn((usize, V)) -> (StableNodeId, V)>,
         <crate::NodeMap<V> as IntoIterator>::IntoIter,
     >;
 
     fn into_iter(self) -> Self::IntoIter {
-        self.paged.into_iter().chain(self.overflow)
+        fn entry<V>((index, value): (usize, V)) -> (StableNodeId, V) {
+            (slot_id(index), value)
+        }
+        let entry: fn((usize, V)) -> (StableNodeId, V) = entry::<V>;
+        self.paged.into_iter().map(entry).chain(self.overflow)
     }
 }
 
-/// [`DenseNodeMap::iter`].
-pub(crate) type DenseIter<'a, V> = std::iter::Chain<
-    std::iter::Map<
-        paged::SlotsIter<'a, (StableNodeId, V)>,
-        fn((usize, &'a (StableNodeId, V))) -> (&'a StableNodeId, &'a V),
-    >,
-    <&'a crate::NodeMap<V> as IntoIterator>::IntoIter,
->;
+/// [`DenseNodeMap::iter`]: each entry's id by value, as no slot holds it.
+pub(crate) struct DenseIter<'a, V> {
+    paged: paged::SlotsIter<'a, V>,
+    overflow: <&'a crate::NodeMap<V> as IntoIterator>::IntoIter,
+}
+
+impl<'a, V> Iterator for DenseIter<'a, V> {
+    type Item = (StableNodeId, &'a V);
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.paged.next() {
+            Some((index, value)) => Some((slot_id(index), value)),
+            None => self.overflow.next().map(|(id, value)| (*id, value)),
+        }
+    }
+}
 
 impl<'a, V> IntoIterator for &'a DenseNodeMap<V> {
-    type Item = (&'a StableNodeId, &'a V);
+    type Item = (StableNodeId, &'a V);
     type IntoIter = DenseIter<'a, V>;
 
     fn into_iter(self) -> Self::IntoIter {
@@ -1458,7 +1476,7 @@ impl NodeStore {
             .text_nodes
             .iter()
             .filter(|(_, text)| text.stamp().is_some_and(|stamp| stamp.measured))
-            .map(|(id, _)| *id);
+            .map(|(id, _)| id);
         let measuring = self
             .visuals
             .iter()

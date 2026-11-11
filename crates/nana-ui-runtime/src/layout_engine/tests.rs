@@ -5155,7 +5155,7 @@ fn scoped_step_matches_full(
         // default. Absent and zero are the same statement here: the retained
         // map only ever loses an entry by never having had one, so this cannot
         // hide a box the scoped pass dropped.
-        let cached = cached.get(node).copied().unwrap_or_default();
+        let cached = cached.get(&node).copied().unwrap_or_default();
         assert_eq!(
             cached, *box_,
             "{label}: scoped layout diverged from full recompute at {node:?}"
@@ -5221,7 +5221,7 @@ fn reversed_axes_keep_the_sequential_replay() {
             let cached = &retained.documents[&document].page_boxes(&world);
             for (node, box_) in &expected {
                 assert_eq!(
-                    cached.get(node).copied().unwrap_or_default(),
+                    cached.get(&node).copied().unwrap_or_default(),
                     *box_,
                     "{} step {step}: scoped layout diverged at {node:?}",
                     shape.name

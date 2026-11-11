@@ -1491,7 +1491,7 @@ impl DocumentLayoutCache {
     /// Every retained box on the page.
     #[cfg(test)]
     fn page_boxes(&self, world: &UiWorld) -> crate::store::DenseNodeMap<LayoutBox> {
-        let ids: Vec<_> = self.boxes.iter().map(|(id, _)| *id).collect();
+        let ids: Vec<_> = self.boxes.iter().map(|(id, _)| id).collect();
         page_boxes(world, &ids, |id| {
             Some((
                 self.boxes.get(&id).copied()?,
@@ -2770,7 +2770,7 @@ impl PassOutput {
     /// Every box, in id order.
     fn sorted(&self) -> Vec<(StableNodeId, LayoutBox)> {
         let mut emitted: Vec<_> = match self {
-            Self::Dense(map) => map.iter().map(|(&id, &layout)| (id, layout)).collect(),
+            Self::Dense(map) => map.iter().map(|(id, &layout)| (id, layout)).collect(),
             Self::Sparse(map) => map.iter().map(|(&id, &layout)| (id, layout)).collect(),
         };
         emitted.sort_unstable_by_key(|(id, _)| *id);

@@ -14622,3 +14622,56 @@ fn a_composed_anchored_menu_walks_its_stops_and_closes_on_a_command() {
             .unwrap()
     );
 }
+
+/// Stacks built alike hold one style between them and the records written
+/// from them: a page of cells keeps one style, not a copy a node.
+#[test]
+fn equal_stacks_share_one_style_with_their_records() {
+    let mut context = AppContext::new();
+    let document = DocumentId::new(917).unwrap();
+    let root = context
+        .create_component(document, Stack::column(0.0))
+        .unwrap();
+    let cells: Vec<_> = (0..3)
+        .map(|_| {
+            let cell = context
+                .create_detached_component(
+                    document,
+                    Stack::row(4.0).surface(nana_ui_core::SemanticColorRole::Surface),
+                )
+                .unwrap();
+            context.append_child(root, cell).unwrap();
+            cell.id
+        })
+        .collect();
+    let other = context
+        .create_detached_component(
+            document,
+            Stack::row(4.0).surface(nana_ui_core::SemanticColorRole::Background),
+        )
+        .unwrap();
+    context.append_child(root, other).unwrap();
+    let other = other.id;
+    let view_style = |id: StableNodeId| {
+        context
+            .views
+            .get(&id)
+            .and_then(|view| view.downcast_ref::<Stack>())
+            .map(|stack| stack.style_ref() as *const NodeStyle)
+            .unwrap()
+    };
+    let record_style =
+        |id: StableNodeId| context.world().node_style(id).unwrap() as *const NodeStyle;
+    let shared = view_style(cells[0]);
+    for &cell in &cells {
+        assert_eq!(view_style(cell), shared, "{cell:?}: view");
+        assert_eq!(record_style(cell), shared, "{cell:?}: record");
+    }
+    // A different style is its own, in the view and the record alike.
+    assert_ne!(view_style(other), shared);
+    assert_eq!(record_style(other), view_style(other));
+    assert_eq!(
+        context.world().node_style(other).unwrap().background,
+        Some(nana_ui_core::SemanticColorRole::Background)
+    );
+}
