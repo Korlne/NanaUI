@@ -105,6 +105,9 @@ pub struct Toast {
     /// The close button's accessible name; `None` says the framework's
     /// (`toast.close`). Assembled toasts only.
     pub close_label: Option<Arc<str>>,
+    /// Its words were already announced (where it was shown before): changes
+    /// inside it are not announced again. Assembled toasts only.
+    pub quiet: bool,
     pub style: NodeStyle,
     /// The nodes [`AppContext::assemble_toast`] built; `None` for a bare
     /// toast.
@@ -123,6 +126,7 @@ impl Toast {
             action: None,
             icon: None,
             close_label: None,
+            quiet: false,
             style: NodeStyle::default(),
             parts: None,
         }
@@ -163,6 +167,13 @@ impl Toast {
     /// Name the close button for assistive technology. Assembled toasts only.
     pub fn close_label(mut self, label: impl Into<Arc<str>>) -> Self {
         self.close_label = Some(label.into());
+        self
+    }
+
+    /// Say nothing when its words change; see [`Self::quiet`](field@Self::quiet).
+    /// Assembled toasts only.
+    pub fn quiet(mut self, quiet: bool) -> Self {
+        self.quiet = quiet;
         self
     }
 
@@ -330,8 +341,11 @@ impl Toast {
             },
         );
         // A title rewritten in place (a task that finished) is announced by
-        // the platform's live region; danger interrupts.
-        let live = if self.tone == ToastTone::Danger {
+        // the platform's live region; danger interrupts. Words already said
+        // stay quiet, through every projection, not just the first.
+        let live = if self.quiet {
+            AccessibilityLive::Off
+        } else if self.tone == ToastTone::Danger {
             AccessibilityLive::Assertive
         } else {
             AccessibilityLive::Polite
