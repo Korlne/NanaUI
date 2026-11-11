@@ -1892,6 +1892,20 @@ impl Global {
         }
     }
 
+    /// NanaUI fork: make `cache_id` the cache that pipelines created on
+    /// `device_id` without one use (`None` clears it). The device holds the
+    /// cache weakly. An invalid cache (one whose creation failed) clears it.
+    pub fn device_set_default_pipeline_cache(
+        &self,
+        device_id: DeviceId,
+        cache_id: Option<id::PipelineCacheId>,
+    ) -> Result<(), DeviceError> {
+        api_log!("Device::set_default_pipeline_cache {device_id:?} {cache_id:?}");
+        let device = self.hub.devices.get(device_id);
+        let cache = cache_id.and_then(|id| self.hub.pipeline_caches.get(id).get().ok());
+        device.set_default_pipeline_cache(cache.as_ref())
+    }
+
     pub fn pipeline_cache_get_data(&self, id: id::PipelineCacheId) -> Option<Vec<u8>> {
         use crate::pipeline_cache;
         api_log!("PipelineCache::get_data");

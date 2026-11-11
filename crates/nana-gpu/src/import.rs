@@ -88,12 +88,11 @@ impl Drop for Slot {
 }
 
 impl Slot {
-    fn release(self: &Arc<Self>, ready: u64, locked: bool) {
-        let _guard = (!locked).then(|| self.gpu.lock_submission());
+    fn release(self: &Arc<Self>, ready: u64, after_stage: bool) {
         // Waiting on the GPU also makes dropping an unconsumed ready frame
         // safe: the release cannot overtake the external producer's write.
         let result = unsafe {
-            if locked {
+            if after_stage {
                 // stage already queued the ready wait ahead of this submit.
                 self.queue.Signal(&self.fence, ready + 1)
             } else {
@@ -332,10 +331,7 @@ impl NativeImportPool {
         {
             return Err(NativeImportError::WrongPool);
         }
-        {
-            let _guard = self.gpu.lock_submission();
-            unsafe { slot.queue.Wait(&slot.fence, input.ready) }.map_err(native("queue wait"))?;
-        }
+        unsafe { slot.queue.Wait(&slot.fence, input.ready) }.map_err(native("queue wait"))?;
         let [width, height] = slot.extent;
         let size = wgpu::Extent3d {
             width,
@@ -375,7 +371,6 @@ impl Drop for NativeImportPool {
         // targets/ready frames/recordings retain their own slot and add another
         // tail marker if they release it later, after this marker was queued.
         let retained = self.slots.clone();
-        let _guard = self.gpu.lock_submission();
         self.gpu.inner.queue.submit(std::iter::empty());
         self.gpu
             .inner
@@ -767,7 +762,6 @@ mod tests {
                 )
             };
             {
-                let _guard = gpu.lock_submission();
                 let queue = unsafe { gpu.inner.queue.as_hal::<wgpu::hal::api::Dx12>() }.unwrap();
                 unsafe { queue.as_raw().Wait(&gate.0, 1) }.unwrap();
             }

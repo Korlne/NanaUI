@@ -245,3 +245,7 @@ missing_debug_implementations = "warn"
 level = "warn"
 priority = 0
 check-cfg = ["cfg(wgpu_validate_locks)"]
+
+# Added by scripts/vendor-wgpu.py: a workspace of its own, so cargo does not
+# look for one in an enclosing checkout.
+[workspace]

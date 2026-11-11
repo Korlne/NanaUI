@@ -166,7 +166,7 @@ impl AppContext {
                 next: now.saturating_add(INTERVAL),
             },
         );
-        self.hold_scrollbars(id)?;
+        via!(self.hold_scrollbars(id))?;
         Ok(true)
     }
 

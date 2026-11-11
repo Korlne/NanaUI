@@ -6282,7 +6282,7 @@ mod counting_probe_tests {
         let mut host = GeometryShaper::default();
         let mut cache = crate::text_layout_cache::TextLayoutCache::default();
         let mut glyphs = crate::GlyphCache::default();
-        let id = StableNodeId(1);
+        let id = StableNodeId::new(1).unwrap();
         let text = TextContent {
             value: "first\nsecond".into(),
         };

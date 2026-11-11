@@ -1187,6 +1187,9 @@ fn aligned(toward: [f64; 2], keep: [f64; 2]) -> [f64; 2] {
 
 impl ComponentView for TimelineEditor {
     const BEHAVIOR: crate::TypeBehavior<Self> = crate::TypeBehavior {
+        hooks: Some(|hooks| {
+            crate::framework::routes::timeline(hooks);
+        }),
         pointer: Some(&TIMELINE_POINTER),
         ..crate::TypeBehavior::NONE
     };

@@ -388,7 +388,11 @@ impl<Message: Send + 'static> PendingStartup<Message> {
             self.options.adapter.clone(),
         )
         .map_err(|error| error.to_string())?;
-        let device = spawn_device_request(request, self.channels.proxy.clone())?;
+        let device = spawn_device_request(
+            request,
+            self.options.pipeline_cache.clone(),
+            self.channels.proxy.clone(),
+        )?;
         // The accessibility adapter belongs to the window before it is first
         // shown, which with a splash is now.
         #[cfg(not(target_os = "android"))]
@@ -635,6 +639,7 @@ pub(super) fn record_device_start(
 /// started; a startup cancelled meanwhile simply never takes the result.
 fn spawn_device_request(
     request: DeviceRequest,
+    pipeline_cache: Option<Arc<dyn crate::PipelineCacheStore>>,
     proxy: EventLoopProxy,
 ) -> Result<Receiver<DeviceStart>, String> {
     let (sender, receiver) = mpsc::channel();
@@ -676,7 +681,17 @@ fn spawn_device_request(
             proxy.wake_up();
             if let Some((gpu, profile)) = build {
                 let built = Instant::now();
+                // Before the painter compiles, so a saved cache skips the
+                // shader compiler; the host's store does the I/O here, off
+                // the event thread.
+                if let Some(store) = &pipeline_cache {
+                    gpu.restore_pipeline_cache(store.as_ref());
+                }
                 let painter = SceneWgpuPainter::new_with_presentation(&gpu, profile);
+                // Timed as part of the build, which is what it would save.
+                if let Some(store) = &pipeline_cache {
+                    gpu.persist_pipeline_cache(store.as_ref());
+                }
                 if painter_sender
                     .send(StartupPainter {
                         painter,

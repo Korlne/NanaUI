@@ -1,0 +1,31 @@
+[package]
+name = "nana-wgpu-fork-tests"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.98"
+description = "Tests for NanaUI's changes to its wgpu fork in third_party/wgpu"
+license = "MIT OR Apache-2.0"
+publish = false
+
+# The vendored crates are not workspace members, so their own tests do not
+# build here. This crate tests the fork's changes from inside the workspace:
+# `tests/dx12_cache_format.rs` compiles wgpu-hal's DX12 cache format module
+# directly (its unit tests run with it, on every OS), the other tests go
+# through the public `wgpu` API on a real adapter.
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+wgpu = { workspace = true, features = ["dx12", "vulkan"] }
+pollster.workspace = true
+# Same as wgpu-hal's, for the module `tests/dx12_cache_format.rs` includes.
+hashbrown = { version = "0.17", default-features = false, features = ["default-hasher"] }
+
+[target.'cfg(windows)'.dev-dependencies]
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_System_LibraryLoader",
+    "Win32_UI_WindowsAndMessaging",
+] }

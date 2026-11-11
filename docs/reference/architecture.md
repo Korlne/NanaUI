@@ -14,7 +14,7 @@
     ▼
 nana-ui                  宿主适配器：run_runtime、控件再导出、SceneWgpuPainter、
     │                    FrameBinding、窗口外输出 ExternalSurface（gpu feature）
-    ├── nana-gpu         GPU 后端合同：GpuContext（设备、代次、能力、丢失状态、纹理与提交守卫）、
+    ├── nana-gpu         GPU 后端合同：GpuContext（设备、代次、能力、丢失状态、纹理与提交顺序）、
     │                    FrameContext（独占 encoder 的单帧上下文）、GpuTexture。
     │                    WGPU 是唯一后端，wgpu-interop 是显式逃生口
     ├── nana-frame-exchange  跨线程最新帧交换（建在 nana-gpu 之上并再导出合同类型；
@@ -94,7 +94,7 @@ nana_ui::runtime → UiWorld → ExtractedNode → UiScene → SceneWgpuPainter
 | 对象 / 状态 | 权威所有者 | 边界说明 |
 | --- | --- | --- |
 | `Window`、`Surface` | 宿主（`run_runtime` 或 `EmbeddedRuntime` 的嵌入方） | 框架按窗口借用，普通控件不可触碰原生句柄 |
-| 设备：`GpuContext`（代次、能力、丢失状态、提交守卫） | 宿主 | 粘性丢失记在 `GpuContext::is_lost()`；替换设备即创建新的 `GpuContext`（新 `DeviceGeneration`）。依赖图里只有 NanaUI 自己的 wgpu fork（`third_party/wgpu`，沿用上游包名与版本 30.0.1） 这一份 wgpu |
+| 设备：`GpuContext`（代次、能力、丢失状态、提交顺序） | 宿主 | 粘性丢失记在 `GpuContext::is_lost()`；替换设备即创建新的 `GpuContext`（新 `DeviceGeneration`）。依赖图里只有 NanaUI 自己的 wgpu fork（`third_party/wgpu`，沿用上游包名与版本 30.0.1） 这一份 wgpu |
 | 单帧：`FrameContext`（encoder、提交与丢弃） | 宿主 | Painter 与资源生产者只往里录制命令；帧被丢弃（drop/discard）时 Painter 登记的保留写入自动回滚 |
 | 跨线程帧槽池（`FrameExchange`） | 生产线程 | 窗口侧通过 `FrameInbox` / `FrameBinding` 采样；已声明的色彩空间元数据随租约（lease）传递，消费端不得将 PQ/HLG/P3 未经转换当作 sRGB 或 linear scRGB |
 | 业务状态、应用配置、区域与窗格**内容** | 应用 | 框架不持有业务路由或领域数据 |

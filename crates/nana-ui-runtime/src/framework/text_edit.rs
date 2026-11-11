@@ -8,6 +8,7 @@
 use super::{AppContext, DocumentId, EditableText, Entity, FrameworkError, StableNodeId};
 use super::{TextArea, TextInputState, TextSelection};
 use crate::components::TextSnippetSession;
+use crate::framework::via;
 use crate::text_editing::{
     CursorEdit, TextCaretIntent, TextLineDirection, TextReplacement, TextSearchOptions,
     apply_cursor_edits, apply_replacement, atoms_in, auto_indent_newline, auto_pair_edit,
@@ -115,6 +116,11 @@ pub struct EditableHooks {
     pub(super) delete_backward: fn(&mut AppContext, StableNodeId) -> Result<bool, FrameworkError>,
     pub(super) selected_text: fn(&AppContext, StableNodeId) -> Option<String>,
     pub(super) select_all: fn(&mut AppContext, StableNodeId) -> Result<bool, FrameworkError>,
+    /// The whole value and the selection set from outside (an assistive
+    /// technology's "set value" and "set selection").
+    pub(crate) set_value: fn(&mut AppContext, StableNodeId, String) -> Result<bool, FrameworkError>,
+    pub(crate) set_selection:
+        fn(&mut AppContext, StableNodeId, crate::TextSelection) -> Result<bool, FrameworkError>,
 }
 
 /// What only a plain editor (`TextArea`, `TextInput`, `NumberInput`) does:
@@ -193,6 +199,12 @@ impl<C: EditableText> Editable<C> {
             },
             select_all: |cx: &mut AppContext, node| {
                 cx.select_all_editable(Entity::<C>::from_stable_id(node))
+            },
+            set_value: |cx: &mut AppContext, node, value| {
+                cx.set_editable_value(Entity::<C>::from_stable_id(node), value)
+            },
+            set_selection: |cx: &mut AppContext, node, selection| {
+                cx.set_editable_selection(Entity::<C>::from_stable_id(node), selection)
             },
         }
     }
@@ -2012,7 +2024,7 @@ impl AppContext {
         // 选区；滚轮不经过本路径，落在条上仍按编辑器常规滚动。
         if let Some(target) = self.world.text_minimap_scroll_target(node, x, y) {
             self.text_edit.text_pointer_drag = None;
-            return self.text_editor_minimap_navigate(node, focused.kind, pointer_id, target);
+            return via!(self.text_editor_minimap_navigate(node, focused.kind, pointer_id, target));
         }
         if count == 1
             && !extend
@@ -2020,7 +2032,7 @@ impl AppContext {
             && let Some(token) = self.world.text_atom_close_hit(node, x, y)
         {
             self.text_edit.text_pointer_drag = None;
-            return self.close_focused_text_atom(document, &token);
+            return via!(self.close_focused_text_atom(document, &token));
         }
         // 折叠交互优先：gutter 箭头与折叠摘要标记的点击切换折叠态，不落
         // 光标（单击且无修饰时）。
@@ -2119,7 +2131,7 @@ impl AppContext {
 
     /// minimap 导航：把目标滚动写进世界与组件（组件字段是投影权威，
     /// 不同步会在下一帧被投影改写回去），并钉住视口使光标 reveal 让位。
-    fn text_editor_minimap_navigate(
+    pub(crate) fn text_editor_minimap_navigate(
         &mut self,
         node: StableNodeId,
         kind: TextEditorKind,
@@ -2190,7 +2202,9 @@ impl AppContext {
             let (x, y) = self.editor_point(drag_node, x, y);
             return match self.world.text_minimap_scroll_target(drag_node, x, y) {
                 Some(target) => {
-                    self.text_editor_minimap_navigate(drag_node, drag_kind, pointer_id, target)
+                    via!(
+                        self.text_editor_minimap_navigate(drag_node, drag_kind, pointer_id, target)
+                    )
                 }
                 None => Ok(true),
             };

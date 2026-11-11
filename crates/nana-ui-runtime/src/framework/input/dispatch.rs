@@ -3,7 +3,7 @@
 //! event: pointer and wheel through one shared hit, keys and committed text
 //! through one key chain, composition into the focused editor.
 
-use crate::framework::hooked;
+use crate::framework::{hooked, via};
 use std::time::Duration;
 
 use nana_ui_core::TableNavigation;
@@ -182,7 +182,7 @@ impl AppContext {
         let lane = if captured || touch || matches!(phase, PointerPhase::Cancel) {
             None
         } else {
-            self.scrollbar_target_near_hit(*x, *y, overlay.target)
+            via!(self.scrollbar_target_near_hit(*x, *y, overlay.target))
         };
         let target = lane.map_or(overlay.target, |(view, _)| Some(view));
         *landed = target;
@@ -192,7 +192,7 @@ impl AppContext {
         self.set_pointer_location(document, *pointer_id, Some((*x, *y)));
         self.set_pointer_hover_at(document, *pointer_id, target, now)?;
         if !captured {
-            self.sync_scrollbar_hot(document, *pointer_id, lane)?;
+            via!(self.sync_scrollbar_hot(document, *pointer_id, lane))?;
         }
         self.update_text_diagnostic_hover_hit(document, *x, *y, target)?;
         if *phase == PointerPhase::Move {
@@ -207,14 +207,14 @@ impl AppContext {
         };
         if !overlay.prevent_default
             && let Some(phase) = terminal_phase
-            && self.terminal_pointer(document, target, *pointer_id, phase, *x, *y)?
+            && via!(self.terminal_pointer(document, target, *pointer_id, phase, *x, *y))?
         {
             return Ok(CONSUMED);
         }
         if !overlay.prevent_default
             && !activation_click
             && let Some(phase) = terminal_phase
-            && self.rich_editor_pointer(
+            && via!(self.rich_editor_pointer(
                 document,
                 target,
                 *pointer_id,
@@ -223,7 +223,7 @@ impl AppContext {
                 *y,
                 modifiers.shift,
                 now,
-            )?
+            ))?
         {
             return Ok(CONSUMED);
         }
@@ -238,7 +238,7 @@ impl AppContext {
                 if self.move_view_drag(document, *pointer_id, *x, *y, *modifiers, now)? {
                     return Ok(CONSUMED);
                 }
-                if self.update_text_area_resize(document, *pointer_id, *x, *y)? {
+                if via!(self.update_text_area_resize(document, *pointer_id, *x, *y))? {
                     return Ok(CONSUMED);
                 }
                 if optional_input!(
@@ -265,23 +265,23 @@ impl AppContext {
                 {
                     true
                 } else {
-                    self.update_scrollbar_drag(document, *pointer_id, *x, *y)?
-                        || self.update_range_drag_at(
+                    via!(self.update_scrollbar_drag(document, *pointer_id, *x, *y))?
+                        || via!(self.update_range_drag_at(
                             document,
                             *pointer_id,
                             *x,
                             *y,
                             modifiers.alt,
-                        )?
-                        || self.update_range_span_drag_at(document, *pointer_id, *x, *y)?
-                        || self.update_curve_drag_at(document, *pointer_id, *x, *y)?
-                        || self.update_xy_pad_drag(
+                        ))?
+                        || via!(self.update_range_span_drag_at(document, *pointer_id, *x, *y))?
+                        || via!(self.update_curve_drag_at(document, *pointer_id, *x, *y))?
+                        || via!(self.update_xy_pad_drag(
                             document,
                             *pointer_id,
                             *x,
                             *y,
                             modifiers.shift,
-                        )?
+                        ))?
                         || optional_input!(
                             "graph-canvas",
                             self.update_graph_canvas_pointer(document, *pointer_id, *x, *y,)
@@ -294,7 +294,7 @@ impl AppContext {
                             "controls",
                             self.update_reorder_list_pointer(document, *pointer_id, *x, *y,)
                         )?
-                        || self.update_split_resize(document, *pointer_id, *x, *y)?
+                        || via!(self.update_split_resize(document, *pointer_id, *x, *y))?
                         || hooked!(self, dock, |h| (h.update_split)(
                             self,
                             document,
@@ -336,18 +336,20 @@ impl AppContext {
                             .transpose()?
                             .unwrap_or(false)
                         || optional_input!("calendar", self.clear_calendar_heatmap_hover(document))?
-                        || self.sync_split_handle_hover_near_hit(document, *x, *y, target, now)?
+                        || via!(
+                            self.sync_split_handle_hover_near_hit(document, *x, *y, target, now)
+                        )?
                         || target.is_some()
                 }
             }
             PointerPhase::Down if *button == 2 => {
                 // A secondary press outside an open popover dismisses
                 // it and goes no further, matching the primary press.
-                if self.dismiss_popovers_outside(target)? {
+                if via!(self.dismiss_popovers_outside(target))? {
                     *landed = None;
                     return Ok(CONSUMED);
                 }
-                self.cancel_menu_bar_alt();
+                via!(self.cancel_menu_bar_alt());
                 self.dismiss_detached_menus(target)?;
                 if let Some(target) = target
                     && self.press_pointer_hook(
@@ -366,7 +368,7 @@ impl AppContext {
                         && self.read(editor, |editor| !editor.disabled)?
                     {
                         self.focus_node(document, target)?;
-                        self.prepare_rich_editor_context_menu(editor, *x, *y)?;
+                        via!(self.prepare_rich_editor_context_menu(editor, *x, *y))?;
                     } else if self.world().text_input(target).is_some()
                         && self
                             .world()
@@ -405,7 +407,7 @@ impl AppContext {
                 self.release_pointer_hook(document, *pointer_id, *x, *y, modifiers.shift, 2)?
             }
             PointerPhase::Down if (*is_primary && *button == 0) || *button == 1 => {
-                if self.dismiss_popovers_outside(target)? {
+                if via!(self.dismiss_popovers_outside(target))? {
                     // Consume the press that dismissed the popover.
                     // Activation needs a press recorded here to match
                     // on release, so skipping it also stops this click
@@ -413,20 +415,20 @@ impl AppContext {
                     *landed = None;
                     return Ok(CONSUMED);
                 }
-                self.cancel_menu_bar_alt();
+                via!(self.cancel_menu_bar_alt());
                 self.dismiss_detached_menus(target)?;
                 // Scrollbars overlay content, so they claim the press
                 // before the node underneath sees it.
                 if *button == 0
                     && !activation_click
                     && let Some(target) = target
-                    && self.begin_text_area_resize(*pointer_id, target, *x, *y)?
+                    && via!(self.begin_text_area_resize(*pointer_id, target, *x, *y))?
                 {
                     return Ok(CONSUMED);
                 }
                 if *button == 0
                     && let Some((view, axis)) = lane
-                    && self.begin_scrollbar_drag(*pointer_id, view, axis, *x, *y)?
+                    && via!(self.begin_scrollbar_drag(*pointer_id, view, axis, *x, *y))?
                 {
                     return Ok(CONSUMED);
                 }
@@ -561,8 +563,8 @@ impl AppContext {
                             *x,
                             *y
                         ))?;
-                    } else if self.is_split_handle(target) && *button == 0 {
-                        self.begin_split_resize(document, *pointer_id, target, *x, *y)?;
+                    } else if via!(self.is_split_handle(target)) && *button == 0 {
+                        via!(self.begin_split_resize(document, *pointer_id, target, *x, *y))?;
                     } else if hooked!(self, workspace, |h| (h.is_resize_handle)(self, target))
                         && *button == 0
                     {
@@ -587,22 +589,42 @@ impl AppContext {
                             ))?;
                         } else {
                             self.press_pointer(document, *pointer_id, target)?;
-                            if !*activation_click && self.press_number_stepper(target, *x, *y)? {
+                            if !*activation_click
+                                && via!(self.press_number_stepper(target, *x, *y))?
+                            {
                                 self.release_pointer(document, *pointer_id);
-                            } else if self.is_range_field(target) {
-                                self.begin_range_drag_at(document, *pointer_id, target, *x, *y)?;
-                            } else if self.range_span_target(target).is_some() {
-                                self.begin_range_span_drag_at(
+                            } else if via!(self.is_range_field(target)) {
+                                via!(self.begin_range_drag_at(
+                                    document,
+                                    *pointer_id,
+                                    target,
+                                    *x,
+                                    *y
+                                ))?;
+                            } else if via!(self.range_span_target(target)).is_some() {
+                                via!(self.begin_range_span_drag_at(
                                     document,
                                     *pointer_id,
                                     target,
                                     *x,
                                     *y,
-                                )?;
-                            } else if self.curve_target(target).is_some() {
-                                self.begin_curve_drag_at(document, *pointer_id, target, *x, *y)?;
-                            } else if self.is_xy_pad(target) {
-                                self.begin_xy_pad_drag(document, *pointer_id, target, *x, *y)?;
+                                ))?;
+                            } else if via!(self.curve_target(target)).is_some() {
+                                via!(self.begin_curve_drag_at(
+                                    document,
+                                    *pointer_id,
+                                    target,
+                                    *x,
+                                    *y
+                                ))?;
+                            } else if via!(self.is_xy_pad(target)) {
+                                via!(self.begin_xy_pad_drag(
+                                    document,
+                                    *pointer_id,
+                                    target,
+                                    *x,
+                                    *y
+                                ))?;
                             }
                         }
                     }
@@ -615,7 +637,7 @@ impl AppContext {
                 if self.end_view_drag(document, *pointer_id, *x, *y, *modifiers, false)? {
                     return Ok(CONSUMED);
                 }
-                if self.end_text_area_resize(document, *pointer_id, false)? {
+                if via!(self.end_text_area_resize(document, *pointer_id, false))? {
                     return Ok(CONSUMED);
                 }
                 if self.release_pointer_hook(
@@ -656,11 +678,11 @@ impl AppContext {
                     self.release_pointer(document, *pointer_id);
                     return Ok(CONSUMED);
                 }
-                if self.end_scrollbar_drag(document, *pointer_id, false)?
-                    || self.end_range_drag(document, *pointer_id, false)?
-                    || self.end_range_span_drag(document, *pointer_id, false)?
-                    || self.end_curve_drag(document, *pointer_id, false)?
-                    || self.end_xy_pad_drag(document, *pointer_id, false)?
+                if via!(self.end_scrollbar_drag(document, *pointer_id, false))?
+                    || via!(self.end_range_drag(document, *pointer_id, false))?
+                    || via!(self.end_range_span_drag(document, *pointer_id, false))?
+                    || via!(self.end_curve_drag(document, *pointer_id, false))?
+                    || via!(self.end_xy_pad_drag(document, *pointer_id, false))?
                     || optional_input!(
                         "graph-canvas",
                         self.end_graph_canvas_pointer(document, *pointer_id, *x, *y, false,)
@@ -673,7 +695,7 @@ impl AppContext {
                         "controls",
                         self.end_reorder_list_pointer(document, *pointer_id, *x, *y, false,)
                     )?
-                    || self.end_split_resize(document, *pointer_id, false)?
+                    || via!(self.end_split_resize(document, *pointer_id, false))?
                     || hooked!(self, dock, |h| (h.end_split)(
                         self,
                         document,
@@ -709,7 +731,7 @@ impl AppContext {
                 }
             }
             PointerPhase::Cancel => {
-                self.end_text_area_resize(document, *pointer_id, true)?;
+                via!(self.end_text_area_resize(document, *pointer_id, true))?;
                 optional_input!(
                     "rich-text",
                     self.end_rich_text_pointer(document, *pointer_id, *x, *y, true)
@@ -724,11 +746,11 @@ impl AppContext {
                 }
                 self.text_editor_pointer_release(*pointer_id);
                 self.document_text_pointer_release(*pointer_id);
-                let scrollbar = self.end_scrollbar_drag(document, *pointer_id, true)?;
-                let range = self.end_range_drag(document, *pointer_id, true)?;
-                let range_span = self.end_range_span_drag(document, *pointer_id, true)?;
-                let curve = self.end_curve_drag(document, *pointer_id, true)?;
-                let xy_pad = self.end_xy_pad_drag(document, *pointer_id, true)?;
+                let scrollbar = via!(self.end_scrollbar_drag(document, *pointer_id, true))?;
+                let range = via!(self.end_range_drag(document, *pointer_id, true))?;
+                let range_span = via!(self.end_range_span_drag(document, *pointer_id, true))?;
+                let curve = via!(self.end_curve_drag(document, *pointer_id, true))?;
+                let xy_pad = via!(self.end_xy_pad_drag(document, *pointer_id, true))?;
                 let graph = optional_input!(
                     "graph-canvas",
                     self.end_graph_canvas_pointer(document, *pointer_id, *x, *y, true,)
@@ -741,7 +763,7 @@ impl AppContext {
                     "controls",
                     self.end_reorder_list_pointer(document, *pointer_id, *x, *y, true,)
                 )?;
-                let split = self.end_split_resize(document, *pointer_id, true)?;
+                let split = via!(self.end_split_resize(document, *pointer_id, true))?;
                 let dock_split = hooked!(self, dock, |h| (h.end_split)(
                     self,
                     document,
@@ -770,7 +792,7 @@ impl AppContext {
                 self.set_pointer_hover_at(document, *pointer_id, None, now)?;
                 let calendar =
                     optional_input!("calendar", self.clear_calendar_heatmap_hover(document))?;
-                let split_hover = self.sync_split_handle_hover(document, None)?;
+                let split_hover = via!(self.sync_split_handle_hover(document, None))?;
                 scrollbar
                     || range
                     || range_span
@@ -963,7 +985,7 @@ impl AppContext {
         // An open menu bar, or one the keyboard holds, takes its keys first.
         if !keyboard_barrier
             && !stroke.is_text()
-            && self.route_menu_bar_key(document, key, pressed, repeat, modifiers)?
+            && via!(self.route_menu_bar_key(document, key, pressed, repeat, modifiers))?
         {
             return Ok(CONSUMED);
         }
@@ -987,7 +1009,7 @@ impl AppContext {
                 return Ok(CONSUMED);
             }
             if matches!(overlay_key, Some(OverlayKey::Escape))
-                && self.dismiss_popovers_on_escape()?
+                && via!(self.dismiss_popovers_on_escape())?
             {
                 return Ok(CONSUMED);
             }
@@ -1009,12 +1031,17 @@ impl AppContext {
             // Context-menu rows are virtual. Claim arrows and confirmation
             // before a text field or the focused control underneath sees them,
             // including while this menu is a blocking overlay.
-            if self.navigate_open_context_menu(document, key, repeat)? {
+            if via!(self.navigate_open_context_menu(document, key, repeat))? {
                 return Ok(CONSUMED);
             }
             // An open action menu's commands are real focus stops; the
             // arrows walk them, through keyed lists of commands too.
-            if self.navigate_open_action_menu(document, key)? {
+            if via!(self.navigate_open_action_menu(document, key))? {
+                return Ok(CONSUMED);
+            }
+            // A menu built from components: the arrows walk whatever focus
+            // stops it holds.
+            if via!(self.navigate_open_anchored_menu(document, key))? {
                 return Ok(CONSUMED);
             }
         }
@@ -1035,11 +1062,12 @@ impl AppContext {
                 prevent_default: keyboard_barrier,
             });
         }
-        if !keyboard_barrier && self.focused_terminal(document).is_some() {
+        if !keyboard_barrier && via!(self.focused_terminal(document)).is_some() {
             return self.terminal_keystroke(document, stroke, services);
         }
         if !keyboard_barrier
-            && let Some(handled) = self.rich_editor_key(document, key, text, modifiers, services)?
+            && let Some(handled) =
+                via!(self.rich_editor_key(document, key, text, modifiers, services))?
             && handled
         {
             return Ok(CONSUMED);
@@ -1050,7 +1078,7 @@ impl AppContext {
             && !modifiers.alt
             && !modifiers.control
             && !modifiers.meta
-            && self.end_focused_tree_rename(document, key == "Enter")?
+            && via!(self.end_focused_tree_rename(document, key == "Enter"))?
         {
             return Ok(CONSUMED);
         }
@@ -1082,13 +1110,13 @@ impl AppContext {
                 _ => None,
             };
             if let Some(intent) = segmented_navigation
-                && self.navigate_focused_segmented(document, intent)?
+                && via!(self.navigate_focused_segmented(document, intent))?
             {
                 return Ok(CONSUMED);
             }
             if matches!(key, " " | "Space" | "Enter")
                 && let Some(target) = self.world().focused(document)
-                && self.is_segmented_option_node(target)
+                && via!(self.is_segmented_option_node(target))
             {
                 if !repeat {
                     self.activate_node(target)?;
@@ -1129,7 +1157,7 @@ impl AppContext {
                 _ => None,
             };
             if let Some(navigation) = navigation {
-                self.navigate_focused_table(document, navigation, TABLE_PAGE_ROWS)?
+                via!(self.navigate_focused_table(document, navigation, TABLE_PAGE_ROWS))?
             } else if !primary {
                 match key {
                     "Backspace" => self.delete_focused_text_backward(document)?,
@@ -1143,7 +1171,7 @@ impl AppContext {
             }
         } else if modifiers.shift && !modifiers.alt && !modifiers.control && !modifiers.meta {
             // Shift with an arrow extends a tree's selection
-            self.focused_tree_key(document, key, true)?
+            via!(self.focused_tree_key(document, key, true))?
         } else if modifiers.alt && !modifiers.shift && !modifiers.control && !modifiers.meta {
             // Alt with an arrow moves a reorder list's row
             optional_input!("controls", self.focused_reorder_list_key(document, key))?
@@ -1179,18 +1207,18 @@ impl AppContext {
         if primary {
             return Ok(false);
         }
-        if key == "F2" && self.focused_tree_key(document, key, false)? {
+        if key == "F2" && via!(self.focused_tree_key(document, key, false))? {
             return Ok(true);
         }
         if matches!(key, "Delete" | "Backspace")
-            && self.request_focused_timeline_clip_delete(document)?
+            && via!(self.request_focused_timeline_clip_delete(document))?
         {
             return Ok(true);
         }
         // Across a curve the side arrows walk its points; the others step
         // the focused one as on a vertical slider.
         if matches!(key, "ArrowLeft" | "ArrowRight")
-            && self.focus_curve_neighbour(document, key == "ArrowRight")?
+            && via!(self.focus_curve_neighbour(document, key == "ArrowRight"))?
         {
             return Ok(true);
         }
@@ -1204,10 +1232,10 @@ impl AppContext {
             _ => None,
         };
         if let Some(adjustment) = range_adjustment
-            && (self.adjust_focused_range(document, adjustment)?
-                || self.adjust_focused_range_span(document, adjustment)?
-                || self.adjust_focused_curve(document, adjustment)?
-                || self.adjust_focused_scrub_field(document, adjustment)?)
+            && (via!(self.adjust_focused_range(document, adjustment))?
+                || via!(self.adjust_focused_range_span(document, adjustment))?
+                || via!(self.adjust_focused_curve(document, adjustment))?
+                || via!(self.adjust_focused_scrub_field(document, adjustment))?)
         {
             return Ok(true);
         }
@@ -1219,7 +1247,7 @@ impl AppContext {
             _ => None,
         };
         if let Some(adjustment) = xy_adjustment
-            && self.adjust_focused_xy_pad(document, adjustment)?
+            && via!(self.adjust_focused_xy_pad(document, adjustment))?
         {
             return Ok(true);
         }
@@ -1261,7 +1289,7 @@ impl AppContext {
             _ => None,
         };
         if let Some(direction) = split_direction
-            && (self.adjust_focused_split(document, direction)?
+            && (via!(self.adjust_focused_split(document, direction))?
                 || hooked!(self, dock, |h| (h.adjust_focused_split)(
                     self, document, direction
                 ))?)
@@ -1272,14 +1300,14 @@ impl AppContext {
         // editing keys in `text_editor_key`; Escape is not an editing key and
         // reverts the draft here.
         if key == "Escape" {
-            let reverted = self.revert_focused_number_input(document)?;
+            let reverted = via!(self.revert_focused_number_input(document))?;
             if reverted {
                 // a scrub field's typing ends with its revert
-                self.end_focused_scrub_edit(document)?;
+                via!(self.end_focused_scrub_edit(document))?;
             }
             // a range's typing ends with Escape, whether the draft changed
-            let range = self.end_focused_range_edit(document)?
-                | self.end_focused_range_span_edit(document)?;
+            let range = via!(self.end_focused_range_edit(document))?
+                | via!(self.end_focused_range_span_edit(document))?;
             if reverted || range {
                 return Ok(true);
             }
@@ -1370,18 +1398,18 @@ impl AppContext {
             copied.is_some_and(|text| services.write_clipboard(&text).is_ok())
         } else if clipboard_chord && key.eq_ignore_ascii_case("v") {
             match services.read_clipboard() {
-                Ok(Some(text)) if !text.is_empty() => self.paste_terminal(document, &text)?,
+                Ok(Some(text)) if !text.is_empty() => via!(self.paste_terminal(document, &text))?,
                 _ => false,
             }
         } else {
-            self.terminal_key(
+            via!(self.terminal_key(
                 document,
                 key,
                 text,
                 modifiers.control,
                 modifiers.alt,
                 modifiers.shift,
-            )?
+            ))?
         };
         Ok(InputDisposition {
             handled,
@@ -1449,27 +1477,27 @@ impl AppContext {
         composition: &CompositionInput,
     ) -> Result<InputDisposition, FrameworkError> {
         let overlay_blocks = self.has_blocking_runtime_overlay(document);
-        if !overlay_blocks && self.focused_terminal(document).is_some() {
+        if !overlay_blocks && via!(self.focused_terminal(document)).is_some() {
             match composition {
                 CompositionInput::Start => {
-                    self.set_terminal_preedit(document, "")?;
+                    via!(self.set_terminal_preedit(document, ""))?;
                 }
                 CompositionInput::Update { text, .. } => {
-                    self.set_terminal_preedit(document, text)?;
+                    via!(self.set_terminal_preedit(document, text))?;
                 }
                 CompositionInput::Commit(text) => {
-                    self.set_terminal_preedit(document, "")?;
-                    self.terminal_input(document, text.as_bytes().to_vec())?;
+                    via!(self.set_terminal_preedit(document, ""))?;
+                    via!(self.terminal_input(document, text.as_bytes().to_vec()))?;
                 }
                 CompositionInput::Disabled | CompositionInput::End => {
-                    self.set_terminal_preedit(document, "")?;
+                    via!(self.set_terminal_preedit(document, ""))?;
                 }
                 CompositionInput::Enabled | CompositionInput::DeleteSurrounding { .. } => {}
             }
             return Ok(CONSUMED);
         }
         if !overlay_blocks
-            && let Some(handled) = self.rich_editor_composition(document, composition)?
+            && let Some(handled) = via!(self.rich_editor_composition(document, composition))?
         {
             return Ok(InputDisposition {
                 handled,
@@ -1542,15 +1570,15 @@ impl AppContext {
             match key {
                 "ArrowUp" | "ArrowDown" if !modifiers.shift && !modifiers.alt => {
                     let steps = if key == "ArrowUp" { 1 } else { -1 };
-                    self.step_focused_number_input(document, steps)?;
+                    via!(self.step_focused_number_input(document, steps))?;
                     return Ok(true);
                 }
                 "Enter" => {
-                    let committed = self.commit_focused_number_input(document)?;
+                    let committed = via!(self.commit_focused_number_input(document))?;
                     // a scrub field's typing ends with Enter, committed or not
-                    let ended = self.end_focused_scrub_edit(document)?
-                        | self.end_focused_range_edit(document)?
-                        | self.end_focused_range_span_edit(document)?;
+                    let ended = via!(self.end_focused_scrub_edit(document))?
+                        | via!(self.end_focused_range_edit(document))?
+                        | via!(self.end_focused_range_span_edit(document))?;
                     return Ok(committed || ended);
                 }
                 _ => {}

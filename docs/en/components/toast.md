@@ -75,7 +75,7 @@ An assembled toast publishes only the mark as a part: layout places the mark and
 
 ## Accessibility
 
-A toast is a Status named by its title and described by its description. Bare and assembled toasts are the same. An assembled toast is also a live region: polite for ordinary tones, assertive for danger. Changing the title in place (for example when a task completes) is announced once by the platform's live region. Text in the text column is not read twice; the progress bar is named by the title and does not announce changes separately; both buttons are reachable with Tab.
+A toast is a Status named by its title and described by its description. Bare and assembled toasts are the same. An assembled toast is also a live region: polite for ordinary tones, assertive for danger, and off when `quiet`, through every reprojection (a theme or font set that changed). Changing the title in place (for example when a task completes) is announced once by the platform's live region. Text in the text column is not read twice; the progress bar is named by the title and does not announce changes separately; both buttons are reachable with Tab.
 
 ## Properties
 
@@ -90,6 +90,7 @@ A toast is a Status named by its title and described by its description. Bare an
 | `action` | `Option<Arc<str>>` | Assembled only. Text for one action button; an empty string is the same as none |
 | `icon` | `Option<Icon>` | Assembled only. Replaces the tone's glyph when the recipe marks tone with a glyph |
 | `close_label` | `Option<Arc<str>>` | Assembled only. Accessible name of the close button; `toast.close` when not given |
+| `quiet` | `bool` | Assembled only. Its words were already said (shown in another window, say): the live region is off and changes are not announced |
 | `style` | `NodeStyle` | Style of the outer frame; `place_in` writes only position and width in it |
 
 ## Events

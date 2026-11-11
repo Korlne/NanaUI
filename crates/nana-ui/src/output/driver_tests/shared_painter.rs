@@ -220,10 +220,16 @@ fn unchanged_incompatible_groups_reuse_without_rendering_submitting_or_uploading
     let mut driver = PresentationDriver::new(&test_gpu::context());
     driver.configure(&groups).unwrap();
     let scene = text_scene("Static");
+    // Parallel GPU tests share the frame slots, so a group may defer; `render`
+    // retries, and a group that already submitted this revision then reports
+    // it reused. Either way every group has it once `completed` below.
+    let first = render(&mut driver, &scene);
     assert!(
-        render(&mut driver, &scene)
-            .iter()
-            .all(|outcome| matches!(outcome, ExternalRenderOutcome::Submitted { .. }))
+        first.iter().all(|outcome| matches!(
+            outcome,
+            ExternalRenderOutcome::Submitted { .. } | ExternalRenderOutcome::Reused { .. }
+        )),
+        "{first:?}"
     );
     let revisions: Vec<_> = groups
         .iter()

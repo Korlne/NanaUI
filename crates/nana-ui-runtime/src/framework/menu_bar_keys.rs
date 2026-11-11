@@ -2,6 +2,7 @@
 //! or F10 give it the keyboard, and while it is open or holds the keyboard
 //! the arrows, Enter and Escape are its own. See [`crate::AppMenuBar`].
 
+use crate::framework::via;
 use nana_ui_input::InputModifiers;
 
 use crate::{AppContext, AppMenuBar, DocumentId, FrameworkError, StableNodeId};
@@ -53,7 +54,7 @@ impl AppContext {
             };
             let alt_key = self.read(bar, |bar| bar.alt_key || bar.is_active())?;
             return if alt_key {
-                self.toggle_menu_bar_keyboard(bar)
+                via!(self.toggle_menu_bar_keyboard(bar))
             } else {
                 Ok(false)
             };
@@ -65,7 +66,7 @@ impl AppContext {
         let plain = !modifiers.alt && !modifiers.control && !modifiers.meta && !modifiers.shift;
         if key == "F10" && plain {
             return match self.keyed_menu_bar(document) {
-                Some(bar) => self.toggle_menu_bar_keyboard(bar),
+                Some(bar) => via!(self.toggle_menu_bar_keyboard(bar)),
                 None => Ok(false),
             };
         }

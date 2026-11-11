@@ -641,6 +641,9 @@ fn bar_style() -> NodeStyle {
 
 impl ComponentView for MediaTransportBar {
     const BEHAVIOR: crate::TypeBehavior<Self> = crate::TypeBehavior {
+        hooks: Some(|hooks| {
+            crate::framework::routes::media_transport(hooks);
+        }),
         assembler: Some(crate::AppContext::assemble_media_transport_bar),
         ..crate::TypeBehavior::NONE
     };

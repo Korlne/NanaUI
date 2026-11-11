@@ -292,7 +292,9 @@ fn paint_records_gpu_work_only_after_encode_and_submit() {
 #[test]
 fn frame_uploads_paint_the_same_pixels_as_direct_queue_writes() {
     let (device, queue) = test_device();
-    let gpu = crate::test_gpu::context();
+    // The flush count below is this context's: on the shared one it would
+    // count other tests' frames too.
+    let gpu = crate::test_gpu::private_context();
     let format = wgpu::TextureFormat::Rgba8Unorm;
     let scene = labeled_selected_button_scene();
     let viewport = ScenePaintViewport {
@@ -330,7 +332,7 @@ fn frame_uploads_paint_the_same_pixels_as_direct_queue_writes() {
 
     let (framed_texture, framed_view) = test_copy_target(&device, format, 64, 64);
     let target = __framework::render_target(&gpu, framed_view, format, [64, 64]);
-    let mut framed = SceneWgpuPainter::for_test(format);
+    let mut framed = SceneWgpuPainter::new(&gpu, __framework::format_from_wgpu(format));
     // Twice: the second frame writes only what changed, through the same
     // recorder, and must still match.
     for _ in 0..2 {

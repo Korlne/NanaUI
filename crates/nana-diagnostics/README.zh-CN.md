@@ -4,7 +4,7 @@
 
 低开销的结构化诊断：事件、指标、故障、内存里的 flight recorder，以及 `.nlog` 文件格式。
 
-调用点用 `event!`、`metric!`、`fault!` 和 `span!`，搭配静态描述符。事件写进线程本地的环形缓冲，满了就丢；后台 worker 把它们批量写进 `.nlog`，同时在内存里保留最近一分钟左右的记录，panic 时由 `install_panic_hook` 写出快照。生产线程上没有文件 I/O、锁和格式化，没有安装实例时每个调用点只是一次原子读取。NanaUI 自己的描述符在 `framework` 模块里，域 `0x0000..=0x00FF` 归框架保留，应用从 `Domain::APPLICATION_MIN` 开始。
+调用点用 `event!`、`metric!`、`fault!` 和 `span!`，搭配静态描述符。事件写进线程本地的环形缓冲，满了就丢；后台 worker 把它们批量写进 `.nlog`，同时在内存里保留最近一分钟左右的记录，panic、原生崩溃（Windows x64：未处理的 SEH 异常和 C `abort()`）和 GPU 设备丢失时同步写出快照。崩溃目录里的运行标记让下一个会话报告被结束或没留下任何记录就死掉的进程；`last_crash()` 找出其中最新的一个。生产线程上没有文件 I/O、锁和格式化，没有安装实例时每个调用点只是一次原子读取。NanaUI 自己的描述符在 `framework` 模块里，域 `0x0000..=0x00FF` 归框架保留，应用从 `Domain::APPLICATION_MIN` 开始。
 
 这个 crate 不依赖其它 NanaUI crate。日志和崩溃目录由 [`nana-ui-platform`](../nana-ui-platform) 的 `ApplicationPaths` 解析后传进来，脱敏和上报由应用决定。
 

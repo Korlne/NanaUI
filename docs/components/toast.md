@@ -75,7 +75,7 @@ cx.on(toast, |_, _: &ToastDismissed, _| { /* 拿掉这条 */ })?;
 
 ## 无障碍
 
-提示是以标题为名、说明为描述的 Status。裸提示和装配后的一样。装配后的提示还是一个 live region：普通口气是 polite，危险是 assertive。原地改标题（比如任务完成）由平台的 live region 播报一次。文案列里的文字不重复朗读；进度条以标题为名、不单独播报变化；两个按钮可以 Tab 到。
+提示是以标题为名、说明为描述的 Status。裸提示和装配后的一样。装配后的提示还是一个 live region：普通口气是 polite，危险是 assertive；`quiet` 时是 off，每次重新投影（换主题、字体集变了）都保持。原地改标题（比如任务完成）由平台的 live region 播报一次。文案列里的文字不重复朗读；进度条以标题为名、不单独播报变化；两个按钮可以 Tab 到。
 
 ## 属性
 
@@ -90,6 +90,7 @@ cx.on(toast, |_, _: &ToastDismissed, _| { /* 拿掉这条 */ })?;
 | `action` | `Option<Arc<str>>` | 装配后才有。一个动作按钮的文字，空串等于没有 |
 | `icon` | `Option<Icon>` | 装配后才有。配方用字形标色调时换掉色调的字形 |
 | `close_label` | `Option<Arc<str>>` | 装配后才有。关闭按钮的可访问名，不给时是 `toast.close` |
+| `quiet` | `bool` | 装配后才有。它的话已经说过（比如在别的窗口显示过），live region 关掉，改动不再播报 |
 | `style` | `NodeStyle` | 外框的样式；`place_in` 只写其中的位置和宽度 |
 
 ## 事件
