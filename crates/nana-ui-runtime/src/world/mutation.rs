@@ -1526,6 +1526,7 @@ impl UiWorld {
                     let snapshot = self.node(id).expect("validated subtree must exist");
                     stack.extend(snapshot.children.iter().rev().copied());
                     self.layout_results.remove(&id);
+                    self.layout_results_suppressed.remove(&id);
                     self.forget_visual_presence(id);
                     self.scroll_content_bounds
                         .get_mut()
