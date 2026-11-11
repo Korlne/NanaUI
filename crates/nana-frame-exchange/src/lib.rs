@@ -790,9 +790,17 @@ impl<E: Copy + Eq + Send + Sync + 'static, M: Send + Sync + 'static> FrameExchan
             .filter(|pending| pending.token.epoch == epoch && completed(pending))
             .map(|pending| pending.token.sequence)
             .max();
+        // Completion is set by whichever thread's poll runs the callback, so a
+        // copy can complete after `newest` was chosen. It is not superseded:
+        // it stays pending for the next poll, which publishes it.
+        let settled = |pending: &PendingCopy<E, M>| {
+            completed(pending)
+                && (pending.token.epoch != epoch
+                    || newest.is_some_and(|newest| pending.token.sequence <= newest))
+        };
         let mut published = None;
         for slot in self.slots.iter_mut() {
-            if !slot.pending.as_ref().is_some_and(completed) {
+            if !slot.pending.as_ref().is_some_and(settled) {
                 continue;
             }
             let pending = slot.pending.take().expect("completed frame copy");
