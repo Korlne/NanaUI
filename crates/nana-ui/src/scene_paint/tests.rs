@@ -292,7 +292,16 @@ fn paint_records_gpu_work_only_after_encode_and_submit() {
 #[test]
 fn frame_uploads_paint_the_same_pixels_as_direct_queue_writes() {
     let (device, queue) = test_device();
-    let gpu = crate::test_gpu::context();
+    // A context of its own on the shared test device: the upload counters
+    // read below are then this test's alone. Read off the shared context,
+    // another test's frame landing between two readings made a frame here
+    // look as if it had flushed twice.
+    let host = crate::test_gpu::context();
+    let gpu = __framework::adopt(
+        __framework::adapter(&host).clone(),
+        __framework::device(&host).clone(),
+        __framework::queue(&host).clone(),
+    );
     let format = wgpu::TextureFormat::Rgba8Unorm;
     let scene = labeled_selected_button_scene();
     let viewport = ScenePaintViewport {
@@ -330,7 +339,7 @@ fn frame_uploads_paint_the_same_pixels_as_direct_queue_writes() {
 
     let (framed_texture, framed_view) = test_copy_target(&device, format, 64, 64);
     let target = __framework::render_target(&gpu, framed_view, format, [64, 64]);
-    let mut framed = SceneWgpuPainter::for_test(format);
+    let mut framed = SceneWgpuPainter::new(&gpu, nana_gpu::GpuTextureFormat::RGBA8_UNORM);
     // Twice: the second frame writes only what changed, through the same
     // recorder, and must still match.
     for _ in 0..2 {
