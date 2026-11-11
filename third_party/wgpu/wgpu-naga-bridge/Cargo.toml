@@ -48,3 +48,7 @@ ref_as_ptr = "warn"
 
 [lints.rust]
 missing_debug_implementations = "warn"
+
+# Added by scripts/vendor-wgpu.py: a workspace of its own, so cargo does not
+# look for one in an enclosing checkout.
+[workspace]

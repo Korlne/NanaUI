@@ -2828,6 +2828,16 @@ name = "nana-ui-view-schema"
 version = "0.1.0"
 
 [[package]]
+name = "nana-wgpu-fork-tests"
+version = "0.0.0"
+dependencies = [
+ "hashbrown 0.17.1",
+ "pollster",
+ "wgpu",
+ "windows",
+]
+
+[[package]]
 name = "nana-window"
 version = "0.1.0"
 dependencies = [

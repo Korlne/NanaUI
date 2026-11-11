@@ -162,3 +162,7 @@ missing_debug_implementations = "warn"
 level = "warn"
 priority = 0
 check-cfg = ["cfg(web_sys_unstable_apis)"]
+
+# Added by scripts/vendor-wgpu.py: a workspace of its own, so cargo does not
+# look for one in an enclosing checkout.
+[workspace]

@@ -48,7 +48,25 @@ other by path, so:
   shaders must regenerate the precompiled DXIL in `nana-ui`'s
   `scene_paint::precompiled`: its wgpu version check cannot see fork changes.
 - These directories are excluded from the workspace: their own tests and
-  dev-dependencies do not build here.
+  dev-dependencies do not build here. Each manifest ends in an empty
+  `[workspace]` (added by `scripts/vendor-wgpu.py`), so cargo treats every
+  crate as its own workspace root and does not look further up. Without it,
+  `cargo fmt --all` fails in a checkout nested inside another NanaUI checkout
+  (agent worktrees under `.claude/worktrees/`): the outer workspace claims
+  the crate without listing it. `cargo fmt --all` checks these crates too;
+  they are rustfmt-clean, and fork edits keep them so.
+- Test each fork change in `third_party/wgpu-fork-tests` (a workspace member,
+  so `cargo test --workspace` runs it):
+  - `dx12_cache_format` compiles `wgpu-hal/src/dx12/pipeline_cache.rs` in
+    directly, so that module's own unit tests run there, on every OS;
+  - `pipeline_cache` covers the DX12 cache and `set_default_pipeline_cache`
+    through the `wgpu` API;
+  - `surface_reconfigure` (Windows) reconfigures a small window's surface on
+    DX12 and Vulkan while another thread submits.
+
+  A GPU test without an adapter skips; `NANA_REQUIRE_WGPU_FORK_TESTS=1`
+  makes it fail instead, as the Windows CI job does for DX12.
+  Keep any GPU load in these tests small and bounded.
 
 ## Moving to a new upstream version
 

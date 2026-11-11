@@ -35,6 +35,8 @@ members = [
     "examples/runtime-host-fixture",
     "examples/package-fixture",
     "examples/reactive-sfc",
+    # Tests for the wgpu fork's changes (the vendored crates are not members).
+    "third_party/wgpu-fork-tests",
 ]
 resolver = "2"
 # `third_party/wgpu` holds NanaUI's wgpu fork (see its README): ordinary

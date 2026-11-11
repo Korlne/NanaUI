@@ -46,6 +46,18 @@ PUBLISH_ONLY = ["Cargo.toml.orig", ".cargo_vcs_info.json", "Cargo.lock"]
 DEPENDENCY_TABLE = re.compile(
     r"^\[(?:target\.'[^']*'\.)?(?:dev-|build-)?dependencies\.(?P<key>[A-Za-z0-9_-]+)\]\s*$"
 )
+# Each vendored crate is its own workspace root. NanaUI's root manifest excludes
+# `third_party/wgpu`, so without this cargo keeps looking upward for a
+# workspace when it loads one of these manifests on its own (as `cargo fmt
+# --all` does): in a checkout nested inside another NanaUI checkout (agent
+# worktrees under `.claude/worktrees/`) it finds the outer workspace, which
+# does not list the crate, and fails.
+STANDALONE_WORKSPACE = [
+    "",
+    "# Added by scripts/vendor-wgpu.py: a workspace of its own, so cargo does not",
+    "# look for one in an enclosing checkout.",
+    "[workspace]",
+]
 PACKAGE = re.compile(r'^package\s*=\s*"(?P<name>[^"]+)"\s*$')
 
 
@@ -103,6 +115,7 @@ def rewrite_manifest(manifest: Path, version: str) -> None:
         if package in CRATES:
             block.insert(1, f'path = "../{package}"')
         out.extend(block)
+    out.extend(STANDALONE_WORKSPACE)
     manifest.write_text("\n".join(out) + "\n", encoding="utf-8", newline="\n")
 
 
