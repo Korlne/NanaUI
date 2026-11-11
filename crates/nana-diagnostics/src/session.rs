@@ -170,6 +170,14 @@ pub struct DiagnosticsConfig {
     pub retention: Retention,
     /// Install a panic hook that writes a flight-recorder snapshot.
     pub panic_hook: bool,
+    /// Keep a run marker in the crash directory (the logs directory when
+    /// there is none) and report earlier sessions that left theirs behind
+    /// (see [`crate::UncleanExit`]).
+    pub run_marker: bool,
+    /// On Windows x64, catch unhandled native exceptions and C `abort()` and
+    /// write a `native-crash` snapshot. Installed by [`crate::install`]
+    /// only; a no-op elsewhere.
+    pub native_crash_handler: bool,
 }
 
 impl Default for DiagnosticsConfig {
@@ -198,6 +206,8 @@ impl Default for DiagnosticsConfig {
             },
             retention: Retention::default(),
             panic_hook: true,
+            run_marker: true,
+            native_crash_handler: true,
         }
     }
 }

@@ -28,7 +28,7 @@ use crate::Field;
 use crate::framework::diagnostics::{MAIN_THREAD_RECOVERED, MAIN_THREAD_STALLED};
 
 #[cfg(all(windows, target_arch = "x86_64"))]
-mod windows;
+pub(crate) mod windows;
 #[cfg(all(windows, target_arch = "x86_64"))]
 use windows as platform;
 

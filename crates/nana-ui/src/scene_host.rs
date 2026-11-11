@@ -3572,9 +3572,9 @@ impl<Program: RuntimeProgram> EmbeddedRuntime<Program> {
     pub fn notify_device_lost(&mut self) {
         // Embedded devices never raise the hosted device-lost flag; the
         // embedder tells us here instead. Recording it on the context lets
-        // everything holding it (producer threads) see the
-        // loss; taking the report right away keeps the fault below the only
-        // one.
+        // everything holding it (producer threads) see the loss, and writes
+        // the `gpu.device_lost` fault and snapshot (once per device); taking
+        // the report right away marks it handled.
         let graphics = &self.manager.graphics;
         nana_gpu::__framework::mark_lost(
             graphics.gpu(),
@@ -3584,14 +3584,6 @@ impl<Program: RuntimeProgram> EmbeddedRuntime<Program> {
             },
         );
         let _ = graphics.take_device_lost_report();
-        if !self.manager.render_suspended {
-            nana_diagnostics::fault!(
-                nana_diagnostics::framework::gpu::DEVICE_LOST,
-                reason = 0u64;
-                "reported by the embedding host"
-            );
-            nana_diagnostics::snapshot("device-lost");
-        }
         self.manager.render_suspended = true;
         self.manager.next_gpu_retry = None;
     }

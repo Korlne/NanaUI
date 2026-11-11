@@ -312,11 +312,28 @@ pub struct GpuDeviceLost {
 #[derive(Default)]
 struct LossState {
     lost: AtomicBool,
+    /// The first report of this loss has been recorded.
+    recorded: AtomicBool,
     report: Mutex<Option<GpuDeviceLost>>,
 }
 
 impl LossState {
+    /// Runs on whichever thread WGPU noticed the loss on (or an embedder's).
+    /// The first report is recorded as a `gpu.device_lost` fault with a
+    /// `device-lost` snapshot before this returns: a driver reset is often
+    /// the last thing a process does, so it must not wait for the
+    /// diagnostics worker's next poll.
     fn mark(&self, report: GpuDeviceLost) {
+        if !self.recorded.swap(true, Ordering::AcqRel) {
+            let reason = u64::from(report.reason == GpuLossReason::Destroyed);
+            let message = format!("{:?}: {}", report.reason, report.message);
+            let _ = nana_diagnostics::fault_with_snapshot(
+                &nana_diagnostics::framework::gpu::DEVICE_LOST,
+                &[nana_diagnostics::Field::new("reason", reason)],
+                Some(&message),
+                "device-lost",
+            );
+        }
         if let Ok(mut slot) = self.report.lock() {
             slot.get_or_insert(report);
         }
