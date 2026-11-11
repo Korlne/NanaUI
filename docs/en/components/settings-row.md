@@ -29,9 +29,53 @@ settings_row("Mute").control(switch("").checked(false))
 
 `SettingsRow::new(label)` is horizontal by default and does not wrap by width. `.hint` goes below the label. `.stacked(true)` always stacks vertically.
 
-In the horizontal arrangement the control is vertically centered against the whole block of copy, including when there is a hint or error below the label: the control faces the combined center line of label and hint, so the visual centers of both sides match.
+In the horizontal arrangement the control is vertically centered against the whole block of copy, including when there is a hint below the label: the control faces the combined center line of label and hint, so the visual centers of both sides match. What stands under the row (a hint opened from the help button, the notice line) does not count: the control still faces the name's line.
 
 `.stack_below(width)` wraps by the row's actual layout width: narrower than the threshold it stacks, equal or wider it stays on one line. An invalid threshold counts as off. The control node is not rebuilt; width changes are handled by layout reflow. The example in the reference uses `480.0` as the application's own threshold.
+
+## Hint placement
+
+Where the hint goes depends on how the row is used, so the container that holds the rows decides, not each row:
+
+- A settings page: visited seldom, read when visited. The hint goes under the name (`HintPlacement::Below`, the default).
+- An inspector card or a form: visited often, glanced at while adjusting. The hint goes behind a help button after the name (`HintPlacement::Help`), and the row stays one line tall.
+
+Write `hint_placement` on a `SettingsGroup` or a `SettingsCard` and every row inside follows it; in views, `settings_group(..)` and `group_block(..)` have a method of the same name. A container reaches every `SettingsRow` inside it, through content lines, keyed lists, the containers of `when` / `dynamic` and other groups alike; only a group or card that writes a placement of its own takes over its own part. For a card holding several groups, write it once on the card (`SettingsCard`) or on the outermost group. A row's own `.hint_placement(..)` wins over its container's; with no container writing one it is `Below`. When a container changes its placement, the rows inside follow.
+
+```rust
+use nana_ui::runtime::HintPlacement;
+use nana_ui::runtime::view::{group_row, settings_group, settings_row};
+
+settings_group(Some("Appearance".into()), vec![
+    group_row(settings_row("Opacity").hint("Only affects the picture in the window, not the outputs").control(opacity)),
+    group_row(
+        settings_row("Cache folder")
+            .hint("Optimized models are stored here")
+            .notice("Takes effect after a restart")
+            .control(folder),
+    ),
+])
+.inset()
+.hint_placement(HintPlacement::Help)
+```
+
+## Help button
+
+With `Help`, a row with a hint puts a help button (`HELP_CIRCLE`) after its name, before any label accessory; a row without a hint gets none. The glyph is as tall as the body text, and the button's target is a heading tool's square (24×24 by default) hanging out of the name's line on every side, so it does not make the row taller. The button's accessible name is the hint itself.
+
+- Hovering the button with a mouse: a small card previews the whole hint.
+- Pressing it (mouse and touch alike): the hint opens in place under the row, in the same style as a hint under the name, across the content line; pressing again closes it. While it is open no preview appears. Touch has no hover, so on touch pressing is how it opens.
+- Keyboard: the focus can stop on the button, Enter or Space opens and closes the hint, and a screen reader hears whether it is open (`expanded`).
+
+Whether it is open is the row's own state, kept by the framework; the application does not hold it.
+
+## Notice line
+
+`.notice(text)` puts a line under the row about its value: something to be aware of (`ValidationIntent::Warning`, the default) or a problem (`.notice_tone(ValidationIntent::Danger)`). The notice belongs to the row: it is drawn under the name's line and above the hairline of `.divided(true)`, spans the content line, and lines up with the row's content at the start; it carries an icon in the semantic color (a warning triangle, or a circled cross for a problem), and a faint tint of the semantic color; a problem’s text is in the danger color too, a warning’s in the body text color (a warning color is often a bright yellow, which small text on its own tint does not read in), with the control radius (`RadiusTier::Sm`). An opened hint stands above the notice. `None` or an empty string takes no room and leaves no gap.
+
+When a notice shows, the control at the end of the row still faces the name's line (with a hint under the name, the combined center line of name and hint), not the whole including the notice.
+
+A Warning notice is read as the row's description; a Danger one, like `.error`, makes the row read as invalid with the notice as its screen reader value.
 
 ## Threshold of the view function
 
@@ -102,11 +146,11 @@ The animation changes its opacity on the presentation layer, starting from the f
 
 ## Error
 
-`.error(reason)` says what is wrong with this row's value: a required field is empty, a port is in use, an identity code is incorrect. The reason takes the hint's place, drawn as a Danger [ValidationMessage](https://github.com/sena-nana/NanaUI/blob/main/docs/components/validation-message.md), and the hint steps aside; after writing `None` back, the hint returns. The reason is right on the row the user is looking at, and a row with a hint keeps its height.
+`.error(reason)` says what is wrong with this row's value: a required field is empty, a port is in use, an identity code is incorrect. The reason is drawn on the notice line under the row, as a Danger notice; with a `.notice` as well, the error shows first. The hint under the name stays where it is; after writing `None` back, the notice line goes back to `.notice`, or folds away when there is none.
 
 The row itself reads as invalid, and the screen reader value is the reason. The control's own red border is governed by the control's `invalid`; the row only says why: write both.
 
-The reason's slot is built the first time there is an error and kept (hidden) after the error clears, so the next error does not rebuild it.
+The notice line is built the first time there is a notice or an error and kept (hidden) after they clear, so the next one does not rebuild it.
 
 When a reason newly appears on an existing row (from none to some), and focus is in the same document (for example on the submit button just clicked), focus moves to this row's control: the user lands where the change is needed, and the screen reader reads the field and the reason. A row built with an error, focus in another window, or only rewording the reason do not move focus.
 
@@ -119,8 +163,11 @@ If settings use a separate `WorkspaceController`, it does not override the main 
 | Property | Type | Description |
 | --- | --- | --- |
 | `label` | — | `SettingsRow::new(label)`. Horizontal by default, no wrapping by width. The view function first does `new("")`, then writes the label |
-| `.hint` | — | Goes below the label. Can later be written as `Some` with `update_component`; writing `None` hides it |
-| `.error` | `Option<Arc<str>>` | What is wrong with the value. When set it takes the hint's place, drawn as a Danger `ValidationMessage`, and the row reads as invalid; `None` brings the hint back. Bindable in views |
+| `.hint` | — | The hint: under the label, or behind the help button after the name, by placement. Can later be written as `Some` with `update_component`; writing `None` hides it |
+| `.hint_placement` | `Option<HintPlacement>` | This row's own placement of its hint, over its container's. `None` follows the nearest `SettingsGroup` / `SettingsCard` that writes one, and `Below` when none does. Bindable in views |
+| `.notice` | `Option<Arc<str>>` | The notice line under the row. `None` or empty takes no room. Bindable in views |
+| `.notice_tone` | `ValidationIntent` | How the notice reads: `Warning` (default) or `Danger`. Bindable in views |
+| `.error` | `Option<Arc<str>>` | What is wrong with the value. When set it is drawn on the notice line as Danger, over `.notice`, and the row reads as invalid. Bindable in views |
 | `.stacked` | — | `true` always stacks vertically |
 | `.stack_below` | — | Stacks when narrower than the threshold, same line when equal or wider. An invalid threshold counts as off. The view function uses `280.0`. The example in the reference uses `480.0` as the application's own threshold |
 | `.divided` | — | `true` draws a hairline below the row. Do not draw it on the last row of a group; the group's own edge closes it |

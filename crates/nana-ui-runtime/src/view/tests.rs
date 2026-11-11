@@ -6450,11 +6450,11 @@ fn a_settings_group_rules_a_row_under_other_content() {
     );
 }
 
-/// A row's error stands where its hint does: while it is set the hint steps
-/// aside, the reason shows as a Danger validation message and the row reads
-/// as invalid; once it clears the hint comes back.
+/// A row's error stands on its notice line, under the row: a Danger notice
+/// the row reads as invalid, with the hint staying where it is; once it
+/// clears the line hides and the row reads as before.
 #[test]
-fn a_settings_rows_error_takes_the_hints_place() {
+fn a_settings_rows_error_shows_on_its_notice_line() {
     let (mut cx, _document, parent) = setup();
     let state = std::cell::Cell::new(None);
     cx.mount_view(parent, || {
@@ -6471,38 +6471,34 @@ fn a_settings_rows_error_takes_the_hints_place() {
     let hidden =
         |cx: &AppContext, id: StableNodeId| cx.world().node_style(id).unwrap().layout.hidden;
     let (hint, slot) = cx
-        .read(row, |row| (row.hint_slot.unwrap(), row.error_slot))
+        .read(row, |row| (row.hint_slot.unwrap(), row.notice_slot))
         .unwrap();
-    assert_eq!(slot, None, "no error, no slot");
+    assert_eq!(slot, None, "no error, no notice line");
     assert!(!hidden(&cx, hint));
 
     error.set(Some("Another app uses this port".into()));
     cx.flush_reactive().unwrap();
-    let slot = cx
-        .read(row, |row| row.error_slot)
-        .unwrap()
-        .expect("an error slot");
-    let copy = cx.world().node(slot).unwrap().parent;
+    let (slot, text, main) = cx
+        .read(row, |row| {
+            (row.notice_slot, row.notice_text_slot, row.main_slot)
+        })
+        .unwrap();
+    let (slot, text, main) = (slot.expect("a notice line"), text.unwrap(), main.unwrap());
     assert_eq!(
-        copy,
-        cx.world().node(hint).unwrap().parent,
-        "under the label, with the hint"
+        cx.world().node(slot).unwrap().parent,
+        Some(row.stable_id()),
+        "under the row, not in its copy"
     );
-    // The row projects what its slots say, as it does the hint's text.
-    let Some(crate::StandardVisual::ValidationMessage {
-        message, intent, ..
-    }) = cx.world().standard_visual(slot)
-    else {
-        panic!("a validation message");
-    };
     assert_eq!(
-        (message.as_ref(), intent),
-        (
-            "Another app uses this port",
-            nana_ui_core::ValidationIntent::Danger
-        )
+        cx.world().node(row.stable_id()).unwrap().children,
+        [main, slot]
     );
-    assert!(hidden(&cx, hint), "the hint steps aside");
+    assert_eq!(cx.world().text(text), Some("Another app uses this port"));
+    assert_eq!(
+        cx.world().node_style(text).unwrap().foreground,
+        Some(nana_ui_core::SemanticColorRole::Danger)
+    );
+    assert!(!hidden(&cx, hint), "the hint stays");
     assert!(!hidden(&cx, slot));
     let spoken = cx.world().accessibility(row.stable_id()).unwrap();
     assert!(spoken.invalid);
@@ -6511,12 +6507,12 @@ fn a_settings_rows_error_takes_the_hints_place() {
     error.set(None);
     cx.flush_reactive().unwrap();
     assert_eq!(
-        cx.read(row, |row| row.error_slot).unwrap(),
+        cx.read(row, |row| row.notice_slot).unwrap(),
         Some(slot),
         "kept"
     );
     assert!(hidden(&cx, slot));
-    assert!(!hidden(&cx, hint), "the hint is back");
+    assert!(!hidden(&cx, hint));
     let spoken = cx.world().accessibility(row.stable_id()).unwrap();
     assert!(!spoken.invalid);
     assert_eq!(spoken.value.as_deref(), Some("The editor listens here"));

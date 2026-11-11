@@ -291,6 +291,13 @@ pub trait ComponentView: Clone + PartialEq + Send + 'static {
     ) {
     }
 
+    /// Hand the style this component holds as an `Arc` to `share`, which
+    /// may replace it with an equal one other nodes already use; the node's
+    /// record then holds the same one. Called when the component is
+    /// created, after [`Self::share_layouts`].
+    #[doc(hidden)]
+    fn share_style(&mut self, _share: &mut dyn FnMut(&mut std::sync::Arc<NodeStyle>)) {}
+
     /// Bring what an application wrote inside the limits the framework's
     /// walks rely on, such as [`crate::MAX_SPLIT_DEPTH`]. Called whenever a
     /// value enters the framework: when the component is created and after
@@ -1152,6 +1159,10 @@ pub struct IconButton {
     /// and ArrowUp / ArrowDown on it raise [`SecondaryPress`] with
     /// `keyboard` set. See [`AccessibilityState::has_popup`].
     pub has_popup: bool,
+    /// Shows and hides something in place (`aria-expanded`): `Some(open)`
+    /// tells assistive technology whether it is shown now. See
+    /// [`AccessibilityState::expanded`].
+    pub expanded: Option<bool>,
     pub style: NodeStyle,
 }
 
@@ -1219,6 +1230,7 @@ impl IconButton {
             tooltip_open: false,
             colors_from_style: false,
             has_popup: false,
+            expanded: None,
             style,
         }
     }
@@ -1309,6 +1321,13 @@ impl IconButton {
     /// The button opens a menu; see [`Self::has_popup`](field@Self::has_popup).
     pub fn has_popup(mut self, has_popup: bool) -> Self {
         self.has_popup = has_popup;
+        self
+    }
+
+    /// The button shows and hides something in place, shown now when
+    /// `expanded`; see [`Self::expanded`](field@Self::expanded).
+    pub fn expanded(mut self, expanded: bool) -> Self {
+        self.expanded = Some(expanded);
         self
     }
 
@@ -1409,6 +1428,7 @@ impl ComponentView for IconButton {
                 disabled: self.disabled,
                 selected: Some(selected),
                 has_popup: self.has_popup,
+                expanded: self.expanded,
                 ..AccessibilityState::default()
             },
         );
@@ -6559,7 +6579,10 @@ impl ComponentView for List {
 /// Rust 预设容器默认不参与命中测试；[`Self::from_layout`] 与 CSS 布局盒默认可点。
 #[derive(Debug, Clone, PartialEq)]
 pub struct Stack {
-    style: NodeStyle,
+    /// Shared with the node's record and with equal stacks once created
+    /// ([`ComponentView::share_style`]): a page of cells holds one style,
+    /// not a copy a node.
+    style: Arc<NodeStyle>,
     hittable: bool,
     /// The container a keyed list or a conditional block puts its rows in:
     /// layout only, so a [`crate::SettingsGroup`] reads through it to the
@@ -6589,7 +6612,7 @@ impl Stack {
         let mut style = NodeStyle::default();
         style.layout = layout.into();
         Self {
-            style,
+            style: Arc::new(style),
             hittable: true,
             structural: false,
         }
@@ -6597,14 +6620,14 @@ impl Stack {
 
     /// 就地改 [`nana_ui_core::LayoutStyle`] 全字段。
     pub fn with_layout(mut self, f: impl FnOnce(&mut nana_ui_core::LayoutStyle)) -> Self {
-        f(Arc::make_mut(&mut self.style.layout));
+        f(Arc::make_mut(&mut self.style_mut().layout));
         self
     }
 
     /// [`Self::with_layout`] 的借用版：`bind` 闭包里拿到的是 `&mut Stack`，
     /// 直接改字段，不必把整个容器换掉再重建。
     pub fn layout_mut(&mut self) -> &mut nana_ui_core::LayoutStyle {
-        Arc::make_mut(&mut self.style.layout)
+        Arc::make_mut(&mut self.style_mut().layout)
     }
 
     pub(crate) fn style_ref(&self) -> &NodeStyle {
@@ -6612,7 +6635,13 @@ impl Stack {
     }
 
     pub(crate) fn style_mut(&mut self) -> &mut NodeStyle {
-        &mut self.style
+        Arc::make_mut(&mut self.style)
+    }
+
+    /// Replace the style with what `edit` makes of it.
+    fn restyle(&mut self, edit: impl FnOnce(NodeStyle) -> NodeStyle) {
+        let style = self.style_mut();
+        *style = edit(std::mem::take(style));
     }
 
     /// One of the presets below, built as one remembered edit of the shared
@@ -6668,7 +6697,7 @@ impl Stack {
             },
         );
         Self {
-            style,
+            style: Arc::new(style),
             hittable: false,
             structural: false,
         }
@@ -6722,7 +6751,7 @@ impl Stack {
         layout.align_items = nana_ui_core::AlignSpec::Start;
         layout.justify_items = Some(nana_ui_core::AlignSpec::Start);
         Self {
-            style,
+            style: Arc::new(style),
             hittable: false,
             structural: false,
         }
@@ -6746,13 +6775,13 @@ impl Stack {
 
     /// 自绘这个容器的外观，见 [`crate::Painter`]。
     pub fn painter(mut self, painter: impl Into<crate::NodePainter>) -> Self {
-        self.style.painter = Some(painter.into());
+        self.style_mut().painter = Some(painter.into());
         self
     }
 
     /// A standard gap that follows the installed spacing scale.
     pub fn gap_theme(mut self, step: nana_ui_core::SpacingStep) -> Self {
-        let layout = Arc::make_mut(&mut self.style.layout);
+        let layout = Arc::make_mut(&mut self.style_mut().layout);
         layout.gap = Some(nana_ui_core::LengthSpec::Px(
             nana_ui_core::SpacingTokens::DEFAULT.resolve(step),
         ));
@@ -6763,7 +6792,7 @@ impl Stack {
     pub fn gap(mut self, gap: f32) -> Self {
         let gap = gap.max(0.0);
         edit_layout(
-            &mut self.style.layout,
+            &mut self.style_mut().layout,
             LayoutEdit::Gap(gap.to_bits()),
             |layout| {
                 layout.theme.gap = None;
@@ -6779,16 +6808,24 @@ impl Stack {
         } else {
             nana_ui_core::FlexWrap::NoWrap
         };
-        edit_layout(&mut self.style.layout, LayoutEdit::Wrap(wrap), |layout| {
-            layout.flex_wrap = wrap;
-        });
+        edit_layout(
+            &mut self.style_mut().layout,
+            LayoutEdit::Wrap(wrap),
+            |layout| {
+                layout.flex_wrap = wrap;
+            },
+        );
         self
     }
 
     pub fn align(mut self, align: nana_ui_core::AlignSpec) -> Self {
-        edit_layout(&mut self.style.layout, LayoutEdit::Align(align), |layout| {
-            layout.align_items = align;
-        });
+        edit_layout(
+            &mut self.style_mut().layout,
+            LayoutEdit::Align(align),
+            |layout| {
+                layout.align_items = align;
+            },
+        );
         self
     }
 
@@ -6796,7 +6833,7 @@ impl Stack {
     /// （`justify-items`）；`Space*` 在一格里没有意义，按起点对齐。
     pub fn justify(mut self, justify: nana_ui_core::JustifySpec) -> Self {
         use nana_ui_core::{AlignSpec, JustifySpec};
-        let layout = Arc::make_mut(&mut self.style.layout);
+        let layout = Arc::make_mut(&mut self.style_mut().layout);
         layout.justify_content = justify;
         if layout
             .display
@@ -6816,15 +6853,20 @@ impl Stack {
     }
 
     pub fn width(mut self, width: nana_ui_core::LengthSpec) -> Self {
-        edit_length(&mut self.style.layout, width, LayoutEdit::Width, |layout| {
-            layout.width = Some(width);
-        });
+        edit_length(
+            &mut self.style_mut().layout,
+            width,
+            LayoutEdit::Width,
+            |layout| {
+                layout.width = Some(width);
+            },
+        );
         self
     }
 
     pub fn height(mut self, height: nana_ui_core::LengthSpec) -> Self {
         edit_length(
-            &mut self.style.layout,
+            &mut self.style_mut().layout,
             height,
             LayoutEdit::Height,
             |layout| {
@@ -6836,7 +6878,7 @@ impl Stack {
 
     pub fn min_width(mut self, min_width: nana_ui_core::LengthSpec) -> Self {
         edit_length(
-            &mut self.style.layout,
+            &mut self.style_mut().layout,
             min_width,
             LayoutEdit::MinWidth,
             |layout| {
@@ -6853,7 +6895,7 @@ impl Stack {
 
     pub fn min_height(mut self, min_height: nana_ui_core::LengthSpec) -> Self {
         edit_length(
-            &mut self.style.layout,
+            &mut self.style_mut().layout,
             min_height,
             LayoutEdit::MinHeight,
             |layout| layout.min_height = Some(min_height),
@@ -6864,7 +6906,7 @@ impl Stack {
     pub fn max_width(mut self, max_width: f32) -> Self {
         let max_width = max_width.max(0.0);
         edit_layout(
-            &mut self.style.layout,
+            &mut self.style_mut().layout,
             LayoutEdit::MaxWidth(max_width.to_bits()),
             |layout| layout.max_width = Some(nana_ui_core::LengthSpec::Px(max_width)),
         );
@@ -6873,7 +6915,7 @@ impl Stack {
 
     pub fn grow(mut self, grow: f32) -> Self {
         edit_layout(
-            &mut self.style.layout,
+            &mut self.style_mut().layout,
             LayoutEdit::Grow(grow.to_bits()),
             |layout| layout.flex_grow = Some(grow),
         );
@@ -6882,7 +6924,7 @@ impl Stack {
 
     pub fn shrink(mut self, shrink: f32) -> Self {
         edit_layout(
-            &mut self.style.layout,
+            &mut self.style_mut().layout,
             LayoutEdit::Shrink(shrink.to_bits()),
             |layout| layout.flex_shrink = Some(shrink),
         );
@@ -6896,74 +6938,74 @@ impl Stack {
 
     /// 水平与垂直内边距，后调用者覆盖四边。
     pub fn padding_xy(mut self, x: f32, y: f32) -> Self {
-        replace_padding_xy(Arc::make_mut(&mut self.style.layout), x, y);
+        replace_padding_xy(Arc::make_mut(&mut self.style_mut().layout), x, y);
         self
     }
 
     /// 取出容器样式，可复用到其他控件的 `.style(...)` 上。
     pub fn node_style(&self) -> NodeStyle {
-        self.style.clone()
+        (*self.style).clone()
     }
 
     /// 语义背景色。
     pub fn surface(mut self, role: nana_ui_core::SemanticColorRole) -> Self {
-        self.style.background = Some(role);
+        self.style_mut().background = Some(role);
         self
     }
 
     /// 边框（CSS `border`）：语义色角色与宽度一次写全。边框占布局空间，
     /// 改宽度会挪动内容；见 [`NodeStyle::border`]。
     pub fn border(mut self, role: nana_ui_core::SemanticColorRole, width: f32) -> Self {
-        self.style = self.style.border(role, width);
+        self.restyle(|style| style.border(role, width));
         self
     }
 
     /// 外环（CSS `outline`）：画在边框盒之外，不占布局空间，宽度为 0 即去掉；
     /// 见 [`NodeStyle::ring`]。
     pub fn ring(mut self, role: nana_ui_core::SemanticColorRole, width: f32) -> Self {
-        self.style = self.style.ring(role, width);
+        self.restyle(|style| style.ring(role, width));
         self
     }
 
     /// 跟随主题的混合背景（如强调色 12% 的淡底），见 [`NodeStyle::surface_mix`]。
     pub fn surface_mix(mut self, mix: nana_ui_core::SemanticColorMix) -> Self {
-        self.style = self.style.surface_mix(mix);
+        self.restyle(|style| style.surface_mix(mix));
         self
     }
 
     /// 跟随主题的混合边框色与宽度，见 [`NodeStyle::border_mix`]。
     pub fn border_mix(mut self, mix: nana_ui_core::SemanticColorMix, width: f32) -> Self {
-        self.style = self.style.border_mix(mix, width);
+        self.restyle(|style| style.border_mix(mix, width));
         self
     }
 
     /// 圆角半径（物理 px）——一次性覆盖，不跟随主题。
     pub fn radius_px(mut self, radius: f32) -> Self {
-        self.style = self.style.radius_px(radius);
+        self.restyle(|style| style.radius_px(radius));
         self
     }
 
     /// 圆角档位，跟随安装的 `ThemeMetrics`。
     pub fn radius(mut self, tier: nana_ui_core::RadiusTier) -> Self {
-        self.style = self.style.radius(tier);
+        self.restyle(|style| style.radius(tier));
         self
     }
 
     /// 圆角取哪一档由安装主题的 `ShapeRecipe` 按组件角色决定，见 [`NodeStyle::shape`]。
     pub fn shape(mut self, role: nana_ui_core::ShapeRole) -> Self {
-        self.style = self.style.shape(role);
+        self.restyle(|style| style.shape(role));
         self
     }
 
     /// 方形最小盒档位（最小宽高），跟随安装的 `ThemeMetrics`。
     pub fn square(mut self, size: nana_ui_core::SquareSize) -> Self {
-        self.style = self.style.square(size);
+        self.restyle(|style| style.square(size));
         self
     }
 
     /// 子项间距档位（或代表它的 `SpacingRole`），跟随安装主题的间距刻度，覆盖构造时给的 `gap`。
     pub fn gap_step(mut self, step: impl Into<nana_ui_core::SpacingStep>) -> Self {
-        self.style = self.style.gap_step(step);
+        self.restyle(|style| style.gap_step(step));
         self
     }
 
@@ -6973,7 +7015,7 @@ impl Stack {
         x: nana_ui_core::SpacingStep,
         y: nana_ui_core::SpacingStep,
     ) -> Self {
-        self.style = self.style.padding_step(x, y);
+        self.restyle(|style| style.padding_step(x, y));
         self
     }
 
@@ -6994,7 +7036,7 @@ impl Stack {
     }
 
     pub fn style(mut self, style: NodeStyle) -> Self {
-        self.style = style;
+        self.style = Arc::new(style);
         self
     }
 }
@@ -7005,8 +7047,12 @@ impl ComponentView for Stack {
         share: &mut dyn FnMut(&mut std::sync::Arc<nana_ui_core::LayoutStyle>),
     ) {
         let built = Arc::clone(&self.style.layout);
-        share(&mut self.style.layout);
+        share(&mut self.style_mut().layout);
         crate::layout_edits::adopt_shared(&built, &self.style.layout);
+    }
+
+    fn share_style(&mut self, share: &mut dyn FnMut(&mut Arc<NodeStyle>)) {
+        share(&mut self.style);
     }
 
     fn node_kind(&self) -> NodeKind {

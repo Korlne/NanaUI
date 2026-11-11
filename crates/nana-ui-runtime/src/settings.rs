@@ -29,6 +29,9 @@ const ROW_INLINE_GAP: f32 = nana_ui_core::space::MD;
 const ROW_INLINE_GAP_LOOSE: f32 = nana_ui_core::space::XXL;
 const ROW_COPY_GAP: f32 = nana_ui_core::space::XXS;
 const ROW_LABEL_ACCESSORY_GAP: f32 = nana_ui_core::space::XS;
+/// Between a row's main line and what is under it (the opened hint, the
+/// notice).
+const ROW_UNDER_GAP: f32 = nana_ui_core::space::XS;
 /// Between a column row's control and its trailing node.
 const ROW_TRAILING_GAP: f32 = nana_ui_core::space::XXS;
 /// Between a column row's label column and its control, and between its
@@ -40,18 +43,56 @@ const ROW_COLUMN_STACK_GAP: f32 = nana_ui_core::space::XXS;
 /// leaves the label and hint a column a few characters wide.
 pub(crate) const ASSEMBLED_ROW_STACK_BELOW: f32 = 280.0;
 
+/// Where a settings row puts its hint ([`SettingsRow::hint`](field@SettingsRow::hint)).
+///
+/// The place suits how the row is used, so its container chooses it, not
+/// each row: a settings page, visited seldom and read when visited, keeps
+/// the hint under the name ([`Self::Below`]); an inspector or a form, glanced
+/// at while adjusting, keeps each row one line tall and puts the hint behind
+/// a help button after the name ([`Self::Help`]). Set it on a
+/// [`SettingsGroup`] or a [`SettingsCard`] and every row inside follows; a
+/// row's own [`SettingsRow::hint_placement`](field@SettingsRow::hint_placement) wins over its container's.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub enum HintPlacement {
+    /// Under the name, in the row's copy.
+    #[default]
+    Below,
+    /// Behind a help button after the name: hovering it previews the hint,
+    /// pressing it (with a pointer, a touch or the keyboard) opens the hint
+    /// in place under the row, and pressing again closes it.
+    Help,
+}
+
 /// Non-interactive chrome wrapping an application-owned control child.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SettingsRow {
     pub label: Arc<str>,
     pub hint: Option<Arc<str>>,
     pub hint_is_path: bool,
+    /// Where the hint goes, this row's own choice. `None` follows the
+    /// nearest [`SettingsGroup`] or [`SettingsCard`] above it that sets one,
+    /// and [`HintPlacement::Below`] when none does.
+    pub hint_placement: Option<HintPlacement>,
     /// Why the row's value is wrong (an empty required field, a port that
-    /// is taken). While set it takes the hint's place, as a Danger
-    /// [`ValidationMessage`], and the hint comes back once it clears: the
-    /// reason stands on the line the user is looking at and the row keeps
-    /// its height. The control marks itself invalid; the row only says why.
+    /// is taken). While set it shows on the row's notice line, under the
+    /// row, as a Danger notice, in place of any [`Self::notice`](field@Self::notice); the hint
+    /// stays where it is. The control marks itself invalid; the row only
+    /// says why.
     pub error: Option<Arc<str>>,
+    /// A line under the row about its value: a caution, or with
+    /// [`Self::notice_tone`](field@Self::notice_tone) Danger, a problem. It belongs to the row: it
+    /// stands above the row's divider, spans the row, and the control stays
+    /// centred on the name. `None` or empty takes no room.
+    pub notice: Option<Arc<str>>,
+    /// How [`Self::notice`](field@Self::notice) reads: Warning (the default) or Danger.
+    pub notice_tone: nana_ui_core::ValidationIntent,
+    /// The placement the row's group or card gives it, written by them; see
+    /// [`Self::hint_placement`](field@Self::hint_placement).
+    pub(crate) inherited_hint_placement: Option<HintPlacement>,
+    /// Whether the hint behind the help button is open under the row. The
+    /// help button flips it; it is the row's own state, as a hover card's
+    /// `open` is the card's.
+    pub(crate) help_open: bool,
     pub stacked: bool,
     /// Stack below this row's laid-out width in logical pixels. `stacked`
     /// remains an unconditional override; `None` preserves inline layout.
@@ -81,16 +122,31 @@ pub struct SettingsRow {
     pub trailing: Option<StableNodeId>,
     pub label_slot: Option<StableNodeId>,
     pub hint_slot: Option<StableNodeId>,
-    /// The [`ValidationMessage`] under the label, made the first time the
-    /// row has an [`Self::error`] and hidden while it has none.
-    pub(crate) error_slot: Option<StableNodeId>,
+    /// The help button after the label, only while the hint goes behind
+    /// one ([`HintPlacement::Help`]) and there is a hint.
+    pub(crate) help_slot: Option<StableNodeId>,
+    /// The hint opened in place under the row, made with the help button
+    /// and hidden while it is closed.
+    pub(crate) help_text_slot: Option<StableNodeId>,
+    /// The notice line under the row (its tinted box, glyph and text), made
+    /// the first time the row has a notice or an error and hidden while it
+    /// has neither.
+    pub(crate) notice_slot: Option<StableNodeId>,
+    pub(crate) notice_glyph_slot: Option<StableNodeId>,
+    pub(crate) notice_text_slot: Option<StableNodeId>,
+    /// The row's main line (the copy, then the control), only once the row
+    /// has something under it (an opened hint, a notice): the row is then a
+    /// column of that line and what is under it, and the control stays
+    /// centred on the line.
+    pub(crate) main_slot: Option<StableNodeId>,
     /// Whether the last assembly showed an error; `None` before the first.
     /// A reason that appears on a row already there takes the focus to the
     /// row's control (see [`AppContext::assemble_settings_row`]).
     pub(crate) error_shown: Option<bool>,
     pub(crate) copy_slot: Option<StableNodeId>,
-    /// The line holding the label and its accessory, only while there is an
-    /// accessory: without one the label sits in the copy itself.
+    /// The line holding the label, its help button and its accessory, only
+    /// while there is a help button or an accessory: without either the
+    /// label sits in the copy itself.
     pub(crate) label_line_slot: Option<StableNodeId>,
     /// The tint [`AppContext::flash_settings_row`] paints under the row, only
     /// while it flashes.
@@ -113,7 +169,12 @@ impl SettingsRow {
             label: label.into(),
             hint: None,
             hint_is_path: false,
+            hint_placement: None,
             error: None,
+            notice: None,
+            notice_tone: nana_ui_core::ValidationIntent::Warning,
+            inherited_hint_placement: None,
+            help_open: false,
             stacked: false,
             stack_below: None,
             divided: false,
@@ -127,7 +188,12 @@ impl SettingsRow {
             trailing: None,
             label_slot: None,
             hint_slot: None,
-            error_slot: None,
+            help_slot: None,
+            help_text_slot: None,
+            notice_slot: None,
+            notice_glyph_slot: None,
+            notice_text_slot: None,
+            main_slot: None,
             error_shown: None,
             copy_slot: None,
             label_line_slot: None,
@@ -150,10 +216,56 @@ impl SettingsRow {
         self
     }
 
-    /// Say why the value is wrong, in the hint's place; see [`Self::error`].
+    /// Say why the value is wrong, on the notice line; see [`Self::error`].
     pub fn error(mut self, error: impl Into<Arc<str>>) -> Self {
         self.error = Some(error.into());
         self
+    }
+
+    /// Put the hint where `placement` says, whatever the row's container
+    /// says; see [`Self::hint_placement`](field@Self::hint_placement).
+    pub fn hint_placement(mut self, placement: HintPlacement) -> Self {
+        self.hint_placement = Some(placement);
+        self
+    }
+
+    /// Show `notice` on a line under the row; see [`Self::notice`](field@Self::notice).
+    pub fn notice(mut self, notice: impl Into<Arc<str>>) -> Self {
+        self.notice = Some(notice.into());
+        self
+    }
+
+    /// How the notice reads; see [`Self::notice_tone`](field@Self::notice_tone).
+    pub fn notice_tone(mut self, tone: nana_ui_core::ValidationIntent) -> Self {
+        self.notice_tone = tone;
+        self
+    }
+
+    /// Where the hint goes now: the row's own choice, else its container's,
+    /// else under the name.
+    pub fn effective_hint_placement(&self) -> HintPlacement {
+        self.hint_placement
+            .or(self.inherited_hint_placement)
+            .unwrap_or_default()
+    }
+
+    /// Whether the hint is behind a help button: it goes there and there is
+    /// one.
+    fn shows_help(&self) -> bool {
+        self.effective_hint_placement() == HintPlacement::Help
+            && self.hint.as_deref().is_some_and(|hint| !hint.is_empty())
+    }
+
+    /// What the notice line shows, and how: the error first, else the
+    /// notice; `None` when it has nothing to show.
+    fn shown_notice(&self) -> Option<(&Arc<str>, nana_ui_core::ValidationIntent)> {
+        if let Some(error) = self.error.as_ref() {
+            return Some((error, nana_ui_core::ValidationIntent::Danger));
+        }
+        self.notice
+            .as_ref()
+            .filter(|notice| !notice.is_empty())
+            .map(|notice| (notice, self.notice_tone))
     }
 
     pub fn stacked(mut self, stacked: bool) -> Self {
@@ -281,31 +393,18 @@ impl SettingsRow {
             layout.position = nana_ui_core::PositionSpec::Relative;
         }
         layout.width = Some(LengthSpec::Percent(100.0));
-        layout.direction = Some(if stacked {
-            FlexDirection::Column
+        if self.main_slot.is_some() {
+            // The main line, then what is under it (the opened hint, the
+            // notice), each across the row.
+            layout.direction = Some(FlexDirection::Column);
+            layout.align_items = AlignSpec::Stretch;
+            layout.justify_content = JustifySpec::Start;
+            layout.flex_wrap = FlexWrap::NoWrap;
+            layout.gap = Some(LengthSpec::Px(ROW_UNDER_GAP));
+            layout.theme.gap = Some(crate::theme_intent::space(nana_ui_core::SpacingStep::Xs));
         } else {
-            FlexDirection::Row
-        });
-        // Centred on the whole copy, hint included: the control balances
-        // the block it sits beside, not just the name's line.
-        layout.align_items = if stacked {
-            AlignSpec::Stretch
-        } else {
-            AlignSpec::Center
-        };
-        layout.justify_content = if stacked {
-            JustifySpec::Start
-        } else {
-            JustifySpec::SpaceBetween
-        };
-        layout.flex_wrap = FlexWrap::NoWrap;
-        layout.gap = Some(LengthSpec::Px(self.gap(stacked)));
-        layout.theme.gap = Some(crate::theme_intent::space(match (stacked, self.loose) {
-            (true, true) => nana_ui_core::SpacingStep::Lg,
-            (true, false) => nana_ui_core::SpacingStep::Sm,
-            (false, true) => nana_ui_core::SpacingStep::Xxl,
-            (false, false) => nana_ui_core::SpacingStep::Md,
-        }));
+            self.line_layout(layout, stacked);
+        }
         layout.theme.padding_top = Some(crate::theme_intent::space(if self.first_in_group {
             nana_ui_core::SpacingStep::Xs
         } else {
@@ -339,14 +438,7 @@ impl SettingsRow {
         layout.theme.border_top_width = rule_above
             .then(|| nana_ui_core::ThemeToken::Border(nana_ui_core::BorderWidth::Hairline).into());
         if self.label_column.is_some() {
-            // An inspector row: the label column, then the control from its
-            // edge, and no band above or below the control.
-            layout.justify_content = JustifySpec::Start;
-            layout.theme.gap = Some(crate::theme_intent::space(if stacked {
-                nana_ui_core::SpacingStep::Xxs
-            } else {
-                nana_ui_core::SpacingStep::Xs
-            }));
+            // An inspector row: no band above or below the control.
             layout.padding_top = Some(LengthSpec::Px(0.0));
             layout.padding_bottom = Some(LengthSpec::Px(0.0));
             layout.theme.padding_top = None;
@@ -362,6 +454,52 @@ impl SettingsRow {
         style.text_vertical_alignment = crate::TextVerticalAlignment::Center;
         style
     }
+
+    /// How the copy and the control share their line: the row's own layout,
+    /// or its main line's once the row has something under it.
+    fn line_layout(&self, layout: &mut nana_ui_core::LayoutStyle, stacked: bool) {
+        layout.direction = Some(if stacked {
+            FlexDirection::Column
+        } else {
+            FlexDirection::Row
+        });
+        // Centred on the whole copy, hint included: the control balances
+        // the block it sits beside, not just the name's line.
+        layout.align_items = if stacked {
+            AlignSpec::Stretch
+        } else {
+            AlignSpec::Center
+        };
+        layout.justify_content = if stacked {
+            JustifySpec::Start
+        } else {
+            JustifySpec::SpaceBetween
+        };
+        layout.flex_wrap = FlexWrap::NoWrap;
+        layout.gap = Some(LengthSpec::Px(self.gap(stacked)));
+        layout.theme.gap = Some(crate::theme_intent::space(match (stacked, self.loose) {
+            (true, true) => nana_ui_core::SpacingStep::Lg,
+            (true, false) => nana_ui_core::SpacingStep::Sm,
+            (false, true) => nana_ui_core::SpacingStep::Xxl,
+            (false, false) => nana_ui_core::SpacingStep::Md,
+        }));
+        if self.label_column.is_some() {
+            // An inspector row: the label column, then the control from its
+            // edge.
+            layout.justify_content = JustifySpec::Start;
+            layout.theme.gap = Some(crate::theme_intent::space(if stacked {
+                nana_ui_core::SpacingStep::Xxs
+            } else {
+                nana_ui_core::SpacingStep::Xs
+            }));
+        }
+    }
+
+    /// The node whose direction says whether the row is stacked: the row,
+    /// or its main line.
+    fn line_node(&self, id: StableNodeId) -> StableNodeId {
+        self.main_slot.unwrap_or(id)
+    }
 }
 
 impl ComponentView for SettingsRow {
@@ -370,7 +508,7 @@ impl ComponentView for SettingsRow {
             crate::framework::routes::settings_row(hooks);
         }),
         slot_assembler: Some(AppContext::assemble_settings_row),
-        lifecycle: Some(sync_row_group),
+        lifecycle: Some(sync_settings_row),
         ..crate::TypeBehavior::NONE
     };
 
@@ -425,12 +563,24 @@ impl ComponentView for SettingsRow {
                 pointer_events: false,
                 focusable: false,
             },
-            AccessibilityState {
-                role: AccessibilityRole::Generic,
-                label: Some(Arc::clone(&self.label)),
-                value: self.error.clone().or_else(|| self.hint.clone()),
-                invalid: self.error.is_some(),
-                ..AccessibilityState::default()
+            {
+                // A Danger notice says what is wrong, as an error does; a
+                // Warning one describes the row.
+                let notice = self.shown_notice();
+                let problem = notice
+                    .filter(|(_, tone)| *tone == nana_ui_core::ValidationIntent::Danger)
+                    .map(|(text, _)| Arc::clone(text));
+                let caution = notice
+                    .filter(|(_, tone)| *tone == nana_ui_core::ValidationIntent::Warning)
+                    .map(|(text, _)| Arc::clone(text));
+                AccessibilityState {
+                    role: AccessibilityRole::Generic,
+                    label: Some(Arc::clone(&self.label)),
+                    invalid: problem.is_some(),
+                    value: problem.or_else(|| self.hint.clone()),
+                    description: caution,
+                    ..AccessibilityState::default()
+                }
             },
         );
         self.project_slots(world, mutations, stacked);
@@ -468,18 +618,38 @@ impl SettingsRow {
         if let Some(flash) = self.flash_slot {
             SettingsRowFlash.project(flash, world, mutations);
         }
-        if let Some(error) = self.error_slot {
-            crate::ValidationMessage::new(
-                self.error.clone().unwrap_or_default(),
-                nana_ui_core::ValidationIntent::Danger,
-            )
-            .compact(false)
-            .style(error_slot_style(self.error.is_none()))
-            .project(error, world, mutations);
+        if let Some(main) = self.main_slot {
+            SettingsRowMain {
+                line: {
+                    let mut style = NodeStyle::default();
+                    self.line_layout(Arc::make_mut(&mut style.layout), stacked);
+                    style
+                },
+            }
+            .project(main, world, mutations);
+        }
+        let help = self.shows_help();
+        if let Some(text) = self.help_text_slot {
+            Text::new(self.hint.as_deref().unwrap_or(""))
+                .style(hint_slot_style(!(help && self.help_open)))
+                .project(text, world, mutations);
+        }
+        let notice = self.shown_notice();
+        if let Some(slot) = self.notice_slot {
+            notice_box_style(notice.map(|(_, tone)| tone)).project(slot, world, mutations);
+        }
+        let tone = notice.map_or(nana_ui_core::ValidationIntent::Warning, |(_, tone)| tone);
+        if let Some(glyph) = self.notice_glyph_slot {
+            notice_glyph(tone).project(glyph, world, mutations);
+        }
+        if let Some(text) = self.notice_text_slot {
+            notice_text(notice.map_or("", |(text, _)| text.as_ref()), tone)
+                .project(text, world, mutations);
         }
         if let Some(hint) = self.hint_slot {
             let value = self.hint.as_deref().unwrap_or("");
-            let style = hint_slot_style(self.hint.is_none() || self.error.is_some());
+            // Behind a help button the hint is not under the name.
+            let style = hint_slot_style(self.hint.is_none() || help);
             if self.hint_is_path {
                 crate::PathText::new(value)
                     .style(style)
@@ -541,18 +711,75 @@ fn label_slot_style(hidden: bool, on_line: bool, column: bool) -> NodeStyle {
     style
 }
 
-/// The error stands where the hint does, wrapping under the label as it does.
-fn error_slot_style(hidden: bool) -> NodeStyle {
-    let mut style = NodeStyle::default();
-    let layout = Arc::make_mut(&mut style.layout);
-    layout.line_height = Some(LineHeightSpec::Absolute(nana_ui_core::type_scale::LINE));
-    layout.theme.line_height =
-        Some(nana_ui_core::ThemeToken::Line(nana_ui_core::LineRole::Line).into());
-    layout.width = Some(LengthSpec::Fill);
-    layout.flex_shrink = Some(1.0);
-    layout.min_width = Some(LengthSpec::Px(0.0));
-    layout.hidden = hidden;
-    style
+/// The colour a notice of `tone` takes, for its glyph, an error's text
+/// and, faintly, its box.
+fn notice_role(tone: nana_ui_core::ValidationIntent) -> SemanticColorRole {
+    match tone {
+        nana_ui_core::ValidationIntent::Warning => SemanticColorRole::Warning,
+        nana_ui_core::ValidationIntent::Danger => SemanticColorRole::Danger,
+    }
+}
+
+/// How faint a notice's box is: a tint of its colour, as a callout's.
+const NOTICE_TINT: f32 = 0.10;
+
+/// The notice line's box: a faint tint of the tone's colour with the
+/// control radius, across the row, the glyph on the text's first line.
+/// `None` hides it: a row without a notice keeps no room or gap for one.
+fn notice_box_style(tone: Option<nana_ui_core::ValidationIntent>) -> crate::Stack {
+    let role = notice_role(tone.unwrap_or(nana_ui_core::ValidationIntent::Warning));
+    crate::Stack::row(nana_ui_core::space::XS)
+        .gap_step(nana_ui_core::SpacingStep::Xs)
+        .width(LengthSpec::Fill)
+        .align(AlignSpec::Start)
+        .padding_step(nana_ui_core::SpacingStep::Sm, nana_ui_core::SpacingStep::Xs)
+        .radius(nana_ui_core::RadiusTier::Sm)
+        .surface_mix(nana_ui_core::SemanticColorMix::alpha(role, NOTICE_TINT))
+        .with_layout(|layout| layout.hidden = tone.is_none())
+}
+
+/// The notice's glyph: a caution triangle or an error circle, as tall as the
+/// body text and centred on the text's first line.
+fn notice_glyph(tone: nana_ui_core::ValidationIntent) -> crate::IconGlyph {
+    let icon = match tone {
+        nana_ui_core::ValidationIntent::Warning => nana_ui_core::Icon::AlertTriangle,
+        nana_ui_core::ValidationIntent::Danger => nana_ui_core::Icon::CircleX,
+    };
+    let mut glyph = crate::IconGlyph::new(icon)
+        .size_role(nana_ui_core::TypeRole::Body)
+        .role(notice_role(tone))
+        .decorative();
+    // Half of what the text's line box is taller than the glyph, above it.
+    let layout = Arc::make_mut(&mut glyph.style.layout);
+    layout.theme.margin_top = Some(
+        nana_ui_core::ThemeExpr::from(nana_ui_core::ThemeToken::Line(nana_ui_core::LineRole::Line))
+            .plus(
+                nana_ui_core::ThemeExpr::from(nana_ui_core::ThemeToken::Type(
+                    nana_ui_core::TypeRole::Body,
+                ))
+                .scaled(-1.0),
+            )
+            .scaled(0.5),
+    );
+    glyph
+}
+
+/// The notice's words at the hint's size, wrapping. An error's are in the
+/// danger colour; a caution's in the text colour, the glyph and the tint
+/// carrying its tone: a caution colour is a bright one (yellow), which
+/// small words on its own tint do not read in.
+fn notice_text(value: &str, tone: nana_ui_core::ValidationIntent) -> Text {
+    let mut style = hint_slot_style(false);
+    style.foreground = Some(match tone {
+        nana_ui_core::ValidationIntent::Warning => SemanticColorRole::Text,
+        nana_ui_core::ValidationIntent::Danger => notice_role(tone),
+    });
+    {
+        let layout = Arc::make_mut(&mut style.layout);
+        layout.width = None;
+        layout.flex_grow = Some(1.0);
+    }
+    Text::new(value).style(style)
 }
 
 fn hint_slot_style(hidden: bool) -> NodeStyle {
@@ -775,8 +1002,45 @@ impl ComponentView for SettingsRowCopy {
     }
 }
 
-/// The label's line when the row has a label accessory: the label, then the
-/// accessory, centred on each other.
+/// A row's main line once the row has something under it: the copy and the
+/// control, laid out as the row lays them out otherwise ([`SettingsRow`]'s
+/// `line_layout`), so the control stays centred on the copy and not on what
+/// is under it.
+#[derive(Debug, Clone, PartialEq)]
+struct SettingsRowMain {
+    /// The line's layout, as the row's projection works it out.
+    line: NodeStyle,
+}
+
+impl ComponentView for SettingsRowMain {
+    fn node_kind(&self) -> NodeKind {
+        NodeKind::Element {
+            tag: "settings-row-main".into(),
+        }
+    }
+
+    fn project(&self, id: StableNodeId, world: &UiWorld, mutations: &mut MutationQueue) {
+        let mut style = self.line.clone();
+        Arc::make_mut(&mut style.layout).width = Some(LengthSpec::Percent(100.0));
+        project_common(
+            id,
+            world,
+            mutations,
+            &style,
+            InteractionState {
+                pointer_events: false,
+                focusable: false,
+            },
+            AccessibilityState {
+                role: AccessibilityRole::Generic,
+                ..AccessibilityState::default()
+            },
+        );
+    }
+}
+
+/// The label's line when the row has a help button or a label accessory:
+/// the label, the help button, then the accessory, centred on each other.
 #[derive(Debug, Clone, PartialEq)]
 struct SettingsRowLabelLine;
 
@@ -941,10 +1205,19 @@ fn settings_row_flash_animation(
 }
 
 /// Surface grouping for settings rows.
+///
+/// [`Self::hint_placement`](field@Self::hint_placement) says where the hints of every
+/// [`SettingsRow`] in the card go, through the groups inside, as on a
+/// [`SettingsGroup`]: a card of inspector groups sets it once.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SettingsCard {
     pub title: Arc<str>,
     pub style: NodeStyle,
+    /// Where the hints of the rows inside go; see
+    /// [`SettingsGroup::hint_placement`](field@SettingsGroup::hint_placement).
+    pub hint_placement: Option<HintPlacement>,
+    /// The placement the card last handed down to its rows.
+    pub(crate) pushed_hint_placement: Option<HintPlacement>,
 }
 
 impl SettingsCard {
@@ -952,7 +1225,15 @@ impl SettingsCard {
         Self {
             title: title.into(),
             style: NodeStyle::default(),
+            hint_placement: None,
+            pushed_hint_placement: None,
         }
+    }
+
+    /// Put the hints of the rows inside where `placement` says.
+    pub fn hint_placement(mut self, placement: HintPlacement) -> Self {
+        self.hint_placement = Some(placement);
+        self
     }
 
     pub fn style(mut self, style: NodeStyle) -> Self {
@@ -975,6 +1256,11 @@ impl SettingsCard {
 }
 
 impl ComponentView for SettingsCard {
+    const BEHAVIOR: crate::TypeBehavior<Self> = crate::TypeBehavior {
+        lifecycle: Some(sync_settings_card),
+        ..crate::TypeBehavior::NONE
+    };
+
     fn share_layouts(
         &mut self,
         share: &mut dyn FnMut(&mut std::sync::Arc<nana_ui_core::LayoutStyle>),
@@ -1005,9 +1291,19 @@ impl ComponentView for SettingsCard {
 /// keyed list or a conditional block is read through, so its rows are
 /// members in their own right. A [`crate::Divider`] member is a separator:
 /// it shows only between two shown members.
+///
+/// [`Self::hint_placement`](field@Self::hint_placement) says where the hints of the rows inside go, for
+/// every [`SettingsRow`] below the group (through any container, a nested
+/// group or card that sets its own aside); a row's own placement wins.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SettingsGroup {
     pub style: NodeStyle,
+    /// Where the hints of the rows inside go; `None` leaves it to the group
+    /// or card around this one, and to [`HintPlacement::Below`] when none
+    /// says.
+    pub hint_placement: Option<HintPlacement>,
+    /// The placement the group last handed down to its rows.
+    pub(crate) pushed_hint_placement: Option<HintPlacement>,
 }
 
 impl Default for SettingsGroup {
@@ -1023,7 +1319,18 @@ impl SettingsGroup {
         layout.direction = Some(FlexDirection::Column);
         layout.align_items = AlignSpec::Stretch;
         layout.width = Some(LengthSpec::Fill);
-        Self { style }
+        Self {
+            style,
+            hint_placement: None,
+            pushed_hint_placement: None,
+        }
+    }
+
+    /// Put the hints of the rows inside where `placement` says; see
+    /// [`Self::hint_placement`](field@Self::hint_placement).
+    pub fn hint_placement(mut self, placement: HintPlacement) -> Self {
+        self.hint_placement = Some(placement);
+        self
     }
 
     /// Space between members.
@@ -1243,6 +1550,231 @@ fn mark_group_edges(
                 (row.first_in_group, row.last_in_group, row.rule_above) = edges;
             })?;
         }
+    }
+    let (own, pushed) = context.read(group, |group| {
+        (group.hint_placement, group.pushed_hint_placement)
+    })?;
+    if hand_down_hint_placement(context, group.stable_id(), own, pushed)? {
+        context.update_component(group, |group, _| group.pushed_hint_placement = own)?;
+    }
+    Ok(())
+}
+
+std::thread_local! {
+    /// The rows being assembled now, so a write the assembly makes does not
+    /// start the same row's assembly again from its lifecycle.
+    static ROW_ASSEMBLING: std::cell::RefCell<HashSet<StableNodeId>> =
+        std::cell::RefCell::new(HashSet::new());
+}
+
+/// A row written: where its hint goes may have changed (its container's
+/// placement, its own), so are its parts (the help button, the notice line)
+/// the ones that need, and its group's edges.
+fn sync_settings_row(
+    context: &mut AppContext,
+    row: Entity<SettingsRow>,
+) -> Result<(), FrameworkError> {
+    resolve_row_hint_placement(context, row.stable_id())?;
+    sync_row_parts(context, row)?;
+    sync_row_group(context, row)
+}
+
+/// Give an assembled row the parts it lacks now (a help button, a notice
+/// line) and bring its help button in line with the hint and whether it is
+/// open. A write from outside the view layer (a group handing down a
+/// placement, the application setting a notice on a row it built by hand)
+/// reaches the row through here; the view layer reassembles its own rows.
+fn sync_row_parts(
+    context: &mut AppContext,
+    row: Entity<SettingsRow>,
+) -> Result<(), FrameworkError> {
+    let id = row.stable_id();
+    if ROW_ASSEMBLING.with_borrow(|rows| rows.contains(&id)) {
+        return Ok(());
+    }
+    let world = context.world();
+    let live = |slot: Option<StableNodeId>| slot.filter(|id| world.contains(*id));
+    let lacking = context.read(row, |row| {
+        live(row.copy_slot).is_some()
+            && (row.shows_help() != live(row.help_slot).is_some()
+                || (row.shown_notice().is_some() && live(row.notice_slot).is_none()))
+    })?;
+    if lacking && !context.reactive_flushing() {
+        context.assemble_settings_row(row)?;
+        return Ok(());
+    }
+    sync_row_help(context, row)
+}
+
+/// The help button after a row's name, for `hint`: a heading tool's square
+/// (24px at the default metrics) to aim at, hanging out of the name's line
+/// on every side so the line and the row keep their height; its glyph is
+/// the body text's size. Its name is the hint itself. Hovering it previews
+/// the hint, until the hint is `open` under the row.
+fn help_button(hint: &Arc<str>, open: bool) -> crate::IconButton {
+    let mut button = crate::IconButton::new(nana_ui_core::Icon::HelpCircle, Arc::clone(hint))
+        .compact(true)
+        .expanded(open);
+    if !open {
+        button = button.tooltip(
+            Arc::clone(hint),
+            nana_ui_core::TooltipConfig {
+                placement: nana_ui_core::TooltipPlacement::Bottom,
+                ..nana_ui_core::TooltipConfig::default()
+            },
+        );
+    }
+    let overhang = (nana_ui_core::space::PAGE - nana_ui_core::type_scale::BODY) * -0.5;
+    let theme_overhang = nana_ui_core::ThemeExpr::from(nana_ui_core::ThemeToken::Space(
+        nana_ui_core::SpacingStep::Page,
+    ))
+    .plus(
+        nana_ui_core::ThemeExpr::from(nana_ui_core::ThemeToken::Type(nana_ui_core::TypeRole::Body))
+            .scaled(-1.0),
+    )
+    .scaled(-0.5);
+    let layout = Arc::make_mut(&mut button.style.layout);
+    layout.margin_top = Some(LengthSpec::Px(overhang));
+    layout.margin_bottom = Some(LengthSpec::Px(overhang));
+    layout.margin_left = Some(LengthSpec::Px(overhang));
+    layout.margin_right = Some(LengthSpec::Px(overhang));
+    layout.theme.margin_top = Some(theme_overhang.clone());
+    layout.theme.margin_bottom = Some(theme_overhang.clone());
+    layout.theme.margin_left = Some(theme_overhang.clone());
+    layout.theme.margin_right = Some(theme_overhang);
+    button
+}
+
+/// Bring `row`'s help button in line with its hint and whether the hint is
+/// open: named by the hint, saying whether it is expanded, and previewing
+/// the hint on hover only while it is closed.
+fn sync_row_help(context: &mut AppContext, row: Entity<SettingsRow>) -> Result<(), FrameworkError> {
+    let Some((button, hint, open)) = context.read(row, |row| {
+        row.help_slot
+            .map(|id| (id, row.hint.clone().unwrap_or_default(), row.help_open))
+    })?
+    else {
+        return Ok(());
+    };
+    let button = Entity::<crate::IconButton>::from_stable_id(button);
+    let next = help_button(&hint, open);
+    let stale = context
+        .read(button, |current| {
+            current.label != next.label
+                || current.tooltip != next.tooltip
+                || current.expanded != next.expanded
+        })
+        .unwrap_or(false);
+    if stale {
+        context.update_component(button, |current, _| {
+            current.label = next.label;
+            current.tooltip = next.tooltip;
+            current.expanded = next.expanded;
+        })?;
+    }
+    Ok(())
+}
+
+/// Whether `id` is a [`SettingsGroup`] or a [`SettingsCard`], and what
+/// placement it sets when it is.
+fn hint_scope(context: &AppContext, id: StableNodeId) -> Option<Option<HintPlacement>> {
+    context
+        .read(Entity::<SettingsGroup>::from_stable_id(id), |group| {
+            group.hint_placement
+        })
+        .or_else(|_| {
+            context.read(Entity::<SettingsCard>::from_stable_id(id), |card| {
+                card.hint_placement
+            })
+        })
+        .ok()
+}
+
+/// The placement the nearest group or card above `id` that sets one gives.
+fn inherited_hint_placement(context: &AppContext, id: StableNodeId) -> Option<HintPlacement> {
+    let mut node = context.world().parent_id(id);
+    while let Some(parent) = node {
+        if let Some(Some(placement)) = hint_scope(context, parent) {
+            return Some(placement);
+        }
+        node = context.world().parent_id(parent);
+    }
+    None
+}
+
+/// Write the placement `row`'s containers give it. While a view is being
+/// built the row may not stand in its container yet: it is looked at once
+/// the build is done.
+pub(crate) fn resolve_row_hint_placement(
+    context: &mut AppContext,
+    row: StableNodeId,
+) -> Result<(), FrameworkError> {
+    if context.defer_settings_row(row) {
+        return Ok(());
+    }
+    resolve_row_hint_placement_now(context, row)
+}
+
+pub(crate) fn resolve_row_hint_placement_now(
+    context: &mut AppContext,
+    row: StableNodeId,
+) -> Result<(), FrameworkError> {
+    let inherited = inherited_hint_placement(context, row);
+    let row = Entity::<SettingsRow>::from_stable_id(row);
+    if context.read(row, |row| row.inherited_hint_placement != inherited)? {
+        context.update_component(row, |row, _| row.inherited_hint_placement = inherited)?;
+    }
+    Ok(())
+}
+
+/// The rows under `node` that take their placement from it: every
+/// [`SettingsRow`] below it, through any container, except under a group or
+/// card that sets a placement of its own.
+fn scope_rows(context: &AppContext, node: StableNodeId, rows: &mut Vec<StableNodeId>) {
+    let Some(snapshot) = context.world().node(node) else {
+        return;
+    };
+    for child in snapshot.children {
+        if context
+            .read(Entity::<SettingsRow>::from_stable_id(child), |_| ())
+            .is_ok()
+        {
+            rows.push(child);
+        } else if !matches!(hint_scope(context, child), Some(Some(_))) {
+            scope_rows(context, child, rows);
+        }
+    }
+}
+
+/// A group or card whose placement changed hands it down to the rows under
+/// it. `pushed` is the placement it handed down last; returns whether it
+/// handed one down now.
+fn hand_down_hint_placement(
+    context: &mut AppContext,
+    scope: StableNodeId,
+    own: Option<HintPlacement>,
+    pushed: Option<HintPlacement>,
+) -> Result<bool, FrameworkError> {
+    if own == pushed {
+        return Ok(false);
+    }
+    let mut rows = Vec::new();
+    scope_rows(context, scope, &mut rows);
+    for row in rows {
+        resolve_row_hint_placement(context, row)?;
+    }
+    Ok(true)
+}
+
+fn sync_settings_card(
+    context: &mut AppContext,
+    card: Entity<SettingsCard>,
+) -> Result<(), FrameworkError> {
+    let (own, pushed) = context.read(card, |card| {
+        (card.hint_placement, card.pushed_hint_placement)
+    })?;
+    if hand_down_hint_placement(context, card.stable_id(), own, pushed)? {
+        context.update_component(card, |card, _| card.pushed_hint_placement = own)?;
     }
     Ok(())
 }
@@ -2761,7 +3293,7 @@ impl AppContext {
                     FlexDirection::Row
                 };
                 self.world()
-                    .node_style(id)
+                    .node_style(row.line_node(id))
                     .is_some_and(|style| style.layout.direction != Some(direction))
             })
             .unwrap_or(false);
@@ -2787,18 +3319,36 @@ impl AppContext {
 
     /// Give a row its label, hint and copy nodes and put its children in
     /// order: the copy (label over hint), then the control. A row with a
-    /// [`SettingsRow::label_accessory`] puts the label and the accessory on
-    /// one line in the copy; without one the label is the copy's own child,
-    /// as it always was. What the label and hint say is the row's own
-    /// `label` / `hint`; its projection writes them. The view layer runs
-    /// this after it builds a row (`TypeBehavior::slot_assembler`); a row
-    /// made with [`Self::mount_settings_leaf_row`] is already assembled.
+    /// [`SettingsRow::label_accessory`] or a help button
+    /// ([`HintPlacement::Help`]) puts the label and those on one line in the
+    /// copy; without either the label is the copy's own child, as it always
+    /// was. A row with something under it (the hint opened from its help
+    /// button, a notice or an error) holds its copy and control in a main
+    /// line and stacks what is under it after that line. What the label and
+    /// hint say is the row's own `label` / `hint`; its projection writes
+    /// them. The view layer runs this after it builds a row
+    /// (`TypeBehavior::slot_assembler`); a row made with
+    /// [`Self::mount_settings_leaf_row`] is already assembled.
     /// Returns whether anything changed.
     pub fn assemble_settings_row(
         &mut self,
         row: Entity<SettingsRow>,
     ) -> Result<bool, FrameworkError> {
+        let id = row.stable_id();
+        if !ROW_ASSEMBLING.with_borrow_mut(|rows| rows.insert(id)) {
+            return Ok(false);
+        }
+        let result = self.assemble_settings_row_parts(row);
+        ROW_ASSEMBLING.with_borrow_mut(|rows| rows.remove(&id));
+        result
+    }
+
+    fn assemble_settings_row_parts(
+        &mut self,
+        row: Entity<SettingsRow>,
+    ) -> Result<bool, FrameworkError> {
         let document = document_of(self, row.stable_id())?;
+        resolve_row_hint_placement(self, row.stable_id())?;
         let snapshot = self.read(row, |row| {
             (
                 row.label.clone(),
@@ -2814,9 +3364,24 @@ impl AppContext {
         let (accessory, line_slot, flash_slot) = self.read(row, |row| {
             (row.label_accessory, row.label_line_slot, row.flash_slot)
         })?;
-        let (error, error_slot, error_shown) = self.read(row, |row| {
-            (row.error.is_some(), row.error_slot, row.error_shown)
+        let (error, error_shown, wants_notice) = self.read(row, |row| {
+            (
+                row.error.is_some(),
+                row.error_shown,
+                row.shown_notice().is_some(),
+            )
         })?;
+        let (wants_help, help_open, help_slot, help_text_slot, notice_slot, main_slot) = self
+            .read(row, |row| {
+                (
+                    row.shows_help(),
+                    row.help_open,
+                    row.help_slot,
+                    row.help_text_slot,
+                    row.notice_slot,
+                    row.main_slot,
+                )
+            })?;
         let (column, trailing, control_slot, value_slot, trailing_slot) =
             self.read(row, |row| {
                 (
@@ -2852,6 +3417,8 @@ impl AppContext {
                 hint_slot = None;
             }
         }
+        // Behind a help button the hint is not under the name.
+        let hint_hidden = hint.is_none() || wants_help;
         let hint_slot = match live(self, hint_slot) {
             Some(id) => id,
             None => {
@@ -2860,13 +3427,13 @@ impl AppContext {
                     self.create_detached_component(
                         document,
                         crate::PathText::new(hint.as_deref().unwrap_or(""))
-                            .style(hint_slot_style(hint.is_none())),
+                            .style(hint_slot_style(hint_hidden)),
                     )?
                     .stable_id()
                 } else {
                     self.create_detached_component(
                         document,
-                        row_hint_text(hint.as_deref().unwrap_or(""), hint.is_none()),
+                        row_hint_text(hint.as_deref().unwrap_or(""), hint_hidden),
                     )?
                     .stable_id()
                 }
@@ -2898,49 +3465,118 @@ impl AppContext {
                 Entity::<crate::PathText>::from_stable_id(hint_slot),
                 |text, _| {
                     text.value = hint.clone().unwrap_or_default();
-                    text.style = hint_slot_style(hint.is_none() || error);
+                    text.style = hint_slot_style(hint_hidden);
                 },
             )?;
         }
-        // The error's slot is made the first time there is one and kept,
-        // hidden, after it clears: a row that was wrong once is likely to be
-        // again, and its copy keeps one shape meanwhile.
-        let error_slot = match (live(self, error_slot), error) {
+        let mut changed = false;
+        // The help button goes with the hint behind it; the opened hint's
+        // node is made with it and kept, hidden, after it goes: the row keeps
+        // one shape meanwhile.
+        let live_help = live(self, help_slot);
+        let help = match (wants_help, live_help) {
+            (true, Some(id)) => Some(id),
+            (true, None) => {
+                let hint = hint.clone().unwrap_or_default();
+                let button =
+                    self.create_detached_component(document, help_button(&hint, help_open))?;
+                self.observe(button, row, |row, _: &Activate, cx| {
+                    row.help_open = !row.help_open;
+                    // The row's lifecycle brings the button along.
+                    cx.reassemble();
+                })?;
+                Some(button.stable_id())
+            }
+            (false, _) => None,
+        };
+        let help_text = match (live(self, help_text_slot), help) {
+            (Some(id), _) => Some(id),
+            (None, Some(_)) => Some(
+                self.create_detached_component(
+                    document,
+                    Text::new(hint.as_deref().unwrap_or("")).style(hint_slot_style(true)),
+                )?
+                .stable_id(),
+            ),
+            (None, None) => None,
+        };
+        // The notice line is made the first time there is a notice or an
+        // error and kept, hidden, after they clear: a row that was wrong
+        // once is likely to be again.
+        let notice = match (live(self, notice_slot), wants_notice) {
             (Some(id), _) => Some(id),
             (None, true) => {
-                let id = self
+                let glyph = self
                     .create_detached_component(
                         document,
-                        crate::ValidationMessage::new("", nana_ui_core::ValidationIntent::Danger)
-                            .compact(false)
-                            .style(error_slot_style(true)),
+                        notice_glyph(nana_ui_core::ValidationIntent::Warning),
                     )?
                     .stable_id();
-                self.update_component(row, |row, _| row.error_slot = Some(id))?;
-                Some(id)
+                let text = self
+                    .create_detached_component(
+                        document,
+                        notice_text("", nana_ui_core::ValidationIntent::Warning),
+                    )?
+                    .stable_id();
+                let notice = self
+                    .create_detached_component(document, notice_box_style(None))?
+                    .stable_id();
+                self.reconcile_children(notice, &[glyph, text])?;
+                self.update_component(row, |row, _| {
+                    row.notice_slot = Some(notice);
+                    row.notice_glyph_slot = Some(glyph);
+                    row.notice_text_slot = Some(text);
+                })?;
+                Some(notice)
             }
             (None, false) => None,
         };
+        // Something under the row puts the copy and the control on a main
+        // line of their own, kept from then on.
+        let main = match (
+            live(self, main_slot),
+            help_text.is_some() || notice.is_some(),
+        ) {
+            (Some(id), _) => Some(id),
+            (None, true) => Some(
+                self.create_detached_component(
+                    document,
+                    SettingsRowMain {
+                        line: NodeStyle::default(),
+                    },
+                )?
+                .stable_id(),
+            ),
+            (None, false) => None,
+        };
+        if help != live_help || help_text != help_text_slot || main != main_slot {
+            self.update_component(row, |row, _| {
+                row.help_slot = help;
+                row.help_text_slot = help_text;
+                row.main_slot = main;
+            })?;
+            changed = true;
+        }
         let copy = Entity::<SettingsRowCopy>::from_stable_id(copy_slot);
         let accessory = live(self, accessory);
         let live_line = live(self, line_slot);
-        let line = match (accessory, live_line) {
-            (Some(_), Some(line)) => Some(line),
-            (Some(_), None) => Some(
+        let line = match (accessory.is_some() || help.is_some(), live_line) {
+            (true, Some(line)) => Some(line),
+            (true, None) => Some(
                 self.create_detached_component(document, SettingsRowLabelLine)?
                     .stable_id(),
             ),
-            (None, _) => None,
+            (false, _) => None,
         };
         let line_changed = line != line_slot;
-        let mut changed = false;
-        if let (Some(line), Some(accessory)) = (line, accessory) {
-            changed |= self.reconcile_children(line, &[label_slot, accessory])?;
+        if let Some(line) = line {
+            let on_line: Vec<_> = std::iter::once(label_slot)
+                .chain(help)
+                .chain(accessory)
+                .collect();
+            changed |= self.reconcile_children(line, &on_line)?;
         }
-        let copy_children: Vec<_> = [line.unwrap_or(label_slot), hint_slot]
-            .into_iter()
-            .chain(error_slot)
-            .collect();
+        let copy_children = [line.unwrap_or(label_slot), hint_slot];
         changed |= reconcile_children(self, copy, &copy_children)?;
         if line_changed {
             // The label's width rule follows where it sits; the row's
@@ -2959,6 +3595,11 @@ impl AppContext {
                 self.reconcile_children(old, &[])?;
                 self.remove_view(Entity::<SettingsRowLabelLine>::from_stable_id(old))?;
             }
+        }
+        if let Some(old) = live_help.filter(|old| Some(*old) != help) {
+            // The hint came out from behind the button: the button goes,
+            // its line handed back above.
+            self.remove_view(Entity::<crate::IconButton>::from_stable_id(old))?;
         }
         let control = live(self, control);
         if error_shown != Some(error) {
@@ -3042,11 +3683,24 @@ impl AppContext {
             changed = true;
         }
         let box_changed = control_box != control_slot;
-        let children: Vec<_> = live(self, flash_slot)
-            .into_iter()
-            .chain(std::iter::once(copy_slot))
+        let line_parts: Vec<_> = std::iter::once(copy_slot)
             .chain(control_box.or(control))
             .collect();
+        let children: Vec<_> = match main {
+            Some(main) => {
+                changed |= self.reconcile_children(main, &line_parts)?;
+                live(self, flash_slot)
+                    .into_iter()
+                    .chain([main])
+                    .chain(help_text)
+                    .chain(notice)
+                    .collect()
+            }
+            None => live(self, flash_slot)
+                .into_iter()
+                .chain(line_parts)
+                .collect(),
+        };
         let previous = self
             .world()
             .node(row.stable_id())
@@ -3062,6 +3716,7 @@ impl AppContext {
                 self.remove_view(Entity::<SettingsRowControl>::from_stable_id(old))?;
             }
         }
+        sync_row_help(self, row)?;
         label_row_control(self, label_slot, control, &previous)?;
         Ok(created || changed || line_changed || box_changed)
     }
@@ -4066,7 +4721,8 @@ mod tests {
     }
 
     /// One line of copy, an error and label-column rows centre their
-    /// control; stacked rows stretch it.
+    /// control; stacked rows stretch it. A row with an error holds its copy
+    /// and control on a main line above the notice, and that line centres.
     #[test]
     fn rows_keep_their_alignment_whatever_the_copy() {
         let mut context = AppContext::new();
@@ -4093,9 +4749,15 @@ mod tests {
         ];
         for (case, hint, edit, align) in cases {
             for (kind, control) in row_controls(&mut context) {
-                let (row, _) = laid_out_row(&mut context, control, hint, edit);
-                let style = context.world().node_style(row.stable_id()).unwrap();
+                let (row, label) = laid_out_row(&mut context, control, hint, edit);
+                let line = context.read(row, |r| r.line_node(row.stable_id())).unwrap();
+                let style = context.world().node_style(line).unwrap();
                 assert_eq!(style.layout.align_items, align, "{case}, {kind}");
+                if case == "error" {
+                    // centred on the name, not on the name and the notice
+                    let offset = middle(&context, control) - middle(&context, label);
+                    assert!(offset.abs() <= 1.0, "{case}, {kind}: {offset}");
+                }
             }
         }
         // a one-line row centres its control on the name, as it always has

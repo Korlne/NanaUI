@@ -233,6 +233,9 @@ pub(crate) fn toast_stack(hooks: &mut TypeHooks) {
 
 pub(crate) fn settings_row(hooks: &mut TypeHooks) {
     route!(hooks; refresh_settings_row_layout, advance_settings_row_flash);
+    // A row looks up the placement its containers give it once a flush is
+    // done, with or without a group in the program.
+    route!(hooks; mark_deferred_settings_groups);
 }
 
 pub(crate) fn switch(hooks: &mut TypeHooks) {

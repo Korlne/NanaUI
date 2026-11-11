@@ -2896,6 +2896,192 @@ static RESET: IconData = IconData {
     svg: RESET_SVG,
 };
 
+static HELP_CIRCLE_PATH_0: &[IconPathCommand] = &[
+    IconPathCommand::MoveTo([3.0, 12.0]),
+    IconPathCommand::CubicTo {
+        control_a: [3.0, 16.9706],
+        control_b: [7.0294, 21.0],
+        to: [12.0, 21.0],
+    },
+    IconPathCommand::CubicTo {
+        control_a: [16.9706, 21.0],
+        control_b: [21.0, 16.9706],
+        to: [21.0, 12.0],
+    },
+    IconPathCommand::CubicTo {
+        control_a: [21.0, 7.0294],
+        control_b: [16.9706, 3.0],
+        to: [12.0, 3.0],
+    },
+    IconPathCommand::CubicTo {
+        control_a: [7.0294, 3.0],
+        control_b: [3.0, 7.0294],
+        to: [3.0, 12.0],
+    },
+];
+static HELP_CIRCLE_PATH_1: &[IconPathCommand] = &[
+    IconPathCommand::MoveTo([12.0, 16.0]),
+    IconPathCommand::LineTo([12.0, 16.01]),
+];
+static HELP_CIRCLE_PATH_2: &[IconPathCommand] = &[
+    IconPathCommand::MoveTo([12.0, 13.0]),
+    IconPathCommand::CubicTo {
+        control_a: [12.9258, 13.0028],
+        control_b: [13.7326, 12.3698],
+        to: [13.95, 11.4698],
+    },
+    IconPathCommand::CubicTo {
+        control_a: [14.1675, 10.5699],
+        control_b: [13.7389, 9.6383],
+        to: [12.914, 9.218],
+    },
+    IconPathCommand::CubicTo {
+        control_a: [12.0949, 8.7984],
+        control_b: [11.0946, 8.9985],
+        to: [10.5, 9.701],
+    },
+];
+static HELP_CIRCLE_SHAPES: &[IconShape] = &[
+    IconShape::Path(HELP_CIRCLE_PATH_0),
+    IconShape::Path(HELP_CIRCLE_PATH_1),
+    IconShape::Path(HELP_CIRCLE_PATH_2),
+];
+static HELP_CIRCLE_SVG: &str = r#"<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+  class="icon icon-tabler icons-tabler-outline icon-tabler-help-circle"
+><path stroke="none" d="M0 0h24v24H0z" fill="none" /><path d="M3 12a9 9 0 1 0 18 0a9 9 0 0 0 -18 0" /><path d="M12 16v.01" /><path d="M12 13a2 2 0 0 0 .914 -3.782a1.98 1.98 0 0 0 -2.414 .483" /></svg>"#;
+static HELP_CIRCLE: IconData = IconData {
+    name: "help-circle",
+    shapes: HELP_CIRCLE_SHAPES,
+    svg: HELP_CIRCLE_SVG,
+};
+
+static ALERT_TRIANGLE_PATH_0: &[IconPathCommand] = &[
+    IconPathCommand::MoveTo([12.0, 9.0]),
+    IconPathCommand::LineTo([12.0, 13.0]),
+];
+static ALERT_TRIANGLE_PATH_1: &[IconPathCommand] = &[
+    IconPathCommand::MoveTo([10.363, 3.591]),
+    IconPathCommand::LineTo([2.257, 17.125]),
+    IconPathCommand::CubicTo {
+        control_a: [1.917, 17.7139],
+        control_b: [1.9149, 18.4389],
+        to: [2.2515, 19.0297],
+    },
+    IconPathCommand::CubicTo {
+        control_a: [2.5882, 19.6205],
+        control_b: [3.2131, 19.9884],
+        to: [3.893, 19.996],
+    },
+    IconPathCommand::LineTo([20.107, 19.996]),
+    IconPathCommand::CubicTo {
+        control_a: [20.7866, 19.9882],
+        control_b: [21.4111, 19.6205],
+        to: [21.7477, 19.03],
+    },
+    IconPathCommand::CubicTo {
+        control_a: [22.0843, 18.4395],
+        control_b: [22.0825, 17.7148],
+        to: [21.743, 17.126],
+    },
+    IconPathCommand::LineTo([13.637, 3.59]),
+    IconPathCommand::CubicTo {
+        control_a: [13.2901, 3.0175],
+        control_b: [12.6694, 2.6678],
+        to: [12.0, 2.6678],
+    },
+    IconPathCommand::CubicTo {
+        control_a: [11.3306, 2.6678],
+        control_b: [10.7099, 3.0175],
+        to: [10.363, 3.59],
+    },
+];
+static ALERT_TRIANGLE_PATH_2: &[IconPathCommand] = &[
+    IconPathCommand::MoveTo([12.0, 16.0]),
+    IconPathCommand::LineTo([12.01, 16.0]),
+];
+static ALERT_TRIANGLE_SHAPES: &[IconShape] = &[
+    IconShape::Path(ALERT_TRIANGLE_PATH_0),
+    IconShape::Path(ALERT_TRIANGLE_PATH_1),
+    IconShape::Path(ALERT_TRIANGLE_PATH_2),
+];
+static ALERT_TRIANGLE_SVG: &str = r#"<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+  class="icon icon-tabler icons-tabler-outline icon-tabler-alert-triangle"
+><path stroke="none" d="M0 0h24v24H0z" fill="none" /><path d="M12 9v4" /><path d="M10.363 3.591l-8.106 13.534a1.914 1.914 0 0 0 1.636 2.871h16.214a1.914 1.914 0 0 0 1.636 -2.87l-8.106 -13.536a1.914 1.914 0 0 0 -3.274 0" /><path d="M12 16h.01" /></svg>"#;
+static ALERT_TRIANGLE: IconData = IconData {
+    name: "alert-triangle",
+    shapes: ALERT_TRIANGLE_SHAPES,
+    svg: ALERT_TRIANGLE_SVG,
+};
+
+static CIRCLE_X_PATH_0: &[IconPathCommand] = &[
+    IconPathCommand::MoveTo([3.0, 12.0]),
+    IconPathCommand::CubicTo {
+        control_a: [3.0, 16.9706],
+        control_b: [7.0294, 21.0],
+        to: [12.0, 21.0],
+    },
+    IconPathCommand::CubicTo {
+        control_a: [16.9706, 21.0],
+        control_b: [21.0, 16.9706],
+        to: [21.0, 12.0],
+    },
+    IconPathCommand::CubicTo {
+        control_a: [21.0, 7.0294],
+        control_b: [16.9706, 3.0],
+        to: [12.0, 3.0],
+    },
+    IconPathCommand::CubicTo {
+        control_a: [7.0294, 3.0],
+        control_b: [3.0, 7.0294],
+        to: [3.0, 12.0],
+    },
+];
+static CIRCLE_X_PATH_1: &[IconPathCommand] = &[
+    IconPathCommand::MoveTo([10.0, 10.0]),
+    IconPathCommand::LineTo([14.0, 14.0]),
+    IconPathCommand::MoveTo([14.0, 10.0]),
+    IconPathCommand::LineTo([10.0, 14.0]),
+];
+static CIRCLE_X_SHAPES: &[IconShape] = &[
+    IconShape::Path(CIRCLE_X_PATH_0),
+    IconShape::Path(CIRCLE_X_PATH_1),
+];
+static CIRCLE_X_SVG: &str = r#"<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+  class="icon icon-tabler icons-tabler-outline icon-tabler-circle-x"
+><path stroke="none" d="M0 0h24v24H0z" fill="none" /><path d="M3 12a9 9 0 1 0 18 0a9 9 0 1 0 -18 0" /><path d="M10 10l4 4m0 -4l-4 4" /></svg>"#;
+static CIRCLE_X: IconData = IconData {
+    name: "circle-x",
+    shapes: CIRCLE_X_SHAPES,
+    svg: CIRCLE_X_SVG,
+};
+
 #[allow(non_upper_case_globals)]
 impl Icon {
     pub const About: Self = Self(&ABOUT);
@@ -2943,4 +3129,7 @@ impl Icon {
     pub const Webcam: Self = Self(&WEBCAM);
     pub const Wind: Self = Self(&WIND);
     pub const Reset: Self = Self(&RESET);
+    pub const HelpCircle: Self = Self(&HELP_CIRCLE);
+    pub const AlertTriangle: Self = Self(&ALERT_TRIANGLE);
+    pub const CircleX: Self = Self(&CIRCLE_X);
 }

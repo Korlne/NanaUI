@@ -3147,23 +3147,43 @@ impl UiWorld {
     /// the caller still owns. Validation runs fully before the apply loop, so
     /// a rejected batch never lands partially and the caller may replay it.
     pub fn commit_ref(&mut self, queue: &MutationQueue) -> Result<CommitReport, UiWorldError> {
-        self.commit_applying(queue, None)
+        self.commit_applying(queue, &[], None)
     }
 
     /// `commit_ref` that also collects the root of every `Insert` and
     /// `ParkSubtree` it actually applied into `roots`.
+    ///
+    /// `placements` are a layout pass's writeback, committed exactly as the
+    /// same boxes queued as [`UiMutation::PlaceLayout`] after `queue`'s
+    /// mutations would be: each is validated as one and goes through the one
+    /// loop below as one. A batch is either mutations or placements.
     fn commit_applying(
         &mut self,
         queue: &MutationQueue,
+        placements: &[crate::mutation::LayoutPlacement],
         mut roots: Option<&mut Vec<StableNodeId>>,
     ) -> Result<CommitReport, UiWorldError> {
-        let mut report = CommitReport::unchanged(self.generation, queue.len());
-        if queue.is_empty() {
+        debug_assert!(
+            queue.is_empty() || placements.is_empty(),
+            "a batch is either mutations or a layout pass's placements"
+        );
+        let mut report = CommitReport::unchanged(self.generation, queue.len() + placements.len());
+        if queue.is_empty() && placements.is_empty() {
             return Ok(report);
         }
         let mut scanned = 0;
         let mut validated = Ok(());
-        if !self.validate_simple_mutation(queue.as_slice())? {
+        // Placements are a layout pass's writeback, validated as
+        // `validate_simple_mutation` validates one.
+        for placement in placements {
+            if !self.contains(placement.id) {
+                return Err(UiWorldError::MissingNode(placement.id));
+            }
+            if !layout_is_valid(&placement.layout) {
+                return Err(UiWorldError::InvalidLayout(placement.id));
+            }
+        }
+        if !queue.is_empty() && !self.validate_simple_mutation(queue.as_slice())? {
             let mut plan = ValidationPlan::new(self);
             validated = plan.validate(queue.as_slice());
             scanned = plan.scanned;
@@ -3189,10 +3209,28 @@ impl UiWorld {
         if self.result_chain_memo_off {
             self.result_chain_memo = None;
         }
-        for (index, mutation) in mutations.iter().enumerate() {
+        for index in 0..mutations.len() + placements.len() {
+            let placed;
+            let mutation = match mutations.get(index) {
+                Some(mutation) => mutation,
+                None => {
+                    let placement = placements[index - mutations.len()];
+                    placed = UiMutation::PlaceLayout {
+                        id: placement.id,
+                        layout: placement.layout,
+                        frame: placement.frame,
+                    };
+                    &placed
+                }
+            };
             self.forget_result_chains_before(mutation);
             if index >= run_end {
-                run_end = index + self.unlink_removal_run(&mutations[index..]);
+                // A placement removes nothing: it is a run of its own.
+                run_end = index
+                    + mutations
+                        .get(index..)
+                        .filter(|rest| !rest.is_empty())
+                        .map_or(1, |rest| self.unlink_removal_run(rest));
             }
             if self.is_structural_noop(mutation) {
                 self.note_noop_text_scale(mutation);
@@ -3522,11 +3560,12 @@ impl UiWorld {
     pub(crate) fn commit_with_mount_lifecycle(
         &mut self,
         queue: MutationQueue,
+        placements: &[crate::mutation::LayoutPlacement],
     ) -> Result<(CommitReport, NodeSet, NodeSet), UiWorldError> {
         // A root put back where it already was mounts or parks nothing, so
         // only the ones actually applied count.
         let mut roots = Vec::new();
-        let mut report = self.commit_applying(&queue, Some(&mut roots))?;
+        let mut report = self.commit_applying(&queue, placements, Some(&mut roots))?;
         let mut parked = NodeSet::default();
         let mut inserted = NodeSet::default();
         let mut visited = NodeSet::default();

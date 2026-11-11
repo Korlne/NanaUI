@@ -67,6 +67,9 @@ CATALOG = [
     ("Webcam", "device-computer-camera"),
     ("Wind", "wind"),
     ("Reset", "arrow-back-up"),
+    ("HelpCircle", "help-circle"),
+    ("AlertTriangle", "alert-triangle"),
+    ("CircleX", "circle-x"),
 ]
 
 NS = {"svg": "http://www.w3.org/2000/svg"}

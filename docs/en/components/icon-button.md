@@ -58,7 +58,7 @@ The disabled look follows the colors. A button colored by its kind drops to 50% 
 
 ## Properties
 
-The fields are `icon: Icon`, `label: Arc<str>`, `selected: bool`, `disabled: bool`, and `has_popup: bool`. There is no `model`. Activation does not change `selected` on its own.
+The fields are `icon: Icon`, `label: Arc<str>`, `selected: bool`, `disabled: bool`, `has_popup: bool`, and `expanded: Option<bool>`. There is no `model`. Activation does not change `selected` on its own. `expanded` (`IconButton::expanded(open)` in Rust) is for a button that shows and hides something in place: a screen reader hears whether it is open now (`aria-expanded`). Defaults to `None`.
 
 | Property | Type | Description |
 | --- | --- | --- |

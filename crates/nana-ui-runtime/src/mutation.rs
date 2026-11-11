@@ -329,6 +329,22 @@ pub enum UiMutation {
     },
 }
 
+/// One box [`crate::RuntimeLayoutEngine`] computed, measured from `frame`'s
+/// origin: what [`UiMutation::PlaceLayout`] carries, 40 bytes of it.
+///
+/// A layout pass writes back one of these per box it moved, a whole page of
+/// them on a first layout. They are committed as a batch of their own
+/// ([`crate::AppContext::commit_layout_placements`]) rather than queued as
+/// mutations, each of which takes the room the largest mutation needs (240
+/// bytes): the queue of a 21 001-box page was 7.9 MB allocated and freed
+/// every cold pass.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct LayoutPlacement {
+    pub id: StableNodeId,
+    pub layout: LayoutBox,
+    pub frame: crate::LayoutFrame,
+}
+
 /// Frame-local command boundary for reconcilers and adapters.
 #[derive(Debug, Default)]
 pub struct MutationQueue {
@@ -557,8 +573,11 @@ impl MutationQueue {
         self.mutations.push(UiMutation::WriteLayout { id, layout });
     }
 
-    /// Publish a box [`crate::RuntimeLayoutEngine`] computed, measured from
-    /// `frame`'s origin.
+    /// Queue a box [`crate::RuntimeLayoutEngine`] computed, measured from
+    /// `frame`'s origin, among other mutations. A layout pass's writeback
+    /// commits [`LayoutPlacement`]s instead; tests queue one to place a box
+    /// beside the mutations they are about.
+    #[cfg(test)]
     pub(crate) fn place_layout(
         &mut self,
         id: StableNodeId,

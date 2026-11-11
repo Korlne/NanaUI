@@ -331,6 +331,9 @@ mod tests {
         Icon::Webcam,
         Icon::Wind,
         Icon::Reset,
+        Icon::HelpCircle,
+        Icon::AlertTriangle,
+        Icon::CircleX,
     ];
 
     /// The SVG rasterizer the atlas used before, as the reference.

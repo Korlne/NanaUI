@@ -319,7 +319,7 @@ impl UiWorld {
             orientation: state.orientation,
             selected: state.selected,
             level: None,
-            expanded: None,
+            expanded: state.expanded,
             active_descendant: None,
             position_in_set: None,
             set_size: None,

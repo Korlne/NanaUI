@@ -41,6 +41,18 @@ settings_group(Some("Connection".into()), vec![
 
 When you build the title yourself, or the block holds something other than `group_row`, use `group_block(children)` directly: it is the same tinted block, with an inner `SettingsGroup` managing the first and last members and the hairlines; `.quiet()` removes the background and padding, and `.gap(step)` sets the spacing between members.
 
+## Hint placement
+
+`.hint_placement(HintPlacement::Help)` puts the hint of every row in the group behind a help button after its name, so each row stays one line tall; use it where rows are adjusted at a glance, such as an inspector card or a form, and keep the default (the hint under the name) on a settings page. It is written on the group's `SettingsGroup` and reaches every settings row inside; see [SettingsRow's hint placement](https://github.com/sena-nana/NanaUI/blob/main/docs/components/settings-row.md#hint-placement). For a card holding several groups, write it once on the card (`SettingsCard`) or on a group around them, and the groups inside need none; a row's own placement wins.
+
+```rust
+use nana_ui::runtime::HintPlacement;
+
+settings_group(Some("Transform".into()), rows).hint_placement(HintPlacement::Help)
+```
+
+For a group built by hand, write `SettingsGroup::new().hint_placement(HintPlacement::Help)`; `group_block(..)` has the same method.
+
 ## Actions of the group itself
 
 `.footer(view)` goes below the card or block, as close to it as the title is (`Md` for a raised card, `Attach` for a tinted block), so it reads as belonging to this group rather than the next. Buttons that advance a task go here, not in the title tools.
@@ -70,6 +82,7 @@ The distance between groups comes from the `gap` of the column holding them; gro
 | `content_line(view)` | Puts any view on the content line (adds only horizontal padding) |
 | `.inset()` | A tinted block instead of a raised card; title and row text on the same line; rows use `group_row` |
 | `.footer(view)` | The group's own actions, directly below the card or block |
+| `.hint_placement(placement)` | Where the hints of the group's settings rows go (on `SettingsGroupView`, `GroupBlock`, `SettingsGroup` and `SettingsCard`); see above |
 | `group_block(children)` | A tinted block without a title; `.quiet()`, `.gap(step)` |
 | `CONTENT_INSET` / `content_inset()` | The content line's step / the pixel value that holds **only under default metrics**: when a theme changes spacing, the content line follows the step and this number does not change. Wherever a step can be written, write `CONTENT_INSET` (`Divider::inset_step`, theme padding) |
 

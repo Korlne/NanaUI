@@ -1001,22 +1001,36 @@ pub(crate) struct PassIntrinsicFacts {
     /// Index into `facts` of the fact each node last measured or was
     /// seeded with: what its baseline is read from.
     latest: crate::store::DenseNodeMap<u32>,
+    /// Recordings that differ from what their fact's lookups answer.
+    records: Vec<IntrinsicMetrics>,
     counters: IntrinsicCacheCounters,
 }
 
+/// One fact of a pass. A pass writes one or two a node, so what a fact
+/// holds is what a cold layout's working memory grows by: its recording
+/// lives in `metrics` too, because what a lookup answers is the recording
+/// normalized, and that is the recording itself for every measurement.
 struct PassFact {
     key: IntrinsicCacheKey,
-    /// What lookups answer, when `visible`.
+    /// What lookups answer, when `visible`; until then, the recording.
     metrics: IntrinsicMetrics,
     context: Option<FormattingContextId>,
-    visible: bool,
-    /// The latest metrics recorded for the retained cache.
-    recorded: Option<IntrinsicMetrics>,
+    /// The latest metrics recorded for the retained cache:
+    /// [`NOT_RECORDED`], [`RECORDED_AS_HELD`] (`metrics` itself), or where
+    /// they differ from `metrics`, an index into
+    /// [`PassIntrinsicFacts::records`].
+    recorded: u32,
     /// The node's next older fact, or `u32::MAX`.
     older: u32,
+    visible: bool,
 }
 
+// Two recordings in one fact was 184 bytes.
+const _: () = assert!(std::mem::size_of::<PassFact>() <= 128);
+
 const NO_FACT: u32 = u32::MAX;
+const NOT_RECORDED: u32 = u32::MAX;
+const RECORDED_AS_HELD: u32 = u32::MAX - 1;
 
 impl PassIntrinsicFacts {
     pub(crate) fn with_capacity(capacity: usize) -> Self {
@@ -1054,13 +1068,8 @@ impl PassIntrinsicFacts {
         None
     }
 
-    /// The fact for `key`, appended (unseen, unrecorded) when there is none.
-    fn slot(&mut self, key: IntrinsicCacheKey) -> &mut PassFact {
-        let index = self.slot_index(key);
-        &mut self.facts[index]
-    }
-
-    /// Where [`Self::slot`]'s fact lies.
+    /// Where the fact for `key` lies, appended (unseen, unrecorded) when
+    /// there is none.
     fn slot_index(&mut self, key: IntrinsicCacheKey) -> usize {
         if let Some(index) = self.find(&key) {
             return index;
@@ -1077,11 +1086,58 @@ impl PassIntrinsicFacts {
             key,
             metrics: IntrinsicMetrics::new(0.0, 0.0, 0.0, None, UsedSize::new(0.0, 0.0)),
             context: None,
-            visible: false,
-            recorded: None,
+            recorded: NOT_RECORDED,
             older,
+            visible: false,
         });
         index as usize
+    }
+
+    /// What `fact` holds for the retained cache.
+    fn recording(&self, fact: &PassFact) -> Option<IntrinsicMetrics> {
+        match fact.recorded {
+            NOT_RECORDED => None,
+            RECORDED_AS_HELD => Some(fact.metrics),
+            aside => Some(self.records[aside as usize]),
+        }
+    }
+
+    /// Make `metrics` fact `index`'s recording: in the fact itself while
+    /// lookups see nothing or the same, aside otherwise. A fact keeps the
+    /// place aside it once took, so there are never more than facts.
+    fn hold_recording(&mut self, index: usize, metrics: IntrinsicMetrics) {
+        let fact = &mut self.facts[index];
+        if let Some(aside) = self.records.get_mut(fact.recorded as usize) {
+            *aside = metrics;
+        } else if !fact.visible || fact.metrics == metrics {
+            if !fact.visible {
+                fact.metrics = metrics;
+            }
+            fact.recorded = RECORDED_AS_HELD;
+        } else {
+            fact.recorded = u32::try_from(self.records.len()).expect("a pass holds under 4G facts");
+            self.records.push(metrics);
+        }
+    }
+
+    /// Make `metrics` what lookups of fact `index` answer, keeping its
+    /// recording.
+    fn show(
+        &mut self,
+        index: usize,
+        metrics: IntrinsicMetrics,
+        context: Option<FormattingContextId>,
+    ) {
+        let recording = self.recording(&self.facts[index]);
+        let fact = &mut self.facts[index];
+        let newly = !fact.visible;
+        fact.metrics = metrics;
+        fact.context = context;
+        fact.visible = true;
+        self.visible += usize::from(newly);
+        if let Some(recording) = recording {
+            self.hold_recording(index, recording);
+        }
     }
 
     /// [`Self::insert`], [`Self::record`] and [`Self::note_latest`] for one
@@ -1113,8 +1169,9 @@ impl PassIntrinsicFacts {
         fact.metrics = shown;
         fact.context = context;
         fact.visible = true;
-        fact.recorded = Some(metrics);
         self.visible += usize::from(newly);
+        // The recording this replaces goes with it.
+        self.hold_recording(index, metrics);
         self.latest.insert(id, index as u32);
     }
 
@@ -1132,12 +1189,8 @@ impl PassIntrinsicFacts {
         };
         metrics = metrics.normalized();
         metrics.generation = IntrinsicGeneration::default().get();
-        let fact = self.slot(key);
-        let newly = !fact.visible;
-        fact.metrics = metrics;
-        fact.context = context;
-        fact.visible = true;
-        self.visible += usize::from(newly);
+        let index = self.slot_index(key);
+        self.show(index, metrics, context);
     }
 
     /// Make the fact for `key` the one `id`'s baseline is read from.
@@ -1167,15 +1220,17 @@ impl PassIntrinsicFacts {
     /// Record `metrics` for `key` for the retained cache; the latest
     /// recording of a key wins.
     pub(crate) fn record(&mut self, key: IntrinsicCacheKey, metrics: IntrinsicMetrics) {
-        self.slot(key).recorded = Some(metrics);
+        let index = self.slot_index(key);
+        self.hold_recording(index, metrics);
     }
 
     /// Every key's latest recording, in measuring order.
-    pub(crate) fn recorded(&self) -> Vec<(IntrinsicCacheKey, IntrinsicMetrics)> {
+    pub(crate) fn recorded(
+        &self,
+    ) -> impl Iterator<Item = (IntrinsicCacheKey, IntrinsicMetrics)> + '_ {
         self.facts
             .iter()
-            .filter_map(|fact| Some((fact.key, fact.recorded?)))
-            .collect()
+            .filter_map(|fact| Some((fact.key, self.recording(fact)?)))
     }
 
     fn lookup(
@@ -1423,5 +1478,113 @@ mod tests {
         cache.insert(third, metrics(), None);
         assert_eq!(cache.bytes(), bytes_per_entry * 2);
         assert_eq!(cache.len(), 2);
+    }
+
+    /// A pass's facts answer and hand over what a fact holding what lookups
+    /// answer and its recording side by side would: recordings that differ
+    /// from the answer (a later generation, unnormalized values) and keys
+    /// that normalize to another are interleaved with every write.
+    #[test]
+    fn pass_facts_hold_one_copy_and_answer_as_two() {
+        #[derive(Default)]
+        struct Model {
+            order: Vec<IntrinsicCacheKey>,
+            shown: Vec<Option<IntrinsicMetrics>>,
+            recorded: Vec<Option<IntrinsicMetrics>>,
+        }
+        impl Model {
+            fn slot(&mut self, key: IntrinsicCacheKey) -> usize {
+                if let Some(index) = self.order.iter().position(|held| *held == key) {
+                    return index;
+                }
+                self.order.push(key);
+                self.shown.push(None);
+                self.recorded.push(None);
+                self.order.len() - 1
+            }
+            fn show(&mut self, key: IntrinsicCacheKey, metrics: IntrinsicMetrics) {
+                let key = IntrinsicCacheKey {
+                    constraints: key.constraints.normalized(),
+                    ..key
+                };
+                let index = self.slot(key);
+                self.shown[index] = Some(metrics.normalized().with_generation(0));
+            }
+            fn record(&mut self, key: IntrinsicCacheKey, metrics: IntrinsicMetrics) {
+                let index = self.slot(key);
+                self.recorded[index] = Some(metrics);
+            }
+            fn get(&self, key: &IntrinsicCacheKey) -> Option<IntrinsicMetrics> {
+                let key = IntrinsicCacheKey {
+                    constraints: key.constraints.normalized(),
+                    ..*key
+                };
+                let index = self.order.iter().position(|held| *held == key)?;
+                self.shown[index]
+            }
+        }
+
+        let keys: Vec<IntrinsicCacheKey> = (1..=3)
+            .flat_map(|content| {
+                [
+                    ConstraintClass::Unconstrained,
+                    ConstraintClass::MaxInline(40.0),
+                    // Normalizes to `Unconstrained`.
+                    ConstraintClass::MaxInline(f32::INFINITY),
+                ]
+                .map(|constraints| IntrinsicCacheKey {
+                    content,
+                    style: 5,
+                    constraints,
+                })
+            })
+            .collect();
+        let values = [
+            metrics(),
+            metrics().with_generation(3),
+            IntrinsicMetrics::new(-4.0, 30.0, 2.0, 9.0, UsedSize::new(30.0, 9.0)),
+            IntrinsicMetrics::new(6.0, 60.0, 8.0, None, UsedSize::new(60.0, 8.0)),
+        ];
+        let mut facts = PassIntrinsicFacts::default();
+        let mut model = Model::default();
+        let mut state = 0x2545_f491_u32;
+        for step in 0..4_000 {
+            state = state.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+            let key = keys[(state >> 8) as usize % keys.len()];
+            let value = values[(state >> 16) as usize % values.len()];
+            match (state >> 24) % 3 {
+                0 => {
+                    facts.insert(key, value, None);
+                    model.show(key, value);
+                }
+                1 => {
+                    facts.record(key, value);
+                    model.record(key, value);
+                }
+                _ => {
+                    let id = crate::StableNodeId::new(key.content).unwrap();
+                    facts.insert_measured(id, key, value, None);
+                    model.show(key, value);
+                    model.record(key, value);
+                }
+            }
+            for key in &keys {
+                assert_eq!(facts.get(key, None), model.get(key), "step {step}, {key:?}");
+            }
+            let expected: Vec<_> = model
+                .order
+                .iter()
+                .zip(&model.recorded)
+                .filter_map(|(key, recorded)| Some((*key, (*recorded)?)))
+                .collect();
+            assert_eq!(
+                facts.recorded().collect::<Vec<_>>(),
+                expected,
+                "step {step}"
+            );
+        }
+        // Some recordings were held aside, never more than a place a fact.
+        assert!(!facts.records.is_empty());
+        assert!(facts.records.len() <= facts.facts.len());
     }
 }

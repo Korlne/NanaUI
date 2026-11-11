@@ -58,7 +58,7 @@ icon_button(Icon::Search, "搜索")
 
 ## 属性
 
-字段是 `icon: Icon`、`label: Arc<str>`、`selected: bool`、`disabled: bool`、`has_popup: bool`。没有 `model`。激活不自己改 `selected`。
+字段是 `icon: Icon`、`label: Arc<str>`、`selected: bool`、`disabled: bool`、`has_popup: bool`、`expanded: Option<bool>`。没有 `model`。激活不自己改 `selected`。`expanded`（Rust 里用 `IconButton::expanded(open)`）给原地展开、收起某样东西的按钮：读屏读到它现在是否展开（`aria-expanded`），默认 `None`。
 
 | 属性 | 类型 | 说明 |
 | --- | --- | --- |

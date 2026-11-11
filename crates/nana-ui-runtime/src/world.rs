@@ -7962,6 +7962,8 @@ mod line_box_memo;
 mod list_item_tooltip;
 mod mount_under_narrow_row;
 mod pending_causes;
+#[cfg(test)]
+mod placement_commit;
 mod reflow_oracle;
 mod result_chain_memo;
 #[cfg(test)]

@@ -123,17 +123,22 @@ impl<T> Paged<T> {
         }
     }
 
-    /// Keeps the values `keep` answers for.
-    pub(crate) fn retain(&mut self, mut keep: impl FnMut(&mut T) -> bool) {
-        for (entry, used) in self.pages.iter_mut().zip(&mut self.used) {
+    /// Keeps the values `keep` answers for, given each with its index.
+    pub(crate) fn retain(&mut self, mut keep: impl FnMut(usize, &mut T) -> bool) {
+        let base = self.base;
+        for (number, (entry, used)) in self.pages.iter_mut().zip(&mut self.used).enumerate() {
             let Some(page) = entry.as_deref_mut() else {
                 continue;
             };
+            let first = (base + number) << PAGE_BITS;
             let mut left = *used;
             while left != 0 {
                 let slot = left.trailing_zeros() as usize;
                 left &= left - 1;
-                if page[slot].as_mut().is_some_and(|value| !keep(value)) {
+                if page[slot]
+                    .as_mut()
+                    .is_some_and(|value| !keep(first | slot, value))
+                {
                     page[slot] = None;
                     *used &= !(1 << slot);
                     self.len -= 1;
@@ -207,34 +212,39 @@ impl<'a, T> Iterator for Iter<'a, T> {
     }
 }
 
-/// Every value, in index order, by value.
+/// Every value with its index, in index order, by value.
 pub(crate) struct IntoIter<T> {
     pages: std::iter::Zip<std::vec::IntoIter<Option<Page<T>>>, std::vec::IntoIter<u64>>,
     page: Option<Page<T>>,
+    /// The number of the page after `page`.
+    next: usize,
     left: u64,
 }
 
 impl<T> Iterator for IntoIter<T> {
-    type Item = T;
+    type Item = (usize, T);
 
-    fn next(&mut self) -> Option<T> {
+    fn next(&mut self) -> Option<(usize, T)> {
         while self.left == 0 {
             let (page, used) = self.pages.next()?;
             self.page = page;
+            self.next += 1;
             self.left = used;
         }
         let slot = self.left.trailing_zeros() as usize;
         self.left &= self.left - 1;
-        self.page.as_deref_mut()?[slot].take()
+        let value = self.page.as_deref_mut()?[slot].take()?;
+        Some((((self.next - 1) << PAGE_BITS) | slot, value))
     }
 }
 
 impl<T> IntoIterator for Paged<T> {
-    type Item = T;
+    type Item = (usize, T);
     type IntoIter = IntoIter<T>;
 
     fn into_iter(self) -> IntoIter<T> {
         IntoIter {
+            next: self.base,
             pages: self.pages.into_iter().zip(self.used),
             page: None,
             left: 0,
@@ -407,13 +417,14 @@ impl<T> Slots<T> {
         self.on_pages = true;
     }
 
-    pub(crate) fn retain(&mut self, mut keep: impl FnMut(&mut T) -> bool) {
+    /// Keeps the values `keep` answers for, given each with its index.
+    pub(crate) fn retain(&mut self, mut keep: impl FnMut(usize, &mut T) -> bool) {
         if self.on_pages {
             self.paged.retain(keep);
             return;
         }
-        for slot in &mut self.run {
-            if slot.as_mut().is_some_and(|value| !keep(value)) {
+        for (index, slot) in self.run.iter_mut().enumerate() {
+            if slot.as_mut().is_some_and(|value| !keep(index, value)) {
                 *slot = None;
                 self.held -= 1;
             }
@@ -464,31 +475,29 @@ impl<'a, T> Iterator for SlotsIter<'a, T> {
     }
 }
 
-/// Every value of a [`Slots`], in index order, by value.
+/// Every value of a [`Slots`] with its index, in index order, by value.
 pub(crate) struct SlotsIntoIter<T> {
-    run: std::vec::IntoIter<Option<T>>,
+    run: std::iter::Enumerate<std::vec::IntoIter<Option<T>>>,
     paged: IntoIter<T>,
 }
 
 impl<T> Iterator for SlotsIntoIter<T> {
-    type Item = T;
+    type Item = (usize, T);
 
-    fn next(&mut self) -> Option<T> {
+    fn next(&mut self) -> Option<(usize, T)> {
         self.run
-            .by_ref()
-            .flatten()
-            .next()
+            .find_map(|(index, slot)| Some((index, slot?)))
             .or_else(|| self.paged.next())
     }
 }
 
 impl<T> IntoIterator for Slots<T> {
-    type Item = T;
+    type Item = (usize, T);
     type IntoIter = SlotsIntoIter<T>;
 
     fn into_iter(self) -> SlotsIntoIter<T> {
         SlotsIntoIter {
-            run: self.run.into_iter(),
+            run: self.run.into_iter().enumerate(),
             paged: self.paged.into_iter(),
         }
     }
@@ -534,8 +543,10 @@ mod tests {
                     3 | 4 => assert_eq!(paged.remove(index), model.remove(&index)),
                     5 if draw(20) == 0 => {
                         let cut = draw(4) as u64;
-                        paged.retain(|value| *value % 4 != cut);
-                        model.retain(|_, value| *value % 4 != cut);
+                        // What is kept turns on the index too: retain
+                        // hands each value its own.
+                        paged.retain(|at, value| (*value + at as u64) % 4 != cut);
+                        model.retain(|at, value| (*value + *at as u64) % 4 != cut);
                     }
                     _ => {
                         if let Some(value) = paged.get_mut(index) {
@@ -556,7 +567,7 @@ mod tests {
                     "seed {seed}, step {step}"
                 );
             }
-            let held: Vec<u64> = model.values().copied().collect();
+            let held: Vec<(usize, u64)> = model.iter().map(|(at, value)| (*at, *value)).collect();
             assert_eq!(paged.clone().into_iter().collect::<Vec<_>>(), held);
             for index in model.keys().copied().collect::<Vec<_>>() {
                 assert!(paged.remove(index).is_some());
