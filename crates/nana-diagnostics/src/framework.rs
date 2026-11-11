@@ -296,6 +296,10 @@ pub mod gpu {
     pub static UPLOAD_RING_WAITS: Metric = Metric::counter(D, 24, "gpu.upload_ring_waits", "count");
     /// `begin_frame` calls that blocked on the oldest in-flight frame.
     pub static FRAME_SLOT_WAITS: Metric = Metric::counter(D, 25, "gpu.frame_slot_waits", "count");
+    /// Submits (or producer frame starts) that waited for their lane's
+    /// oldest unfinished submission: the submission budget at work.
+    pub static SUBMISSION_BUDGET_WAITS: Metric =
+        Metric::counter(D, 67, "gpu.submission_budget_waits", "count");
     /// Frame binding observed a live exchange epoch gap and retained the last
     /// presented frame until its replacement was published.
     pub static FRAME_BINDING_REPLACEMENT_GAPS: Metric =
@@ -519,6 +523,16 @@ pub mod gpu {
     /// slot.
     pub static FRAME_SLOTS_EXHAUSTED: EventDescriptor =
         EventDescriptor::new(D, 7, "gpu.frame_slots_exhausted", Severity::Error, &[]);
+    /// Fault: a submit waited past the submission budget's bound for its
+    /// lane's oldest submission (one GPU job running for seconds) and went
+    /// ahead over budget. `lane`: 0 = presentation, 1 = producer.
+    pub static SUBMISSION_BUDGET_OVERRUN: EventDescriptor = EventDescriptor::new(
+        D,
+        8,
+        "gpu.submission_budget_overrun",
+        Severity::Warn,
+        &[F::u64("lane")],
+    );
 }
 
 pub mod window {

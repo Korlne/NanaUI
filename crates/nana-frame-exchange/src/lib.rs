@@ -272,7 +272,8 @@ impl<E: Copy> FrameToken<E> {
 pub enum CopyOutcome {
     /// The copy is queued and becomes visible on a later [`FrameExchange::poll`].
     Submitted,
-    /// Every slot is copying or leased. The frame is dropped; nothing waits.
+    /// Every slot is copying or leased, or the device's producer submission
+    /// budget is used up. The frame is dropped; nothing waits.
     PoolFull,
     /// The source has zero width or height.
     EmptySource,
@@ -692,7 +693,8 @@ impl<E: Copy + Eq + Send + Sync + 'static, M: Send + Sync + 'static> FrameExchan
         };
         self.sequence = sequence;
         let slot = &mut self.slots[index];
-        let Some(mut frame) = self.gpu.try_begin_frame("NanaUI frame exchange copy") else {
+        let Some(mut frame) = self.gpu.try_begin_producer_frame("NanaUI frame exchange copy")
+        else {
             slot.ownership.release(sequence);
             self.stats.pool_full += 1;
             return CopyOutcome::PoolFull;
@@ -1002,16 +1004,14 @@ mod tests {
     }
 
     #[test]
-    fn shared_frame_slot_pressure_drops_copy_without_leaking_exchange_slot() {
+    fn window_frame_slots_do_not_hold_back_producer_copies() {
         let gpu = test_gpu();
         gpu.policy().set_frame_slot_count(1);
-        let recording = gpu.try_begin_frame("unsubmitted consumer").unwrap();
+        let recording = gpu.try_begin_frame("unsubmitted window frame").unwrap();
         let mut exchange = FrameExchange::new(&gpu, DEFAULT_CAPACITY, 0u64, Arc::new(|| {}));
         let texture = source(&gpu, 4, 1, wgpu::TextureUsages::COPY_SRC);
-        assert_eq!(exchange.copy_from(&texture, 0), CopyOutcome::PoolFull);
-        assert_eq!(exchange.stats().occupied, 0);
-        drop(recording);
         assert_eq!(exchange.copy_from(&texture, 0), CopyOutcome::Submitted);
+        drop(recording);
         wait(&gpu);
         assert!(exchange.poll());
     }

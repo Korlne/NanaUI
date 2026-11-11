@@ -23,6 +23,7 @@
 #![recursion_limit = "256"]
 
 mod abi;
+mod budget;
 mod context;
 mod error;
 mod frame;
@@ -52,7 +53,9 @@ pub use context::{
     GpuDeviceLost, GpuDeviceType, GpuFeatureSet, GpuLimits, GpuLossReason,
 };
 pub use error::GpuError;
-pub use frame::{FrameAcquisition, FrameContext, FrameId, GpuSubmission, RetainedWrites};
+pub use frame::{
+    FrameAcquisition, FrameContext, FrameId, FrameLane, GpuSubmission, RetainedWrites,
+};
 pub use policy::{FrameSlotId, GpuDeviceState, GpuPolicyStats, PipelineKey, TransientResourceKey};
 pub use realization::{GpuBuffer, GpuBufferDescriptor, GpuBufferUsages, GpuSampler};
 pub use realization::{GpuResourceGroup, GpuResourceLayout};

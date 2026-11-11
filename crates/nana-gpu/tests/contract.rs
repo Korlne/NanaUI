@@ -736,6 +736,98 @@ fn a_full_pipeline_blocks_on_the_oldest_frame_and_unsubmitted_slots_never_deadlo
 }
 
 #[test]
+fn a_producer_flood_stays_within_its_submission_budget_and_leaves_window_frames_alone() {
+    const PRODUCERS: usize = 4;
+    const FRAMES: usize = 24;
+    const BYTES: u64 = 16 << 20;
+    let gpu = context();
+    gpu.policy().set_producer_submission_budget(1);
+    assert_eq!(gpu.policy().producer_submission_budget(), 1);
+    let device = __framework::device(&gpu).clone();
+    let buffer = |usage| {
+        device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("producer flood"),
+            size: BYTES,
+            usage,
+            mapped_at_creation: false,
+        })
+    };
+    let source = Arc::new(buffer(wgpu::BufferUsages::COPY_SRC));
+    let before = gpu.policy().stats();
+    let producers: Vec<_> = (0..PRODUCERS)
+        .map(|_| {
+            let gpu = gpu.clone();
+            let source = Arc::clone(&source);
+            let target = buffer(wgpu::BufferUsages::COPY_DST);
+            thread::spawn(move || {
+                for _ in 0..FRAMES {
+                    // Several copies per submit keep each one on the GPU for
+                    // a while, so concurrent producers really contend.
+                    let mut frame = gpu.begin_producer_frame("flood");
+                    assert_eq!(frame.lane(), nana_gpu::FrameLane::Producer);
+                    for _ in 0..4 {
+                        __framework::encoder(&mut frame)
+                            .copy_buffer_to_buffer(&source, 0, &target, 0, BYTES);
+                    }
+                    frame.submit();
+                    assert!(gpu.policy().producer_submissions_in_flight() <= 1);
+                }
+            })
+        })
+        .collect();
+    // The host keeps presenting meanwhile: its frames take slots producers
+    // never hold and are never counted against the producer budget.
+    for _ in 0..FRAMES {
+        let frame = gpu.begin_frame("window");
+        assert_eq!(frame.lane(), nana_gpu::FrameLane::Presentation);
+        let submission = frame.submit();
+        assert_eq!(submission.acquisition().frame_slot_stalls, 0);
+    }
+    for producer in producers {
+        producer.join().unwrap();
+    }
+    let after = gpu.policy().stats();
+    assert!(
+        after.producer_submissions_peak <= 1,
+        "producer lane exceeded its budget: {after:?}"
+    );
+    assert!(
+        after.producer_submission_waits > before.producer_submission_waits,
+        "{PRODUCERS} concurrent producers must have waited for the budget: {after:?}"
+    );
+    assert_eq!(
+        after.presentation_submission_waits,
+        before.presentation_submission_waits
+    );
+    assert_eq!(after.frame_slot_stalls, before.frame_slot_stalls);
+    __framework::device(&gpu)
+        .poll(wgpu::PollType::wait_indefinitely())
+        .unwrap();
+    assert_eq!(gpu.policy().producer_submissions_in_flight(), 0);
+}
+
+#[test]
+fn a_discarded_producer_frame_returns_no_budget() {
+    let gpu = context();
+    gpu.policy().set_producer_submission_budget(1);
+    drop(gpu.begin_producer_frame("discarded"));
+    assert_eq!(gpu.policy().producer_submissions_in_flight(), 0);
+    let submission = gpu
+        .try_begin_producer_frame("after discard")
+        .expect("a discarded recording holds no budget")
+        .submit();
+    let done = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let seen = Arc::clone(&done);
+    gpu.on_submission_complete(&submission, move || seen.store(true, Ordering::Release))
+        .unwrap();
+    __framework::device(&gpu)
+        .poll(wgpu::PollType::wait_indefinitely())
+        .unwrap();
+    assert!(done.load(Ordering::Acquire));
+    assert!(gpu.try_begin_producer_frame("budget returned").is_some());
+}
+
+#[test]
 fn try_begin_frame_returns_immediately_while_recordings_hold_every_slot() {
     let gpu = context();
     let held: Vec<_> = (0..3).map(|_| gpu.try_begin_frame("held")).collect();

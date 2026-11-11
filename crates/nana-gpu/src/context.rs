@@ -3,7 +3,8 @@ use std::num::NonZeroU64;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use crate::frame::FrameContext;
+use crate::budget::Admission;
+use crate::frame::{FrameContext, FrameLane};
 use crate::policy::GpuDeviceState;
 use crate::texture::{
     GpuTexture, GpuTextureDescriptor, GpuTextureFormat, GpuTextureRegion, GpuTextureUsages,
@@ -11,6 +12,15 @@ use crate::texture::{
 use crate::{FrameId, GpuError};
 
 static NEXT_DEVICE_GENERATION: AtomicU64 = AtomicU64::new(1);
+
+/// How long one wait for a lane's oldest submission blocks before the device
+/// is checked for loss again.
+const BUDGET_POLL: std::time::Duration = std::time::Duration::from_millis(250);
+/// How long a submitter waits for room before going ahead over budget. Past
+/// Windows' 2 s GPU timeout a job that has not finished has either reset the
+/// device (then waiting is pointless) or the driver let it run on; either way
+/// the submitter is not held forever.
+const BUDGET_WAIT_LIMIT: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// Identity of one device. Every device a process adopts gets a fresh
 /// generation; clones of a [`GpuContext`] share it. Resources and caches
@@ -612,8 +622,9 @@ impl GpuContext {
         self.inner.upload_ring.submitted(uploads.chunk, index);
     }
 
-    /// Start recording one frame. The returned [`FrameContext`] owns the
-    /// encoder until it is submitted or dropped.
+    /// Start recording one host frame ([`FrameLane::Presentation`]). The
+    /// returned [`FrameContext`] owns the encoder until it is submitted or
+    /// dropped. Producers use [`Self::begin_producer_frame`] instead.
     ///
     /// With every frame slot in flight this blocks until the oldest submitted
     /// frame completes. If every slot is held by a recording that was never
@@ -644,6 +655,7 @@ impl GpuContext {
         self.make_frame(
             label,
             id,
+            FrameLane::Presentation,
             slot,
             crate::FrameAcquisition {
                 frame_slot_waits: u64::from(waited),
@@ -658,7 +670,120 @@ impl GpuContext {
     pub fn try_begin_frame(&self, label: &'static str) -> Option<FrameContext> {
         let id = FrameId::new(self.inner.next_frame.fetch_add(1, Ordering::Relaxed));
         let slot = self.inner.policy.take_frame_slot(id.get()).ok()?;
-        Some(self.make_frame(label, id, Some(slot), crate::FrameAcquisition::default()))
+        Some(self.make_frame(
+            label,
+            id,
+            FrameLane::Presentation,
+            Some(slot),
+            crate::FrameAcquisition::default(),
+        ))
+    }
+
+    /// Start recording producer work ([`FrameLane::Producer`]): content the
+    /// UI shows but does not present itself, such as video, model or custom
+    /// node rendering and frame exchange copies.
+    ///
+    /// Producer frames take no frame slot, so they never hold back a window
+    /// frame. Instead the producer lane is held to
+    /// [`GpuDeviceState::producer_submission_budget`](crate::GpuDeviceState::producer_submission_budget)
+    /// unfinished submissions: with the budget used up this blocks until the
+    /// lane's oldest submission finishes, and [`FrameContext::submit`]
+    /// enforces the same bound for producers that record concurrently.
+    pub fn begin_producer_frame(&self, label: &'static str) -> FrameContext {
+        self.admit(FrameLane::Producer, false);
+        let id = FrameId::new(self.inner.next_frame.fetch_add(1, Ordering::Relaxed));
+        self.make_frame(
+            label,
+            id,
+            FrameLane::Producer,
+            None,
+            crate::FrameAcquisition::default(),
+        )
+    }
+
+    /// [`Self::begin_producer_frame`] without blocking: `None` while the
+    /// producer lane's budget is used up (after one non-blocking poll), so a
+    /// producer can drop or coalesce work instead of waiting.
+    pub fn try_begin_producer_frame(&self, label: &'static str) -> Option<FrameContext> {
+        let lane = &self.inner.policy.lanes.producer;
+        if lane.has_room(None).is_err() {
+            let _ = self.inner.device.poll(wgpu::PollType::Poll);
+            lane.has_room(None).ok()?;
+        }
+        let id = FrameId::new(self.inner.next_frame.fetch_add(1, Ordering::Relaxed));
+        Some(self.make_frame(
+            label,
+            id,
+            FrameLane::Producer,
+            None,
+            crate::FrameAcquisition::default(),
+        ))
+    }
+
+    /// Wait until `lane` has room for one more submission, reserving it when
+    /// `reserve`. Never called under the submission-order lock: a lane only
+    /// ever waits on its own oldest submission, so no other lane's submit is
+    /// held up behind it.
+    pub(crate) fn admit(&self, lane: FrameLane, reserve: bool) {
+        let budget = self.inner.policy.lane(lane);
+        let limit = self.inner.policy.submission_limit(lane);
+        let started = std::time::Instant::now();
+        let mut waited = false;
+        loop {
+            let admission = if reserve {
+                budget.reserve(limit)
+            } else {
+                match budget.has_room(limit) {
+                    Ok(()) => return,
+                    Err(admission) => admission,
+                }
+            };
+            let wait = match admission {
+                Admission::Reserved => return,
+                Admission::Wait(index, done) => Some((index, done)),
+                Admission::Busy => None,
+            };
+            // A lost device finishes nothing; one stuck job is not waited on
+            // forever.
+            let overdue = started.elapsed() >= BUDGET_WAIT_LIMIT;
+            if self.is_lost() || overdue {
+                if overdue && !self.is_lost() {
+                    nana_diagnostics::event!(
+                        nana_diagnostics::framework::gpu::SUBMISSION_BUDGET_OVERRUN,
+                        lane = lane.diagnostic_code()
+                    );
+                }
+                if reserve {
+                    budget.force_reserve();
+                }
+                return;
+            }
+            if !waited {
+                waited = true;
+                budget.record_wait();
+                nana_diagnostics::metric!(nana_diagnostics::framework::gpu::SUBMISSION_BUDGET_WAITS);
+            }
+            match wait {
+                Some((index, done)) => {
+                    // Runs completion callbacks too, which is what normally
+                    // marks entries done; marking here covers a callback that
+                    // was registered late.
+                    if self
+                        .inner
+                        .device
+                        .poll(wgpu::PollType::Wait {
+                            submission_index: Some(index),
+                            timeout: Some(BUDGET_POLL),
+                        })
+                        .is_ok()
+                    {
+                        done.store(true, Ordering::Release);
+                    }
+                }
+                // Only reservations about to reach the queue hold the room.
+                None => std::thread::yield_now(),
+            }
+        }
     }
 
     /// Run `callback` after work submitted through this queue has completed.
@@ -691,6 +816,7 @@ impl GpuContext {
         &self,
         label: &'static str,
         id: FrameId,
+        lane: FrameLane,
         frame_slot: Option<crate::FrameSlotId>,
         acquisition: crate::FrameAcquisition,
     ) -> FrameContext {
@@ -698,7 +824,7 @@ impl GpuContext {
             .inner
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some(label) });
-        FrameContext::new(self.clone(), id, encoder, frame_slot, acquisition)
+        FrameContext::new(self.clone(), id, lane, encoder, frame_slot, acquisition)
     }
 
     /// What WGPU will allow for `format`, chosen the way WGPU validates it:

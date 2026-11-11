@@ -9,6 +9,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex, OnceLock};
 
+use crate::budget::{DEFAULT_PRODUCER_SUBMISSIONS, SubmissionBudget};
 use crate::{DeviceGeneration, GpuTexture, GpuTextureFormat};
 
 /// A bounded map whose hits cost one stamp write. When full it evicts the
@@ -91,6 +92,16 @@ pub struct GpuPolicyStats {
     pub upload_flushes: u64,
     pub upload_ring_allocations: u64,
     pub upload_ring_waits: u64,
+    /// Producer submits (or `begin_producer_frame` calls) that waited for
+    /// the producer lane's oldest submission to finish.
+    pub producer_submission_waits: u64,
+    /// Most producer submissions ever unfinished at once. Never above the
+    /// producer budget unless the device was lost or a wait timed out.
+    pub producer_submissions_peak: u64,
+    /// Host frame submits that waited because the presentation lane already
+    /// had a frame slot's worth of unfinished submissions (frames that ran
+    /// without a slot).
+    pub presentation_submission_waits: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -227,11 +238,30 @@ struct PolicyState {
     stats: GpuPolicyStats,
 }
 
+/// Per-lane submission budgets. Separate from [`PolicyState`] so a submitter
+/// waiting on its lane never holds the policy lock.
+pub(crate) struct LaneBudgets {
+    pub(crate) presentation: SubmissionBudget<wgpu::SubmissionIndex>,
+    pub(crate) producer: SubmissionBudget<wgpu::SubmissionIndex>,
+}
+
+impl std::fmt::Debug for LaneBudgets {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("LaneBudgets")
+            .field("presentation_in_flight", &self.presentation.in_flight())
+            .field("producer_in_flight", &self.producer.in_flight())
+            .field("producer_limit", &self.producer.limit())
+            .finish()
+    }
+}
+
 /// Shared policy state for one `DeviceGeneration`.
 #[derive(Clone, Debug)]
 pub struct GpuDeviceState {
     generation: DeviceGeneration,
     inner: Arc<Mutex<PolicyState>>,
+    pub(crate) lanes: Arc<LaneBudgets>,
 }
 
 impl GpuDeviceState {
@@ -253,6 +283,47 @@ impl GpuDeviceState {
                 frame_slots: vec![None, None, None],
                 stats: GpuPolicyStats::default(),
             })),
+            lanes: Arc::new(LaneBudgets {
+                // Follows the frame slot count; see `submission_limit`.
+                presentation: SubmissionBudget::new(3),
+                producer: SubmissionBudget::new(DEFAULT_PRODUCER_SUBMISSIONS),
+            }),
+        }
+    }
+
+    /// How many producer-lane submissions ([`crate::FrameLane::Producer`])
+    /// may be unfinished on the GPU at once. A producer submit beyond it
+    /// waits, outside the queue's submission-order lock, for the producer
+    /// lane's oldest submission. Host frames are not counted. Default 2;
+    /// values below 1 are raised to 1.
+    pub fn set_producer_submission_budget(&self, submissions: usize) {
+        self.lanes.producer.set_limit(submissions);
+    }
+
+    pub fn producer_submission_budget(&self) -> usize {
+        self.lanes.producer.limit()
+    }
+
+    /// Producer submissions currently tracked as unfinished (conservative:
+    /// one leaves only after its completion was observed).
+    pub fn producer_submissions_in_flight(&self) -> usize {
+        self.lanes.producer.in_flight()
+    }
+
+    pub(crate) fn lane(&self, lane: crate::FrameLane) -> &SubmissionBudget<wgpu::SubmissionIndex> {
+        match lane {
+            crate::FrameLane::Presentation => &self.lanes.presentation,
+            crate::FrameLane::Producer => &self.lanes.producer,
+        }
+    }
+
+    /// The limit `lane` is held to. Host frames are paced by frame slots; the
+    /// presentation lane's budget only catches frames that ran without one,
+    /// so it equals the slot count.
+    pub(crate) fn submission_limit(&self, lane: crate::FrameLane) -> Option<usize> {
+        match lane {
+            crate::FrameLane::Presentation => Some(self.frame_slot_count()),
+            crate::FrameLane::Producer => None,
         }
     }
 
@@ -704,7 +775,11 @@ impl GpuDeviceState {
     }
 
     pub fn stats(&self) -> GpuPolicyStats {
-        self.inner.lock().unwrap_or_else(|e| e.into_inner()).stats
+        let mut stats = self.inner.lock().unwrap_or_else(|e| e.into_inner()).stats;
+        stats.producer_submission_waits = self.lanes.producer.waits();
+        stats.producer_submissions_peak = self.lanes.producer.peak() as u64;
+        stats.presentation_submission_waits = self.lanes.presentation.waits();
+        stats
     }
 }
 
