@@ -308,3 +308,7 @@ required-features = ["hosted", "bundled-fonts"]
 [[example]]
 name = "embedded-window-lifecycle"
 required-features = ["hosted", "bundled-fonts", "wgpu-interop"]
+
+[[example]]
+name = "partial-present-probe"
+required-features = ["hosted", "bundled-fonts", "wgpu-interop"]
