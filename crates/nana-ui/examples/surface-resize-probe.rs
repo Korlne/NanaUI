@@ -12,9 +12,18 @@
 //! `--guard` serializes producer submits against configure with a lock, the
 //! way NanaUI's former submission guard did.
 //!
+//! `--frame-context` (needs the `wgpu-interop` feature) routes both sides
+//! through `nana-gpu`: the producer records `begin_producer_frame` frames and
+//! submits them back to back with no wait of its own, so only the producer
+//! submission budget bounds it; the window frames use `begin_frame`.
+//!
+//! `--load` is clamped to 16 and `--resizes` to 200: 16 is the highest load
+//! verified to keep the desktop responsive. Never run two GPU probes at once.
+//!
 //! ```text
 //! cargo run -p nana-ui --example surface-resize-probe --features gpu --release -- --backend dx12
 //! cargo run -p nana-ui --example surface-resize-probe --features gpu --release -- --backend vulkan --guard
+//! cargo run -p nana-ui --example surface-resize-probe --features gpu,wgpu-interop --release -- --frame-context --load 4
 //! ```
 
 #[cfg(not(target_os = "windows"))]
@@ -47,6 +56,9 @@ mod probe {
     /// The whole run aborts past this, so a heavy setting cannot hold the GPU.
     const WALL_CLOCK_CAP: Duration = Duration::from_secs(20);
     const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+    /// Highest `--load` verified to leave the desktop responsive.
+    const MAX_LOAD: u32 = 16;
+    const MAX_RESIZES: u32 = 200;
 
     struct Options {
         backend: wgpu::Backends,
@@ -54,6 +66,7 @@ mod probe {
         load: u32,
         producer: bool,
         guard: bool,
+        frame_context: bool,
     }
 
     fn options() -> Options {
@@ -63,6 +76,7 @@ mod probe {
             load: 1,
             producer: true,
             guard: false,
+            frame_context: false,
         };
         let mut args = std::env::args().skip(1);
         while let Some(arg) = args.next() {
@@ -79,9 +93,23 @@ mod probe {
                 "--load" => options.load = args.next().unwrap().parse().unwrap(),
                 "--no-producer" => options.producer = false,
                 "--guard" => options.guard = true,
+                "--frame-context" => options.frame_context = true,
                 other => panic!("unknown argument {other}"),
             }
         }
+        if options.load > MAX_LOAD || options.resizes > MAX_RESIZES {
+            println!("clamping to --load <= {MAX_LOAD} and --resizes <= {MAX_RESIZES}");
+        }
+        options.load = options.load.clamp(1, MAX_LOAD);
+        options.resizes = options.resizes.clamp(1, MAX_RESIZES);
+        assert!(
+            !(options.frame_context && options.guard),
+            "--guard applies to the raw producer only"
+        );
+        assert!(
+            !options.frame_context || cfg!(feature = "wgpu-interop"),
+            "--frame-context needs --features gpu,wgpu-interop"
+        );
         options
     }
 
@@ -267,6 +295,8 @@ fn fs(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
         configuration.height = height;
         surface.configure(&device, &configuration);
 
+        let gpu = Gpu::new(options.frame_context, &adapter, &device, &queue);
+
         let gate = Arc::new(RwLock::new(()));
         let stop = Arc::new(AtomicBool::new(false));
         let producer = options.producer.then(|| {
@@ -275,7 +305,8 @@ fn fs(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
             let gate = gate.clone();
             let stop = stop.clone();
             let (guard, load) = (options.guard, options.load);
-            std::thread::spawn(move || produce(&device, &queue, &gate, &stop, guard, load))
+            let gpu = gpu.clone();
+            std::thread::spawn(move || produce(&device, &queue, &gpu, &gate, &stop, guard, load))
         });
         // Let the producer reach its steady state.
         std::thread::sleep(Duration::from_millis(300));
@@ -332,28 +363,30 @@ fn fs(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
                 other => panic!("acquire failed: {other:?}"),
             };
             let view = texture.texture.create_view(&Default::default());
-            let mut encoder = device.create_command_encoder(&Default::default());
-            encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("resize frame"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: f64::from(step % 7) / 7.0,
-                            g: 0.3,
-                            b: 0.5,
-                            a: 1.0,
-                        }),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                ..Default::default()
-            });
+            let mut recording = gpu.begin(&device, false);
+            recording
+                .encoder()
+                .begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("resize frame"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color {
+                                r: f64::from(step % 7) / 7.0,
+                                g: 0.3,
+                                b: 0.5,
+                                a: 1.0,
+                            }),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    ..Default::default()
+                });
             {
                 let _gate = options.guard.then(|| gate.read().unwrap());
-                queue.submit([encoder.finish()]);
+                recording.submit(&queue);
             }
             queue.present(texture);
             frame.push(frame_start.elapsed());
@@ -365,14 +398,15 @@ fn fs(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
 
         let info = adapter.get_info();
         println!(
-            "backend={:?} adapter={:?} present={:?} resizes={} load={} producer={} guard={}",
+            "backend={:?} adapter={:?} present={:?} resizes={} load={} producer={} guard={} frame_context={}",
             info.backend,
             info.name,
             present_mode,
             options.resizes,
             options.load,
             options.producer,
-            options.guard
+            options.guard,
+            options.frame_context
         );
         println!("configure: {}", configure.summary());
         println!("frame:     {}", frame.summary());
@@ -388,18 +422,107 @@ fn fs(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
         }
         if let Some((submits, stalls)) = producer {
             println!(
-                "producer submits: {submits}; submit call: {}",
+                "producer submits: {submits}; begin+submit call: {}",
                 stalls.summary()
             );
         }
+        gpu.report();
         unsafe {
             let _ = DestroyWindow(window);
+        }
+    }
+
+    /// The probe's two submit paths: raw WGPU, or `nana-gpu` frames.
+    #[derive(Clone)]
+    enum Gpu {
+        Raw,
+        #[cfg(feature = "wgpu-interop")]
+        Frames(nana_gpu::GpuContext),
+    }
+
+    enum Recording {
+        Raw(wgpu::CommandEncoder),
+        #[cfg(feature = "wgpu-interop")]
+        Frame(nana_gpu::FrameContext),
+    }
+
+    impl Gpu {
+        #[cfg_attr(not(feature = "wgpu-interop"), allow(unused_variables))]
+        fn new(
+            frame_context: bool,
+            adapter: &wgpu::Adapter,
+            device: &wgpu::Device,
+            queue: &wgpu::Queue,
+        ) -> Self {
+            #[cfg(feature = "wgpu-interop")]
+            if frame_context {
+                return Self::Frames(nana_gpu::GpuContext::from_wgpu(
+                    adapter.clone(),
+                    device.clone(),
+                    queue.clone(),
+                ));
+            }
+            Self::Raw
+        }
+
+        #[cfg_attr(not(feature = "wgpu-interop"), allow(unused_variables))]
+        fn begin(&self, device: &wgpu::Device, producer: bool) -> Recording {
+            match self {
+                Self::Raw => Recording::Raw(device.create_command_encoder(&Default::default())),
+                #[cfg(feature = "wgpu-interop")]
+                Self::Frames(gpu) => Recording::Frame(if producer {
+                    gpu.begin_producer_frame("probe producer")
+                } else {
+                    gpu.begin_frame("probe window")
+                }),
+            }
+        }
+
+        fn report(&self) {
+            #[cfg(feature = "wgpu-interop")]
+            if let Self::Frames(gpu) = self {
+                let stats = gpu.policy().stats();
+                println!(
+                    "producer budget {}: peak in flight {}, producer waits {}, window waits {}, \
+                     frame slot waits {} stalls {}",
+                    gpu.policy().producer_submission_budget(),
+                    stats.producer_submissions_peak,
+                    stats.producer_submission_waits,
+                    stats.presentation_submission_waits,
+                    stats.frame_slot_waits,
+                    stats.frame_slot_stalls,
+                );
+            }
+        }
+    }
+
+    impl Recording {
+        fn encoder(&mut self) -> &mut wgpu::CommandEncoder {
+            match self {
+                Self::Raw(encoder) => encoder,
+                #[cfg(feature = "wgpu-interop")]
+                Self::Frame(frame) => frame.wgpu_encoder(),
+            }
+        }
+
+        /// Submits. The raw path returns its index for the producer's own
+        /// one-in-flight wait; the frame path none (its budget bounds it).
+        fn submit(self, queue: &wgpu::Queue) -> Option<wgpu::SubmissionIndex> {
+            match self {
+                Self::Raw(encoder) => Some(queue.submit([encoder.finish()])),
+                #[cfg(feature = "wgpu-interop")]
+                Self::Frame(frame) => {
+                    frame.submit();
+                    None
+                }
+            }
         }
     }
 
     fn produce(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
+        gpu: &Gpu,
         gate: &RwLock<()>,
         stop: &AtomicBool,
         guard: bool,
@@ -448,40 +571,44 @@ fn fs(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
         let mut submits = 0;
         let mut stalls = Samples::default();
         while !stop.load(Ordering::Relaxed) {
-            let mut encoder = device.create_command_encoder(&Default::default());
+            let t = Instant::now();
+            let mut recording = gpu.begin(device, true);
             {
-                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("producer load"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &view,
-                        depth_slice: None,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    ..Default::default()
-                });
+                let mut pass = recording
+                    .encoder()
+                    .begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("producer load"),
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view: &view,
+                            depth_slice: None,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                                store: wgpu::StoreOp::Store,
+                            },
+                        })],
+                        ..Default::default()
+                    });
                 pass.set_pipeline(&pipeline);
                 for _ in 0..load {
                     pass.draw(0..3, 0..1);
                 }
             }
-            let commands = encoder.finish();
-            let t = Instant::now();
             let index = {
                 let _gate = guard.then(|| gate.read().unwrap());
-                queue.submit([commands])
+                recording.submit(queue)
             };
             stalls.push(t.elapsed());
             submits += 1;
-            // Keep one submission in flight: wait for it before the next, so the
-            // producer never queues ahead of the desktop compositor.
-            let _ = device.poll(wgpu::PollType::Wait {
-                submission_index: Some(index),
-                timeout: Some(Duration::from_secs(2)),
-            });
+            // Raw path: keep one submission in flight, waiting for it before
+            // the next, so the producer never queues ahead of the desktop
+            // compositor. The frame path relies on the producer budget alone.
+            if let Some(index) = index {
+                let _ = device.poll(wgpu::PollType::Wait {
+                    submission_index: Some(index),
+                    timeout: Some(Duration::from_secs(2)),
+                });
+            }
         }
         (submits, stalls)
     }

@@ -22,7 +22,9 @@
 //!   reach.
 //!
 //! `UPLOAD_COST_ONLY=ring,8,65536` runs one cell ten times as long, for a
-//! stack sampler to attach to. Results: `docs/reference/gpu.md` section 7.
+//! stack sampler to attach to. Its sizes are clamped to at most
+//! `MAX_WRITES` runs of `MAX_BYTES`, and every cell stops after
+//! `CELL_TIME_CAP` of wall clock, so no setting loads the GPU for long. Results: `docs/reference/gpu.md` section 7.
 //!
 //! ```bash
 //! WGPU_BACKEND=dx12 WGPU_ADAPTER_NAME=nvidia cargo run --release -p nana-gpu --example upload-cost
@@ -34,6 +36,11 @@ use nana_gpu::__framework;
 
 const FRAMES: usize = 2000;
 const WARMUP: usize = 200;
+/// Upper bounds for `UPLOAD_COST_ONLY`: a 4 MiB frame at most.
+const MAX_WRITES: usize = 64;
+const MAX_BYTES: usize = 64 * 1024;
+/// One cell's wall-clock cap; it reports what it measured by then.
+const CELL_TIME_CAP: std::time::Duration = std::time::Duration::from_secs(20);
 
 #[cfg(windows)]
 fn thread_cycles() -> u64 {
@@ -96,8 +103,18 @@ fn main() {
             Some("copy") => Path::Copy,
             _ => Path::Memcpy,
         };
-        let writes = parts.next().and_then(|v| v.parse().ok()).unwrap_or(8);
-        let bytes = parts.next().and_then(|v| v.parse().ok()).unwrap_or(65536);
+        let writes = parts
+            .next()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(8usize)
+            .clamp(1, MAX_WRITES);
+        // Copies move whole 4-byte words.
+        let bytes = parts
+            .next()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(65536usize)
+            .clamp(4, MAX_BYTES)
+            & !3;
         run(&gpu, &device, &queue, path, writes, bytes, FRAMES * 10);
         return;
     }
@@ -176,7 +193,12 @@ fn run(
     let mut submit = Vec::with_capacity(frames);
     let mut wait = Vec::with_capacity(frames);
     let mut wall = Vec::with_capacity(frames);
+    let cell_started = Instant::now();
     for frame in 0..WARMUP + frames {
+        if cell_started.elapsed() > CELL_TIME_CAP {
+            println!("  (wall-clock cap reached after {frame} frames)");
+            break;
+        }
         let mut recording = gpu.begin_frame("upload-cost");
         let started = Instant::now();
         let before = thread_cycles();
@@ -278,6 +300,9 @@ fn run(
         }
     }
     drop(mapped_view);
+    if record.is_empty() {
+        return;
+    }
     let median = |values: &mut Vec<u64>| {
         values.sort_unstable();
         values[values.len() / 2]

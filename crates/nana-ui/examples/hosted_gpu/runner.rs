@@ -93,7 +93,7 @@ impl PreviewProducer {
                             frame.accent,
                             frame.revision,
                         );
-                        let mut producer = gpu.begin_frame("hosted gpu demo producer");
+                        let mut producer = gpu.begin_producer_frame("hosted gpu demo producer");
                         scene.render(producer.wgpu_encoder());
                         producer.submit();
                         match exchange.copy_from_wgpu_with_metadata(

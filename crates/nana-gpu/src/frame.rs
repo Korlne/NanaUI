@@ -36,6 +36,39 @@ pub struct FrameAcquisition {
     pub frame_slot_stalls: u64,
 }
 
+/// Which submission budget a [`FrameContext`] is held to.
+///
+/// The device has one queue, shared with the host's window frames and,
+/// through the driver, with the desktop compositor. Each lane counts its own
+/// unfinished submissions, so a producer's backlog never delays a window frame
+/// and window frames never use up a producer's budget.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FrameLane {
+    /// Frames the host presents or renders UI into
+    /// ([`GpuContext::begin_frame`], [`GpuContext::try_begin_frame`]). Paced
+    /// by frame slots; frames that run without a slot are still held to the
+    /// slot count of unfinished submissions.
+    Presentation,
+    /// Work produced for the UI to show (video, models, frame exchange
+    /// copies, custom render producers): [`GpuContext::begin_producer_frame`]
+    /// and [`GpuContext::try_begin_producer_frame`]. Takes no frame slot; at
+    /// most [`GpuDeviceState::producer_submission_budget`] submissions are
+    /// unfinished at once.
+    ///
+    /// [`GpuDeviceState::producer_submission_budget`]: crate::GpuDeviceState::producer_submission_budget
+    Producer,
+}
+
+impl FrameLane {
+    pub(crate) const fn diagnostic_code(self) -> u64 {
+        match self {
+            Self::Presentation => 0,
+            Self::Producer => 1,
+        }
+    }
+}
+
 /// One frame's command recording. It owns the encoder from
 /// [`GpuContext::begin_frame`] until [`Self::submit`]; dropping it instead
 /// is the discard.
@@ -47,6 +80,7 @@ pub struct FrameAcquisition {
 pub struct FrameContext {
     gpu: GpuContext,
     id: FrameId,
+    lane: FrameLane,
     encoder: Option<wgpu::CommandEncoder>,
     retained: Vec<(RetainedWrites, u64)>,
     frame_slot: Option<FrameSlotId>,
@@ -66,6 +100,7 @@ impl fmt::Debug for FrameContext {
         formatter
             .debug_struct("FrameContext")
             .field("id", &self.id)
+            .field("lane", &self.lane)
             .field("generation", &self.gpu.generation())
             .field("retained", &self.retained.len())
             .finish()
@@ -76,6 +111,7 @@ impl FrameContext {
     pub(crate) fn new(
         gpu: GpuContext,
         id: FrameId,
+        lane: FrameLane,
         encoder: wgpu::CommandEncoder,
         frame_slot: Option<FrameSlotId>,
         acquisition: FrameAcquisition,
@@ -84,6 +120,7 @@ impl FrameContext {
         Self {
             gpu,
             id,
+            lane,
             encoder: Some(encoder),
             retained: Vec::new(),
             frame_slot,
@@ -146,6 +183,11 @@ impl FrameContext {
         &self.gpu
     }
 
+    /// The submission budget this frame is held to.
+    pub const fn lane(&self) -> FrameLane {
+        self.lane
+    }
+
     pub const fn acquisition(&self) -> FrameAcquisition {
         self.acquisition
     }
@@ -177,10 +219,20 @@ impl FrameContext {
 
     /// Finish the encoder and submit it. Holds the submission-order lock only
     /// for the submit itself.
+    ///
+    /// When this frame's [`FrameLane`] already has its budget of unfinished
+    /// submissions, this first waits for the lane's oldest one to finish.
+    /// The wait happens before the submission-order lock is taken, so it
+    /// never delays another lane's submit.
     pub fn submit(mut self) -> GpuSubmission {
         let encoder = self.encoder.take().expect("frame encoder");
         let started = Instant::now();
         let commands = encoder.finish();
+        let policy = self.gpu.policy().clone();
+        self.gpu.admit(self.lane, true);
+        // Turned into an in-flight entry by `submitted` below; an unwind
+        // before that gives the room back.
+        let reservation = Reservation(Some(policy.lane(self.lane)));
         let index = {
             // Makes token order match actual queue order.
             let _order = self
@@ -211,6 +263,15 @@ impl FrameContext {
             if let Some(chunk) = upload_chunk {
                 self.gpu.inner.upload_ring.submitted(chunk, index.clone());
             }
+            // Registered under the lock, right behind this submit: it fires
+            // once this submission (and everything before it) finished.
+            let done = Arc::new(AtomicBool::new(false));
+            let finished = Arc::clone(&done);
+            self.gpu
+                .inner
+                .queue
+                .on_submitted_work_done(move || finished.store(true, Ordering::Release));
+            reservation.submitted(index.clone(), done);
             for hook in self.after_submit.drain(..) {
                 hook();
             }
@@ -338,6 +399,26 @@ impl Drop for FrameContext {
         }
         for cleanup in self.on_discard.drain(..) {
             cleanup();
+        }
+    }
+}
+
+/// A lane reservation taken by [`FrameContext::submit`], handed back if the
+/// submit unwinds before reaching the queue.
+struct Reservation<'a>(Option<&'a crate::budget::SubmissionBudget<wgpu::SubmissionIndex>>);
+
+impl Reservation<'_> {
+    fn submitted(mut self, index: wgpu::SubmissionIndex, done: Arc<AtomicBool>) {
+        if let Some(lane) = self.0.take() {
+            lane.submitted(index, done);
+        }
+    }
+}
+
+impl Drop for Reservation<'_> {
+    fn drop(&mut self) {
+        if let Some(lane) = self.0.take() {
+            lane.cancel();
         }
     }
 }
