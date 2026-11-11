@@ -9,6 +9,9 @@
 //!                                          # a fixed run: instructions and cycles per box;
 //!                                          # SKIP_LAYOUT=1 builds the page only
 //! BUILD_ALLOCS=1 cargo run --release -- wide # also the build's allocations and heap per box
+//! FOOTPRINT=1 target/release/nana-stack-depth reps 1000 1
+//!                                          # the page's live heap beside what the process
+//!                                          # grew by in physical memory, per box
 //! HOLD=1 target/release/nana-stack-depth reps 1000 1
 //!                                          # keep the page alive for `malloc_history`
 //! FRAME_PATH=1 cargo run --release -- wide  # the product frame's first layout
@@ -249,6 +252,7 @@ fn nana_page(cx: &mut AppContext, document: DocumentId, rows: usize, cells: usiz
 fn nana_wide(rows: usize, cells: usize) -> (f64, f64, isize, isize) {
     let document = DocumentId::new(1).unwrap();
     let before = LIVE.load(Ordering::Relaxed);
+    let footprint = physical_footprint();
     let built = Instant::now();
     let build_calls = CALLS.load(Ordering::Relaxed);
     let mut cx = AppContext::new();
@@ -281,6 +285,11 @@ fn nana_wide(rows: usize, cells: usize) -> (f64, f64, isize, isize) {
     let total = built.elapsed().as_secs_f64() * 1e6;
     let calls = CALLS.load(Ordering::Relaxed) - calls;
     let held = LIVE.load(Ordering::Relaxed) - before;
+    // `FOOTPRINT=1`: what the process grew by in physical memory, beside the
+    // live heap. The two differ by what the allocator keeps of blocks the
+    // page freed on the way (a table that grew by copying leaves its earlier
+    // copies there) less the capacity nothing has written to yet.
+    report_footprint(rows, cells, held, footprint);
     // `HOLD=1`: keep the laid-out page alive, for a heap tool
     // (`MallocStackLogging=1` and `malloc_history <pid> -allBySize`).
     if std::env::var_os("HOLD").is_some() {
@@ -289,6 +298,35 @@ fn nana_wide(rows: usize, cells: usize) -> (f64, f64, isize, isize) {
     }
     drop(cx);
     (took, total, held, calls)
+}
+
+fn report_footprint(rows: usize, cells: usize, held: isize, footprint_before: isize) {
+    if std::env::var_os("FOOTPRINT").is_some() {
+        let boxes = (1 + rows * (1 + 2 * cells)) as f64;
+        eprintln!(
+            "held: {:.0} B / box live, {:.0} B / box physical",
+            held as f64 / boxes,
+            (physical_footprint() - footprint_before) as f64 / boxes
+        );
+    }
+}
+
+/// The physical memory the process is charged with (`phys_footprint`, what
+/// Activity Monitor shows), in bytes; zero where it is not read.
+fn physical_footprint() -> isize {
+    #[cfg(target_os = "macos")]
+    {
+        unsafe extern "C" {
+            fn proc_pid_rusage(pid: i32, flavor: i32, buffer: *mut u64) -> i32;
+        }
+        // `rusage_info_v0`: a 16-byte uuid, then 64-bit fields; the footprint
+        // is the eighth of them.
+        let mut info = [0u64; 16];
+        if unsafe { proc_pid_rusage(std::process::id() as i32, 0, info.as_mut_ptr()) } == 0 {
+            return info[9] as isize;
+        }
+    }
+    0
 }
 
 /// The same page laid out by Taffy.
@@ -368,6 +406,7 @@ fn taffy_page(rows: usize, cells: usize) -> (taffy::TaffyTree<()>, taffy::NodeId
 fn taffy_wide(rows: usize, cells: usize) -> (f64, f64, isize, isize) {
     use taffy::prelude::*;
     let before = LIVE.load(Ordering::Relaxed);
+    let footprint = physical_footprint();
     let built = Instant::now();
     let (mut tree, root, _) = taffy_page(rows, cells);
     let calls = CALLS.load(Ordering::Relaxed);
@@ -384,6 +423,7 @@ fn taffy_wide(rows: usize, cells: usize) -> (f64, f64, isize, isize) {
     let total = built.elapsed().as_secs_f64() * 1e6;
     let calls = CALLS.load(Ordering::Relaxed) - calls;
     let held = LIVE.load(Ordering::Relaxed) - before;
+    report_footprint(rows, cells, held, footprint);
     drop(tree);
     (took, total, held, calls)
 }
