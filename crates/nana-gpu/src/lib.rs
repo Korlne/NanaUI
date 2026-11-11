@@ -4,8 +4,8 @@
 //!
 //! - [`GpuContext`] is the one device a process renders with: its
 //!   [`DeviceGeneration`], [`GpuCapabilities`], loss state, texture creation
-//!   and upload, and the submission guard that keeps off-thread work away from
-//!   surface reconfiguration.
+//!   and upload. Queue work needs no guard against surface reconfiguration:
+//!   NanaUI's wgpu fork waits only for the work that used that surface.
 //! - [`FrameContext`] owns one command encoder from [`GpuContext::begin_frame`]
 //!   until it is submitted or dropped. Dropping it without submitting is the
 //!   discard, and rolls back the retained writes painters recorded into it.

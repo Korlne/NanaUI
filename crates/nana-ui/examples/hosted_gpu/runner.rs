@@ -87,17 +87,12 @@ impl PreviewProducer {
                     }
                     if dirty || continuous {
                         scene.resize(device, SURFACE_FORMAT, frame.size.0, frame.size.1);
-                        {
-                            // Raw queue writes off the window thread hold the
-                            // submission guard, like every submit does.
-                            let _submission = gpu.wgpu().lock_submission();
-                            scene.update(
-                                gpu.wgpu().queue(),
-                                frame.background,
-                                frame.accent,
-                                frame.revision,
-                            );
-                        }
+                        scene.update(
+                            gpu.wgpu().queue(),
+                            frame.background,
+                            frame.accent,
+                            frame.revision,
+                        );
                         let mut producer = gpu.begin_frame("hosted gpu demo producer");
                         scene.render(producer.wgpu_encoder());
                         producer.submit();

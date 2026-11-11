@@ -57,7 +57,7 @@ There is exactly one product rendering path: `UiWorld → ExtractedNode → UiSc
 | Chapter | Core content |
 | --- | --- |
 | [Scene Extraction](/learn/scene-extraction) | `UiScene` drawing graph structure, `apply_delta` incremental invalidation, `FramePlan` compilation, why it does not depend on WGPU |
-| [GPU and Frame Lifecycle](/learn/gpu-frame) | The `nana-gpu` contract, submission guard, frame slots, upload ring, `SceneWgpuPainter`, the 35-step total order of a frame |
+| [GPU and Frame Lifecycle](/learn/gpu-frame) | The `nana-gpu` contract, submission order, frame slots, upload ring, `SceneWgpuPainter`, the 35-step total order of a frame |
 | [Window and Platform](/learn/window-platform) | The neutral `nana-ui-platform` contract, native execution in `nana-window`, material fallback semantics, headless `WebSurface` |
 
 ### Authoring paths and toolchain

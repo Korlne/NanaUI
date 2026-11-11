@@ -582,8 +582,7 @@ impl<E: Copy + Eq + Send + Sync + 'static, M: Send + Sync + 'static> FrameExchan
     /// Copy `source` into a free slot on the shared device. Returns without
     /// waiting when the pool is full.
     ///
-    /// Safe from any thread: the copy is submitted under the device's
-    /// submission guard, so it never races a window's surface reconfiguration.
+    /// Safe from any thread, including while a window reconfigures its surface.
     pub fn copy_from(&mut self, source: &GpuTexture, epoch: E) -> CopyOutcome
     where
         M: Default,

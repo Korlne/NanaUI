@@ -454,7 +454,6 @@ impl HostedGpuSurface {
     }
 
     fn reconfigure(&mut self, gpu: &GpuContext) {
-        let _gate = __framework::lock_reconfigure(gpu);
         self.surface
             .configure(__framework::device(gpu), &self.configuration);
         self.needs_target_commit = true;
@@ -1128,7 +1127,6 @@ fn configure_surface(
         view_formats: vec![],
         desired_maximum_frame_latency: 1,
     };
-    let _gate = __framework::lock_reconfigure(gpu);
     surface.configure(__framework::device(gpu), &configuration);
     target.commit()?;
     crate::host_diagnostics::record_surface_hdr(profile, &hdr_info);

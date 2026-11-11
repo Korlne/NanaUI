@@ -63,12 +63,6 @@ impl super::Device {
         let mem_allocator =
             suballocation::Allocator::new(&raw, memory_hints, memory_budget_thresholds)?;
 
-        let idle_fence: Direct3D12::ID3D12Fence = unsafe {
-            profiling::scope!("ID3D12Device::CreateFence");
-            raw.CreateFence(0, Direct3D12::D3D12_FENCE_FLAG_NONE)
-        }
-        .into_device_result("Idle fence creation")?;
-
         let raw_desc = Direct3D12::D3D12_RESOURCE_DESC {
             Dimension: Direct3D12::D3D12_RESOURCE_DIMENSION_BUFFER,
             Alignment: 0,
@@ -206,7 +200,6 @@ impl super::Device {
         Ok(super::Device {
             raw: raw.clone(),
             present_queue,
-            idler: super::Idler { fence: idle_fence },
             features,
             shared: Arc::new(shared),
             rtv_pool: Arc::new(Mutex::new(rtv_pool)),
@@ -254,26 +247,6 @@ impl super::Device {
         }
         .into_device_result("Command signature creation")?;
         signature.ok_or(crate::DeviceError::Unexpected)
-    }
-
-    // Blocks until the dedicated present queue is finished with all of its work.
-    //
-    // Once this method completes, the surface is able to be resized or deleted.
-    pub(super) unsafe fn wait_for_present_queue_idle(&self) -> Result<(), crate::DeviceError> {
-        let cur_value = unsafe { self.idler.fence.GetCompletedValue() };
-        if cur_value == !0 {
-            return Err(crate::DeviceError::Lost);
-        }
-
-        let event = Event::create(false, false)?;
-
-        let value = cur_value + 1;
-        unsafe { self.present_queue.Signal(&self.idler.fence, value) }
-            .into_device_result("Signal")?;
-        let hr = unsafe { self.idler.fence.SetEventOnCompletion(value, event.0) };
-        hr.into_device_result("Set event")?;
-        unsafe { Threading::WaitForSingleObject(event.0, Threading::INFINITE) };
-        Ok(())
     }
 
     /// When generating the vertex shader, the fragment stage must be passed if it exists!

@@ -4,11 +4,11 @@ title: GPU 与帧生命周期
 
 # GPU 与帧生命周期：`nana-gpu` 合同与宿主的一帧
 
-本章回答三个核心问题：**`nana-gpu` 的类型合同（`GpuContext` / `FrameContext` / `GpuTexture`、设备代际与丢失、提交守卫）为什么这样设计**；**`nana-ui` 的 `SceneWgpuPainter` 如何在宿主的 GPU 上下文上组织渲染通道（pass）与保留状态**；以及**一帧从调度到 `present` 的完整 35 步生命周期经过了哪些环节**。本章承接 [Scene 提取](/learn/scene-extraction) 的 `UiScene`，向下衔接 [窗口与平台](/learn/window-platform)。
+本章回答三个核心问题：**`nana-gpu` 的类型合同（`GpuContext` / `FrameContext` / `GpuTexture`、设备代际与丢失、提交顺序）为什么这样设计**；**`nana-ui` 的 `SceneWgpuPainter` 如何在宿主的 GPU 上下文上组织渲染通道（pass）与保留状态**；以及**一帧从调度到 `present` 的完整 35 步生命周期经过了哪些环节**。本章承接 [Scene 提取](/learn/scene-extraction) 的 `UiScene`，向下衔接 [窗口与平台](/learn/window-platform)。
 
 ## 职责与边界
 
-- **`nana-gpu` 是后端合同，WGPU 是其唯一实现**：`crates/nana-gpu/src/lib.rs:1` 规定 `GpuContext` 代表进程唯一的 GPU 设备（携带设备代际、硬件能力、粘性丢失状态、纹理创建/上传与提交守卫）；`FrameContext` 从 `begin_frame` 到 `submit` 或 drop 独占一个命令编码器（drop 即自动 `discard` 并回滚 painter 登记的保留状态写入）；`GpuTexture` 与 `GpuRenderTarget` 携带 `DeviceGeneration`，跨代际资源在入口即被拒绝。`wgpu-interop` feature 是显式的底层逃生舱。
+- **`nana-gpu` 是后端合同，WGPU 是其唯一实现**：`crates/nana-gpu/src/lib.rs:1` 规定 `GpuContext` 代表进程唯一的 GPU 设备（携带设备代际、硬件能力、粘性丢失状态、纹理创建/上传）；`FrameContext` 从 `begin_frame` 到 `submit` 或 drop 独占一个命令编码器（drop 即自动 `discard` 并回滚 painter 登记的保留状态写入）；`GpuTexture` 与 `GpuRenderTarget` 携带 `DeviceGeneration`，跨代际资源在入口即被拒绝。`wgpu-interop` feature 是显式的底层逃生舱。
 - **宿主拥有设备与帧（`AGENTS.md` 核心合同）**：宿主拥有 `Window`、`Surface`、`GpuContext`、每一帧的 `FrameContext` 以及帧调度；`SceneWgpuPainter` 建立在宿主上下文之上，只往宿主的帧里录制绘制命令。依赖图里只有 NanaUI 自己的 wgpu fork（`third_party/wgpu`，沿用上游包名与版本 30.0.1） 这一份 wgpu，严禁创建第二个 `Device` / `Queue`，严禁在产品呈现路径上执行 CPU 回读。
 - **`nana-frame-exchange` 只传递生产者帧**：在宿主已有的同一份 `GpuContext` 上提供有界最新帧交换池（内部通过 GPU 侧 `copy_texture_to_texture` 复制，不回读 CPU），自身不拥有 UI 设备或提交权（`crates/nana-frame-exchange/src/lib.rs:1`）。
 - **GPU 内容是树上的一等节点**：通过 `CustomRenderNode` 或 `HostTexture`（`GpuTextureView`）挂载在树上，像普通按钮一样参与布局、裁剪、命中测试与文档顺序。
@@ -45,17 +45,17 @@ title: GPU 与帧生命周期
 
 ## 内部结构
 
-### 1. `nana-gpu` 核心合同：设备代际、粘性丢失与提交守卫
+### 1. `nana-gpu` 核心合同：设备代际、粘性丢失与提交顺序
 
 - **设备代际（`DeviceGeneration`）与粘性丢失**：每个 `GpuContext` 分配唯一的 `DeviceGeneration`（`context.rs:19`），`GpuContext::check_device`（`:715`）在遇到其他代际的纹理或渲染目标时直接返回 `GpuError::DeviceMismatch`。设备丢失原因记录在粘性的 `LossState` 中（仅保留**首次**丢失报告，`:312-325`，防止驱动回调风暴）。
-- **提交守卫（Submission Guard）**：`GpuInner.submission: RwLock<()>`（`context.rs:327`）负责将所有队列提交与 `Surface::configure` 串行化——因为 `Surface::configure` 会等待 GPU 空闲，若另一条线程同时调用 `queue.submit` 会触发 `GpuWaitTimeout`。所有通过合同执行的提交与上传在调用期间持有**读锁**（`lock_submission:726`），而 Surface 重配置持有**写锁**（`lock_reconfigure:733`）。通过 `wgpu-interop` 直接提交裸队列命令的调用方必须遵守同一把锁纪律，且严禁跨 `device.poll(Wait)` 或休眠持锁（`wgpu_interop.rs:45`）。
+- **提交顺序**：队列提交不再需要与 `Surface::configure` 串行化——NanaUI 的 wgpu fork 让重配置只等仍在使用该 surface 交换链图像的工作，而不是整个设备空闲，所以另一条线程同时提交不会触发 `GpuWaitTimeout`（见 `third_party/wgpu/README.md`）。`GpuInner.submission_order: Mutex<()>` 只负责让帧提交、上传批与 native-export 的 signal 按真实队列顺序排列；`wgpu-interop` 的 `lock_submission` 已弃用。
 - **前置参数校验**：`create_texture`（`context.rs:459`）在调用底层 WGPU 前完成尺寸、usage、块对齐与格式用途校验，将所有非法输入转化为可恢复的 `GpuError`，绝不触发 WGPU 校验 panic。
 
 ### 2. `FrameContext`：独占编码器、合并上传环与丢弃回滚
 
 每个 `FrameContext`（`crates/nana-gpu/src/frame.rs:38`）只有两条终结路径：
 
-1. **`submit(mut self) -> GpuSubmission`（`:148`）**：先在提交守卫锁外完成 `encoder.finish()` 与上传批打包；随后获取提交守卫读锁与 `submission_order` 互斥锁，将 `UploadRing`（`crates/nana-gpu/src/upload.rs:1`，`32 MiB` 映射块池，消除每次小写入在 Metal/DX12 上的独立 staging 开销）生成的上传命令缓冲排在帧渲染命令**之前**，在同一次 `queue.submit` 中提交；最后结清保留写入账本并在 `on_submitted_work_done` 回调中归还帧槽与瞬态缓冲。
+1. **`submit(mut self) -> GpuSubmission`（`:148`）**：先在锁外完成 `encoder.finish()`；随后获取 `submission_order` 互斥锁并打包上传批，将 `UploadRing`（`crates/nana-gpu/src/upload.rs:1`，`32 MiB` 映射块池，消除每次小写入在 Metal/DX12 上的独立 staging 开销）生成的上传命令缓冲排在帧渲染命令**之前**，在同一次 `queue.submit` 中提交；最后结清保留写入账本并在 `on_submitted_work_done` 回调中归还帧槽与瞬态缓冲。
 2. **`discard(self)` 或 `Drop`（`:250 / :259`）**：丢弃编码器并累加 `FRAMES_DISCARDED`；帧内已排队的缓冲写入并入设备待落地批（由下一次提交落地，保证 CPU 侧镜像一致）；同时调用 `RetainedWrites::roll_back` 将本帧画过的渲染目标标记为已回滚（触发 `RETAINED_FRAME_DISCARDED`），强制 painter 在下次绘制该目标前重建保留状态。
 
 ### 3. `SceneWgpuPainter`：设备级共享管线与每目标状态
@@ -82,7 +82,7 @@ title: GPU 与帧生命周期
 | **18–19** | 同步 `nana.host-texture` 槽位重绘订阅；注入 Windows 原生内容渲染器 | 仅订阅当前场景实际引用的宿主纹理槽 |
 | **20–21** | 设置绘制参数；执行 **`painter.paint_target(...)`（`present.rs:385`）** | 按文档顺序录制全部可见图元；若失败则 `discard` 帧并标记重整 |
 | **22–24** | 录制窗口外二次输出（`window_output`）；**`recording.submit()`**；注册完成回调 | 窗口与离屏输出共享同一次 `FrameContext::submit` |
-| **25–27** | `present_frame` 上屏；记录呈现诊断；应用挂起的 Surface 重配置 | Surface 重配置严格排在 `present` 之后并持提交守卫写锁 |
+| **25–27** | `present_frame` 上屏；记录呈现诊断；应用挂起的 Surface 重配置 | Surface 重配置严格排在 `present` 之后，只等该 surface 的工作 |
 | **28–31** | 更新 `FrameDemand`；回写解码图片自然尺寸（`commit_image_sizes`）；提交 Windows 合成树；投递窗口外输出帧 | 图片自然尺寸在程序回调前写回，若有未设尺寸的 `<img>` 拿到尺寸则请求下一帧重排 |
 | **32–35** | 发布无障碍增量；刷新 IME 光标盒；调用 **`window_frame_presented`** | 直到第 35 步，应用才可安全释放上一帧被替换的旧纹理 |
 
@@ -94,7 +94,7 @@ title: GPU 与帧生命周期
 
 | 文件路径 | 核心内容 |
 | --- | --- |
-| `crates/nana-gpu/src/context.rs` | `GpuContext`、`DeviceGeneration`、能力表、粘性丢失状态、提交守卫与 `begin_frame` |
+| `crates/nana-gpu/src/context.rs` | `GpuContext`、`DeviceGeneration`、能力表、粘性丢失状态、提交顺序与 `begin_frame` |
 | `crates/nana-gpu/src/frame.rs` | `FrameContext` 的 `submit` / `discard`、`RetainedWrites` 回滚账本与 `GpuSubmission` |
 | `crates/nana-gpu/src/texture.rs` | `GpuTexture`、`GpuRenderTarget` 与稳定 usage 标志 |
 | `crates/nana-gpu/src/policy.rs` | 有界帧槽、瞬态缓冲池、`StampedCache` 管线缓存与退役资源回收 |

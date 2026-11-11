@@ -1,7 +1,7 @@
 use std::fmt;
 use std::num::NonZeroU64;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::{Arc, Mutex};
 
 use crate::frame::FrameContext;
 use crate::policy::GpuDeviceState;
@@ -334,12 +334,6 @@ pub(crate) struct GpuInner {
     /// Whether WGPU trusts the WebGPU format table on this device, rather
     /// than asking the adapter (see [`GpuContext::format_features`]).
     webgpu_format_table: bool,
-    /// Serializes queue work against `Surface::configure`, which waits for the
-    /// GPU to go idle: a submit racing it from another thread fails with
-    /// `GpuWaitTimeout`. Every submit and upload the contract performs holds
-    /// it for reading only for the duration of the call; reconfiguration takes
-    /// it for writing.
-    submission: RwLock<()>,
     loss: Arc<LossState>,
     next_frame: AtomicU64,
     pub(crate) next_submission: AtomicU64,
@@ -411,7 +405,6 @@ impl GpuContext {
                 adapter_info,
                 capabilities,
                 webgpu_format_table,
-                submission: RwLock::new(()),
                 loss,
                 next_frame: AtomicU64::new(1),
                 next_submission: AtomicU64::new(1),
@@ -594,7 +587,6 @@ impl GpuContext {
     /// `wgpu-interop` and read what they uploaded.
     pub fn flush_uploads(&self) {
         // In submission order, as a frame takes them: see `FrameContext::submit`.
-        let _submission = self.lock_submission();
         let _order = self
             .inner
             .submission_order
@@ -736,20 +728,6 @@ impl GpuContext {
                 found,
             })
         }
-    }
-
-    pub(crate) fn lock_submission(&self) -> RwLockReadGuard<'_, ()> {
-        self.inner
-            .submission
-            .read()
-            .unwrap_or_else(|error| error.into_inner())
-    }
-
-    pub(crate) fn lock_reconfigure(&self) -> RwLockWriteGuard<'_, ()> {
-        self.inner
-            .submission
-            .write()
-            .unwrap_or_else(|error| error.into_inner())
     }
 
     pub(crate) fn mark_lost(&self, report: GpuDeviceLost) {

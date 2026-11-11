@@ -134,8 +134,8 @@ fn rebuild_gpu(&mut self, context: &RuntimeProgramContext<Self::Message>) {}
 
 当自定义渲染器确实需要访问底层原生 WGPU 对象时，显式启用 `wgpu-interop` feature（提供 `GpuContext::from_wgpu` / `wgpu()`、`FrameContext::wgpu_encoder()`、`GpuTexture::from_wgpu` / `wgpu_view()`、`ScenePass::wgpu()` 等，交出的是合同背后的**同一个**设备与编码器）。框架内部 crate（`nana-ui`、`nana-frame-exchange`、`nana-ui-devtools`）则通过隐藏的 `nana_gpu::__framework` 访问后端，由 `scripts/check-engine-boundary.py` 在 CI 中强制把关。
 
-::: warning 提交守卫不可重入
-窗口缩放执行 `Surface::configure` 时会等待 GPU 空闲；若其他线程同时提交队列会导致 `GpuWaitTimeout`。因此通过 `wgpu-interop` 直接调用裸 `queue.submit` / `write_texture` / `write_buffer` 时，必须持有 `gpu.wgpu().lock_submission()` 读锁，且**严禁跨越 `device.poll(Wait)`、休眠或 Surface 操作持有该锁**。`FrameContext::submit`、`GpuContext::write_texture` 与 `FrameExchange::copy_from` 内部已自动加锁，切勿在已持锁时嵌套调用它们。
+::: tip 队列工作不需要提交守卫
+NanaUI 的 wgpu fork 让 `Surface::configure`（窗口缩放）只等仍在使用该 surface 交换链图像的工作，不再等整个设备空闲，其他线程同时提交也不会让它以 `GpuWaitTimeout` 失败（见 `third_party/wgpu/README.md`）。因此通过 `wgpu-interop` 直接调用裸 `queue.submit` / `write_texture` / `write_buffer` 时可以在任意线程进行，不必持锁；原来的 `gpu.wgpu().lock_submission()` 已标记为弃用，返回的守卫不再与任何东西互斥。`GpuContext` 内部只保留 `submission_order` 互斥锁，让帧提交、上传批与 native-export 的 signal 按队列顺序排列。
 :::
 
 #### 原生纹理导出（`native-export`）

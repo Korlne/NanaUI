@@ -134,8 +134,8 @@ Ordinary render extensions can declare uniform/storage buffers, sampled/storage 
 
 When a custom renderer really needs the underlying native WGPU objects, enable the `wgpu-interop` feature explicitly. It provides `GpuContext::from_wgpu` / `wgpu()`, `FrameContext::wgpu_encoder()`, `GpuTexture::from_wgpu` / `wgpu_view()`, `ScenePass::wgpu()`, and more, and hands out **the same** device and encoder behind the contract. Internal framework crates (`nana-ui`, `nana-frame-exchange`, `nana-ui-devtools`) reach the backend through the hidden `nana_gpu::__framework`, enforced in CI by `scripts/check-engine-boundary.py`.
 
-::: warning The submission guard is not reentrant
-When a window is resized, `Surface::configure` waits for the GPU to go idle; if another thread submits to the queue at the same time, the result is `GpuWaitTimeout`. So when calling raw `queue.submit` / `write_texture` / `write_buffer` directly through `wgpu-interop`, you must hold the `gpu.wgpu().lock_submission()` read lock, and **never hold it across `device.poll(Wait)`, sleeps, or Surface operations**. `FrameContext::submit`, `GpuContext::write_texture`, and `FrameExchange::copy_from` take the lock internally; never call them while already holding it.
+::: tip Queue work needs no submission guard
+NanaUI's wgpu fork makes `Surface::configure` (a window resize) wait only for the work that still uses that surface's swapchain images, not for the whole device to go idle, and another thread submitting at the same time no longer makes it fail with `GpuWaitTimeout` (see `third_party/wgpu/README.md`). So raw `queue.submit` / `write_texture` / `write_buffer` calls through `wgpu-interop` may run on any thread without a lock; the former `gpu.wgpu().lock_submission()` is deprecated and its guard no longer excludes anything. Inside `GpuContext` only the `submission_order` mutex remains, keeping frame submits, upload batches and native-export signals in queue order.
 :::
 
 #### Native texture export (`native-export`)

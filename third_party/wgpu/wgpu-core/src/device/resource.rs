@@ -5335,24 +5335,44 @@ impl Device {
                     break 'error error;
                 }
 
-                // Wait for all work to finish before configuring the surface.
+                // Wait for the work that used this surface's textures before
+                // configuring it (the HAL contract), not for the whole device
+                // (NanaUI fork): work submitted meanwhile from other threads,
+                // or earlier work on other targets, keeps running.
+                //
+                // All textures must be destroyed before the surface can be
+                // re-configured. Taking the presentation first means no
+                // texture can be acquired while this waits, so no newer
+                // submission can use the surface.
+                if let Some(present) = surface.presentation.lock().take() {
+                    if present.acquired_texture.is_some() {
+                        break 'error E::PreviousOutputExists;
+                    }
+                }
+                // A submit already past validation stamps the surface while
+                // it holds the snatch lock: let it finish before reading.
+                drop(self.snatchable_lock.write());
+                let surface_submission = surface.last_submission.load(Ordering::Acquire);
+                let poll_type = if surface_submission == 0 {
+                    wgt::PollType::Poll
+                } else {
+                    wgt::PollType::Wait {
+                        submission_index: Some(surface_submission),
+                        timeout: None,
+                    }
+                };
                 let snatch_guard = self.snatchable_lock.read();
 
                 let maintain_result;
-                (user_callbacks, maintain_result) =
-                    self.maintain(wgt::PollType::wait_indefinitely(), snatch_guard);
+                (user_callbacks, maintain_result) = self.maintain(poll_type, snatch_guard);
 
                 match maintain_result {
-                    // We're happy
-                    Ok(wgt::PollStatus::QueueEmpty) => {}
-                    Ok(wgt::PollStatus::WaitSucceeded) => {
-                        // After the wait, the queue should be empty. It can only be non-empty
-                        // if another thread is submitting at the same time.
-                        break 'error E::GpuWaitTimeout;
-                    }
-                    Ok(wgt::PollStatus::Poll) => {
-                        unreachable!("Cannot get a Poll result from a Wait action.")
-                    }
+                    // Done with every submission up to the surface's last.
+                    Ok(
+                        wgt::PollStatus::QueueEmpty
+                        | wgt::PollStatus::WaitSucceeded
+                        | wgt::PollStatus::Poll,
+                    ) => {}
                     Err(WaitIdleError::Timeout) if cfg!(target_arch = "wasm32") => {
                         // On wasm, you cannot actually successfully wait for the surface.
                         // However WebGL does not actually require you do this, so ignoring
@@ -5361,13 +5381,6 @@ impl Device {
                     }
                     Err(e) => {
                         break 'error e.into();
-                    }
-                }
-
-                // All textures must be destroyed before the surface can be re-configured.
-                if let Some(present) = surface.presentation.lock().take() {
-                    if present.acquired_texture.is_some() {
-                        break 'error E::PreviousOutputExists;
                     }
                 }
 
