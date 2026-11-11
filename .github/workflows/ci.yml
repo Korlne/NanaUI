@@ -77,6 +77,15 @@ jobs:
       - name: Precompiled DXIL paints what WGSL paints
         if: runner.os == 'Windows'
         run: cargo test -p nana-ui --lib --features gpu --locked -- --ignored precompiled_quads_paint --test-threads=1
+      # The wgpu fork's own changes (third_party/wgpu-fork-tests). The
+      # workspace tests above already run them, but a test without an adapter
+      # skips; here a missing DX12 adapter (WARP on the runner) fails instead.
+      - name: Test the wgpu fork's changes on DX12
+        if: runner.os == 'Windows'
+        timeout-minutes: 10
+        env:
+          NANA_REQUIRE_WGPU_FORK_TESTS: "1"
+        run: cargo test -p nana-wgpu-fork-tests --locked -- --test-threads=1 --nocapture
       # Issue #242: measured output work, never a prerecorded zero fixture.
       # Linux has lavapipe, macOS Metal and Windows the hosted GPU/WARP path.
       - name: Exercise retained output and judge live GPU work

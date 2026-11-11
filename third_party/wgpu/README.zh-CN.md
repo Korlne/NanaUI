@@ -31,7 +31,13 @@
 - 公开的 `wgpu::` 接口尽量只增不改；不兼容的改动放在 `wgpu-core` / `wgpu-hal` 内部和新接口上。
 - 每一处公开接口的改动都记在下面的"与上游的差异"里。
 - 改动 naga 的 HLSL 输出，或 `wgpu-hal` 的 DX12 后端编译着色器的方式时，必须重新生成 `nana-ui` 里 `scene_paint::precompiled` 的预编译 DXIL：它的 wgpu 版本检查看不到 fork 的改动。
-- 这些目录不在工作区成员里：它们自己的测试和 dev-dependencies 不在这里构建。
+- 这些目录不在工作区成员里：它们自己的测试和 dev-dependencies 不在这里构建。每个清单末尾都有一个空的 `[workspace]`（由 `scripts/vendor-wgpu.py` 加上），让 cargo 把每个库当作独立的工作区根，不再往上找。少了它，在嵌套于另一个 NanaUI 检出里的检出（`.claude/worktrees/` 下的 agent worktree）中，`cargo fmt --all` 会失败：外层工作区认领了这个库，却没把它列为成员。`cargo fmt --all` 也会检查这些库；它们符合 rustfmt，fork 的改动也要保持如此。
+- 每项 fork 改动的测试写在 `third_party/wgpu-fork-tests`（工作区成员，`cargo test --workspace` 会跑它）：
+  - `dx12_cache_format` 直接把 `wgpu-hal/src/dx12/pipeline_cache.rs` 编译进来，该模块自带的单元测试也在这里跑，所有系统都跑；
+  - `pipeline_cache` 通过 `wgpu` 接口测试 DX12 缓存与 `set_default_pipeline_cache`；
+  - `surface_reconfigure`（Windows）在另一个线程提交的同时，对一个小窗口的 surface 在 DX12 与 Vulkan 上反复重配置。
+
+  没有适配器时 GPU 测试会跳过；设 `NANA_REQUIRE_WGPU_FORK_TESTS=1` 则改为失败，Windows CI 对 DX12 就是这样跑的。这些测试里的 GPU 负载要小且有上限。
 
 ## 升级到新的上游版本
 
