@@ -11,8 +11,9 @@
 //! driver hangs.
 #![cfg(windows)]
 
+mod support;
+
 use std::{
-    num::NonZeroIsize,
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
@@ -21,106 +22,11 @@ use std::{
 };
 
 use nana_wgpu_fork_tests::no_adapter;
-use windows::{
-    Win32::{
-        Foundation::{HWND, LPARAM, LRESULT, WPARAM},
-        System::LibraryLoader::GetModuleHandleW,
-        UI::WindowsAndMessaging::{
-            CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, MSG, PM_REMOVE,
-            PeekMessageW, RegisterClassW, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOZORDER, SetWindowPos,
-            TranslateMessage, WNDCLASSW, WS_EX_NOACTIVATE, WS_OVERLAPPEDWINDOW, WS_VISIBLE,
-        },
-    },
-    core::w,
-};
+use support::{clear, create_window, pump, resize, surface};
+use windows::Win32::{Foundation::HWND, UI::WindowsAndMessaging::DestroyWindow};
 
 const RECONFIGURES: u32 = 40;
 const WALL_CLOCK_CAP: Duration = Duration::from_secs(20);
-
-unsafe extern "system" fn window_proc(
-    window: HWND,
-    message: u32,
-    wparam: WPARAM,
-    lparam: LPARAM,
-) -> LRESULT {
-    unsafe { DefWindowProcW(window, message, wparam, lparam) }
-}
-
-fn create_window() -> HWND {
-    unsafe {
-        let module = GetModuleHandleW(None).unwrap();
-        let class = WNDCLASSW {
-            lpfnWndProc: Some(window_proc),
-            hInstance: module.into(),
-            lpszClassName: w!("NanaWgpuForkReconfigure"),
-            ..Default::default()
-        };
-        RegisterClassW(&class);
-        CreateWindowExW(
-            WS_EX_NOACTIVATE,
-            w!("NanaWgpuForkReconfigure"),
-            w!("wgpu fork reconfigure test"),
-            WS_OVERLAPPEDWINDOW | WS_VISIBLE,
-            40,
-            40,
-            200,
-            160,
-            None,
-            None,
-            Some(module.into()),
-            None,
-        )
-        .unwrap()
-    }
-}
-
-fn pump() {
-    unsafe {
-        let mut message = MSG::default();
-        while PeekMessageW(&mut message, None, 0, 0, PM_REMOVE).as_bool() {
-            let _ = TranslateMessage(&message);
-            DispatchMessageW(&message);
-        }
-    }
-}
-
-fn surface(instance: &wgpu::Instance, window: HWND) -> wgpu::Surface<'static> {
-    let mut handle =
-        wgpu::rwh::Win32WindowHandle::new(NonZeroIsize::new(window.0 as isize).unwrap());
-    let module = unsafe { GetModuleHandleW(None) }.unwrap();
-    handle.hinstance = NonZeroIsize::new(module.0 as isize);
-    // SAFETY: the window outlives the surface (destroyed after it is dropped).
-    unsafe {
-        instance.create_surface_unsafe(wgpu::SurfaceTargetUnsafe::RawHandle {
-            raw_display_handle: Some(wgpu::rwh::RawDisplayHandle::Windows(
-                wgpu::rwh::WindowsDisplayHandle::new(),
-            )),
-            raw_window_handle: wgpu::rwh::RawWindowHandle::Win32(handle),
-        })
-    }
-    .unwrap()
-}
-
-fn clear(encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView, red: f64) {
-    encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-        label: Some("fork reconfigure clear"),
-        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-            view,
-            depth_slice: None,
-            resolve_target: None,
-            ops: wgpu::Operations {
-                load: wgpu::LoadOp::Clear(wgpu::Color {
-                    r: red,
-                    g: 0.3,
-                    b: 0.5,
-                    a: 1.0,
-                }),
-                store: wgpu::StoreOp::Store,
-            },
-        })],
-        ..Default::default()
-    });
-}
 
 /// One small clear at a time until `stop`; returns the number submitted.
 fn produce(device: &wgpu::Device, queue: &wgpu::Queue, stop: &AtomicBool) -> u64 {
@@ -211,19 +117,7 @@ fn reconfigure_under_submission(backend: wgpu::Backends, window: HWND) -> bool {
         }
         let width = 160 + (step % 5) * 24;
         let height = 120 + (step % 3) * 16;
-        unsafe {
-            SetWindowPos(
-                window,
-                None,
-                0,
-                0,
-                width as i32 + 16,
-                height as i32 + 40,
-                SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
-            )
-            .unwrap();
-        }
-        pump();
+        resize(window, width, height);
         configuration.width = width;
         configuration.height = height;
         surface.configure(&device, &configuration);

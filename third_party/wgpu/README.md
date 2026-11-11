@@ -63,6 +63,11 @@ other by path, so:
     through the `wgpu` API;
   - `surface_reconfigure` (Windows) reconfigures a small window's surface on
     DX12 and Vulkan while another thread submits;
+  - `vulkan_present_tracking` (Windows) resizes a window with frames in flight
+    on Vulkan once per present-tracking path the adapter has, with validation
+    requested, and fails on any error the backend logs. Without
+    `VK_LAYER_KHRONOS_validation` it checks the driver's messages only;
+    `NANA_REQUIRE_VULKAN_VALIDATION=1` makes a missing layer fail;
   - `timed_poll` races zero-timeout waits against other threads' polls and
     submissions on DX12 and Vulkan for a few seconds.
 
@@ -99,10 +104,38 @@ validation is unchanged (an output still acquired is `PreviousOutputExists`).
   release, instead of draining the queue (the device's present-queue idler is
   gone).
 - **`wgpu-hal` Vulkan**: `configure` no longer calls `vkDeviceWaitIdle`. The
-  old swapchain, passed as `oldSwapchain` and therefore retired, is kept until
-  a submission that drew to its successor completes (checked without
-  blocking at the next acquire); `unconfigure` and dropping a retired
-  swapchain still wait for the device.
+  old swapchain, passed as `oldSwapchain` and therefore retired, is destroyed
+  once its presents are known done. How that is known depends on what the
+  adapter offers, in this order:
+  - **Present fences** (`VK_EXT_swapchain_maintenance1`, else
+    `VK_KHR_swapchain_maintenance1`, with the matching
+    `VK_*_surface_maintenance1` instance extension and the
+    `swapchainMaintenance1` feature): every present carries a
+    `VkSwapchainPresentFenceInfoEXT` fence, which signals once the present's
+    semaphores and image may be freed, as the extension defines. The old
+    swapchain is freed at `configure` if its fences have signaled, otherwise at
+    a later acquire once they have (polled, never blocking). `unconfigure`
+    waits for the fences (up to 100 ms) instead of the device. The EXT is
+    preferred because ash 0.38's structures carry its names and validation
+    checks the chained structure against it.
+  - **Present wait** (`VK_KHR_present_id` + `VK_KHR_present_wait`): every
+    present carries an id. `vkWaitForPresentKHR` is not valid on a retired
+    swapchain, so `configure` waits, up to 100 ms, for the old swapchain's
+    last present to be shown, then frees it at once. On a 60 Hz FIFO swapchain
+    this costs about two refresh intervals per configure; past the timeout the
+    swapchain falls back to the heuristic below.
+  - **Neither (heuristic)**: the old swapchain is kept until a submission that
+    drew to its successor completes (checked without blocking at the next
+    acquire). That submission was queued after the old swapchain's last
+    present, but Vulkan does not promise the present is done by then; this is
+    a timing assumption, much like upstream's reliance on device idle.
+
+  The instance enables `VK_KHR_get_surface_capabilities2` and the
+  `VK_*_surface_maintenance1` extensions when present. The environment
+  variable `NANA_WGPU_VULKAN_PRESENT_TRACKING` (`fence`, `wait` or `none`),
+  read when a device is opened, limits the choice so tests can run each path.
+  `unconfigure` and dropping a retired swapchain without present fences still
+  wait for the device.
 - **Metal, GLES**: their `configure` did not wait; they get the `wgpu-core`
   change only.
 

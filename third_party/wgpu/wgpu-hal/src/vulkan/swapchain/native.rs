@@ -1,7 +1,7 @@
 //! Vulkan Surface and Swapchain implementation using native Vulkan surfaces.
 
-use alloc::{boxed::Box, sync::Arc, vec::Vec};
-use core::any::Any;
+use alloc::{boxed::Box, collections::VecDeque, sync::Arc, vec::Vec};
+use core::{any::Any, time::Duration};
 
 use ash::{khr, vk};
 use parking_lot::{Mutex, MutexGuard};
@@ -12,8 +12,14 @@ use crate::vulkan::{
     swapchain::{
         Surface, SurfaceTextureMetadata, Swapchain, SwapchainSubmissionSemaphoreGuard, WindowHandle,
     },
-    DeviceShared, InstanceShared,
+    DeviceShared, InstanceShared, PresentTracking,
 };
+
+/// How long [`Swapchain::wait_presents`] waits for present fences, and
+/// [`Swapchain::presents_finished_before_retire`] for the last present to be
+/// shown, before giving up and falling back (NanaUI fork). Presents normally
+/// finish within a refresh interval or two.
+const PRESENT_WAIT_TIMEOUT: Duration = Duration::from_millis(100);
 
 pub(crate) struct NativeSurface {
     raw: vk::SurfaceKHR,
@@ -299,6 +305,10 @@ impl Surface for NativeSurface {
             next_acquire_index: 0,
             present_semaphores,
             next_present_time: None,
+            present_fences: (device.shared.present_tracking == PresentTracking::PresentFence)
+                .then(PresentFences::default),
+            last_present_id: 0,
+            last_enqueued_present_id: 0,
         }))
     }
 
@@ -365,6 +375,88 @@ pub(crate) struct NativeSwapchain {
     /// This must only be set if [`wgt::Features::VULKAN_GOOGLE_DISPLAY_TIMING`] is enabled, and
     /// so the VK_GOOGLE_display_timing extension is present.
     next_present_time: Option<vk::PresentTimeGOOGLE>,
+
+    /// Fences for presents, when the device tracks them that way
+    /// ([`PresentTracking::PresentFence`]) (NanaUI fork).
+    present_fences: Option<PresentFences>,
+
+    /// The last id given to a present with `VK_KHR_present_id`
+    /// ([`PresentTracking::PresentWait`]), 0 if none (NanaUI fork). Ids must
+    /// increase, even past a present that was not enqueued.
+    last_present_id: u64,
+    /// The id of the last present actually enqueued, 0 if none (NanaUI fork).
+    last_enqueued_present_id: u64,
+}
+
+/// Present fences of a swapchain (`VkSwapchainPresentFenceInfoEXT`, NanaUI
+/// fork). Each present signals one once the presentation engine is done with
+/// the present's resources: its wait semaphores and its image.
+#[derive(Debug, Default)]
+struct PresentFences {
+    /// Fences of enqueued presents, oldest first.
+    pending: VecDeque<vk::Fence>,
+    /// Unsignaled fences ready for reuse.
+    free: Vec<vk::Fence>,
+}
+
+impl PresentFences {
+    /// Move the leading signaled fences from `pending` to `free`. Returns
+    /// whether `pending` is now empty. Never blocks.
+    fn recycle(&mut self, device: &ash::Device) -> bool {
+        while let Some(&fence) = self.pending.front() {
+            match unsafe { device.get_fence_status(fence) } {
+                Ok(true) => {
+                    self.pending.pop_front();
+                    if unsafe { device.reset_fences(&[fence]) }.is_ok() {
+                        self.free.push(fence);
+                    } else {
+                        unsafe { device.destroy_fence(fence, None) };
+                    }
+                }
+                // Nothing is in flight on a lost device.
+                Err(vk::Result::ERROR_DEVICE_LOST) => {
+                    self.pending.pop_front();
+                    unsafe { device.destroy_fence(fence, None) };
+                }
+                Ok(false) | Err(_) => return false,
+            }
+        }
+        true
+    }
+
+    /// Block, up to `timeout`, until every pending fence signals.
+    fn wait(&mut self, device: &ash::Device, timeout: Duration) -> bool {
+        if self.recycle(device) {
+            return true;
+        }
+        let pending = self.pending.make_contiguous();
+        let timeout_ns = u64::try_from(timeout.as_nanos()).unwrap_or(u64::MAX);
+        match unsafe { device.wait_for_fences(pending, true, timeout_ns) } {
+            Ok(()) | Err(vk::Result::ERROR_DEVICE_LOST) => {
+                self.recycle(device);
+                // A lost device leaves nothing in flight either.
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
+    /// Take a fence for the next present.
+    fn take(&mut self, device: &ash::Device) -> Result<vk::Fence, crate::DeviceError> {
+        self.recycle(device);
+        match self.free.pop() {
+            Some(fence) => Ok(fence),
+            None => unsafe { device.create_fence(&vk::FenceCreateInfo::default(), None) }
+                .map_err(crate::vulkan::map_host_device_oom_err),
+        }
+    }
+
+    /// Destroy every fence. Pending presents must be done.
+    unsafe fn destroy(&mut self, device: &ash::Device) {
+        for fence in self.pending.drain(..).chain(self.free.drain(..)) {
+            unsafe { device.destroy_fence(fence, None) };
+        }
+    }
 }
 
 impl Drop for NativeSwapchain {
@@ -382,6 +474,10 @@ impl Swapchain for NativeSwapchain {
 
         if let Some(fence) = self.fence.take() {
             unsafe { device.raw.destroy_fence(fence, None) }
+        }
+
+        if let Some(mut present_fences) = self.present_fences.take() {
+            unsafe { present_fences.destroy(&device.raw) };
         }
 
         // We cannot take this by value, as the function returns `self`.
@@ -421,9 +517,42 @@ impl Swapchain for NativeSwapchain {
         self.device.wait_for_fence(fence, value, 0).unwrap_or(false)
     }
 
+    unsafe fn presents_finished_before_retire(&mut self) -> bool {
+        if let Some(present_fences) = self.present_fences.as_mut() {
+            return present_fences.recycle(&self.device.raw);
+        }
+        let Some(present_wait) = self.device.extension_fns.present_wait.as_ref() else {
+            return false;
+        };
+        if self.last_enqueued_present_id == 0 {
+            return true;
+        }
+        // `vkWaitForPresentKHR` is not valid on a retired swapchain, so this is
+        // the last chance to ask. The swapchain gets no further presents, so
+        // its last one is the one the presentation engine shows next.
+        profiling::scope!("vkWaitForPresentKHR");
+        let timeout_ns = u64::try_from(PRESENT_WAIT_TIMEOUT.as_nanos()).unwrap_or(u64::MAX);
+        let result = unsafe {
+            present_wait.wait_for_present(self.raw, self.last_enqueued_present_id, timeout_ns)
+        };
+        result.is_ok()
+    }
+
+    unsafe fn presents_finished(&mut self) -> Option<bool> {
+        let present_fences = self.present_fences.as_mut()?;
+        Some(present_fences.recycle(&self.device.raw))
+    }
+
+    unsafe fn wait_presents(&mut self) -> bool {
+        match self.present_fences.as_mut() {
+            Some(present_fences) => present_fences.wait(&self.device.raw, PRESENT_WAIT_TIMEOUT),
+            None => false,
+        }
+    }
+
     unsafe fn acquire(
         &mut self,
-        timeout: Option<core::time::Duration>,
+        timeout: Option<Duration>,
         fence: &crate::vulkan::Fence,
     ) -> Result<crate::AcquiredSurfaceTexture<crate::api::Vulkan>, crate::SurfaceError> {
         let mut timeout_ns = match timeout {
@@ -599,6 +728,34 @@ impl Swapchain for NativeSwapchain {
             .image_indices(&image_indices)
             .wait_semaphores(&wait_semaphores);
 
+        // Present tracking (NanaUI fork): a fence the presentation engine
+        // signals once this present's resources are free, or an id to wait for.
+        let present_fence = match self.present_fences.as_mut() {
+            Some(present_fences) => Some(present_fences.take(&self.device.raw)?),
+            None => None,
+        };
+        let present_fence_array;
+        let mut present_fence_info;
+        let vk_info = if let Some(fence) = present_fence {
+            present_fence_array = [fence];
+            present_fence_info =
+                vk::SwapchainPresentFenceInfoEXT::default().fences(&present_fence_array);
+            vk_info.push_next(&mut present_fence_info)
+        } else {
+            vk_info
+        };
+        let present_id = (self.device.present_tracking == PresentTracking::PresentWait)
+            .then(|| self.last_present_id + 1);
+        let present_id_array;
+        let mut present_id_info;
+        let vk_info = if let Some(id) = present_id {
+            present_id_array = [id];
+            present_id_info = vk::PresentIdKHR::default().present_ids(&present_id_array);
+            vk_info.push_next(&mut present_id_info)
+        } else {
+            vk_info
+        };
+
         let mut display_timing;
         let present_times;
         let vk_info = if let Some(present_time) = self.next_present_time.take() {
@@ -616,9 +773,34 @@ impl Swapchain for NativeSwapchain {
             vk_info
         };
 
-        let suboptimal = {
+        let result = {
             profiling::scope!("vkQueuePresentKHR");
-            unsafe { self.functor.queue_present(queue.raw, &vk_info) }.map_err(|error| {
+            unsafe { self.functor.queue_present(queue.raw, &vk_info) }
+        };
+        // These errors still enqueue the present, so its fence will signal and
+        // its id counts; other errors enqueue nothing.
+        let enqueued = matches!(
+            result,
+            Ok(_)
+                | Err(vk::Result::ERROR_OUT_OF_DATE_KHR)
+                | Err(vk::Result::ERROR_SURFACE_LOST_KHR)
+                | Err(vk::Result::ERROR_FULL_SCREEN_EXCLUSIVE_MODE_LOST_EXT)
+        );
+        if let (Some(fence), Some(present_fences)) = (present_fence, self.present_fences.as_mut()) {
+            if enqueued {
+                present_fences.pending.push_back(fence);
+            } else {
+                present_fences.free.push(fence);
+            }
+        }
+        if let Some(id) = present_id {
+            self.last_present_id = id;
+            if enqueued {
+                self.last_enqueued_present_id = id;
+            }
+        }
+        let suboptimal = {
+            result.map_err(|error| {
                 match error {
                     vk::Result::ERROR_OUT_OF_DATE_KHR => crate::SurfaceError::Outdated,
                     vk::Result::ERROR_SURFACE_LOST_KHR => crate::SurfaceError::Lost,

@@ -36,6 +36,7 @@
   - `dx12_cache_format` 直接把 `wgpu-hal/src/dx12/pipeline_cache.rs` 编译进来，该模块自带的单元测试也在这里跑，所有系统都跑；
   - `pipeline_cache` 通过 `wgpu` 接口测试 DX12 缓存与 `set_default_pipeline_cache`；
   - `surface_reconfigure`（Windows）在另一个线程提交的同时，对一个小窗口的 surface 在 DX12 与 Vulkan 上反复重配置；
+  - `vulkan_present_tracking`（Windows）在 Vulkan 上、带着在途帧反复缩放窗口，适配器支持的每种 present 跟踪方式各跑一遍，并请求校验层；后端记下任何错误即失败。没有 `VK_LAYER_KHRONOS_validation` 时只检查驱动自己的消息；设 `NANA_REQUIRE_VULKAN_VALIDATION=1` 则缺少校验层就失败；
   - `timed_poll` 在 DX12 与 Vulkan 上让零超时的等待与其他线程的 poll、提交竞争几秒。
 
   没有适配器时 GPU 测试会跳过；设 `NANA_REQUIRE_WGPU_FORK_TESTS=1` 则改为失败，Windows CI 对 DX12 就是这样跑的。这些测试里的 GPU 负载要小且有上限。
@@ -54,7 +55,12 @@
 
 - **`wgpu-core`**：每个 `Surface` 记下最后一次用到它纹理的提交序号（提交时盖章）。`configure_surface` 先取走 presentation，使等待期间不能再获取新纹理，然后只等这个序号，而不是 `wait_indefinitely`。期间其他线程的提交不再被等待，也不再让 configure 失败。`TextureInner::Surface` 多了 `last_submission` 字段（`wgpu-core` 的公开枚举；`wgpu` 不暴露它）。
 - **`wgpu-hal` DX12**：队列在每次 `Present` 之后立即 signal 一个围栏；`configure` / `unconfigure` 在 `ResizeBuffers` / 释放前只等这个值，不再排空整个队列（设备上的 present 队列 idler 已删除）。
-- **`wgpu-hal` Vulkan**：`configure` 不再调用 `vkDeviceWaitIdle`。旧交换链作为 `oldSwapchain` 传入后已退役，保留到绘制其后继交换链的某次提交完成为止（在下一次 acquire 时非阻塞检查）；`unconfigure` 与销毁仍未释放的退役交换链时仍等待设备空闲。
+- **`wgpu-hal` Vulkan**：`configure` 不再调用 `vkDeviceWaitIdle`。旧交换链作为 `oldSwapchain` 传入后已退役，确知它的 present 都已完成后才销毁。怎样确知取决于适配器支持什么，依次为：
+  - **Present 围栏**（`VK_EXT_swapchain_maintenance1`，否则 `VK_KHR_swapchain_maintenance1`，并需要对应的 `VK_*_surface_maintenance1` 实例扩展和 `swapchainMaintenance1` 特性）：每次 present 都带一个 `VkSwapchainPresentFenceInfoEXT` 围栏，按扩展的定义，它在该次 present 的信号量和图像可以释放时 signal。旧交换链若在 `configure` 时围栏都已 signal 就当场释放，否则在之后某次 acquire 时检查到 signal 再释放（轮询，不阻塞）。`unconfigure` 改为等这些围栏（最多 100 ms），不再等设备空闲。优先用 EXT，因为 ash 0.38 的结构体用的是它的名字，校验层也按它检查挂上的结构体。
+  - **Present wait**（`VK_KHR_present_id` + `VK_KHR_present_wait`）：每次 present 都带一个 id。`vkWaitForPresentKHR` 不能用于已退役的交换链，所以 `configure` 先最多等 100 ms，等旧交换链最后一次 present 显示出来，然后当场释放。60 Hz 的 FIFO 交换链上，每次 configure 约多花两个刷新间隔；超时则该交换链退回下面的启发式。
+  - **两者都没有（启发式）**：旧交换链保留到绘制其后继交换链的某次提交完成为止（在下一次 acquire 时非阻塞检查）。这次提交排在旧交换链最后一次 present 之后，但 Vulkan 并不保证那时 present 已完成；这是一个时序假设，与上游依赖设备空闲的做法类似。
+
+  实例在可用时启用 `VK_KHR_get_surface_capabilities2` 与 `VK_*_surface_maintenance1`。环境变量 `NANA_WGPU_VULKAN_PRESENT_TRACKING`（`fence`、`wait` 或 `none`）在打开设备时读取，用来限制选择，让测试能分别跑每条路径。没有 present 围栏时，`unconfigure` 与销毁仍未释放的退役交换链仍等待设备空闲。
 - **Metal、GLES**：它们的 `configure` 本来不等待，只受 `wgpu-core` 改动影响。
 
 `wgpu` 的接口没有变化。`ConfigureSurfaceError::GpuWaitTimeout` 仍保留，在等待本身超时时返回。
