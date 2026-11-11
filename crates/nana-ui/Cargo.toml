@@ -150,10 +150,20 @@ egui = { version = "0.37", default-features = false, features = ["default_fonts"
 egui-wgpu = { version = "0.37", default-features = false }
 log = "0.4"
 
-# `window-output-probe` reads its native output on a D3D11 device.
+# `window-output-probe` reads its native output on a D3D11 device;
+# `stack-sampler` and `input-latency-probe` are Windows measurement tools.
 [target.'cfg(target_os = "windows")'.dev-dependencies]
 windows = { version = "0.62", features = [
     "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_System_Diagnostics_Debug",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_Kernel",
+    "Win32_System_Memory",
+    "Win32_System_Performance",
+    "Win32_System_SystemInformation",
+    "Win32_System_Threading",
+    "Win32_UI_WindowsAndMessaging",
     "Win32_Graphics_Direct3D",
     "Win32_Graphics_Direct3D11",
     "Win32_Graphics_Dxgi",
@@ -256,6 +266,10 @@ required-features = ["hosted", "bundled-fonts", "native-export"]
 
 [[example]]
 name = "presentation-output-probe"
+required-features = ["hosted", "bundled-fonts"]
+
+[[example]]
+name = "input-latency-probe"
 required-features = ["hosted", "bundled-fonts"]
 
 [[example]]
