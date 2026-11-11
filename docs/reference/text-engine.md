@@ -2156,7 +2156,7 @@ run 行号同理是**每个 entry 一个固定槽**。不是画序下标。一�
 字形（`two_paints_of_one_target_before_one_submit_each_draw_their_own_text`）。这只管字形：
 run 表、presentation 表和投影仍然直接 `write_buffer`。两次画之间位置、颜色或尺寸变了的话。
 第一次画用的是第二次的值。现有宿主都是一次画一次提交（多窗口是不同 target）。所以没有把
-这两张表也挪进 ring。代价是只写一小块的帧也多一条拷贝命令：`static` 指令数多约 1%。
+这两张表也挪进 ring。代价是只写一小块的帧也多一条拷贝命令：`static` 指令数多约 1%。换成持续映射、直接写进 GPU 读的缓冲的方案测过，没有做：这条路径在真实场景里不到 CPU 的 1%（[GPU](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/gpu.md) §7）。
 
 一帧要写的超过 256 KiB（长列表的第一帧、整 arena 整理）不进 ring。而是临时建缓冲、拷完即弃。
 ring 不跟着长大。instance 与索引**各用一块**：一帧里每个槽最多写一次。所以每块都不大于它要
@@ -2479,8 +2479,9 @@ text_prepare_nodes_considered / skipped / culled
   `primitive_bounds`（也就是每个图元一次 `draw_primitive`）才是。两个版本都付。为了
   一个点让两个走同一棵树的函数用两种写法。不值。
 
-  还剩的：整数哈希那一换在 `nana-ui-runtime` 里还没做（`store.rs` 23 处、
-  `framework.rs` 18 处、`layout_engine.rs` 16 处……）。而逐图元那条路
+  还剩的：整数哈希那一换在 `nana-ui-runtime` 里试过、量不出来、撤回了（`store.rs`、
+  `layout_engine.rs` 用的 hashbrown 默认就是 foldhash，不是 SipHash；见
+  `resource-budgets.md`「长列表里改一行之后的那一帧」后面那段）。而逐图元那条路
   （`draw_primitive` → `primitive_bounds`）现在是 flush 和 batch 两侧共同的大头：
   同一个被改祖先下面所有后代的 delta 数学上是同一个（`A_new ∘ L ∘ L⁻¹ ∘ A_old⁻¹`）。
   按祖先记一份就够。但那要先证明「下面那段链没动」。再往下就是把整帧的绘制列表保留

@@ -5,7 +5,7 @@
 
 use std::cell::RefCell;
 use std::ops::{Deref, DerefMut};
-use std::sync::{Arc, Mutex, RwLockReadGuard};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use nana_gpu::{GpuContext, GpuDeviceState, TransientResourceKey};
@@ -111,15 +111,6 @@ impl GpuWorkSink {
             transient_registry,
             uploads,
         }
-    }
-
-    /// Hold the host submission lock while a renderer maps a queue staging
-    /// view and records the copy that consumes it. Surface reconfiguration
-    /// takes the write side of the same lock.
-    pub(crate) fn lock_submission(&self) -> Option<RwLockReadGuard<'_, ()>> {
-        self.gpu
-            .as_ref()
-            .map(nana_gpu::__framework::lock_submission)
     }
 
     /// Replace a persistent renderer buffer through the policy pool. The old

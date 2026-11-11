@@ -366,6 +366,9 @@ impl SettingsRow {
 
 impl ComponentView for SettingsRow {
     const BEHAVIOR: crate::TypeBehavior<Self> = crate::TypeBehavior {
+        hooks: Some(|hooks| {
+            crate::framework::routes::settings_row(hooks);
+        }),
         slot_assembler: Some(AppContext::assemble_settings_row),
         lifecycle: Some(sync_row_group),
         ..crate::TypeBehavior::NONE
@@ -852,6 +855,13 @@ impl SettingsRowFlash {
 }
 
 impl ComponentView for SettingsRowFlash {
+    const BEHAVIOR: crate::TypeBehavior<Self> = crate::TypeBehavior {
+        hooks: Some(|hooks| {
+            crate::framework::routes::settings_row(hooks);
+        }),
+        ..crate::TypeBehavior::NONE
+    };
+
     fn node_kind(&self) -> NodeKind {
         NodeKind::Element {
             tag: "settings-row-flash".into(),
@@ -1030,6 +1040,9 @@ impl SettingsGroup {
 
 impl ComponentView for SettingsGroup {
     const BEHAVIOR: crate::TypeBehavior<Self> = crate::TypeBehavior {
+        hooks: Some(|hooks| {
+            crate::framework::routes::settings_group(hooks);
+        }),
         lifecycle: Some(sync_settings_group),
         ..crate::TypeBehavior::NONE
     };

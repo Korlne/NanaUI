@@ -582,8 +582,7 @@ impl<E: Copy + Eq + Send + Sync + 'static, M: Send + Sync + 'static> FrameExchan
     /// Copy `source` into a free slot on the shared device. Returns without
     /// waiting when the pool is full.
     ///
-    /// Safe from any thread: the copy is submitted under the device's
-    /// submission guard, so it never races a window's surface reconfiguration.
+    /// Safe from any thread, including while a window reconfigures its surface.
     pub fn copy_from(&mut self, source: &GpuTexture, epoch: E) -> CopyOutcome
     where
         M: Default,
@@ -791,9 +790,17 @@ impl<E: Copy + Eq + Send + Sync + 'static, M: Send + Sync + 'static> FrameExchan
             .filter(|pending| pending.token.epoch == epoch && completed(pending))
             .map(|pending| pending.token.sequence)
             .max();
+        // Completion is set by whichever thread's poll runs the callback, so a
+        // copy can complete after `newest` was chosen. It is not superseded:
+        // it stays pending for the next poll, which publishes it.
+        let settled = |pending: &PendingCopy<E, M>| {
+            completed(pending)
+                && (pending.token.epoch != epoch
+                    || newest.is_some_and(|newest| pending.token.sequence <= newest))
+        };
         let mut published = None;
         for slot in self.slots.iter_mut() {
-            if !slot.pending.as_ref().is_some_and(completed) {
+            if !slot.pending.as_ref().is_some_and(settled) {
                 continue;
             }
             let pending = slot.pending.take().expect("completed frame copy");

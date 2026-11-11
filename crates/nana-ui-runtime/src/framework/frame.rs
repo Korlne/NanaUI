@@ -549,18 +549,18 @@ impl AppContext {
             phase.lap(13);
             self.last_layout_scope = scope;
             for id in adaptive_editors {
-                self.refresh_text_area_compact_layout(id)?;
+                via!(self.refresh_text_area_compact_layout(id))?;
             }
             for id in settings_rows {
-                self.refresh_settings_row_layout(id)?;
+                via!(self.refresh_settings_row_layout(id))?;
             }
             for id in terminal_sizes {
                 if let Some(bounds) = self.world.component_layout_box(id) {
-                    self.resize_terminal_view(
+                    via!(self.resize_terminal_view(
                         Entity::from_stable_id(id),
                         bounds.width,
                         bounds.height,
-                    )?;
+                    ))?;
                 }
             }
             completed(2);
@@ -571,7 +571,7 @@ impl AppContext {
             self.play_pending_flips(document);
             // A toast stack's new toasts were measured by this pass: what
             // shows follows from their heights.
-            self.reconcile_toast_stacks(document)?;
+            via!(self.reconcile_toast_stacks(document))?;
             completed(3);
             Ok(report)
         })();
@@ -817,7 +817,7 @@ impl AppContext {
         self.advance_wheel_scrolls(now, &mut frame);
         self.advance_touch_scrolls(now, &mut frame);
         self.advance_caret_blink(now, &mut frame);
-        if let Some(id) = self.advance_rich_drag(now) {
+        if let Some(id) = via!(self.advance_rich_drag(now)) {
             frame.component_updates.push(id);
         }
         if let Some(id) = self.advance_plain_drag(now) {
@@ -865,22 +865,22 @@ impl AppContext {
                 frame.component_updates.push(target);
             }
         }
-        for bar in self.drive_due_auto_overlays() {
+        for bar in via!(self.drive_due_auto_overlays()) {
             if !frame.component_updates.contains(&bar) {
                 frame.component_updates.push(bar);
             }
         }
-        for scroll in self.release_scrollbar_holds(now) {
+        for scroll in via!(self.release_scrollbar_holds(now)) {
             if !frame.component_updates.contains(&scroll) {
                 frame.component_updates.push(scroll);
             }
         }
-        for bar in self.settle_menu_aims(now) {
+        for bar in via!(self.settle_menu_aims(now)) {
             if !frame.component_updates.contains(&bar) {
                 frame.component_updates.push(bar);
             }
         }
-        self.sweep_hover_cards();
+        via!(self.sweep_hover_cards());
         let hover_targets = self
             .component_lifecycle
             .hover_cards
@@ -898,9 +898,9 @@ impl AppContext {
             .collect::<Vec<_>>();
         for (target, open) in hover_targets {
             let changed = if open {
-                self.open_hover_card(target).unwrap_or(false)
+                via!(self.open_hover_card(target)).unwrap_or(false)
             } else {
-                self.close_hover_card(target).unwrap_or(false)
+                via!(self.close_hover_card(target)).unwrap_or(false)
             };
             if changed {
                 frame.component_updates.push(target);
@@ -927,16 +927,8 @@ impl AppContext {
                         button.loading_phase = phase;
                     })
                     .is_ok(),
-                LoadingComponent::Switch => self
-                    .update_component(Entity::<Switch>::from_stable_id(target), |switch, _| {
-                        switch.loading_phase = phase;
-                    })
-                    .is_ok(),
-                LoadingComponent::Card => self
-                    .update_component(Entity::<crate::Card>::from_stable_id(target), |card, _| {
-                        card.loading_phase = phase;
-                    })
-                    .is_ok(),
+                LoadingComponent::Switch => via!(self.set_switch_loading_phase(target, phase)),
+                LoadingComponent::Card => via!(self.set_card_loading_phase(target, phase)),
             };
             if changed && !frame.component_updates.contains(&target) {
                 frame.component_updates.push(target);
@@ -958,14 +950,7 @@ impl AppContext {
                 crate::MotionValue::Scalar(value) => value,
                 _ => progress,
             };
-            if self
-                .update_component(
-                    Entity::<SidebarSection>::from_stable_id(target),
-                    |section, _| {
-                        section.animation_progress = expansion.clamp(0.0, 1.0);
-                    },
-                )
-                .is_ok()
+            if via!(self.set_sidebar_section_progress(target, expansion))
                 // `advance_animations` already pushed this target for the
                 // SIDEBAR sample, and the host reprojects once per entry:
                 // without the guard its sibling loops all carry, a toggling
@@ -987,14 +972,7 @@ impl AppContext {
             .map(|sample| (sample.target, sample.progress))
             .collect::<Vec<_>>();
         for (target, phase) in spinner_targets {
-            if self
-                .update_component(
-                    Entity::<crate::Spinner>::from_stable_id(target),
-                    |spinner, _| {
-                        spinner.phase = phase;
-                    },
-                )
-                .is_ok()
+            if via!(self.set_spinner_phase(target, phase))
                 && !frame.component_updates.contains(&target)
             {
                 frame.component_updates.push(target);
@@ -1013,12 +991,7 @@ impl AppContext {
             .map(|sample| sample.target)
             .collect::<Vec<_>>();
         for target in expired_toasts {
-            if self.advance_toast_timer(target, now).unwrap_or(false) {
-                let _ = self
-                    .update_component(Entity::<crate::Toast>::from_stable_id(target), |_, cx| {
-                        cx.emit(crate::ToastDismissed)
-                    });
-            }
+            via!(self.expire_toast(target, now));
         }
         let flashes = frame
             .samples
@@ -1033,7 +1006,7 @@ impl AppContext {
             .map(|sample| (sample.target, sample.property))
             .collect::<Vec<_>>();
         for (target, property) in flashes {
-            let _ = self.advance_settings_row_flash(target, property, now);
+            let _ = via!(self.advance_settings_row_flash(target, property, now));
         }
         let workspace_targets = frame
             .samples
@@ -1047,11 +1020,7 @@ impl AppContext {
             .map(|sample| sample.target)
             .collect::<Vec<_>>();
         for id in workspace_targets {
-            let advanced = self
-                .update_component(Entity::<Workspace>::from_stable_id(id), |workspace, _| {
-                    workspace.apply(WorkspaceMutation::AdvanceAnimations, now)
-                })
-                .unwrap_or(false);
+            let advanced = via!(self.advance_workspace_animation(id, now));
             if advanced && !frame.component_updates.contains(&id) {
                 frame.component_updates.push(id);
             }

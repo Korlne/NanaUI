@@ -201,20 +201,24 @@ pub fn generate(mut recorder: Recorder) -> Result<Report, Box<dyn std::error::Er
     // `gallery-controls`. It is also named for tools this Gallery's sidebar
     // does not have — no call site anywhere passes `SidebarSection::tools` —
     // so the name moves to what the scene can actually show: a sidebar row
-    // hovered inside the full shell. (12, 104, 200x28) is the "表面" row.
+    // hovered inside the full shell. (12, 146, 200x28) is the "展示与容器" row,
+    // the first one that is not the selected page: the selected row above it
+    // looks the same hovered or not, and the band between the groups holds
+    // nothing to hover. `no_two_top_level_scenes_are_the_same_image` fails
+    // when the sidebar is regrouped and this point lands on neither.
     gallery_snapshot_with_cursor(
         &mut snapshots,
         &mut recorder,
         "gallery-sidebar-hover-dark.png",
         &mut controls,
-        LogicalPoint::new(100.0, 118.0),
+        LogicalPoint::new(100.0, 160.0),
     )?;
     gallery_snapshot_with_cursor(
         &mut snapshots,
         &mut recorder,
         "gallery-sidebar-hover-light.png",
         &mut controls_light,
-        LogicalPoint::new(100.0, 118.0),
+        LogicalPoint::new(100.0, 160.0),
     )?;
 
     let mut loading = GalleryState::new();
@@ -466,8 +470,15 @@ pub fn generate(mut recorder: Recorder) -> Result<Report, Box<dyn std::error::Er
     sidebar_collapsed.update(GalleryMessage::Workspace(
         WorkspaceAction::SetRegionCollapsed(nana_ui::RegionId::Resources, true),
     ));
+    // The collapse starts at the controller's own wall clock (however long
+    // the state took to build), while an animation frame carries its time. A
+    // frame at 300 ms therefore landed a fraction of a pixel short of
+    // collapsed (the sidebar 0.1 px wide on one run), by an amount that
+    // followed the machine's speed, and the content's left edge rounded to
+    // one pixel or the next. An hour in is past the collapse whenever it
+    // started.
     sidebar_collapsed.update(GalleryMessage::Workspace(WorkspaceAction::AnimationFrame(
-        std::time::Duration::from_millis(300),
+        std::time::Duration::from_secs(3600),
     )));
     gallery_snapshot(
         &mut snapshots,

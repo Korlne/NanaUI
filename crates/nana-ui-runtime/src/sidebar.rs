@@ -652,6 +652,9 @@ fn assemble_sidebar_row_tools(
 
 impl ComponentView for SidebarRow {
     const BEHAVIOR: crate::TypeBehavior<Self> = crate::TypeBehavior {
+        hooks: Some(|hooks| {
+            crate::framework::routes::tools_row(hooks);
+        }),
         activation: Some(crate::AppContext::activate_sidebar_row),
         slot_assembler: Some(assemble_sidebar_row_tools),
         ..crate::TypeBehavior::NONE
@@ -1331,6 +1334,9 @@ fn body_port_style(expansion: f32, empty_text: Option<&str>, content_height: f32
 
 impl ComponentView for SidebarSection {
     const BEHAVIOR: crate::TypeBehavior<Self> = crate::TypeBehavior {
+        hooks: Some(|hooks| {
+            crate::framework::routes::sidebar_section(hooks);
+        }),
         activation: Some(crate::AppContext::activate_sidebar_section),
         slot_assembler: Some(AppContext::assemble_sidebar_section),
         ..crate::TypeBehavior::NONE

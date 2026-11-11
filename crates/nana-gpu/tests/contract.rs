@@ -3,7 +3,7 @@
 #![recursion_limit = "256"]
 
 use std::sync::{
-    Arc,
+    Arc, Mutex, MutexGuard, OnceLock, PoisonError,
     atomic::{AtomicU64, Ordering},
     mpsc,
 };
@@ -17,19 +17,61 @@ use nana_gpu::{
     LogicalResource, ResourceBinding, ResourceSet, ResourceTable, RetainedWrites, ShaderStage,
 };
 
+/// A context of the calling test's own: its generation, loss state, policy
+/// counters and frame slots belong to it alone, so two calls are two devices
+/// as far as the contract can tell. The `wgpu::Device` under them is created
+/// once per process: creating one per test, in parallel, hangs device creation
+/// on Windows with the NVIDIA Vulkan ICD and fails it outright under memory
+/// pressure.
 fn context() -> GpuContext {
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::from_env().unwrap_or_default(),
-        ..wgpu::InstanceDescriptor::new_without_display_handle()
-    });
-    let adapter = pollster::block_on(wgpu::util::initialize_adapter_from_env_or_default(
-        &instance, None,
-    ))
-    .expect("GPU contract tests require a WGPU adapter");
-    let (device, queue) =
-        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))
-            .expect("GPU contract tests require a WGPU device");
-    __framework::adopt(adapter, device, queue)
+    adopt(&devices().shared)
+}
+
+/// A context on a device no other running test polls, held until the guard
+/// drops. A poll takes every completion callback that is ready and runs it on
+/// the polling thread, so on the shared device another test's poll can take
+/// this test's callbacks and run them only after this test's own poll has
+/// returned. A test asserting on what its own poll released uses this one.
+fn solo_context() -> (MutexGuard<'static, ()>, GpuContext) {
+    static SOLO: Mutex<()> = Mutex::new(());
+    let guard = SOLO.lock().unwrap_or_else(PoisonError::into_inner);
+    (guard, adopt(&devices().solo))
+}
+
+type Device = (wgpu::Adapter, wgpu::Device, wgpu::Queue);
+
+struct Devices {
+    shared: Device,
+    solo: Device,
+}
+
+/// Both devices, created together the first time any test asks.
+fn devices() -> &'static Devices {
+    static DEVICES: OnceLock<Devices> = OnceLock::new();
+    DEVICES.get_or_init(|| {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::from_env().unwrap_or_default(),
+            ..wgpu::InstanceDescriptor::new_without_display_handle()
+        });
+        let adapter = pollster::block_on(wgpu::util::initialize_adapter_from_env_or_default(
+            &instance, None,
+        ))
+        .expect("GPU contract tests require a WGPU adapter");
+        let device = || {
+            let (device, queue) =
+                pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))
+                    .expect("GPU contract tests require a WGPU device");
+            (adapter.clone(), device, queue)
+        };
+        Devices {
+            shared: device(),
+            solo: device(),
+        }
+    })
+}
+
+fn adopt((adapter, device, queue): &Device) -> GpuContext {
+    __framework::adopt(adapter.clone(), device.clone(), queue.clone())
 }
 
 fn texture(gpu: &GpuContext, usage: GpuTextureUsages) -> nana_gpu::GpuTexture {
@@ -236,33 +278,6 @@ fn a_dropped_frame_rolls_back_what_it_recorded_and_a_submitted_one_settles() {
     keys.sort_unstable();
     assert_eq!(keys, [1, 2]);
     assert!(!ledger.has_rolled_back());
-}
-
-#[test]
-fn submission_waits_while_a_surface_reconfigures() {
-    let gpu = context();
-    let (started, waiting) = mpsc::channel();
-    let (submitted, submissions) = mpsc::channel();
-    let writer = gpu.clone();
-    let gate = __framework::lock_reconfigure(&writer);
-    let producer = {
-        let gpu = gpu.clone();
-        std::thread::spawn(move || {
-            started.send(()).unwrap();
-            gpu.begin_frame("producer").submit();
-            submitted.send(()).unwrap();
-        })
-    };
-    waiting.recv_timeout(Duration::from_secs(5)).unwrap();
-    assert!(
-        submissions
-            .recv_timeout(Duration::from_millis(200))
-            .is_err(),
-        "a submit must wait while the surface is reconfiguring"
-    );
-    drop(gate);
-    submissions.recv_timeout(Duration::from_secs(5)).unwrap();
-    producer.join().unwrap();
 }
 
 #[test]
@@ -686,7 +701,7 @@ fn writes_outside_a_frame_and_from_a_discarded_frame_land_at_the_next_submit() {
 
 #[test]
 fn steady_frames_reuse_their_staging_chunks() {
-    let gpu = context();
+    let (_solo, gpu) = solo_context();
     let target = raw_buffer(&gpu, 4096);
     let device = __framework::device(&gpu);
     for frame_index in 0..20u8 {
@@ -706,7 +721,7 @@ fn steady_frames_reuse_their_staging_chunks() {
 
 #[test]
 fn a_full_pipeline_blocks_on_the_oldest_frame_and_unsubmitted_slots_never_deadlock() {
-    let gpu = context();
+    let (_solo, gpu) = solo_context();
     for _ in 0..3 {
         gpu.begin_frame("in flight").submit();
     }

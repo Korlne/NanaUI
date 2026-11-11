@@ -21,8 +21,9 @@ mod menu_bar_aim;
 mod menu_bar_keys;
 mod modal;
 mod registry;
+pub(crate) mod routes;
 mod roving_focus;
-pub(crate) use hooks::{ChoiceHooks, DockHooks, NavigateHooks, WorkspaceHooks, hooked};
+pub(crate) use hooks::{ChoiceHooks, DockHooks, NavigateHooks, WorkspaceHooks, hooked, route, via};
 pub use hooks::{NodePointer, NodePointerHooks, NodeWheel, TypeBehavior, TypeHooks};
 pub(crate) use lifecycle::lifecycle_hooks;
 pub(crate) use text_edit::Editable;
@@ -64,7 +65,6 @@ use nana_ui_core::{
     LengthSpec, ThemeAppearance, TooltipConfig, TooltipPlacement, VirtualListLayout,
     VirtualListMaterializationError, VirtualListMaterializer, VirtualListWindow,
     VirtualTableLayout, VirtualTableMaterializer, VirtualTableWindow, VirtualTreeLayout,
-    WorkspaceMutation,
 };
 
 #[cfg(test)]
@@ -2133,7 +2133,7 @@ impl AppContext {
             // and its own `open` says so, as when the host closes it.
             suspended = suspended
                 .and(self.suspend(id))
-                .and(self.note_modal_open(id, false));
+                .and(via!(self.note_modal_open(id, false)));
         }
         for id in inserted {
             if self.world.is_mounted(id) {
@@ -2711,7 +2711,7 @@ impl AppContext {
         // out being updated is closing itself or keeps what that update says.
         for id in blurred {
             if self.views.get(&id).is_some_and(|view| view.is::<Select>()) {
-                self.set_select_opened(Entity::<Select>::from_stable_id(id), false)?;
+                via!(self.set_select_opened(Entity::<Select>::from_stable_id(id), false))?;
             }
         }
         self.drain_focus_within()
@@ -2737,8 +2737,7 @@ impl AppContext {
                 };
                 let emit = self.emitters.get(&view.as_ref().type_id()).copied();
                 if self.is_tools_row(id) {
-                    outcome = outcome
-                        .and(self.sync_row_tools(Some(id), |row| row.focus_within = focused));
+                    outcome = outcome.and(via!(self.sync_row_tools(Some(id), None, Some(focused))));
                 }
                 if !self
                     .event_handlers
@@ -2779,13 +2778,24 @@ impl AppContext {
         None
     }
 
-    fn sync_row_tools(
+    /// Tells `row` what the pointer (`hovered`) or keyboard focus
+    /// (`focus_within`) now does about it; `None` leaves that as it was.
+    pub(crate) fn sync_row_tools(
         &mut self,
         row: Option<StableNodeId>,
-        set: impl Fn(&mut RowToolsPresence),
+        hovered: Option<bool>,
+        focus_within: Option<bool>,
     ) -> Result<(), FrameworkError> {
         let Some(row) = row else {
             return Ok(());
+        };
+        let set = |presence: &mut RowToolsPresence| {
+            if let Some(hovered) = hovered {
+                presence.hovered = hovered;
+            }
+            if let Some(focus_within) = focus_within {
+                presence.focus_within = focus_within;
+            }
         };
         let changed = |mut presence: RowToolsPresence| {
             let before = presence;
@@ -2970,8 +2980,9 @@ impl AppContext {
         &mut self,
         entity: Entity<ActionMenuItem>,
     ) -> Result<bool, FrameworkError> {
+        let keep_open = self.read(entity, |item| item.keep_open)?;
         let activated = self.activate_component(entity, |item| item.disabled)?;
-        if activated {
+        if activated && !keep_open {
             self.close_owning_menu(entity.id)?;
         }
         Ok(activated)
@@ -2994,8 +3005,56 @@ impl AppContext {
                 }
                 return Ok(());
             }
+            if let Some(entity) = self.view_entity::<crate::AnchoredActionMenu>(id) {
+                self.dismiss_anchored_menu(entity)?;
+                return Ok(());
+            }
             current = self.world.parent_id(id);
         }
+        Ok(())
+    }
+
+    /// Close an open [`crate::AnchoredActionMenu`] as the framework does:
+    /// through its overlay host when it is that host's open overlay (focus
+    /// goes back where it was), and telling the application with
+    /// [`crate::AnchoredMenuDismissed`]. Returns whether it was open.
+    pub fn dismiss_anchored_menu(
+        &mut self,
+        entity: Entity<crate::AnchoredActionMenu>,
+    ) -> Result<bool, FrameworkError> {
+        if !self.read(entity, |menu| menu.open)? {
+            return Ok(false);
+        }
+        let host = self.world.parent_id(entity.id).filter(|host| {
+            self.world
+                .overlay_host(*host)
+                .is_some_and(|state| state.active == Some(entity.id))
+        });
+        if let Some(host) = host {
+            // The host's dismissal writes `open` and emits the event.
+            if self.dismiss_overlay(Entity::from_stable_id(host))? {
+                return Ok(true);
+            }
+        }
+        via!(self.note_anchored_menu_dismissed(entity.id))?;
+        Ok(true)
+    }
+
+    /// The framework closed the anchored menu `root`: its `open` follows and
+    /// the application hears of it. Nothing for any other view.
+    pub(crate) fn note_anchored_menu_dismissed(
+        &mut self,
+        root: StableNodeId,
+    ) -> Result<(), FrameworkError> {
+        let Some(entity) = self.view_entity::<crate::AnchoredActionMenu>(root) else {
+            return Ok(());
+        };
+        self.update_component(entity, |menu, cx| {
+            if menu.open {
+                menu.open = false;
+                cx.emit(crate::AnchoredMenuDismissed);
+            }
+        })?;
         Ok(())
     }
 
@@ -3118,7 +3177,7 @@ impl AppContext {
         self.world.animation_now = now;
         if target.is_none() {
             // A pointer that left, or was cancelled, is on no lane.
-            self.sync_scrollbar_hot(document, pointer_id, None)?;
+            via!(self.sync_scrollbar_hot(document, pointer_id, None))?;
         }
         let previous = self.world.set_pointer_hover(document, pointer_id, target)?;
         if previous != target {
@@ -3155,16 +3214,16 @@ impl AppContext {
                 .and_then(|id| self.enclosing_sidebar_section(id))
                 .map(Entity::stable_id);
             if previous_section != next_section {
-                self.sync_sidebar_section_hover(previous, target)?;
+                via!(self.sync_sidebar_section_hover(previous, target))?;
             }
-            self.sync_sidebar_section_hover(target, target)?;
+            via!(self.sync_sidebar_section_hover(target, target))?;
             self.sync_scroll_view_hover(previous, target)?;
             let previous_row = previous.and_then(|id| self.enclosing_tools_row(id));
             let next_row = target.and_then(|id| self.enclosing_tools_row(id));
             if previous_row != next_row {
-                self.sync_row_tools(previous_row, |row| row.hovered = false)?;
+                via!(self.sync_row_tools(previous_row, Some(false), None))?;
             }
-            self.sync_row_tools(next_row, |row| row.hovered = true)?;
+            via!(self.sync_row_tools(next_row, Some(true), None))?;
             self.sync_pointer_hover_listeners(previous, target)?;
         } else if let Some(target) = target {
             self.reposition_follow_cursor_tooltip(target)?;
@@ -3257,56 +3316,10 @@ impl AppContext {
         // A numeric draft settles before focus leaves it, so a half-typed value
         // never survives as the visible text of an unfocused field.
         if self.world.focused(document) != Some(target) {
-            self.settle_focused_number_input(document)?;
+            via!(self.settle_focused_number_input(document))?;
         }
-        if self.is_segmented_option_node(target) {
-            let Some(parent) = self.world.parent_id(target) else {
-                return Ok(false);
-            };
-            if self
-                .views
-                .get(&parent)
-                .is_some_and(|view| view.is::<SegmentedControl>())
-            {
-                let control = Entity::<SegmentedControl>::from_stable_id(parent);
-                let mut next = self.read(control, Clone::clone)?;
-                let target_changed = next.focus_target != Some(target);
-                let focus_changed = self.world.focused(document) != Some(target);
-                if !target_changed && !focus_changed {
-                    return Ok(false);
-                }
-                next.focus_target = Some(target);
-                let mut mutations = MutationQueue::new();
-                next.project(parent, &self.world, &mut mutations);
-                mutations.request_focus(document, Some(target));
-                self.commit_mutations(mutations)?;
-                self.views.insert(parent, Box::new(next));
-                return Ok(true);
-            }
-            if self
-                .views
-                .get(&parent)
-                .is_some_and(|view| view.is::<Tabs>())
-            {
-                let tabs = Entity::<Tabs>::from_stable_id(parent);
-                let Some(value) = self.tabs_option_value(tabs, target)? else {
-                    return Ok(false);
-                };
-                let mut next = self.read(tabs, Clone::clone)?;
-                let target_changed = next.focus.as_ref() != Some(&value);
-                let focus_changed = self.world.focused(document) != Some(target);
-                if !target_changed && !focus_changed {
-                    return Ok(false);
-                }
-                next.focus = Some(value);
-                let mut mutations = MutationQueue::new();
-                next.project(parent, &self.world, &mut mutations);
-                mutations.request_focus(document, Some(target));
-                self.commit_mutations(mutations)?;
-                self.views.insert(parent, Box::new(next));
-                return Ok(true);
-            }
-            return Ok(false);
+        if via!(self.is_segmented_option_node(target)) {
+            return via!(self.focus_segmented_option(document, target));
         }
         if self.world.focused(document) == Some(target) {
             return Ok(false);
@@ -3322,7 +3335,7 @@ impl AppContext {
         if previous_focus.is_none() {
             return Ok(false);
         }
-        self.settle_focused_number_input(document)?;
+        via!(self.settle_focused_number_input(document))?;
         let mut mutations = MutationQueue::new();
         mutations.request_focus(document, None);
         self.commit_mutations(mutations)?;
@@ -3340,13 +3353,13 @@ impl AppContext {
             if self.world.document_of(tree) != Some(document) {
                 return Ok(false);
             }
-            return self.apply_tree_item_action(document, tree, slot, &request.action);
+            return via!(self.apply_tree_item_action(document, tree, slot, &request.action));
         }
         if let Some((tree, slot, column)) = crate::decode_virtual_tree_toggle(request.target) {
             if self.world.document_of(tree) != Some(document) {
                 return Ok(false);
             }
-            return self.apply_tree_toggle_action(tree, slot, column, &request.action);
+            return via!(self.apply_tree_toggle_action(tree, slot, column, &request.action));
         }
         let owner = match &request.action {
             AccessibilityAction::ActivateMenuItem { menu, .. } => *menu,
@@ -3369,10 +3382,10 @@ impl AppContext {
                     let Some(index) = self.world.virtual_menu_row_index(menu, slot) else {
                         return Ok(false);
                     };
-                    return self.activate_context_menu_index(entity, index);
+                    return via!(self.activate_context_menu_index(entity, index));
                 }
                 if let Some((field, slot)) = crate::decode_virtual_menu_item(request.target)
-                    && let Some(handled) = self.activate_select_option(field, slot)?
+                    && let Some(handled) = via!(self.activate_select_option(field, slot))?
                 {
                     return Ok(handled);
                 }
@@ -3393,7 +3406,7 @@ impl AppContext {
                 if crate::decode_virtual_menu_item(request.target) != Some((menu, slot)) {
                     return Ok(false);
                 }
-                if let Some(handled) = self.activate_select_option(menu, slot)? {
+                if let Some(handled) = via!(self.activate_select_option(menu, slot))? {
                     return Ok(handled);
                 }
                 let Some(entity) = self.view_entity::<ContextMenu>(menu) else {
@@ -3402,7 +3415,7 @@ impl AppContext {
                 let Some(index) = self.world.virtual_menu_row_index(menu, slot) else {
                     return Ok(false);
                 };
-                self.activate_context_menu_index(entity, index)
+                via!(self.activate_context_menu_index(entity, index))
             }
             AccessibilityAction::Focus => {
                 if let Some((menu, slot)) = crate::decode_virtual_menu_item(request.target)
@@ -3411,40 +3424,30 @@ impl AppContext {
                     let Some(index) = self.world.virtual_menu_row_index(menu, slot) else {
                         return Ok(false);
                     };
-                    return self.focus_context_menu_index(entity, index);
+                    return via!(self.focus_context_menu_index(entity, index));
                 }
                 self.focus_node(document, request.target)
             }
             AccessibilityAction::Increment | AccessibilityAction::Decrement => {
                 let steps = matches!(request.action, AccessibilityAction::Increment) as i32 * 2 - 1;
                 if let Some(entity) = self.view_entity::<RangeField>(request.target) {
-                    return self.adjust_range(
+                    return via!(self.adjust_range(
                         entity,
                         if steps > 0 {
                             RangeAdjustment::Increment
                         } else {
                             RangeAdjustment::Decrement
                         },
-                    );
+                    ));
                 }
                 if let Some(entity) = self.view_entity::<NumberInput>(request.target) {
-                    return self.step_number_input(entity, steps);
+                    return via!(self.step_number_input(entity, steps));
                 }
                 if let Some(entity) = self.view_entity::<crate::ScrubField>(request.target) {
-                    let step = self.read(entity, |field| field.spec.step)?;
-                    let value = self.read(entity, |field| field.value)?;
-                    let next = value + step * f64::from(steps.signum());
-                    if self.set_scrub_field_value(entity, next, false)? {
-                        let value = self.read(entity, |field| field.value)?;
-                        self.update_component(entity, |_, view| {
-                            view.emit(crate::ScrubChanged { value })
-                        })?;
-                        return Ok(true);
-                    }
-                    return Ok(false);
+                    return via!(self.step_scrub_field(entity, steps));
                 }
-                if let Some((entity, Some(index))) = self.curve_target(request.target) {
-                    return self.adjust_curve_point(
+                if let Some((entity, Some(index))) = via!(self.curve_target(request.target)) {
+                    return via!(self.adjust_curve_point(
                         entity,
                         index,
                         if steps > 0 {
@@ -3452,10 +3455,10 @@ impl AppContext {
                         } else {
                             RangeAdjustment::Decrement
                         },
-                    );
+                    ));
                 }
-                if let Some((entity, Some(thumb))) = self.range_span_target(request.target) {
-                    return self.adjust_range_span(
+                if let Some((entity, Some(thumb))) = via!(self.range_span_target(request.target)) {
+                    return via!(self.adjust_range_span(
                         entity,
                         thumb,
                         if steps > 0 {
@@ -3463,20 +3466,20 @@ impl AppContext {
                         } else {
                             RangeAdjustment::Decrement
                         },
-                    );
+                    ));
                 }
                 Ok(false)
             }
             AccessibilityAction::Expand | AccessibilityAction::Collapse => {
                 let expand = matches!(request.action, AccessibilityAction::Expand);
                 if let Some(entity) = self.view_entity::<Select>(request.target) {
-                    return self.set_select_opened(entity, expand);
+                    return via!(self.set_select_opened(entity, expand));
                 }
                 if let Some(entity) = self.view_entity::<Dropdown>(request.target) {
-                    return self.set_dropdown_opened(entity, expand);
+                    return via!(self.set_dropdown_opened(entity, expand));
                 }
                 if let Some(entity) = self.view_entity::<SearchDropdown>(request.target) {
-                    return self.set_search_dropdown_opened(entity, expand);
+                    return via!(self.set_search_dropdown_opened(entity, expand));
                 }
                 Ok(false)
             }
@@ -3504,23 +3507,12 @@ impl AppContext {
                 )
             }
             AccessibilityAction::SetValue(value) => {
-                if let Some(entity) = self.view_entity::<TextInput>(request.target) {
-                    return self.set_editable_value(entity, value);
-                }
-                if let Some(entity) = self.view_entity::<TextArea>(request.target) {
-                    return self.set_editable_value(entity, value);
-                }
                 if let Some(entity) = self.view_entity::<NumberInput>(request.target) {
-                    return self.set_number_text(entity, &value);
+                    return via!(self.set_number_text(entity, &value));
                 }
-                if let Some(entity) = self.view_entity::<SearchDropdown>(request.target) {
-                    return self.set_editable_value(entity, value);
-                }
-                if let Some(entity) = self.view_entity::<CommandPalette>(request.target) {
-                    return self.set_editable_value(entity, value);
-                }
-                if let Some(entity) = self.view_entity::<ContextMenu>(request.target) {
-                    return self.set_editable_value(entity, value);
+                // Every other editor and search field: its type's own hooks.
+                if let Some(hooks) = self.editable_hooks(request.target) {
+                    return (hooks.set_value)(self, request.target, value);
                 }
                 if self
                     .views
@@ -3531,22 +3523,24 @@ impl AppContext {
                         .parse::<f64>()
                         .ok()
                         .map(|value| {
-                            self.set_range_value(Entity::from_stable_id(request.target), value)
+                            via!(
+                                self.set_range_value(Entity::from_stable_id(request.target), value)
+                            )
                         })
                         .transpose()
                         .map(|changed| changed.unwrap_or(false));
                 }
-                if let Some((entity, Some(thumb))) = self.range_span_target(request.target) {
+                if let Some((entity, Some(thumb))) = via!(self.range_span_target(request.target)) {
                     return value
                         .trim()
                         .parse::<f64>()
                         .ok()
                         .filter(|value| value.is_finite())
-                        .map(|value| self.set_range_span_thumb(entity, thumb, value))
+                        .map(|value| via!(self.set_range_span_thumb(entity, thumb, value)))
                         .transpose()
                         .map(|changed| changed.unwrap_or(false));
                 }
-                if let Some((entity, Some(index))) = self.curve_target(request.target) {
+                if let Some((entity, Some(index))) = via!(self.curve_target(request.target)) {
                     // A point reads as a percentage; "35%" and "0.35" both
                     // set it to 0.35.
                     let text = value.trim();
@@ -3557,30 +3551,15 @@ impl AppContext {
                     return parsed
                         .ok()
                         .filter(|value| value.is_finite())
-                        .map(|value| self.set_curve_point(entity, index, value))
+                        .map(|value| via!(self.set_curve_point(entity, index, value)))
                         .transpose()
                         .map(|changed| changed.unwrap_or(false));
                 }
                 Ok(false)
             }
             AccessibilityAction::SetSelection(selection) => {
-                if let Some(entity) = self.view_entity::<TextInput>(request.target) {
-                    return self.set_editable_selection(entity, selection);
-                }
-                if let Some(entity) = self.view_entity::<TextArea>(request.target) {
-                    return self.set_editable_selection(entity, selection);
-                }
-                if let Some(entity) = self.view_entity::<NumberInput>(request.target) {
-                    return self.set_editable_selection(entity, selection);
-                }
-                if let Some(entity) = self.view_entity::<SearchDropdown>(request.target) {
-                    return self.set_editable_selection(entity, selection);
-                }
-                if let Some(entity) = self.view_entity::<CommandPalette>(request.target) {
-                    return self.set_editable_selection(entity, selection);
-                }
-                if let Some(entity) = self.view_entity::<ContextMenu>(request.target) {
-                    return self.set_editable_selection(entity, selection);
+                if let Some(hooks) = self.editable_hooks(request.target) {
+                    return (hooks.set_selection)(self, request.target, selection);
                 }
                 Ok(false)
             }
@@ -3655,10 +3634,7 @@ impl AppContext {
                 return self.close_gesture(root, nana_ui_core::DialogCloseTrigger::CloseButton);
             }
             if let Some(intent) = intent {
-                self.update_component(
-                    Entity::<crate::ConfirmDialog>::from_stable_id(root),
-                    |_confirm, cx| cx.emit(intent),
-                )?;
+                via!(self.announce_confirm_intent(root, intent))?;
                 return Ok(true);
             }
         }

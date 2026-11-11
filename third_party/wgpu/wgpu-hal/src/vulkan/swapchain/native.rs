@@ -183,7 +183,7 @@ impl Surface for NativeSurface {
         &self,
         device: &crate::vulkan::Device,
         config: &crate::SurfaceConfiguration,
-        provided_old_swapchain: Option<Box<dyn Swapchain>>,
+        provided_old_swapchain: Option<&dyn Swapchain>,
     ) -> Result<Box<dyn Swapchain>, crate::SurfaceError> {
         profiling::scope!("Device::create_swapchain");
         let functor = khr::swapchain::Device::new(&self.instance.raw, &device.shared.raw);
@@ -376,23 +376,12 @@ impl Drop for NativeSwapchain {
 }
 
 impl Swapchain for NativeSwapchain {
-    unsafe fn release_resources(&mut self, device: &crate::vulkan::Device) {
+    unsafe fn release_resources(&mut self) {
         profiling::scope!("Swapchain::release_resources");
-        {
-            profiling::scope!("vkDeviceWaitIdle");
-            // We need to also wait until all presentation work is done. Because there is no way to portably wait until
-            // the presentation work is done, we are forced to wait until the device is idle.
-            let _ = unsafe {
-                device
-                    .shared
-                    .raw
-                    .device_wait_idle()
-                    .map_err(map_host_device_oom_and_lost_err)
-            };
-        };
+        let device = Arc::clone(&self.device);
 
-        if let Some(fence) = self.fence {
-            unsafe { device.shared.raw.destroy_fence(fence, None) }
+        if let Some(fence) = self.fence.take() {
+            unsafe { device.raw.destroy_fence(fence, None) }
         }
 
         // We cannot take this by value, as the function returns `self`.
@@ -402,7 +391,7 @@ impl Swapchain for NativeSwapchain {
             );
             let mutex_removed = arc_removed.into_inner();
 
-            unsafe { mutex_removed.destroy(&device.shared.raw) };
+            unsafe { mutex_removed.destroy(&device.raw) };
         }
 
         for semaphore in self.present_semaphores.drain(..) {
@@ -411,8 +400,25 @@ impl Swapchain for NativeSwapchain {
             );
             let mutex_removed = arc_removed.into_inner();
 
-            unsafe { mutex_removed.destroy(&device.shared.raw) };
+            unsafe { mutex_removed.destroy(&device.raw) };
         }
+    }
+
+    unsafe fn wait_device_idle(&self) {
+        profiling::scope!("vkDeviceWaitIdle");
+        let _ = unsafe { self.device.raw.device_wait_idle() };
+    }
+
+    fn last_used_fence_value(&self) -> crate::FenceValue {
+        self.acquire_semaphores
+            .iter()
+            .map(|semaphore| semaphore.lock().previously_used_submission_index)
+            .max()
+            .unwrap_or(0)
+    }
+
+    unsafe fn fence_reached(&self, fence: &crate::vulkan::Fence, value: crate::FenceValue) -> bool {
+        self.device.wait_for_fence(fence, value, 0).unwrap_or(false)
     }
 
     unsafe fn acquire(

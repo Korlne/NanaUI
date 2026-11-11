@@ -130,16 +130,16 @@ fn sample_stops(
     if (t <= positions[0]) {
         return colors[0];
     }
-    let last = count - 1u;
+    let last = min(count, 8u) - 1u;
     if (t >= positions[last]) {
-        return colors[min(last, 7u)];
+        return colors[last];
     }
-    for (var i: u32 = 0u; i < min(count, 8u) - 1u; i = i + 1u) {
+    for (var i: u32 = 0u; i < last; i = i + 1u) {
         let p0 = positions[i];
         let p1 = positions[i + 1u];
         if (t >= p0 && t <= p1) {
             let mix_t = (t - p0) / max(p1 - p0, 0.0001);
-            return mix(colors[i], colors[min(i + 1u, 7u)], mix_t);
+            return mix(colors[i], colors[i + 1u], mix_t);
         }
     }
     return colors0;

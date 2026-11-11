@@ -128,7 +128,7 @@ impl AppContext {
 
     fn emit_user_scroll(&mut self, scroll: Entity<ScrollView>) -> Result<(), FrameworkError> {
         // A user scroll reveals auto-hiding bars even without subscribers.
-        self.hold_scrollbars(scroll.id)?;
+        via!(self.hold_scrollbars(scroll.id))?;
         if !self.has_scroll_listener::<crate::UserScroll>(scroll.id) {
             return Ok(());
         }
@@ -288,7 +288,7 @@ impl AppContext {
         if self.is_scroll_view(scroll) {
             let moved = self.scroll_to(Entity::from_stable_id(scroll), next)?;
             if moved {
-                self.hold_scrollbars(scroll)?;
+                via!(self.hold_scrollbars(scroll))?;
             }
             return Ok(moved);
         }
@@ -545,12 +545,7 @@ impl AppContext {
         offset: ScrollOffset,
     ) -> Result<bool, FrameworkError> {
         if self.is_scroll_view(id) {
-            let scroll = Entity::from_stable_id(id);
-            let changed = self.apply_scroll_to(scroll, offset)?;
-            if changed {
-                self.emit_user_scroll(scroll)?;
-            }
-            return Ok(changed);
+            return via!(self.apply_scroll_view_to(id, offset));
         }
         let editor = self
             .views
@@ -586,17 +581,50 @@ impl AppContext {
             let applied = self.world.scroll_request(id).unwrap_or(next);
             self.world.set_text_viewport_pin(id, Some(applied));
             if self.view_entity::<TextArea>(id).is_some() {
-                self.update_component(Entity::<TextArea>::from_stable_id(id), |area, _| {
-                    area.scroll_offset = applied;
-                })?;
+                via!(self.note_text_area_scroll(id, applied))?;
             } else {
-                self.update_component(
-                    Entity::<crate::RichTextEditor>::from_stable_id(id),
-                    |area, _| area.scroll_offset = applied,
-                )?;
+                via!(self.note_rich_editor_scroll(id, applied))?;
             }
         }
         Ok(true)
+    }
+
+    /// [`Self::apply_scroll_node_to`] for a scroll view, which tells its
+    /// listeners the user scrolled it.
+    pub(crate) fn apply_scroll_view_to(
+        &mut self,
+        id: StableNodeId,
+        offset: ScrollOffset,
+    ) -> Result<bool, FrameworkError> {
+        let scroll = Entity::from_stable_id(id);
+        let changed = self.apply_scroll_to(scroll, offset)?;
+        if changed {
+            self.emit_user_scroll(scroll)?;
+        }
+        Ok(changed)
+    }
+
+    /// A text area keeps the offset it was scrolled to.
+    pub(crate) fn note_text_area_scroll(
+        &mut self,
+        id: StableNodeId,
+        applied: ScrollOffset,
+    ) -> Result<(), FrameworkError> {
+        self.update_component(Entity::<TextArea>::from_stable_id(id), |area, _| {
+            area.scroll_offset = applied;
+        })
+    }
+
+    /// A rich text editor keeps the offset it was scrolled to.
+    pub(crate) fn note_rich_editor_scroll(
+        &mut self,
+        id: StableNodeId,
+        applied: ScrollOffset,
+    ) -> Result<(), FrameworkError> {
+        self.update_component(
+            Entity::<crate::RichTextEditor>::from_stable_id(id),
+            |area, _| area.scroll_offset = applied,
+        )
     }
 
     /// An explicit position, a pixel wheel or a grabbed bar ends any line
@@ -707,7 +735,7 @@ impl AppContext {
         x: f32,
         y: f32,
     ) -> Option<(StableNodeId, nana_ui_core::ScrollbarAxis)> {
-        self.scrollbar_target_near_hit(x, y, self.world.hit_test(document, x, y))
+        via!(self.scrollbar_target_near_hit(x, y, self.world.hit_test(document, x, y)))
     }
 
     /// [`Self::scrollbar_target_near`] with the point already hit-tested.
@@ -838,7 +866,7 @@ impl AppContext {
             scroll.dragging = None;
             cx.mutations().release_pointer(pointer_id, target);
         })?;
-        self.hold_scrollbars(target)?;
+        via!(self.hold_scrollbars(target))?;
         Ok(true)
     }
 
@@ -856,11 +884,11 @@ impl AppContext {
             return Ok(());
         }
         for &id in left.iter().filter(|id| !entered.contains(id)) {
-            self.set_scroll_view_hover(id, false)?;
-            self.hold_scrollbars(id)?;
+            via!(self.set_scroll_view_hover(id, false))?;
+            via!(self.hold_scrollbars(id))?;
         }
         for &id in entered.iter().filter(|id| !left.contains(id)) {
-            self.set_scroll_view_hover(id, true)?;
+            via!(self.set_scroll_view_hover(id, true))?;
         }
         Ok(())
     }

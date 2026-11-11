@@ -14,7 +14,7 @@ Application / Demo
     ▼
 nana-ui                  Host adapter: run_runtime, control re-exports, SceneWgpuPainter,
     │                    FrameBinding, off-window output ExternalSurface (gpu feature)
-    ├── nana-gpu         GPU backend contract: GpuContext (device, generation, capabilities, loss state, textures and submission guard),
+    ├── nana-gpu         GPU backend contract: GpuContext (device, generation, capabilities, loss state, textures and submission order),
     │                    FrameContext (single-frame context owning the encoder), GpuTexture.
     │                    WGPU is the only backend; wgpu-interop is the explicit escape hatch
     ├── nana-frame-exchange  Cross-thread latest-frame exchange (built on nana-gpu and re-exports the contract types;
@@ -94,7 +94,7 @@ The compositor steady-state performance gate (with no queries, the `UiWorld`, la
 | Object / state | Authoritative owner | Boundary notes |
 | --- | --- | --- |
 | `Window`, `Surface` | Host (`run_runtime`, or the embedder of `EmbeddedRuntime`) | The framework borrows per window; ordinary controls may not touch native handles |
-| Device: `GpuContext` (generation, capabilities, loss state, submission guard) | Host | Sticky loss is recorded in `GpuContext::is_lost()`; replacing the device means creating a new `GpuContext` (new `DeviceGeneration`). The dependency graph holds one wgpu: NanaUI's fork in `third_party/wgpu` (upstream package names and version 30.0.1 kept) |
+| Device: `GpuContext` (generation, capabilities, loss state, submission order) | Host | Sticky loss is recorded in `GpuContext::is_lost()`; replacing the device means creating a new `GpuContext` (new `DeviceGeneration`). The dependency graph holds one wgpu: NanaUI's fork in `third_party/wgpu` (upstream package names and version 30.0.1 kept) |
 | Single frame: `FrameContext` (encoder, submit and discard) | Host | The Painter and resource producers only record commands into it; when a frame is dropped/discarded, retained writes registered by the Painter roll back automatically |
 | Cross-thread frame slot pool (`FrameExchange`) | Producer thread | The window side samples through `FrameInbox` / `FrameBinding`; declared color space metadata travels with the lease, and consumers must not treat PQ/HLG/P3 as sRGB or linear scRGB without conversion |
 | Business state, application configuration, region and pane **content** | Application | The framework holds no business routing or domain data |

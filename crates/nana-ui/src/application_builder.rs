@@ -33,6 +33,8 @@ impl NanaApplication {
             resource_packs: None,
             #[cfg(feature = "hosted")]
             splash: None,
+            #[cfg(feature = "hosted")]
+            pipeline_cache: None,
         }
     }
 
@@ -75,6 +77,8 @@ pub struct NanaApplicationBuilder {
     resource_packs: Option<crate::packaged_resources::ResourcePackOptions>,
     #[cfg(feature = "hosted")]
     splash: Option<crate::SplashSpec>,
+    #[cfg(feature = "hosted")]
+    pipeline_cache: Option<std::sync::Arc<dyn crate::PipelineCacheStore>>,
 }
 
 /// Keeps process-level services alive. Dropping it shuts diagnostics down
@@ -118,6 +122,16 @@ impl NanaApplicationBuilder {
     #[cfg(feature = "hosted")]
     pub fn early_splash(mut self, splash: crate::SplashSpec) -> Self {
         self.splash = Some(splash);
+        self
+    }
+
+    /// Keep the GPU device's shader and pipeline cache in `store` between
+    /// runs: a warm start then skips most shader compilation. Where the bytes
+    /// live is the application's choice (typically its cache directory, one
+    /// file per [`crate::PipelineCacheKey::file_stem`]).
+    #[cfg(feature = "hosted")]
+    pub fn pipeline_cache(mut self, store: std::sync::Arc<dyn crate::PipelineCacheStore>) -> Self {
+        self.pipeline_cache = Some(store);
         self
     }
 
@@ -198,6 +212,7 @@ impl NanaApplicationBuilder {
     ) -> Result<(), crate::HostedRunError> {
         let startup = crate::StartupOptions {
             splash: self.splash,
+            pipeline_cache: self.pipeline_cache.clone(),
             ..Default::default()
         };
         let session = self.start();
@@ -216,6 +231,7 @@ impl NanaApplicationBuilder {
     ) -> Result<(), crate::HostedRunError> {
         let startup = crate::StartupOptions {
             splash: self.splash,
+            pipeline_cache: self.pipeline_cache.clone(),
             ..Default::default()
         };
         let session = self.start();

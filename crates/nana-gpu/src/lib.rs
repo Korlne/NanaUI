@@ -4,14 +4,17 @@
 //!
 //! - [`GpuContext`] is the one device a process renders with: its
 //!   [`DeviceGeneration`], [`GpuCapabilities`], loss state, texture creation
-//!   and upload, and the submission guard that keeps off-thread work away from
-//!   surface reconfiguration.
+//!   and upload. Queue work needs no guard against surface reconfiguration:
+//!   NanaUI's wgpu fork waits only for the work that used that surface.
 //! - [`FrameContext`] owns one command encoder from [`GpuContext::begin_frame`]
 //!   until it is submitted or dropped. Dropping it without submitting is the
 //!   discard, and rolls back the retained writes painters recorded into it.
 //! - [`GpuTexture`] / [`GpuRenderTarget`] carry the device generation they
 //!   were created on, so a resource from a replaced device is refused instead
 //!   of reaching the backend.
+//! - The device's shader and pipeline cache is one per [`GpuContext`]; the
+//!   host persists it through [`GpuContext::pipeline_cache_key`],
+//!   [`GpuContext::load_pipeline_cache`] and [`GpuContext::pipeline_cache_data`].
 //! - [`GpuDeviceState`] is the shared per-device policy authority for bounded
 //!   uploads, frame slots, transient keys, pipeline/realization identities and
 //!   submission retirement. It contains no public WGPU types.
@@ -26,6 +29,7 @@ mod abi;
 mod context;
 mod error;
 mod frame;
+mod pipeline_cache;
 mod policy;
 mod realization;
 mod texture;
@@ -53,6 +57,9 @@ pub use context::{
 };
 pub use error::GpuError;
 pub use frame::{FrameAcquisition, FrameContext, FrameId, GpuSubmission, RetainedWrites};
+pub use pipeline_cache::{
+    PipelineCacheKey, PipelineCacheLoad, PipelineCacheRefusal, PipelineCacheStore,
+};
 pub use policy::{FrameSlotId, GpuDeviceState, GpuPolicyStats, PipelineKey, TransientResourceKey};
 pub use realization::{GpuBuffer, GpuBufferDescriptor, GpuBufferUsages, GpuSampler};
 pub use realization::{GpuResourceGroup, GpuResourceLayout};

@@ -134,7 +134,7 @@ Window output supports `WindowOutputConfig::with_suspended(true)`: it submits on
 `nana_gpu::NativeExportPool` (with the `native-export` feature, Windows + DX12 devices only; capability bit `GpuCapability::NativeTextureExport`) holds three `DXGI_FORMAT_B8G8R8A8_UNORM` submission textures created with `D3D12_HEAP_FLAG_SHARED` and the render-target flag (without that flag D3D11 refuses to open a shared D3D12 texture), exports each as one NT handle, and pairs them with a shared fence. They are wrapped as `COPY_DST`-only textures on the host's own device, and there is no second device or queue:
 
 - `stage`: records one copy from the rendered texture into the next slot in the caller's current frame;
-- `FrameContext::submit`: under the submission guard, signals the frame's *ready* fence value on the device queue right after `queue.submit`;
+- `FrameContext::submit`: under the submission-order lock, signals the frame's *ready* fence value on the device queue right after `queue.submit`;
 - `finish`: wraps the submitted copy as a `NativeFrameToken`. Window output configured with `WindowOutputExport::Native` runs this sequence for every frame it produces.
 
 The `k`-th successful stage reservation (counting from 0) uses ready value `2k + 1` and release value `2k + 2`. A discard, or a reservation discarded after submission without `finish`, also consumes a number, so later values may skip; a consumer must use the value the token gives and must not derive it from `issued()` or the number of delivered frames. Otherwise a discarded submission could let the next ready wait pass early. The consumer contract is:

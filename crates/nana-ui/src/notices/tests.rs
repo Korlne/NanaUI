@@ -1,6 +1,6 @@
 use super::*;
 use crate::NanaTextShaper;
-use nana_ui_runtime::LayoutViewport;
+use nana_ui_runtime::{AccessibilityLive, LayoutViewport};
 use nana_ui_scene::RuntimeDocument;
 
 const MAIN: WindowId = WindowId::PRIMARY;
@@ -308,6 +308,18 @@ fn a_moved_notice_does_not_repeat_what_was_said_but_new_words_are_live() {
             .live(main.toast().stable_id())
     };
     assert_eq!(live(&main), Some(AccessibilityLive::Off));
+    // A theme or font set that changes projects the toast again; that does
+    // not make it say the same words twice.
+    let toast = main.toast();
+    main.document
+        .context_mut()
+        .reproject_component(toast)
+        .unwrap();
+    assert_eq!(
+        live(&main),
+        Some(AccessibilityLive::Off),
+        "a reprojection keeps it quiet"
+    );
     let mut progress = running();
     progress.progress = Some(ToastProgress::Determinate(0.25));
     center.show(

@@ -42,7 +42,7 @@ use nana_ui_platform::{
     restore_window_geometry, window_resize_edge,
 };
 use nana_ui_runtime::{
-    AccessibilityUpdate, AppTitleBar, Entity, FrameworkError, LayoutViewport, StableNodeId, Task,
+    AccessibilityUpdate, Entity, FrameworkError, LayoutViewport, StableNodeId, Task,
 };
 #[cfg(target_os = "macos")]
 use nana_window::set_application_icon_png;
@@ -2804,6 +2804,19 @@ fn platform_physical_key(key: &winit::keyboard::PhysicalKey) -> std::borrow::Cow
     }
 }
 
+/// The keys the system reports held, where it can be sampled.
+#[cfg(not(test))]
+fn system_keyboard_modifiers() -> Option<nana_window::KeyboardModifiers> {
+    nana_window::keyboard_modifiers()
+}
+
+/// Unit tests set the system sample on their own thread: the real one is
+/// whatever keys someone at this machine happens to hold while they run.
+#[cfg(test)]
+fn system_keyboard_modifiers() -> Option<nana_window::KeyboardModifiers> {
+    tests::SYSTEM_KEYS.with(std::cell::Cell::get)
+}
+
 fn system_input_modifiers(keys: nana_window::KeyboardModifiers) -> InputModifiers {
     InputModifiers {
         alt: keys.alt,
@@ -3181,7 +3194,7 @@ impl InputTracker {
     /// events while the source owns the keyboard, so prefer the system state
     /// and fall back to the last tracked one where it cannot be sampled.
     fn drag_modifiers(&self) -> InputModifiers {
-        nana_window::keyboard_modifiers()
+        system_keyboard_modifiers()
             .map(system_input_modifiers)
             .unwrap_or_else(|| platform_input_modifiers(self.modifiers))
     }
@@ -3572,9 +3585,9 @@ impl<Program: RuntimeProgram> EmbeddedRuntime<Program> {
     pub fn notify_device_lost(&mut self) {
         // Embedded devices never raise the hosted device-lost flag; the
         // embedder tells us here instead. Recording it on the context lets
-        // everything holding it (producer threads) see the
-        // loss; taking the report right away keeps the fault below the only
-        // one.
+        // everything holding it (producer threads) see the loss, and writes
+        // the `gpu.device_lost` fault and snapshot (once per device); taking
+        // the report right away marks it handled.
         let graphics = &self.manager.graphics;
         nana_gpu::__framework::mark_lost(
             graphics.gpu(),
@@ -3584,14 +3597,6 @@ impl<Program: RuntimeProgram> EmbeddedRuntime<Program> {
             },
         );
         let _ = graphics.take_device_lost_report();
-        if !self.manager.render_suspended {
-            nana_diagnostics::fault!(
-                nana_diagnostics::framework::gpu::DEVICE_LOST,
-                reason = 0u64;
-                "reported by the embedding host"
-            );
-            nana_diagnostics::snapshot("device-lost");
-        }
         self.manager.render_suspended = true;
         self.manager.next_gpu_retry = None;
     }
@@ -3677,6 +3682,13 @@ impl<Program: RuntimeProgram> EmbeddedRuntime<Program> {
 
 #[cfg(test)]
 mod tests {
+    thread_local! {
+        /// The system modifier sample this test thread sees; `None` is a
+        /// platform that cannot sample it.
+        pub(super) static SYSTEM_KEYS: std::cell::Cell<Option<nana_window::KeyboardModifiers>> =
+            const { std::cell::Cell::new(None) };
+    }
+
     use super::ScreenSpace;
     #[cfg(not(target_os = "macos"))]
     use super::desktop_scale;
@@ -3691,8 +3703,8 @@ mod tests {
         platform_composition, platform_input_key, platform_input_modifiers, platform_physical_key,
         platform_window_event, remove_image_target_index, replace_image_target_index,
         route_window_command, scene_clear_color, scene_runtime_input_update,
-        scene_window_attributes, screen_position, surface_image_keys, system_input_modifiers,
-        tablet_pointer_id, window_cursor_override, window_level, window_surface_effect,
+        scene_window_attributes, screen_position, surface_image_keys, tablet_pointer_id,
+        window_cursor_override, window_level, window_surface_effect,
         window_wants_transparent_surface, windows_scene_chrome, windows_to_redraw, winit_icon,
     };
     use crate::presentation::{
@@ -5194,31 +5206,33 @@ mod tests {
 
     #[test]
     fn file_drag_events_carry_the_held_modifiers() {
-        // Without a system sample (Linux) the tracked state is reported.
-        let transfer = winit::data_transfer::DataTransferId::from_raw(3);
-        let mut tracker = InputTracker {
-            modifiers: ModifiersState::CONTROL,
-            ..InputTracker::default()
-        };
-        let expected = nana_window::keyboard_modifiers()
-            .map(|keys| keys.control)
-            .unwrap_or(true);
-        let hovered = tracker.map_file_window_event(&WinitWindowEvent::DragEntered {
-            id: transfer,
-            position: None,
-        });
-        assert!(matches!(
-            hovered,
-            Some(FileDragInput { kind: FileDragKind::Hover, modifiers, .. }) if modifiers.control == expected
-        ));
-        let dropped = tracker.map_file_window_event(&WinitWindowEvent::DragDropped {
-            id: transfer,
-            proposed_action: None,
-        });
-        assert!(matches!(
-            dropped,
-            Some(FileDragInput { kind: FileDragKind::Drop, modifiers, .. }) if modifiers.control == expected
-        ));
+        // Without a system sample (Linux) the tracked state is reported;
+        // with one (Windows, macOS) the system's keys win over the stale
+        // tracked state.
+        for (sample, expected) in [(None, true), (Some(Default::default()), false)] {
+            SYSTEM_KEYS.with(|keys| keys.set(sample));
+            let transfer = winit::data_transfer::DataTransferId::from_raw(3);
+            let mut tracker = InputTracker {
+                modifiers: ModifiersState::CONTROL,
+                ..InputTracker::default()
+            };
+            let hovered = tracker.map_file_window_event(&WinitWindowEvent::DragEntered {
+                id: transfer,
+                position: None,
+            });
+            assert!(matches!(
+                hovered,
+                Some(FileDragInput { kind: FileDragKind::Hover, modifiers, .. }) if modifiers.control == expected
+            ));
+            let dropped = tracker.map_file_window_event(&WinitWindowEvent::DragDropped {
+                id: transfer,
+                proposed_action: None,
+            });
+            assert!(matches!(
+                dropped,
+                Some(FileDragInput { kind: FileDragKind::Drop, modifiers, .. }) if modifiers.control == expected
+            ));
+        }
     }
 
     #[test]
@@ -5252,20 +5266,20 @@ mod tests {
             })
         );
 
-        let mut delayed = InputTracker {
-            modifiers: ModifiersState::CONTROL,
-            ..InputTracker::default()
-        };
+        let mut delayed = InputTracker::default();
+        SYSTEM_KEYS.with(|keys| {
+            keys.set(Some(nana_window::KeyboardModifiers {
+                control: true,
+                ..Default::default()
+            }))
+        });
         delayed.wait_for_drop_data(transfer, winit::event_loop::AsyncRequestSerial::get());
         // Released before the paths arrive: the drop keeps the keys it had.
-        delayed.modifiers = ModifiersState::empty();
-        let held = nana_window::keyboard_modifiers().map_or(
-            InputModifiers {
-                control: true,
-                ..InputModifiers::default()
-            },
-            system_input_modifiers,
-        );
+        SYSTEM_KEYS.with(|keys| keys.set(Some(Default::default())));
+        let held = InputModifiers {
+            control: true,
+            ..InputModifiers::default()
+        };
         assert_eq!(
             delayed.ingest_file_paths(transfer, paths.clone()),
             Some(FileDragInput {

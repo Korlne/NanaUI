@@ -2356,29 +2356,9 @@ impl<Program: RuntimeProgram> WindowManager<Program> {
     pub(super) fn sync_title_bar_maximized(&mut self, id: WindowId, maximized: bool) {
         self.program.write_document(id, |document| {
             let document_id = document.document();
-            let context = document.context_mut();
-            let stale = context
-                .world()
-                .nodes_of_component(
-                    document_id,
-                    nana_ui_runtime::component_descriptors::APP_TITLE_BAR.type_id,
-                )
-                .filter(|&node| {
-                    context
-                        .read(Entity::<AppTitleBar>::from_stable_id(node), |bar| {
-                            bar.maximized != maximized
-                        })
-                        .unwrap_or(false)
-                })
-                .collect::<Vec<_>>();
-            for bar in stale {
-                let _ = context.update_component(
-                    Entity::<AppTitleBar>::from_stable_id(bar),
-                    |bar, _| {
-                        bar.maximized = maximized;
-                    },
-                );
-            }
+            document
+                .context_mut()
+                .sync_title_bars_maximized(document_id, maximized);
         });
     }
 }

@@ -57,7 +57,7 @@ Rust / `.vue` 方言输入
 | 章节 | 核心内容 |
 | --- | --- |
 | [Scene 提取](/learn/scene-extraction) | `UiScene` 绘制图结构、`apply_delta` 增量失效、`FramePlan` 编译、为何不依赖 WGPU |
-| [GPU 与帧生命周期](/learn/gpu-frame) | `nana-gpu` 合同、提交守卫、帧槽、上传环、`SceneWgpuPainter`、一帧 35 步全序 |
+| [GPU 与帧生命周期](/learn/gpu-frame) | `nana-gpu` 合同、提交顺序、帧槽、上传环、`SceneWgpuPainter`、一帧 35 步全序 |
 | [窗口与平台](/learn/window-platform) | `nana-ui-platform` 中立合同、`nana-window` 原生执行、材质回退语义、无头 `WebSurface` |
 
 ### 作者入口与工具链

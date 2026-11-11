@@ -131,7 +131,7 @@ impl AppContext {
         ids.sort_unstable();
         ids.dedup();
         for id in ids {
-            changed |= self.refresh_text_area_compact_layout(id)?;
+            changed |= via!(self.refresh_text_area_compact_layout(id))?;
         }
         Ok(changed)
     }

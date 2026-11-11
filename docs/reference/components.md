@@ -32,6 +32,8 @@ let (_, save) = cx.mount_view_root(document_id, || {
 
 `ContextMenu` 同样挂在 `OverlayHost` 下，并用 `activate_overlay` 打开。框架按 Menu 语义负责 Escape 与点击外部收起。应用不再自建点外判定。框架驱动的收起会同步组件自身的 `open`，并发出 `ContextMenuEvent::Dismiss`。与选中项收起走同一条回执。应用不需要事后对账两份状态。
 
+**用组件拼的菜单。** `ContextMenu` 的行是数据（`ContextMenuItem`）。要在菜单里放自己的内容时用 `AnchoredActionMenu`：它是锚在一个点上的菜单面，子节点就是菜单，竖排，可以是任何组件——`ActionMenuItem` 命令、`Divider`、应用自己的一段表头、滚动区、输入框。它同样挂在 `OverlayHost` 下，用 `activate_overlay` 打开，按 Menu 语义：拿下指针，点外面或 Escape 收起，Tab 留在里面；方向键、Home、End 按顺序走遍它里面每一个可聚焦的东西（不只是 Tab 停靠点），两端回绕，焦点在它里面的输入框时方向键归输入框。选了里面的 `ActionMenuItem` 菜单即收起；`ActionMenuItem::keep_open(true)` 的行不收（进入下一层、切换一个菜单要继续显示的状态）；别的控件（`ListItem`、`Switch`）不收。框架收起它时把 `open` 写成 `false` 并发 `AnchoredMenuDismissed`；应用自己写 `open = false` 不发。`AppContext::dismiss_anchored_menu` 按同一条路收起。子菜单没有内建：一层换一层的做法是把内容做成跟随状态的视图，进入的那一行用 `keep_open`。
+
 `Toast::place_in(viewport, PopoverAlignment::Center, max_width, PanelInsets { .. })` 用与 `Panel::viewport` 相同的预留合同，把提示钉进空闲区域。`align` 决定它在剩余宽度里的分布。`max_width` 封顶。高度仍由内容决定，并贴住预留的底边。`viewport` 是定位宿主自身的盒子。未放置的 toast 仍然填满所在行。放置过的 toast 保留自己的宽度。空闲区域由应用给出。只有应用知道它开了哪些面板。
 
 `Toast::timeout(Duration)` 让提示挂载满这么久后发一次 `ToastDismissed`，与按下关闭按钮的事件相同。计时器每个提示只启动一次，只在到期时唤醒宿主一次，不逐帧推进。不传则一直等用户关闭。框架不会自己移除提示，收到事件后由应用从列表里删掉。

@@ -1161,9 +1161,6 @@ fn shade(input:VsOut)->TextShade {
         let index_bytes: &[u8] = bytemuck::cast_slice(frame.index_staging);
         let staged = (instance_bytes.len() + index_bytes.len()) as u64;
         if staged != 0 {
-            // Keep surface reconfiguration out of the mapped queue write and
-            // the encoder copies that consume it.
-            let _submission = work.and_then(GpuWorkSink::lock_submission);
             // `None` from wgpu is a staging allocation it could not make — a
             // lost device, or out of memory — already reported through the
             // device's error sink. The frame then tries buffers of its own.

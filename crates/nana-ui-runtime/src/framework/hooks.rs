@@ -9,9 +9,13 @@
 
 use std::time::Duration;
 
-use nana_ui_input::{InputModifiers, PointerInput, PointerPhase, PointerType};
+use nana_ui_input::{
+    CompositionInput, HostServices, InputModifiers, PointerInput, PointerPhase, PointerType,
+};
 
 use super::*;
+#[allow(unused_imports)]
+use crate::*;
 
 type Handled = Result<bool, FrameworkError>;
 type NearHit = fn(&AppContext, DocumentId, f32, f32, Option<StableNodeId>) -> Option<StableNodeId>;
@@ -516,7 +520,196 @@ pub struct TypeHooks {
     pub(crate) search_dropdown: Option<&'static ChoiceHooks>,
     pub(crate) command_palette: Option<&'static NavigateHooks<ActionPickerNavigation>>,
     pub(crate) tree: Option<&'static NavigateHooks<crate::TreeNavigation>>,
+    pub(crate) calls: RoutedCalls,
 }
+
+/// Declares [`RoutedCalls`]: a field per call, and the calls' names for the
+/// check that each has a type to bring it.
+macro_rules! routed_calls {
+    ($($name:ident: $call:ty,)*) => {
+        /// Calls the router makes into one type's own handling, each reached
+        /// through the type that needs it ([`via`]). A field is named after
+        /// the `AppContext` method it stands for and holds that method once a
+        /// type whose nodes it serves has one; until then the call answers
+        /// [`Absent`], which is what the method answers for a document
+        /// without such a node.
+        #[doc(hidden)]
+        #[derive(Clone, Copy, Default)]
+        pub struct RoutedCalls {
+            $(pub(crate) $name: Option<$call>,)*
+        }
+
+        impl RoutedCalls {
+            /// Every call, by the name of its method.
+            #[cfg(test)]
+            pub(crate) const NAMES: &'static [&'static str] = &[$(stringify!($name)),*];
+
+            /// The calls a type has brought so far.
+            #[cfg(test)]
+            pub(crate) fn installed(&self) -> Vec<&'static str> {
+                let mut installed = Vec::new();
+                $(if self.$name.is_some() {
+                    installed.push(stringify!($name));
+                })*
+                installed
+            }
+        }
+    };
+}
+
+routed_calls! {
+    set_terminal_preedit: fn(&mut AppContext, DocumentId, &str) -> Result<bool, FrameworkError>,
+    focused_terminal: fn(&AppContext, DocumentId) -> Option<Entity<TerminalView>>,
+    terminal_pointer: fn(&mut AppContext, DocumentId, Option<StableNodeId>, u64, u8, f32, f32) -> Result<bool, FrameworkError>,
+    terminal_key: fn(&mut AppContext, DocumentId, &str, Option<&str>, bool, bool, bool) -> Result<bool, FrameworkError>,
+    terminal_input: fn(&mut AppContext, DocumentId, Vec<u8>) -> Result<bool, FrameworkError>,
+    paste_terminal: fn(&mut AppContext, DocumentId, &str) -> Result<bool, FrameworkError>,
+    resize_terminal_view: fn(&mut AppContext, Entity<TerminalView>, f32, f32) -> Result<bool, FrameworkError>,
+    end_xy_pad_drag: fn(&mut AppContext, DocumentId, u64, bool) -> Result<bool, FrameworkError>,
+    update_xy_pad_drag: fn(&mut AppContext, DocumentId, u64, f32, f32, bool) -> Result<bool, FrameworkError>,
+    begin_xy_pad_drag: fn(&mut AppContext, DocumentId, u64, StableNodeId, f32, f32) -> Result<bool, FrameworkError>,
+    is_xy_pad: fn(&AppContext, StableNodeId) -> bool,
+    adjust_focused_xy_pad: fn(&mut AppContext, crate::DocumentId, XYPadAdjustment) -> Result<bool, FrameworkError>,
+    end_xy_pad_drag_on: fn(&mut AppContext, StableNodeId, u64, bool) -> Result<bool, FrameworkError>,
+    end_range_drag: fn(&mut AppContext, DocumentId, u64, bool) -> Result<bool, FrameworkError>,
+    update_range_drag_at: fn(&mut AppContext, DocumentId, u64, f32, f32, bool) -> Result<bool, FrameworkError>,
+    begin_range_drag_at: fn(&mut AppContext, DocumentId, u64, StableNodeId, f32, f32) -> Result<bool, FrameworkError>,
+    adjust_focused_range: fn(&mut AppContext, DocumentId, RangeAdjustment) -> Result<bool, FrameworkError>,
+    is_range_field: fn(&AppContext, StableNodeId) -> bool,
+    end_focused_range_edit: fn(&mut AppContext, DocumentId) -> Result<bool, FrameworkError>,
+    end_range_drag_on: fn(&mut AppContext, StableNodeId, u64, bool) -> Result<bool, FrameworkError>,
+    adjust_range: fn(&mut AppContext, Entity<RangeField>, RangeAdjustment) -> Result<bool, FrameworkError>,
+    set_range_value: fn(&mut AppContext, Entity<RangeField>, f64) -> Result<bool, FrameworkError>,
+    step_focused_number_input: fn(&mut AppContext, DocumentId, i32) -> Result<bool, FrameworkError>,
+    revert_focused_number_input: fn(&mut AppContext, DocumentId) -> Result<bool, FrameworkError>,
+    press_number_stepper: fn(&mut AppContext, StableNodeId, f32, f32) -> Result<bool, FrameworkError>,
+    commit_focused_number_input: fn(&mut AppContext, DocumentId) -> Result<bool, FrameworkError>,
+    settle_focused_number_input: fn(&mut AppContext, DocumentId) -> Result<bool, FrameworkError>,
+    step_number_input: fn(&mut AppContext, Entity<NumberInput>, i32) -> Result<bool, FrameworkError>,
+    set_number_text: fn(&mut AppContext, Entity<NumberInput>, &str) -> Result<bool, FrameworkError>,
+    end_split_resize: fn(&mut AppContext, crate::DocumentId, u64, bool) -> Result<bool, FrameworkError>,
+    update_split_resize: fn(&mut AppContext, crate::DocumentId, u64, f32, f32) -> Result<bool, FrameworkError>,
+    sync_split_handle_hover_near_hit: fn(&mut AppContext, crate::DocumentId, f32, f32, Option<StableNodeId>, std::time::Duration) -> Result<bool, FrameworkError>,
+    sync_split_handle_hover: fn(&mut AppContext, crate::DocumentId, Option<StableNodeId>) -> Result<bool, FrameworkError>,
+    is_split_handle: fn(&AppContext, StableNodeId) -> bool,
+    begin_split_resize: fn(&mut AppContext, crate::DocumentId, u64, StableNodeId, f32, f32) -> Result<bool, FrameworkError>,
+    adjust_focused_split: fn(&mut AppContext, crate::DocumentId, f32) -> Result<bool, FrameworkError>,
+    end_range_span_drag: fn(&mut AppContext, DocumentId, u64, bool) -> Result<bool, FrameworkError>,
+    end_focused_range_span_edit: fn(&mut AppContext, DocumentId) -> Result<bool, FrameworkError>,
+    update_range_span_drag_at: fn(&mut AppContext, DocumentId, u64, f32, f32) -> Result<bool, FrameworkError>,
+    range_span_target: fn(&AppContext, StableNodeId) -> Option<(Entity<RangeSpanField>, Option<RangeSpanThumb>)>,
+    begin_range_span_drag_at: fn(&mut AppContext, DocumentId, u64, StableNodeId, f32, f32) -> Result<bool, FrameworkError>,
+    adjust_focused_range_span: fn(&mut AppContext, DocumentId, RangeAdjustment) -> Result<bool, FrameworkError>,
+    end_range_span_drag_on: fn(&mut AppContext, StableNodeId, u64, bool) -> Result<bool, FrameworkError>,
+    adjust_range_span: fn(&mut AppContext, Entity<RangeSpanField>, RangeSpanThumb, RangeAdjustment) -> Result<bool, FrameworkError>,
+    set_range_span_thumb: fn(&mut AppContext, Entity<RangeSpanField>, RangeSpanThumb, f64) -> Result<bool, FrameworkError>,
+    end_curve_drag: fn(&mut AppContext, DocumentId, u64, bool) -> Result<bool, FrameworkError>,
+    update_curve_drag_at: fn(&mut AppContext, DocumentId, u64, f32, f32) -> Result<bool, FrameworkError>,
+    curve_target: fn(&AppContext, StableNodeId) -> Option<(Entity<CurveField>, Option<usize>)>,
+    begin_curve_drag_at: fn(&mut AppContext, DocumentId, u64, StableNodeId, f32, f32) -> Result<bool, FrameworkError>,
+    focus_curve_neighbour: fn(&mut AppContext, DocumentId, bool) -> Result<bool, FrameworkError>,
+    adjust_focused_curve: fn(&mut AppContext, DocumentId, RangeAdjustment) -> Result<bool, FrameworkError>,
+    end_curve_drag_on: fn(&mut AppContext, StableNodeId, u64, bool) -> Result<bool, FrameworkError>,
+    adjust_curve_point: fn(&mut AppContext, Entity<CurveField>, usize, RangeAdjustment) -> Result<bool, FrameworkError>,
+    set_curve_point: fn(&mut AppContext, Entity<CurveField>, usize, f64) -> Result<bool, FrameworkError>,
+    end_focused_scrub_edit: fn(&mut AppContext, DocumentId) -> Result<bool, FrameworkError>,
+    adjust_focused_scrub_field: fn(&mut AppContext, DocumentId, RangeAdjustment) -> Result<bool, FrameworkError>,
+    step_scrub_field: fn(&mut AppContext, Entity<ScrubField>, i32) -> Result<bool, FrameworkError>,
+    focused_tree_key: fn(&mut AppContext, DocumentId, &str, bool) -> Result<bool, FrameworkError>,
+    end_focused_tree_rename: fn(&mut AppContext, DocumentId, bool) -> Result<bool, FrameworkError>,
+    apply_tree_item_action: fn(&mut AppContext, DocumentId, StableNodeId, u16, &crate::AccessibilityAction) -> Result<bool, FrameworkError>,
+    apply_tree_toggle_action: fn(&mut AppContext, StableNodeId, u16, usize, &crate::AccessibilityAction) -> Result<bool, FrameworkError>,
+    request_focused_timeline_clip_delete: fn(&mut AppContext, crate::DocumentId) -> Result<bool, FrameworkError>,
+    rich_editor_pointer: fn(&mut AppContext, DocumentId, Option<StableNodeId>, u64, u8, f32, f32, bool, std::time::Duration) -> Result<bool, FrameworkError>,
+    rich_editor_key: fn(&mut AppContext, DocumentId, &str, Option<&str>, InputModifiers, &mut dyn HostServices) -> Result<Option<bool>, FrameworkError>,
+    rich_editor_composition: fn(&mut AppContext, DocumentId, &CompositionInput) -> Result<Option<bool>, FrameworkError>,
+    prepare_rich_editor_context_menu: fn(&mut AppContext, Entity<RichTextEditor>, f32, f32) -> Result<(), FrameworkError>,
+    advance_rich_drag: fn(&mut AppContext, std::time::Duration) -> Option<StableNodeId>,
+    note_rich_editor_scroll: fn(&mut AppContext, StableNodeId, ScrollOffset) -> Result<(), FrameworkError>,
+    navigate_focused_segmented: fn(&mut AppContext, DocumentId, RovingFocusIntent) -> Result<bool, FrameworkError>,
+    is_segmented_option_node: fn(&AppContext, StableNodeId) -> bool,
+    focus_segmented_option: fn(&mut AppContext, DocumentId, StableNodeId) -> Result<bool, FrameworkError>,
+    segmented_option_is_tab_stop: fn(&AppContext, StableNodeId) -> bool,
+    navigate_focused_table: fn(&mut AppContext, DocumentId, crate::TableNavigation, usize) -> Result<bool, FrameworkError>,
+    end_text_area_resize: fn(&mut AppContext, DocumentId, u64, bool) -> Result<bool, FrameworkError>,
+    update_text_area_resize: fn(&mut AppContext, DocumentId, u64, f32, f32) -> Result<bool, FrameworkError>,
+    begin_text_area_resize: fn(&mut AppContext, u64, StableNodeId, f32, f32) -> Result<bool, FrameworkError>,
+    refresh_text_area_compact_layout: fn(&mut AppContext, StableNodeId) -> Result<bool, FrameworkError>,
+    note_text_area_scroll: fn(&mut AppContext, StableNodeId, ScrollOffset) -> Result<(), FrameworkError>,
+    text_editor_minimap_navigate: fn(&mut AppContext, StableNodeId, super::text_edit::TextEditorKind, u64, ScrollOffset) -> Result<bool, FrameworkError>,
+    close_focused_text_atom: fn(&mut AppContext, DocumentId, &str) -> Result<bool, FrameworkError>,
+    note_modal_open: fn(&mut AppContext, StableNodeId, bool) -> Result<(), FrameworkError>,
+    sync_modal_open_at: fn(&mut AppContext, StableNodeId) -> Result<(), FrameworkError>,
+    announce_close_request: fn(&mut AppContext, StableNodeId, nana_ui_core::DialogCloseTrigger) -> Result<(), FrameworkError>,
+    announce_confirm_intent: fn(&mut AppContext, StableNodeId, crate::ConfirmIntent) -> Result<(), FrameworkError>,
+    note_anchored_menu_dismissed: fn(&mut AppContext, StableNodeId) -> Result<(), FrameworkError>,
+    navigate_open_anchored_menu: fn(&mut AppContext, DocumentId, &str) -> Result<bool, FrameworkError>,
+    sync_sidebar_section_hover: fn(&mut AppContext, Option<StableNodeId>, Option<StableNodeId>) -> Result<(), FrameworkError>,
+    set_sidebar_section_progress: fn(&mut AppContext, StableNodeId, f32) -> bool,
+    activate_select_option: fn(&mut AppContext, StableNodeId, u16) -> Result<Option<bool>, FrameworkError>,
+    set_dropdown_opened: fn(&mut AppContext, Entity<Dropdown>, bool) -> Result<bool, FrameworkError>,
+    close_hover_card: fn(&mut AppContext, StableNodeId) -> Result<bool, FrameworkError>,
+    sweep_hover_cards: fn(&mut AppContext),
+    open_hover_card: fn(&mut AppContext, StableNodeId) -> Result<bool, FrameworkError>,
+    dismiss_popovers_on_escape: fn(&mut AppContext) -> Result<bool, FrameworkError>,
+    close_open_popovers_within: fn(&mut AppContext, Option<StableNodeId>, Option<StableNodeId>, fn(&Popover) -> bool,) -> Result<bool, FrameworkError>,
+    dismiss_popovers_outside: fn(&mut AppContext, Option<StableNodeId>) -> Result<bool, FrameworkError>,
+    navigate_open_action_menu: fn(&mut AppContext, DocumentId, &str) -> Result<bool, FrameworkError>,
+    reconcile_toast_stacks: fn(&mut AppContext, DocumentId) -> Result<(), FrameworkError>,
+    refresh_settings_row_layout: fn(&mut AppContext, StableNodeId) -> Result<(), FrameworkError>,
+    advance_settings_row_flash: fn(&mut AppContext, StableNodeId, crate::AnimatableProperty, std::time::Duration) -> Result<(), FrameworkError>,
+    set_switch_loading_phase: fn(&mut AppContext, StableNodeId, f32) -> bool,
+    set_card_loading_phase: fn(&mut AppContext, StableNodeId, f32) -> bool,
+    set_spinner_phase: fn(&mut AppContext, StableNodeId, f32) -> bool,
+    expire_toast: fn(&mut AppContext, StableNodeId, Duration),
+    advance_workspace_animation: fn(&mut AppContext, StableNodeId, Duration) -> bool,
+    drive_due_auto_overlays: fn(&mut AppContext) -> Vec<StableNodeId>,
+    drive_auto_overlay: fn(&mut AppContext, Entity<MediaTransportBar>, Option<bool>) -> Result<bool, FrameworkError>,
+    release_scrollbar_holds: fn(&mut AppContext, Duration) -> Vec<StableNodeId>,
+    hold_scrollbars: fn(&mut AppContext, StableNodeId) -> Result<(), FrameworkError>,
+    apply_scroll_view_to: fn(&mut AppContext, StableNodeId, ScrollOffset) -> Result<bool, FrameworkError>,
+    sync_scrollbar_hot: fn(&mut AppContext, DocumentId, u64, Option<(StableNodeId, nana_ui_core::ScrollbarAxis)>) -> Result<(), FrameworkError>,
+    scrollbar_target_near_hit: fn(&AppContext, f32, f32, Option<StableNodeId>) -> Option<(StableNodeId, nana_ui_core::ScrollbarAxis)>,
+    begin_scrollbar_drag: fn(&mut AppContext, u64, StableNodeId, nana_ui_core::ScrollbarAxis, f32, f32) -> Result<bool, FrameworkError>,
+    update_scrollbar_drag: fn(&mut AppContext, DocumentId, u64, f32, f32) -> Result<bool, FrameworkError>,
+    end_scrollbar_drag: fn(&mut AppContext, DocumentId, u64, bool) -> Result<bool, FrameworkError>,
+    set_scroll_view_hover: fn(&mut AppContext, StableNodeId, bool) -> Result<(), FrameworkError>,
+    settle_menu_aims: fn(&mut AppContext, Duration) -> Vec<StableNodeId>,
+    toggle_menu_bar_keyboard: fn(&mut AppContext, Entity<AppMenuBar>) -> Result<bool, FrameworkError>,
+    route_menu_bar_key: fn(&mut AppContext, DocumentId, &str, bool, bool, InputModifiers) -> Result<bool, FrameworkError>,
+    cancel_menu_bar_alt: fn(&mut AppContext),
+    sync_row_tools: fn(&mut AppContext, Option<StableNodeId>, Option<bool>, Option<bool>) -> Result<(), FrameworkError>,
+    set_select_opened: fn(&mut AppContext, Entity<Select>, bool) -> Result<bool, FrameworkError>,
+    activate_context_menu_index: fn(&mut AppContext, Entity<ContextMenu>, usize) -> Result<bool, FrameworkError>,
+    focus_context_menu_index: fn(&mut AppContext, Entity<ContextMenu>, usize) -> Result<bool, FrameworkError>,
+    navigate_open_context_menu: fn(&mut AppContext, DocumentId, &str, bool) -> Result<bool, FrameworkError>,
+    dismiss_context_menu: fn(&mut AppContext, Entity<ContextMenu>) -> Result<bool, FrameworkError>,
+    set_search_dropdown_opened: fn(&mut AppContext, Entity<SearchDropdown>, bool) -> Result<bool, FrameworkError>,
+    mark_deferred_settings_groups: fn(&mut AppContext) -> Result<(), FrameworkError>,
+    note_icon_button_tooltip: fn(&mut AppContext, StableNodeId, bool) -> Result<(), FrameworkError>,
+    set_title_bars_maximized: fn(&mut AppContext, crate::DocumentId, bool),
+}
+
+/// Fills fields of [`RoutedCalls`] with the `AppContext` methods of the same
+/// names: `route!(hooks; end_split_resize, ...)`.
+macro_rules! route {
+    ($hooks:expr; $($method:ident),* $(,)?) => {
+        $( $hooks.calls.$method = Some(crate::AppContext::$method); )*
+    };
+}
+pub(crate) use route;
+
+/// `via!(self.method(args))`: `AppContext::method` through [`RoutedCalls`],
+/// or [`Absent`] while no type has installed it.
+macro_rules! via {
+    ($cx:ident . $method:ident ( $($arg:expr),* $(,)? )) => {
+        match $cx.type_hooks.calls.$method {
+            Some(call) => call($cx, $($arg),*),
+            None => $crate::framework::hooks::Absent::absent(),
+        }
+    };
+}
+pub(crate) use via;
 
 /// What a hooked call answers while its type has no node.
 pub(crate) trait Absent {
@@ -538,6 +731,28 @@ impl<T> Absent for Option<T> {
 impl Absent for bool {
     fn absent() -> Self {
         false
+    }
+}
+
+impl Absent for Result<(), FrameworkError> {
+    fn absent() -> Self {
+        Ok(())
+    }
+}
+
+impl<T> Absent for Result<Option<T>, FrameworkError> {
+    fn absent() -> Self {
+        Ok(None)
+    }
+}
+
+impl Absent for () {
+    fn absent() -> Self {}
+}
+
+impl<T> Absent for Vec<T> {
+    fn absent() -> Self {
+        Vec::new()
     }
 }
 

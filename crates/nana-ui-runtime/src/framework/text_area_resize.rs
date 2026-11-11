@@ -111,7 +111,7 @@ impl AppContext {
                 area.disabled || !area.supports_vertical_resize()
             })?
         {
-            return self.end_text_area_resize(document, pointer, true);
+            return via!(self.end_text_area_resize(document, pointer, true));
         }
         let Some((_, y)) = self.world.pointer_layout_position(target, x, y) else {
             return Ok(false);

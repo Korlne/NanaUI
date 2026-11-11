@@ -55,7 +55,7 @@ pub struct FrameContext {
     /// Writes renderers queued for this frame; submitted ahead of it.
     uploads: crate::upload::FrameUploads,
     /// Raw queue operations that must follow this frame's `queue.submit`
-    /// under the same submission guard (native-export ready signals).
+    /// under the same submission-order lock (native-export ready signals).
     after_submit: Vec<Box<dyn FnOnce() + Send>>,
     on_discard: Vec<Box<dyn FnOnce() + Send>>,
     completion_resources: Vec<Box<dyn Send>>,
@@ -97,7 +97,7 @@ impl FrameContext {
     }
 
     /// Runs `hook` right after this frame's `queue.submit`, still holding the
-    /// submission guard, so a raw queue operation it performs is ordered
+    /// submission-order lock, so a raw queue operation it performs is ordered
     /// directly after the frame's commands. Dropped unrun when the frame is
     /// discarded.
     #[cfg_attr(not(all(windows, feature = "native-export")), allow(dead_code))]
@@ -175,16 +175,14 @@ impl FrameContext {
         self.retained.push((owner.clone(), key));
     }
 
-    /// Finish the encoder and submit it. Holds the submission guard only for
-    /// the submit itself.
+    /// Finish the encoder and submit it. Holds the submission-order lock only
+    /// for the submit itself.
     pub fn submit(mut self) -> GpuSubmission {
         let encoder = self.encoder.take().expect("frame encoder");
         let started = Instant::now();
         let commands = encoder.finish();
         let index = {
-            let _submission = self.gpu.lock_submission();
-            // The reconfiguration guard is shared between submitters. A
-            // separate mutex makes token order match actual queue order.
+            // Makes token order match actual queue order.
             let _order = self
                 .gpu
                 .inner

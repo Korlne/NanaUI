@@ -1727,6 +1727,17 @@ impl Queue {
             self.device
                 .last_successful_submission_index
                 .fetch_max(submit_index, Ordering::SeqCst);
+
+            // Stamp each surface this submission used, after the index above
+            // so a reconfigure that reads the stamp can wait for it.
+            for texture in surface_textures.values() {
+                if let Some(TextureInner::Surface {
+                    last_submission, ..
+                }) = texture.inner.get(&snatch_guard).maybe_valid()
+                {
+                    last_submission.fetch_max(submit_index, Ordering::Release);
+                }
+            }
         }
 
         // this will register the new submission to the life time tracker

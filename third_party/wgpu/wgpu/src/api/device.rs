@@ -730,6 +730,19 @@ impl Device {
         let cache = unsafe { self.inner.create_pipeline_cache(desc) };
         PipelineCache { inner: cache }
     }
+
+    /// Make `cache` the [`PipelineCache`] that every pipeline created on this
+    /// device without one uses, or stop using one with `None`.
+    ///
+    /// The device holds the cache weakly: it applies while the application
+    /// keeps a handle to it. A cache from another device is a validation
+    /// error. Backends without pipeline caches ignore the call.
+    ///
+    /// This is a NanaUI fork addition, not part of upstream `wgpu`.
+    pub fn set_default_pipeline_cache(&self, cache: Option<&PipelineCache>) {
+        self.inner
+            .set_default_pipeline_cache(cache.map(|cache| &cache.inner));
+    }
 }
 
 /// [`Features::EXPERIMENTAL_RAY_QUERY`] must be enabled on the device in order to call these functions.

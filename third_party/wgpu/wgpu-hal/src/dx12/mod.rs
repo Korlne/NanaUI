@@ -85,6 +85,7 @@ mod descriptor;
 mod device;
 mod device_creation;
 mod instance;
+mod pipeline_cache;
 mod pipeline_desc;
 mod sampler;
 mod shader_compilation;
@@ -615,6 +616,11 @@ struct SwapChain {
     present_mode: wgt::PresentMode,
     format: wgt::TextureFormat,
     size: wgt::Extent3d,
+    /// A fence and the value the queue signals on it right after this swap
+    /// chain's last `Present`. Reaching it means the GPU is done with every
+    /// back buffer: the work that rendered them and the presents themselves
+    /// sit before it in queue order (NanaUI fork).
+    presented: Option<(Direct3D12::ID3D12Fence, u64)>,
 }
 
 enum SurfaceTarget {
@@ -736,11 +742,6 @@ impl Drop for Event {
     }
 }
 
-/// Helper structure for waiting for GPU.
-struct Idler {
-    fence: Direct3D12::ID3D12Fence,
-}
-
 #[derive(Debug, Clone)]
 struct CommandSignatures {
     draw: Direct3D12::ID3D12CommandSignature,
@@ -764,7 +765,6 @@ unsafe impl Sync for DeviceShared {}
 pub struct Device {
     raw: Direct3D12::ID3D12Device,
     present_queue: Direct3D12::ID3D12CommandQueue,
-    idler: Idler,
     features: wgt::Features,
     shared: Arc<DeviceShared>,
     options: wgt::Dx12BackendOptions,
@@ -1350,9 +1350,21 @@ pub(super) enum CompiledShader {
     Dxc(Direct3D::Dxc::IDxcBlob),
     Fxc(Direct3D::ID3DBlob),
     Precompiled(Vec<u8>),
+    /// Bytecode a [`PipelineCache`] already held.
+    Cached(Arc<[u8]>),
 }
 
 impl CompiledShader {
+    /// The bytecode, as the pipeline cache stores it.
+    fn bytes(&self) -> &[u8] {
+        let native = self.create_native_shader();
+        if native.pShaderBytecode.is_null() {
+            return &[];
+        }
+        // SAFETY: the bytecode lives as long as `self`.
+        unsafe { core::slice::from_raw_parts(native.pShaderBytecode.cast(), native.BytecodeLength) }
+    }
+
     fn create_native_shader(&self) -> Direct3D12::D3D12_SHADER_BYTECODE {
         match self {
             CompiledShader::Dxc(shader) => Direct3D12::D3D12_SHADER_BYTECODE {
@@ -1364,6 +1376,10 @@ impl CompiledShader {
                 BytecodeLength: unsafe { shader.GetBufferSize() },
             },
             CompiledShader::Precompiled(shader) => Direct3D12::D3D12_SHADER_BYTECODE {
+                pShaderBytecode: shader.as_ptr().cast(),
+                BytecodeLength: shader.len(),
+            },
+            CompiledShader::Cached(shader) => Direct3D12::D3D12_SHADER_BYTECODE {
                 pShaderBytecode: shader.as_ptr().cast(),
                 BytecodeLength: shader.len(),
             },
@@ -1400,8 +1416,12 @@ pub struct RayTracingPipeline {}
 
 impl crate::DynRayTracingPipeline for RayTracingPipeline {}
 
+/// Compiled shader bytecode, persisted across runs through
+/// [`crate::Device::pipeline_cache_get_data`]; see the `pipeline_cache` module.
 #[derive(Debug)]
-pub struct PipelineCache;
+pub struct PipelineCache {
+    shaders: Mutex<pipeline_cache::ShaderBlobCache>,
+}
 
 impl crate::DynPipelineCache for PipelineCache {}
 
@@ -1414,6 +1434,25 @@ pub struct AccelerationStructure {
 impl crate::DynAccelerationStructure for AccelerationStructure {}
 
 impl SwapChain {
+    /// Block until the GPU is done with this swap chain's back buffers: until
+    /// the queue passes its last `Present`. Work queued after that, by other
+    /// threads or for other targets, is not waited for.
+    fn wait_for_presents(&self) -> Result<(), crate::DeviceError> {
+        let Some((fence, value)) = &self.presented else {
+            return Ok(());
+        };
+        let completed = unsafe { fence.GetCompletedValue() };
+        if completed == u64::MAX {
+            return Err(crate::DeviceError::Lost);
+        }
+        if completed < *value {
+            // A null event makes the call return once the fence reaches `value`.
+            unsafe { fence.SetEventOnCompletion(*value, Foundation::HANDLE::default()) }
+                .into_device_result("SetEventOnCompletion")?;
+        }
+        Ok(())
+    }
+
     unsafe fn release_resources(mut self) -> Dxgi::IDXGISwapChain3 {
         if let Some(mut waitable) = self.waitable.take() {
             unsafe { Foundation::HANDLE::free(&mut waitable) };
@@ -1485,10 +1524,6 @@ impl crate::Surface for Surface {
             flags |= Dxgi::DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING;
         }
 
-        // While `configure`s contract ensures that no work on the GPU's main queues
-        // are in flight, we still need to wait for the present queue to be idle.
-        unsafe { device.wait_for_present_queue_idle() }?;
-
         let non_srgb_format = auxil::dxgi::conv::map_texture_format_nosrgb(config.format);
 
         // The range for `SetMaximumFrameLatency` is 1-16 so the maximum latency requested should be 15 because we add 1.
@@ -1503,6 +1538,10 @@ impl crate::Surface for Surface {
         let swap_chain = match self.swap_chain.write().take() {
             //Note: this path doesn't properly re-initialize all of the things
             Some(sc) => {
+                // `configure`'s contract covers the work that rendered the back
+                // buffers; `ResizeBuffers` also needs the presents queued after
+                // it to be done. Only those: not the whole queue.
+                sc.wait_for_presents()?;
                 let raw = unsafe { sc.release_resources() };
                 let result = unsafe {
                     raw.ResizeBuffers(
@@ -1702,24 +1741,21 @@ impl crate::Surface for Surface {
             present_mode: config.present_mode,
             format: config.format,
             size: config.extent,
+            presented: None,
         });
 
         Ok(())
     }
 
-    unsafe fn unconfigure(&self, device: &Device) {
+    unsafe fn unconfigure(&self, _device: &Device) {
         if let Some(sc) = self.swap_chain.write().take() {
-            unsafe {
-                // While `unconfigure`s contract ensures that no work on the GPU's main queues
-                // are in flight, we still need to wait for the present queue to be idle.
-
-                // The major failure mode of this function is device loss,
-                // which if we have lost the device, we should just continue
-                // cleaning up, without error.
-                let _ = device.wait_for_present_queue_idle();
-
-                let _raw = sc.release_resources();
-            }
+            // `unconfigure`'s contract covers the work that rendered the back
+            // buffers; wait for the presents queued after it too.
+            //
+            // The major failure mode of this is device loss, which if we have
+            // lost the device, we should just continue cleaning up, without error.
+            let _ = sc.wait_for_presents();
+            let _raw = unsafe { sc.release_resources() };
         }
     }
 
@@ -1841,6 +1877,16 @@ impl crate::Queue for Queue {
         unsafe { sc.raw.Present(interval, flags) }
             .ok()
             .into_device_result("Present")?;
+
+        // Mark the end of this swap chain's queue work, so reconfiguring it
+        // waits for this point only (see `SwapChain::wait_for_presents`).
+        let value = self
+            .idle_fence_value
+            .fetch_add(1, core::sync::atomic::Ordering::Relaxed)
+            + 1;
+        unsafe { self.raw.Signal(&self.idle_fence, value) }
+            .into_device_result("Signal present fence")?;
+        sc.presented = Some((self.idle_fence.clone(), value));
 
         Ok(())
     }

@@ -2153,7 +2153,7 @@ the second write put there (`two_paints_of_one_target_before_one_submit_each_dra
 glyphs only: the run table, the presentation table and projections still call `write_buffer` directly. If position,
 colour or size changed between two draws, the first draw uses the second's values. Existing hosts all draw once and
 submit once (multiple windows are different targets), so those two tables were not moved into the ring either. The
-cost is one more copy command on a frame that writes only one small block: about 1% more instructions on `static`.
+cost is one more copy command on a frame that writes only one small block: about 1% more instructions on `static`. Replacing this path with persistently mapped buffers the GPU reads directly was measured and not done: it is under 1% of CPU in real scenes ([GPU](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/gpu.md) §7).
 
 A frame that needs to write more than 256 KiB (a long list's first frame, a whole-arena compaction) does not go into
 the ring. It builds a temporary buffer and drops it once copied. The ring does not grow with it. Instances and
@@ -2495,8 +2495,9 @@ How to read it:
   cost; `primitive_bounds` (that is, one `draw_primitive` per primitive) is, and both versions pay it. Two
   spellings of two functions walking the same tree for one point is not worth it.
 
-  What is left: the integer-hash switch has not been made in `nana-ui-runtime` (`store.rs` 23 sites, `framework.rs`
-  18, `layout_engine.rs` 16 …). And the per-primitive path (`draw_primitive` → `primitive_bounds`) is now the big
+  What is left: the integer-hash switch in `nana-ui-runtime` was tried, did not measure and was reverted (the
+  hashbrown tables in `store.rs` and `layout_engine.rs` already hash with foldhash, not SipHash; see the paragraph
+  after "The frame after one row of a long list changes" in `resource-budgets.md`). And the per-primitive path (`draw_primitive` → `primitive_bounds`) is now the big
   cost on both flush and batch: the delta for every descendant under one changed ancestor is mathematically the
   same (`A_new ∘ L ∘ L⁻¹ ∘ A_old⁻¹`), so one copy per ancestor would be enough — but that first requires proving
   "the chain below did not move". Further down is retaining the whole frame's draw list (damage tracking), which is
