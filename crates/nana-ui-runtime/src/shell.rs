@@ -445,6 +445,9 @@ impl AppTitleBar {
 
 impl ComponentView for AppTitleBar {
     const BEHAVIOR: crate::TypeBehavior<Self> = crate::TypeBehavior {
+        hooks: Some(|hooks| {
+            crate::framework::routes::title_bar(hooks);
+        }),
         slot_assembler: Some(AppContext::assemble_app_title_bar),
         ..crate::TypeBehavior::NONE
     };

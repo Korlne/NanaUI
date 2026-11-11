@@ -228,7 +228,10 @@ impl Surface {
                 let present = presentation.as_mut().unwrap();
                 let texture = resource::Texture::new(
                     &device,
-                    resource::TextureInner::Surface { raw: ast.texture },
+                    resource::TextureInner::Surface {
+                        raw: ast.texture,
+                        last_submission: Arc::clone(&self.last_submission),
+                    },
                     hal_usage,
                     &texture_desc,
                     format_features,
@@ -346,7 +349,7 @@ impl Queue {
 
         let result = match inner {
             None => return Err(SurfaceError::TextureDestroyed),
-            Some(resource::TextureInner::Surface { raw }) => {
+            Some(resource::TextureInner::Surface { raw, .. }) => {
                 let raw_surface = surface.raw(device.backend()).unwrap();
                 let raw_queue = self.raw();
                 // [`wgpu_hal::Queue::present`] requires the queue to be synchronized with submit calls and
@@ -405,7 +408,7 @@ impl Surface {
 
         match inner {
             None => return Err(SurfaceError::TextureDestroyed),
-            Some(resource::TextureInner::Surface { raw }) => {
+            Some(resource::TextureInner::Surface { raw, .. }) => {
                 let raw_surface = self.raw(device.backend()).unwrap();
                 unsafe { raw_surface.discard_texture(raw) };
             }

@@ -381,7 +381,10 @@ impl ComponentView for TreeView {
     const BEHAVIOR: crate::TypeBehavior<Self> = crate::TypeBehavior {
         activate_at: Some(crate::AppContext::activate_tree_at),
         assembler: Some(AppContext::assemble_tree_rename),
-        hooks: Some(|hooks| hooks.tree = Some(&TREE_HOOKS)),
+        hooks: Some(|hooks| {
+            hooks.tree = Some(&TREE_HOOKS);
+            crate::framework::routes::tree_view(hooks);
+        }),
         pointer: Some(&TREE_POINTER),
         ..crate::TypeBehavior::NONE
     };

@@ -109,6 +109,19 @@ static GLOBAL: Counting = Counting;
 /// the middle row's sixth cell's leaf (its label on a controls page), which
 /// `edits` changes.
 fn nana_page(cx: &mut AppContext, document: DocumentId, rows: usize, cells: usize) -> StableNodeId {
+    // `BURN=n`: n nodes created and removed first, the ids a session that
+    // has been running a while has behind it.
+    if let Some(burn) = std::env::var("BURN")
+        .ok()
+        .and_then(|burn| burn.parse::<usize>().ok())
+    {
+        for _ in 0..burn {
+            let node = cx
+                .create_detached_component(document, Stack::row(0.0))
+                .unwrap();
+            cx.remove_view(node).unwrap();
+        }
+    }
     let mut target = None;
     // `SCROLLED=1`: the rows stand in a column inside a scroller a window
     // tall, which `edits` scrolls before it edits.
@@ -617,9 +630,7 @@ fn nana_insert(rows: usize, size: usize, shape: &str, runs: usize) -> (f64, f64)
                 runtime
                     .context_mut()
                     .mount_view(target, move || {
-                        (0..size)
-                            .map(|_| column().into_any())
-                            .collect::<Vec<_>>()
+                        (0..size).map(|_| column().into_any()).collect::<Vec<_>>()
                     })
                     .unwrap();
             }

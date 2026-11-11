@@ -97,6 +97,20 @@ quad、mesh/path 与 text（含双源混合的子像素程序）三个家族的�
 - 每个家族记录 DXIL 是从哪段程序（设备实际拿到的、去掉注释的 WGSL 的哈希）和哪个资源布局编出来的；不一致、找不到对应阶段（入口点加管线常量），或驱动拒绝时，该家族照常编译 WGSL。测试同时锁定 wgpu 版本。
 - 着色器或布局改了之后重新生成：`NANA_DXC_PATH=<dxcompiler.dll> cargo test -p nana-ui --lib --features gpu,hosted,full -- --ignored regenerate_precompiled_dxil --test-threads=1`。它按 wgpu 在 DX12 上的方式逐家族建管线、截下 naga 写出的 HLSL、用 DXC 编译并经 DXIL 校验器检查，再写出 `generated.rs`；`precompiled_families_paint_what_their_programs_paint`（`--ignored`，需要 DX12）确认 DXIL 与 WGSL 画出的像素一致。
 
+### 跨启动的着色器与管线缓存
+
+painter（以及设备上任何别的东西）建的每条管线都经过设备的默认管线缓存（[GPU · 跨启动的着色器与管线缓存](https://github.com/sena-nana/NanaUI/blob/main/docs/reference/gpu.md#5-跨启动的着色器与管线缓存)）。用 `NanaApplicationBuilder::pipeline_cache(store)` 交出存储后，`nana-startup-gpu` 线程在 painter 编译前恢复缓存、建完后保存；DX12 上热启动时缓存里有的阶段都不再经过 DXC/FXC。用 `startup-splash --probe --no-splash --app-ms=100 [--pipeline-cache=DIR]` 实测（RTX 5060 Ti，release，可执行文件旁放 DXC `10.0.26100`，`painter_build_ms`；构建后第一次运行偏慢，未计入）：
+
+| 后端与路径 | 不用缓存 | 冷（空缓存，随后保存） | 热 |
+| --- | --- | --- | --- |
+| DX12，quad/mesh/text 预编译 | `69–70 ms` | `70 ms` | `23–38 ms`（缓存文件 `93 KB`） |
+| DX12，全部 WGSL（为测量关掉预编译路径） | `1.56–1.69 s` | `1.80 s` | `31–33 ms`（`264 KB`） |
+| Vulkan | `43–46 ms` | `46 ms` | `31–35 ms`（`617 KB`） |
+
+热启动时间包含恢复与保存：读写文件都在计时的构建之内。DXC 保存的字节在 FXC 下（`WGPU_DX12_COMPILER=fxc`）载入时被校验键丢弃：那次启动全部重新编译（FXC、无预编译 DXIL 时 `3.1 s`），并以 FXC 字节码覆盖保存。
+
+**随包附带的种子缓存能否取代 `scene_paint::precompiled`？** 性能上可以：全部 WGSL 的 painter 在热缓存下（`31–33 ms`）与预编译 DXIL 加缓存（`23–38 ms`）只差几毫秒，剩下的是 naga 为各阶段写 HLSL，缓存键要用它。覆盖面上，目前单靠它不行。缓存条目只对产生它的编译器（种类、版本与 DXC 提交）以及 naga 当时的目标 shader model 命中，而后者取适配器与编译器上限中较低的那个；所以种子得随包附带 `dxcompiler.dll`，并为所支持适配器报告的每个 shader model 各存一份，退回 FXC（没有 `dxcompiler.dll`）时全部不命中；预编译 DXIL 是 SM 6.0，任何编译器下都能加载。等 NanaUI 固定框架着色器的 shader model 并随包附带生成种子时用的 DXC 之后，像 `regenerate_precompiled_dxil` 那样生成的种子就能取代 passthrough 路径；在那之前保留预编译路径。
+
 ### 按入口点裁剪的着色器 IR
 
 所有平台上，框架的场景程序（quad、mesh、text、icon、chart、backdrop、dest、HostTexture、运动求值，以及表面/文字材质程序）都由 `scene_paint::wgsl::Program` 交给设备：程序在第一次要用时解析、校验一次，每个入口点各自成为一个只含它能到达的函数、类型与常量的 naga 模块（`naga::compact`），以 `ShaderSource::Naga` 交给 wgpu。共用入口点的管线共用模块；设备只校验裁剪后的 IR；wgpu-hal 不再为每个管线阶段克隆、裁剪并重新校验整个模块；每条管线只留着自己阶段的代码（Metal 按管线生成 MSL，模块要一直留着）。例如 blit 程序有 39 个入口点、658 个表达式，一个阶段只带 5–424 个；mesh 一个阶段 53–737 个（整个程序 1 518 个），chart 411–1 282 个（2 593 个）。切下的模块不再声明它用不到的覆盖常量，管线只设置该阶段仍声明的常量（`Stage::constants`）。程序在这里解析或校验失败时（框架自己的不会，测试逐个编译）整体以 WGSL 交给设备，由设备照旧报错。窗口输出、颜色转换、默认 GpuView 与原生内容占位这几处小程序也经由 `Program` 交给设备。

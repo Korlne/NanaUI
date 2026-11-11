@@ -24,6 +24,8 @@
 //! --composition             ask for a compositor-capable backend (DX12 and
 //!                           DirectComposition on Windows), as overlay apps do
 //! --probe                   exit after the handoff and check the record
+//! --pipeline-cache=DIR      keep the GPU shader and pipeline cache in DIR
+//!                           between runs (one file per cache key)
 //! ```
 //!
 //! The host's fault injection applies too: `NANA_STARTUP_GPU_DELAY_MS=N`
@@ -60,6 +62,7 @@ struct Options {
     hidden: bool,
     composition: bool,
     probe: bool,
+    pipeline_cache: Option<std::path::PathBuf>,
 }
 
 fn options() -> Options {
@@ -101,6 +104,7 @@ fn options() -> Options {
             "--hidden" => options.hidden = true,
             "--composition" => options.composition = true,
             "--probe" => options.probe = true,
+            "--pipeline-cache" => options.pipeline_cache = Some(value.into()),
             other => panic!("unknown argument {other}"),
         }
     }
@@ -445,6 +449,31 @@ fn report(status: &StartupStatus, idle_frames: u64) {
     }
 }
 
+/// The application's side of the GPU pipeline cache: one file per key in a
+/// directory it chose. Replaced through a temporary file, so a crash mid-write
+/// leaves the previous cache (or none), never half of one.
+struct DirectoryPipelineCache(std::path::PathBuf);
+
+impl DirectoryPipelineCache {
+    fn path(&self, key: &nana_ui::PipelineCacheKey) -> std::path::PathBuf {
+        self.0.join(format!("{}.nanapc", key.file_stem()))
+    }
+}
+
+impl nana_ui::PipelineCacheStore for DirectoryPipelineCache {
+    fn load(&self, key: &nana_ui::PipelineCacheKey) -> Option<Vec<u8>> {
+        std::fs::read(self.path(key)).ok()
+    }
+
+    fn save(&self, key: &nana_ui::PipelineCacheKey, bytes: &[u8]) {
+        let path = self.path(key);
+        let temporary = path.with_extension("nanapc.tmp");
+        let _ = std::fs::create_dir_all(&self.0)
+            .and_then(|()| std::fs::write(&temporary, bytes))
+            .and_then(|()| std::fs::rename(&temporary, &path));
+    }
+}
+
 fn main() {
     let options = with_options(Options::clone);
     // With the identity marker, so `nana-packager` can package the example.
@@ -473,6 +502,9 @@ fn main() {
             nana_ui::ResourcePackOptions::new()
                 .loose_root(concat!(env!("CARGO_MANIFEST_DIR"), "/examples/assets")),
         );
+    }
+    if let Some(directory) = options.pipeline_cache.clone() {
+        builder = builder.pipeline_cache(std::sync::Arc::new(DirectoryPipelineCache(directory)));
     }
     let mut window = WindowDescriptor::new("NanaUI Startup").initial_size(640.0, 420.0);
     window.visible = !options.hidden;

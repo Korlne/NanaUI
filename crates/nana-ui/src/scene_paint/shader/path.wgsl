@@ -118,7 +118,9 @@ fn gradient_color(index: u32, p: vec2<f32>) -> vec4<f32> {
     let count = min(g.header.z, GRADIENT_STOPS);
     var srgb = g.colors[0];
     if t >= gradient_offset(g, 0u) {
-        srgb = g.colors[count - 1u];
+        // A gradient with no stops packs `count == 0`; its colours are all
+        // zero, so stop 0 stands in for the missing last one.
+        srgb = g.colors[max(count, 1u) - 1u];
         for (var i = 1u; i < count; i = i + 1u) {
             let o1 = gradient_offset(g, i);
             if t <= o1 {

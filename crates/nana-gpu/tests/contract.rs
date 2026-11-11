@@ -239,33 +239,6 @@ fn a_dropped_frame_rolls_back_what_it_recorded_and_a_submitted_one_settles() {
 }
 
 #[test]
-fn submission_waits_while_a_surface_reconfigures() {
-    let gpu = context();
-    let (started, waiting) = mpsc::channel();
-    let (submitted, submissions) = mpsc::channel();
-    let writer = gpu.clone();
-    let gate = __framework::lock_reconfigure(&writer);
-    let producer = {
-        let gpu = gpu.clone();
-        std::thread::spawn(move || {
-            started.send(()).unwrap();
-            gpu.begin_frame("producer").submit();
-            submitted.send(()).unwrap();
-        })
-    };
-    waiting.recv_timeout(Duration::from_secs(5)).unwrap();
-    assert!(
-        submissions
-            .recv_timeout(Duration::from_millis(200))
-            .is_err(),
-        "a submit must wait while the surface is reconfiguring"
-    );
-    drop(gate);
-    submissions.recv_timeout(Duration::from_secs(5)).unwrap();
-    producer.join().unwrap();
-}
-
-#[test]
 fn a_loss_marked_by_the_host_is_sticky_and_reported() {
     let gpu = context();
     assert!(!gpu.is_lost());

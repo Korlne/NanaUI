@@ -1159,7 +1159,7 @@ impl AppContext {
         // A modal surface declared open opens once it is in the tree, as
         // when a block built detached is first inserted.
         if self.world.is_mounted(id) {
-            self.sync_modal_open_at(id)?;
+            via!(self.sync_modal_open_at(id))?;
         }
         // Parking cancels a component's own timeline; remounting restarts it.
         // Projections only start timelines and surface motion for mounted
@@ -1232,6 +1232,18 @@ impl AppContext {
         })
     }
 
+    /// An icon button keeps whether its tooltip is showing: it stands in
+    /// for the label the button lacks.
+    pub(crate) fn note_icon_button_tooltip(
+        &mut self,
+        target: StableNodeId,
+        open: bool,
+    ) -> Result<(), FrameworkError> {
+        self.update_component(Entity::<IconButton>::from_stable_id(target), |button, _| {
+            button.tooltip_open = open;
+        })
+    }
+
     fn set_tooltip_visible(
         &mut self,
         target: StableNodeId,
@@ -1242,9 +1254,7 @@ impl AppContext {
             .get(&target)
             .is_some_and(|view| view.is::<IconButton>())
         {
-            self.update_component(Entity::<IconButton>::from_stable_id(target), |button, _| {
-                button.tooltip_open = overlay.is_some();
-            })?;
+            via!(self.note_icon_button_tooltip(target, overlay.is_some()))?;
         }
         let host = self
             .component_lifecycle
@@ -1447,7 +1457,7 @@ impl AppContext {
             .map(|(id, _)| *id)
             .collect::<Vec<_>>();
         for id in others {
-            self.close_hover_card(id)?;
+            via!(self.close_hover_card(id))?;
         }
         let Some(lifecycle) = self.component_lifecycle.hover_cards.get_mut(&target) else {
             return Ok(());
@@ -1455,7 +1465,7 @@ impl AppContext {
         lifecycle.close_at = None;
         if delay == 0 {
             lifecycle.show_at = None;
-            self.open_hover_card(target)?;
+            via!(self.open_hover_card(target))?;
             return Ok(());
         }
         lifecycle.show_at = now.checked_add(Duration::from_millis(delay));

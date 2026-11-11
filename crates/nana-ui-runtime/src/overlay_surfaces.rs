@@ -363,6 +363,9 @@ impl ModalSurface for ConfirmDialog {
 
 impl ComponentView for ConfirmDialog {
     const BEHAVIOR: crate::TypeBehavior<Self> = crate::TypeBehavior {
+        hooks: Some(|hooks| {
+            crate::framework::routes::modal(hooks);
+        }),
         slot_assembler: Some(crate::AppContext::assemble_confirm_dialog),
         lifecycle: Some(crate::AppContext::sync_modal_open::<Self>),
         ..crate::TypeBehavior::NONE
@@ -486,6 +489,9 @@ impl ModalSurface for Drawer {
 
 impl ComponentView for Drawer {
     const BEHAVIOR: crate::TypeBehavior<Self> = crate::TypeBehavior {
+        hooks: Some(|hooks| {
+            crate::framework::routes::modal(hooks);
+        }),
         slot_assembler: Some(crate::AppContext::assemble_modal_slots::<Self>),
         lifecycle: Some(crate::AppContext::sync_modal_open::<Self>),
         ..crate::TypeBehavior::NONE

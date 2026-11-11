@@ -454,7 +454,6 @@ impl HostedGpuSurface {
     }
 
     fn reconfigure(&mut self, gpu: &GpuContext) {
-        let _gate = __framework::lock_reconfigure(gpu);
         self.surface
             .configure(__framework::device(gpu), &self.configuration);
         self.needs_target_commit = true;
@@ -1128,7 +1127,6 @@ fn configure_surface(
         view_formats: vec![],
         desired_maximum_frame_latency: 1,
     };
-    let _gate = __framework::lock_reconfigure(gpu);
     surface.configure(__framework::device(gpu), &configuration);
     target.commit()?;
     crate::host_diagnostics::record_surface_hdr(profile, &hdr_info);
@@ -1477,7 +1475,10 @@ fn shared_device_features(available: wgpu::Features, requested: wgpu::Features) 
         & (requested
             | wgpu::Features::DUAL_SOURCE_BLENDING
             | wgpu::Features::TEXTURE_COMPRESSION_BC
-            | wgpu::Features::TEXTURE_COMPRESSION_ASTC)
+            | wgpu::Features::TEXTURE_COMPRESSION_ASTC
+            // The device's shader and pipeline cache, which the host may
+            // persist (`nana_gpu::GpuContext::load_pipeline_cache`).
+            | wgpu::Features::PIPELINE_CACHE)
 }
 
 /// On DX12, passthrough shaders: the framework's own pipeline families then
@@ -1803,12 +1804,15 @@ mod tests {
     #[test]
     fn shared_device_enables_only_supported_compression_and_requested_features() {
         use wgpu::Features as F;
-        let optional =
-            F::DUAL_SOURCE_BLENDING | F::TEXTURE_COMPRESSION_BC | F::TEXTURE_COMPRESSION_ASTC;
+        let optional = F::DUAL_SOURCE_BLENDING
+            | F::TEXTURE_COMPRESSION_BC
+            | F::TEXTURE_COMPRESSION_ASTC
+            | F::PIPELINE_CACHE;
         for available in [
             F::empty(),
             F::TEXTURE_COMPRESSION_BC,
             F::TEXTURE_COMPRESSION_ASTC,
+            F::PIPELINE_CACHE,
             optional,
         ] {
             assert_eq!(

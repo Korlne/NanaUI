@@ -315,6 +315,9 @@ impl CurveField {
 
 impl ComponentView for CurveField {
     const BEHAVIOR: crate::TypeBehavior<Self> = crate::TypeBehavior {
+        hooks: Some(|hooks| {
+            crate::framework::routes::curve_field(hooks);
+        }),
         lifecycle: Some(crate::AppContext::sync_curve_field),
         ..crate::TypeBehavior::NONE
     };

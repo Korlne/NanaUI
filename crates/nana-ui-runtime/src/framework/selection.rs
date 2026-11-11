@@ -642,6 +642,62 @@ impl AppContext {
         Ok(committed)
     }
 
+    /// Focus moving to `target`, an option of a segmented control or a tab
+    /// strip: the control remembers it as its roving focus target.
+    pub(crate) fn focus_segmented_option(
+        &mut self,
+        document: DocumentId,
+        target: StableNodeId,
+    ) -> Result<bool, FrameworkError> {
+        let Some(parent) = self.world.parent_id(target) else {
+            return Ok(false);
+        };
+        if self
+            .views
+            .get(&parent)
+            .is_some_and(|view| view.is::<SegmentedControl>())
+        {
+            let control = Entity::<SegmentedControl>::from_stable_id(parent);
+            let mut next = self.read(control, Clone::clone)?;
+            let target_changed = next.focus_target != Some(target);
+            let focus_changed = self.world.focused(document) != Some(target);
+            if !target_changed && !focus_changed {
+                return Ok(false);
+            }
+            next.focus_target = Some(target);
+            let mut mutations = MutationQueue::new();
+            next.project(parent, &self.world, &mut mutations);
+            mutations.request_focus(document, Some(target));
+            self.commit_mutations(mutations)?;
+            self.views.insert(parent, Box::new(next));
+            return Ok(true);
+        }
+        if self
+            .views
+            .get(&parent)
+            .is_some_and(|view| view.is::<Tabs>())
+        {
+            let tabs = Entity::<Tabs>::from_stable_id(parent);
+            let Some(value) = self.tabs_option_value(tabs, target)? else {
+                return Ok(false);
+            };
+            let mut next = self.read(tabs, Clone::clone)?;
+            let target_changed = next.focus.as_ref() != Some(&value);
+            let focus_changed = self.world.focused(document) != Some(target);
+            if !target_changed && !focus_changed {
+                return Ok(false);
+            }
+            next.focus = Some(value);
+            let mut mutations = MutationQueue::new();
+            next.project(parent, &self.world, &mut mutations);
+            mutations.request_focus(document, Some(target));
+            self.commit_mutations(mutations)?;
+            self.views.insert(parent, Box::new(next));
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
     /// Handle horizontal roving focus before range/table/text key routing.
     pub fn navigate_focused_segmented(
         &mut self,
@@ -698,6 +754,12 @@ impl AppContext {
         {
             return true;
         }
+        via!(self.segmented_option_is_tab_stop(id))
+    }
+
+    /// Whether `id`, an option of a segmented control or a tab strip, is
+    /// the one its control keeps in the tab order.
+    pub(crate) fn segmented_option_is_tab_stop(&self, id: StableNodeId) -> bool {
         let Some(parent) = self.world.parent_id(id) else {
             return false;
         };

@@ -169,5 +169,5 @@ Stack the four flows above and you see the same five-layer funnel across NanaUI:
 ## Read next
 
 - [Retained tree: UiWorld](/learn/runtime-tree) · [Scene extraction](/learn/scene-extraction): the internals of the convergence point and drawing-graph projection
-- [GPU and frame lifecycle](/learn/gpu-frame): `FrameContext`, the upload ring, the submission guard and the 35-step redraw total order
+- [GPU and frame lifecycle](/learn/gpu-frame): `FrameContext`, the upload ring, submission order and the 35-step redraw total order
 - [How it works (reference)](/reference/how-it-works): the same runtime model for application developers

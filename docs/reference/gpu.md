@@ -46,6 +46,77 @@ Surface 的 HDR 能力由 `SurfaceCapabilities::format_capabilities` 决定，�
 - **目标附件与管线复用**：UI-only 与 GPU 节点混排之间切换时，只增加或释放 4x MSAA 附件，保留同尺寸、同格式及同 presentation profile 的线性颜色目标、绑定和组缓存。缩放必须重建尺寸相关纹理，但设备管线缓存命中时不再创建着色器模块或管线布局，避免多目标首帧重复解析 WGSL。改变尺寸、输出格式或 presentation profile 仍按原合同重建目标。
 
 
+### 5. 跨启动的着色器与管线缓存
+
+设备带 `PIPELINE_CACHE`（宿主设备在适配器提供时都会请求）的每个 `GpuContext` 自有一个管线缓存，并通过 fork 的 `wgpu::Device::set_default_pipeline_cache` 设为设备默认缓存。所有不指名缓存创建的管线都经过它——各场景家族、表面与文字材质、图表程序，以及在原始设备上自建管线的渲染器。DX12 上它存放编译好的着色器字节码，缓存里有的阶段不再交给 DXC/FXC 编译 naga 写出的 HLSL；Vulkan 上它就是驱动的 `VkPipelineCache`。Metal 与 GL 没有（`pipeline_cache_key()` 为 `None`）。
+
+框架只交出、收回字节，放在哪里由宿主决定：
+
+- `GpuContext::pipeline_cache_key()` 说明字节属于谁；`file_stem()` 为 `dx12`（字节码与适配器无关）或 `vulkan-<vendor>-<device>`。
+- `load_pipeline_cache(&bytes)` 在建 painter 之前替换缓存；`pipeline_cache_data()` 返回要保存的字节。`restore_pipeline_cache` / `persist_pipeline_cache` 经由 `PipelineCacheStore`（`load` / `save`）做同样的事。
+- 宿主应用用 `NanaApplicationBuilder::pipeline_cache(store)`（或 `StartupOptions::pipeline_cache`）交出存储：`nana-startup-gpu` 线程在 painter 编译前恢复、建完后保存。设备丢失后替换的新设备从空缓存开始。
+- 保存的字节在 wgpu 自己的头部与校验键之外再包一层信封（魔数、键、长度、校验和），DX12 载荷逐条校验。不是缓存、属于别的键、被截断或损坏、或被后端拒绝的字节一律拒收（`PipelineCacheLoad::Refused`），设备照常编译，就像什么都没载入；不会产生后端校验错误。驱动更新会在 wgpu/驱动内部使 Vulkan 数据失效，DXC 更新经校验键使 DX12 数据失效，两者都静默重编。
+
+### 6. 实测：wgpu-core 校验占比与输入到呈现延迟（2026-11-11）
+
+`third_party/wgpu` 有两项 fork 改动等实测后再定：(a) 让可信的框架 pass 跳过 wgpu-core 的逐 draw 校验与资源跟踪；(b) 基于 frame-latency waitable 的帧节奏（frame pacing）。测量机器为 Windows 11、RTX 5060 Ti、60 Hz 显示器，release 构建并设 `CARGO_PROFILE_RELEASE_DEBUG=limited`。探针只是测量工具（示例程序和脚本），产品帧路径上没有新增任何代码。
+
+**Painter CPU。** `stack-sampler` 每 2 ms 挂起 bench 最忙的线程，持续 8 s；每次只读一次寄存器、拷一次栈（每样本 25–37 µs），再用 dbghelp 遍历这份拷贝（含内联帧）。`perf/stack_attribution.py` 把每个样本记到最靠叶端、有明确归属的帧上（`alloc`/`core`/堆/`memcpy` 帧记给它们的调用者）。“阻塞”指样本落在内核等待里。每帧 CPU = 同一窗口内线程 CPU 时间 ÷ 帧数。“回放内 core”指 `encode_render_pass` 下 wgpu-core 自身的帧：每条录下的 draw 和 `set_*` 都在这里校验、跟踪并回放。它是跳过校验最多能省下的部分，因为其中还有必须保留的簿记。
+
+| 场景 | 后端 | 每帧 draw | 每帧 CPU µs | 阻塞 | NanaUI | wgpu-core | hal + 驱动 | 回放内 core |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `ui-dense-2k` | DX12 | 4 | 275 | 91% | 10.0% | 13.3% | 70.5% | 11.9 µs |
+| `host-textures-64` | DX12 | 68 | 1405 | 32% | 6.4% | 12.2% | 76.5% | 110 µs |
+| `shader-nodes-256` | DX12 | 14 | 247 | 86% | 33.4% | 11.6% | 50.5% | 13.4 µs |
+| `text-paint-color` | DX12 | 3 | 3584 | 0% | 93.4% | 0.8% | 5.3% | 10.9 µs |
+| `text-constraint-resize` | DX12 | 2 | 19584 | 0% | 96.1% | 0.5% | 2.1% | 35 µs |
+| `ui-dense-2k` | Vulkan | 4 | 104 | 90% | 14.4% | 19.0% | 62.5% | 8.7 µs |
+| `host-textures-64` | Vulkan | 68 | 1322 | 32% | 8.3% | 14.2% | 74.8% | 117 µs |
+| `shader-nodes-256` | Vulkan | 14 | 182 | 84% | 36.1% | 11.1% | 50.0% | 9.5 µs |
+| `text-paint-color` | Vulkan | 3 | 3918 | 0% | 93.5% | 1.2% | 4.9% | 19.9 µs |
+| `text-constraint-resize` | Vulkan | 2 | 21690 | 0% | 97.2% | 0.5% | 1.4% | 22.1 µs |
+
+占比以非阻塞样本为分母。其余为 `wgpu` 前端（≤1.3%）和 OS/其他帧。
+
+- Painter 把 2,000 个节点合成 4 次 draw，逐 draw 校验几乎没有可放大的对象。UI 场景受 GPU 限制：主线程在 `GpuContext::begin_frame` 里等帧槽（`Device::maintain`）。
+- `host-textures-64` 是“大量小 pass”的情形（bench 自己的 64 个 producer pass 加上 UI pass），开销在驱动。其中 25% 是 bench 自己的 `queue.write_buffer`。在 `command_encoder_finish` 内部，42% 是 wgpu-core 为每个 pass 新开一条 hal 命令列表（`InnerCommandEncoder::open_pass` → `begin_encoding`，DX12 每帧 290 µs，Vulkan 528 µs）。`finish` 里只有 19% 是 wgpu-core 自身代码。
+- NanaUI 自身的开销按 CPU 的包含式占比统计：文字在 `ui-dense-2k` 占 3.5%，在 `text-paint-color` 占 57%（主要是 `RuntimeDocument::flush`，painter 占 9.6%），在 `text-constraint-resize` 占 84%。图标在 `ui-dense-2k` 占 0.5%。`gpu-scene-*` 场景都不画矢量路径，所以这次测量没有覆盖路径的开销。
+
+**(a) 结论：不做。** 跳过校验，普通场景每帧最多省 9–35 µs，65 个 pass 的合成场景约省 110–117 µs。在文字为主的帧里不到 CPU 的 1%，这类帧 93–97% 是 NanaUI 自身的工作。只有当真实场景每帧出现数百个 draw 或 pass 时才值得重看；即便那样，逐 pass 开命令列表才是更大的目标。
+
+**输入到呈现延迟。** `input-latency-probe` 打开一个普通的 hosted 窗口（Mailbox，`desired_maximum_frame_latency` 为 1，wgpu 默认的 `Dx12UseFrameLatencyWaitableObject::Wait`）。驱动线程每隔随机 120–250 ms 投递一次 `WM_LBUTTONDOWN`，每次按下让窗口换色。时间戳全部取 QPC：`post` 在 `PostMessageW` 之前；`input` 在 `RuntimeProgram::input_event` 里（降级和路由之后）；`prepare` 和 `presented` 在帧钩子里（`present` 返回之后，并附上宿主各阶段 gauge）；`screen` 是 Desktop Duplication 第一次出现新颜色的合成桌面帧的 `LastPresentTime`。wgpu 没有为 swapchain 暴露 `GetFrameStatistics`，所以用 DWM 的呈现时间代替 DXGI 帧统计。DWM 把多次更新折进同一帧的样本已剔除。下表单位都是 ms，每行 n = 161–297。
+
+| 窗口 | 后端 | post→input | input→prepare | prepare→presented | presented→screen | **post→screen p50 / p90 / p99** | `acquire` p50 |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 空闲（按需） | DX12 | 0.37 | 0.19 | 0.88 | 7.01 | **8.5 / 12.8 / 15.9** | 0.024 |
+| 空闲（按需） | Vulkan | 0.37 | 0.20 | 0.75 | 5.55 | **7.0 / 11.0 / 15.2** | 0.039 |
+| 持续 60 fps | DX12 | 0.46 | 0.12 | 15.44 | 16.32 | **32.4 / 38.7 / 40.3** | 14.64 |
+| 持续 60 fps | Vulkan | 0.34 | 0.14 | 0.56 | 5.48 | **6.6 / 10.1 / 13.4** | 0.029 |
+| 持续 60，waitable `DontWait`（对照） | DX12 | 0.33 | 0.12 | 0.69 | 55.66 | **59.3 / 68.1 / 74.1** | 0.019 |
+| 持续 60，waitable `None`（对照） | DX12 | 0.34 | 0.12 | 0.64 | 53.55 | **56.5 / 66.7 / 72.2** | 0.019 |
+
+除 post→screen 外，各格都是 p50。对照两行来自一个临时、未提交的补丁：在 `hosted_context::instance_descriptor` 里按 `WGPU_DX12_USE_FRAME_LATENCY_WAITABLE_OBJECT` 设置 `backend_options.dx12.latency_waitable_object`。
+
+- 空闲 UI 是 NanaUI 的大多数帧：输入 p50 约 8.5 ms（DX12）或 7 ms（Vulkan）上屏。其中从投递到呈现的 NanaUI 部分约 1.4 ms，约 82% 是 DWM 等下一个 60 Hz vblank 再合成。帧槽（`reserve` 0.004 ms）、swapchain 和 waitable 都没有增加延迟。
+- 会排队的是持续重绘的 DX12 窗口。帧已经应用了输入之后，`acquire` 还要在 frame-latency waitable 上阻塞 14.6 ms，呈现出的帧随后又要再等一个刷新周期才被 DWM 合成。waitable 本身不能去掉：关掉它，DXGI 会排约三帧，p50 升到 56–59 ms。同一台机器上 Vulkan 不阻塞（6.6 ms）。
+
+**(b) 结论：DX12 上做，范围限于持续重绘的窗口。** 不是去掉等待，而是挪位置：在帧开头、取输入和准备帧之前等 waitable，而不是在 `get_current_texture` 里等。wgpu 已经创建了这个句柄（`Dx12UseFrameLatencyWaitableObject::DontWait`，hal 的 `dx12::Surface::waitable_handle()`），fork 只需加一个让宿主能等它的增量接口。下面是估算，不是测量值：在等待期间到达的输入仍要等完剩下的部分，所以 p50 预计能省下 14.6 ms 阻塞的一半左右，约 32 → 25 ms。要接近 Vulkan 的约 7 ms，还需要对齐相位（刚好在 DWM 合成前呈现）。空闲的按需 UI 没有收益。Metal drawable 时序没有测（没有 macOS 主机），继续搁置。
+
+命令（在仓库根目录执行，S 为临时目录）：
+
+```sh
+export CARGO_PROFILE_RELEASE_DEBUG=limited
+cargo build -j 12 --release -p nana-ui --bin nana-gpu-scene-benchmark --features gpu
+cargo build -j 12 --release -p nana-ui --example stack-sampler --example input-latency-probe --features hosted,bundled-fonts
+# 每个后端（dx12 | vulkan）和场景各跑一次
+WGPU_BACKEND=dx12 target/release/examples/stack-sampler.exe --delay-ms 3000 --duration-ms 8000 --interval-us 2000 \
+  --out $S/dx12-ui-dense-2k.folded -- target/release/nana-gpu-scene-benchmark.exe \
+  --scenario perf/scenarios/gpu-scene-ui-dense-2k.json --sample-seconds 12 --output $S/dx12-ui-dense-2k.bench.json
+python perf/stack_attribution.py $S/dx12-ui-dense-2k.folded            # 输出表格；--json 输出汇总
+WGPU_BACKEND=dx12 target/release/examples/input-latency-probe.exe --clicks 300 --output $S/lat-dx12.json
+WGPU_BACKEND=dx12 target/release/examples/input-latency-probe.exe --clicks 300 --continuous 60 --output $S/lat-dx12-c60.json
+```
+
 ## 挂载宿主纹理（`HostTexture` + `GpuTextureView`）
 
 着色器输出、预览视口、离屏渲染纹理与普通按钮一样，是界面树上占据布局、受裁剪、可命中的节点。首次接入请使用默认路径：把画面画到可采样纹理上，在树上挂载 `GpuTextureView`，并用同一个字符串槽位名在 `host_textures()` 中登记。
@@ -134,8 +205,8 @@ fn rebuild_gpu(&mut self, context: &RuntimeProgramContext<Self::Message>) {}
 
 当自定义渲染器确实需要访问底层原生 WGPU 对象时，显式启用 `wgpu-interop` feature（提供 `GpuContext::from_wgpu` / `wgpu()`、`FrameContext::wgpu_encoder()`、`GpuTexture::from_wgpu` / `wgpu_view()`、`ScenePass::wgpu()` 等，交出的是合同背后的**同一个**设备与编码器）。框架内部 crate（`nana-ui`、`nana-frame-exchange`、`nana-ui-devtools`）则通过隐藏的 `nana_gpu::__framework` 访问后端，由 `scripts/check-engine-boundary.py` 在 CI 中强制把关。
 
-::: warning 提交守卫不可重入
-窗口缩放执行 `Surface::configure` 时会等待 GPU 空闲；若其他线程同时提交队列会导致 `GpuWaitTimeout`。因此通过 `wgpu-interop` 直接调用裸 `queue.submit` / `write_texture` / `write_buffer` 时，必须持有 `gpu.wgpu().lock_submission()` 读锁，且**严禁跨越 `device.poll(Wait)`、休眠或 Surface 操作持有该锁**。`FrameContext::submit`、`GpuContext::write_texture` 与 `FrameExchange::copy_from` 内部已自动加锁，切勿在已持锁时嵌套调用它们。
+::: tip 队列工作不需要提交守卫
+NanaUI 的 wgpu fork 让 `Surface::configure`（窗口缩放）只等仍在使用该 surface 交换链图像的工作，不再等整个设备空闲，其他线程同时提交也不会让它以 `GpuWaitTimeout` 失败（见 `third_party/wgpu/README.md`）。因此通过 `wgpu-interop` 直接调用裸 `queue.submit` / `write_texture` / `write_buffer` 时可以在任意线程进行，不必持锁；原来的 `gpu.wgpu().lock_submission()` 已标记为弃用，返回的守卫不再与任何东西互斥。`GpuContext` 内部只保留 `submission_order` 互斥锁，让帧提交、上传批与 native-export 的 signal 按队列顺序排列。
 :::
 
 #### 原生纹理导出（`native-export`）

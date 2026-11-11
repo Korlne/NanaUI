@@ -443,7 +443,11 @@ impl crate::ComponentView for Select {
                 true
             })
         }),
-        hooks: Some(|hooks| hooks.select = Some(&SELECT_HOOKS)),
+        hooks: Some(|hooks| {
+            hooks.select = Some(&SELECT_HOOKS);
+            crate::framework::routes::option_list(hooks);
+            crate::framework::routes::select(hooks);
+        }),
         pointer: Some(&crate::framework::SELECT_MENU_POINTER),
         ..crate::TypeBehavior::NONE
     };

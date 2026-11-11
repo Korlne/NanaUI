@@ -25,9 +25,8 @@ use std::time::{Duration, Instant};
 use nana_ui_core::{Icon, ToastTone};
 use nana_ui_platform::WindowId;
 use nana_ui_runtime::{
-    AccessibilityLive, AppContext, DocumentId, Entity, FrameworkError, LayoutBox, MutationQueue,
-    PanelInsets, PopoverAlignment, StableNodeId, Stack, Toast, ToastAction, ToastDismissed,
-    ToastProgress, ToastStack,
+    AppContext, DocumentId, Entity, FrameworkError, LayoutBox, PanelInsets, PopoverAlignment,
+    StableNodeId, Stack, Toast, ToastAction, ToastDismissed, ToastProgress, ToastStack,
 };
 
 /// Where a notice comes from: a window, or the application as a whole.
@@ -678,7 +677,6 @@ impl<K: PartialEq + Clone, A: Clone> NoticeCenter<K, A> {
             }
             keep
         });
-        let mut silence = MutationQueue::new();
         for index in 0..self.entries.len() {
             let entry = &self.entries[index];
             if entry.owner != Some(window) || self.shown_elsewhere(&entry.id) {
@@ -692,22 +690,27 @@ impl<K: PartialEq + Clone, A: Clone> NoticeCenter<K, A> {
                 if !entry.notice.looks_like(&projection.notice) {
                     projection.quiet &=
                         projection.notice.announcement() == entry.notice.announcement();
-                    let _ =
-                        cx.update_component(projection.toast, |toast, _| entry.notice.dress(toast));
+                    let quiet = projection.quiet;
+                    let _ = cx.update_component(projection.toast, |toast, _| {
+                        entry.notice.dress(toast);
+                        toast.quiet = quiet;
+                    });
                     if entry.notice.reads_otherwise(&projection.notice) {
                         let _ = cx.pulse_toast(host.stack, projection.toast);
                     }
                     projection.notice = entry.notice.clone();
                     changed = true;
                 }
-                if projection.quiet
-                    && cx.world().live(projection.toast.stable_id()) != Some(AccessibilityLive::Off)
-                {
-                    silence.set_live(projection.toast.stable_id(), Some(AccessibilityLive::Off));
-                }
                 continue;
             }
-            let Ok(toast) = cx.push_toast(host.stack, entry.notice.toast()) else {
+            // The same words where it lands next stay quiet. The toast says
+            // so itself, so no later projection of it (a theme or font set
+            // that changed) announces them again.
+            let quiet = entry
+                .announced
+                .as_ref()
+                .is_some_and(|spoken| *spoken == entry.notice.announcement());
+            let Ok(toast) = cx.push_toast(host.stack, entry.notice.toast().quiet(quiet)) else {
                 continue;
             };
             let events = Arc::clone(&self.events);
@@ -724,13 +727,6 @@ impl<K: PartialEq + Clone, A: Clone> NoticeCenter<K, A> {
             let activate = emit.clone();
             let _ = cx.on(toast, move |_, _: &ToastAction, _| activate(true));
             let _ = cx.on(toast, move |_, _: &ToastDismissed, _| emit(false));
-            let quiet = entry
-                .announced
-                .as_ref()
-                .is_some_and(|spoken| *spoken == entry.notice.announcement());
-            if quiet {
-                silence.set_live(toast.stable_id(), Some(AccessibilityLive::Off));
-            }
             host.projected.push(Projection {
                 id: entry.id.clone(),
                 serial: entry.serial,
@@ -739,9 +735,6 @@ impl<K: PartialEq + Clone, A: Clone> NoticeCenter<K, A> {
                 notice: entry.notice.clone(),
             });
             changed = true;
-        }
-        if !silence.is_empty() {
-            let _ = cx.commit_mutations(silence);
         }
         changed
     }

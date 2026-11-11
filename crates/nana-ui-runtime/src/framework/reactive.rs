@@ -365,7 +365,7 @@ impl AppContext {
         let started = Instant::now();
         let outcome = self.flush_reactive_rounds();
         self.reactive.flushing = false;
-        let outcome = outcome.and(self.mark_deferred_settings_groups());
+        let outcome = outcome.and(via!(self.mark_deferred_settings_groups()));
         nana_diagnostics::metric!(nana_diagnostics::framework::runtime::REACTIVE_FLUSHES);
         nana_diagnostics::metric!(
             nana_diagnostics::framework::runtime::REACTIVE_FLUSH_NS,
@@ -447,7 +447,7 @@ impl AppContext {
         true
     }
 
-    fn mark_deferred_settings_groups(&mut self) -> Result<(), FrameworkError> {
+    pub(crate) fn mark_deferred_settings_groups(&mut self) -> Result<(), FrameworkError> {
         let mut outcome = Ok(());
         for group in std::mem::take(&mut self.reactive.settings_groups) {
             if self.world.contains(group) {

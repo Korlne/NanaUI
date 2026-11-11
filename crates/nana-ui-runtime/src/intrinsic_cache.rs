@@ -1020,22 +1020,17 @@ const NO_FACT: u32 = u32::MAX;
 
 impl PassIntrinsicFacts {
     pub(crate) fn with_capacity(capacity: usize) -> Self {
-        let mut newest = crate::store::DenseNodeMap::default();
-        newest.reserve(capacity);
-        let mut latest = crate::store::DenseNodeMap::default();
-        latest.reserve(capacity);
         Self {
             facts: Vec::with_capacity(capacity),
-            newest,
-            latest,
             ..Self::default()
         }
     }
 
-    /// Room for every id up to `highest` in the per-node indexes.
-    pub(crate) fn reserve_through(&mut self, highest: crate::StableNodeId) {
-        self.newest.reserve_through(highest);
-        self.latest.reserve_through(highest);
+    /// Room for every id up to `highest` in the per-node indexes, which
+    /// are about to hold `entries` nodes.
+    pub(crate) fn reserve_through(&mut self, highest: crate::StableNodeId, entries: usize) {
+        self.newest.reserve_through(highest, entries);
+        self.latest.reserve_through(highest, entries);
     }
 
     fn find(&self, key: &IntrinsicCacheKey) -> Option<usize> {

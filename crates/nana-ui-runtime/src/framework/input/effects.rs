@@ -3,6 +3,7 @@
 //! derived from the world after an event, compared with what the host was
 //! last told through a cheap key, and sent only when it differs.
 
+use crate::framework::via;
 use std::time::Duration;
 
 use nana_ui_core::{CursorSpec, LogicalRect};
@@ -297,7 +298,7 @@ impl AppContext {
     /// [`Self::terminal_caret_bounds`] where it shows in the window.
     fn projected_terminal_caret(&self, document: DocumentId) -> Option<LayoutBox> {
         let caret = self.terminal_caret_bounds(document)?;
-        let terminal = self.focused_terminal(document)?.stable_id();
+        let terminal = via!(self.focused_terminal(document))?.stable_id();
         Some(
             self.world
                 .project_input_bounds(terminal, caret)

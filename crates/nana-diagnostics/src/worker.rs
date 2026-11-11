@@ -510,6 +510,7 @@ pub(crate) fn run(shared: Arc<Shared>) {
         let now = Instant::now();
         let mut snapshots = Vec::new();
         let mut durable = shutting_down;
+        let mut heartbeat = false;
 
         let (batch, prefix) = {
             let mut st = lock(&shared.state);
@@ -525,6 +526,7 @@ pub(crate) fn run(shared: Arc<Shared>) {
                 st.snapshot_metrics(ts);
                 st.report_dropped(&shared, ts);
                 next_metrics = now + config.metric_interval;
+                heartbeat = true;
             }
             for request in requests {
                 match request {
@@ -631,9 +633,19 @@ pub(crate) fn run(shared: Arc<Shared>) {
         for reply in replies.drain(..) {
             let _ = reply.send(());
         }
+        if heartbeat
+            && !shutting_down
+            && let Some(marker) = lock(&shared.marker).as_mut()
+        {
+            marker.heartbeat(crate::session::unix_now_ns());
+        }
         if shutting_down {
             break;
         }
+    }
+    // A clean stop: explicit, or every handle dropped.
+    if let Some(marker) = lock(&shared.marker).take() {
+        marker.remove();
     }
     // Pending requests, producers and history are released by the exit
     // guard in `Diagnostics::start`, which also runs if this panics.

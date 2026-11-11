@@ -134,7 +134,7 @@ Electron 参考在生产端非阻塞观察 ready 后发送 handle。成功 impor
 `nana_gpu::NativeExportPool`（需启用 `native-export` feature，仅限 Windows + DX12 设备；对应能力位 `GpuCapability::NativeTextureExport`）持有三张带 `D3D12_HEAP_FLAG_SHARED` 和渲染目标标志创建的 `DXGI_FORMAT_B8G8R8A8_UNORM` 提交纹理（缺少渲染目标标志时 D3D11 拒绝打开共享 D3D12 纹理），每张纹理导出为一个 NT 句柄，并配一把共享围栏（shared fence）。它们在宿主自己的设备上包装为仅 `COPY_DST` 的纹理，不存在第二个设备或队列：
 
 - `stage`：在调用方当帧中录制一次从已渲染纹理到下一个槽位的拷贝；
-- `FrameContext::submit`：在提交守卫保护下，紧随 `queue.submit` 之后在设备队列上 signal 当帧的 *ready* 围栏值；
+- `FrameContext::submit`：在提交顺序锁下，紧随 `queue.submit` 之后在设备队列上 signal 当帧的 *ready* 围栏值；
 - `finish`：将已提交的拷贝包装为 `NativeFrameToken`。配置了 `WindowOutputExport::Native` 的窗口输出会对每个产出帧执行此流程。
 
 第 `k` 次成功 stage reservation（从 0 起算）使用 ready 值 `2k + 1` 和 release 值 `2k + 2`。discard、提交后丢弃且未 `finish` 的 reservation 也消耗序号，后续值允许跳号；consumer 必须使用 token 给出的数值，不能从 `issued()` 或已交付帧数推算。否则丢弃的提交可能让下一次 ready wait 提前通过。消费方合同如下：

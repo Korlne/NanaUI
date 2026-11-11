@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use nana_ui_core::DialogCloseTrigger;
 
 use super::{AppContext, Entity, FrameworkError};
-use crate::framework::hooked;
+use crate::framework::{hooked, via};
 use crate::{
     CommandPalette, ComponentView, ConfirmDialog, Dialog, DocumentId, Drawer, IconButton,
     ModalInitialFocus, ModalSurface, MutationQueue, RangeField, ScrollOffset, StableNodeId,
@@ -316,9 +316,11 @@ impl AppContext {
                 // is not another OverlayHost entry. Escape must dismiss that
                 // inner surface before closing the card and parking its tree.
                 // Popovers behind a different active modal do not take its key.
-                if self.close_open_popovers_within(Some(overlay.root), None, |popover| {
-                    popover.close_on_escape
-                })? {
+                if via!(
+                    self.close_open_popovers_within(Some(overlay.root), None, |popover| {
+                        popover.close_on_escape
+                    })
+                )? {
                     return Ok(true);
                 }
                 match overlay.kind {
@@ -480,7 +482,7 @@ impl AppContext {
         let captures = self.world.pointer_captures(document);
         let mut cancelled_ranges = Vec::new();
         for (_, target) in &captures {
-            if self.is_range_field(*target) {
+            if via!(self.is_range_field(*target)) {
                 let Some(mut range) = self
                     .views
                     .get(target)

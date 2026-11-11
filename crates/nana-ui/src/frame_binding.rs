@@ -415,6 +415,15 @@ mod tests {
     /// work on the process-wide test queue. Nonblocking polls also let other
     /// libtest threads collect callbacks and release their frame slots.
     fn publish_frame(exchange: &mut FrameExchange<u64>, source: &GpuTexture, epoch: u64) {
+        publish_frame_with(exchange, source, epoch, FrameColorMetadata::unknown());
+    }
+
+    fn publish_frame_with(
+        exchange: &mut FrameExchange<u64>,
+        source: &GpuTexture,
+        epoch: u64,
+        metadata: FrameColorMetadata,
+    ) {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
         let settle = |exchange: &FrameExchange<u64>, phase: &str| {
             assert!(
@@ -425,7 +434,7 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(1));
         };
         loop {
-            match exchange.copy_from(source, epoch) {
+            match exchange.copy_from_with_metadata(source, epoch, metadata) {
                 CopyOutcome::Submitted => break,
                 CopyOutcome::PoolFull => {
                     exchange.poll();
@@ -650,28 +659,16 @@ mod tests {
         let gpu = crate::test_gpu::context();
         let mut exchange = FrameExchange::new(&gpu, DEFAULT_CAPACITY, 0u64, Arc::new(|| {}));
         let inbox = exchange.inbox();
-        let source = source(&gpu, 4);
-        // The shared test device admits one frame at a time; a copy that
-        // finds another test's frame open reports PoolFull and is retried.
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-        loop {
-            match exchange.copy_from_with_metadata(
-                &source,
-                0,
-                FrameColorMetadata::bt2020_pq(FrameAlphaMode::Premultiplied),
-            ) {
-                CopyOutcome::Submitted => break,
-                CopyOutcome::PoolFull => {
-                    assert!(std::time::Instant::now() < deadline, "no frame came free");
-                    std::thread::yield_now();
-                }
-                other => panic!("copy {other:?}"),
-            }
-        }
-        __framework::device(&gpu)
-            .poll(wgpu::PollType::wait_indefinitely())
-            .unwrap();
-        assert!(exchange.poll());
+        // Published the way every test here publishes: polling until its own
+        // copy's completion is seen. Waiting on the shared device and then
+        // polling once is not enough, since another test's poll may have
+        // taken that completion callback and not run it yet.
+        publish_frame_with(
+            &mut exchange,
+            &source(&gpu, 4),
+            0,
+            FrameColorMetadata::bt2020_pq(FrameAlphaMode::Premultiplied),
+        );
         let registry = HostTextureRegistry::new();
         let mut binding = FrameBinding::new(
             &gpu,

@@ -435,7 +435,7 @@ impl RuntimeLayoutEngine {
         let mut intrinsic = PassIntrinsicCache::with_capacity(nodes.len().saturating_mul(2));
         let highest = full_order.iter().max().copied();
         if let Some(highest) = highest {
-            intrinsic.reserve_through(highest);
+            intrinsic.reserve_through(highest, nodes.len());
         }
         // A full pass a caller asked for leaves its plans to nobody (the
         // retained cache was just cleared, or the map is thrown away). The
@@ -748,7 +748,7 @@ impl RuntimeLayoutEngine {
         retained.execution_stats = intrinsic.execution_stats;
         let universe = if force_full { nodes.len() } else { world.len() };
         if let Some(highest) = highest {
-            retained.intrinsics.reserve_through(highest);
+            retained.intrinsics.reserve_through(highest, universe);
         }
         for (key, size) in std::mem::take(&mut intrinsic.used_order) {
             retained
@@ -775,25 +775,41 @@ impl RuntimeLayoutEngine {
         retained.record_intrinsic_counters(intrinsic_counters);
         // Despawned ids linger in the retained maps; keep them bounded.
         // Scoped passes only materialize a subset, so membership is the live
-        // world, not the partial input map.
-        if retained.boxes.len() > universe.saturating_mul(2) {
+        // world, not the partial input map. Each map is swept by its own
+        // size: one that outgrows the others (the line-box memo holds an
+        // answer for a node whose box is already gone) would otherwise wait
+        // for them and keep an entry for every node ever removed.
+        let crowded = universe.saturating_mul(2);
+        let mut swept = false;
+        macro_rules! sweep {
+            ($($map:ident),* $(,)?) => {$(
+                if retained.$map.len() > crowded {
+                    retained.$map.retain(|id, _| world.contains(*id));
+                    swept = true;
+                }
+            )*};
+        }
+        sweep!(
+            boxes,
+            frames,
+            placements,
+            used_padding,
+            far_start,
+            contexts,
+            container_plans,
+            measure_plans,
+            envelopes,
+            line_solves,
+            applied_adjustments,
+            line_boxes,
+        );
+        if retained.remote_overlays.len() > crowded {
+            retained.remote_overlays.retain(|id| world.contains(*id));
+            swept = true;
+        }
+        if swept {
             retained.execution_stats.retain_sweeps =
                 retained.execution_stats.retain_sweeps.saturating_add(1);
-            retained.boxes.retain(|id, _| world.contains(*id));
-            retained.frames.retain(|id, _| world.contains(*id));
-            retained.placements.retain(|id, _| world.contains(*id));
-            retained.used_padding.retain(|id, _| world.contains(*id));
-            retained.far_start.retain(|id, _| world.contains(*id));
-            retained.contexts.retain(|id, _| world.contains(*id));
-            retained.container_plans.retain(|id, _| world.contains(*id));
-            retained.remote_overlays.retain(|id| world.contains(*id));
-            retained.measure_plans.retain(|id, _| world.contains(*id));
-            retained.envelopes.retain(|id, _| world.contains(*id));
-            retained.line_solves.retain(|id, _| world.contains(*id));
-            retained
-                .applied_adjustments
-                .retain(|id, _| world.contains(*id));
-            retained.line_boxes.retain(|id, _| world.contains(*id));
         }
         if retained.intrinsics.len() > universe.saturating_mul(2) {
             retained.intrinsics.retain(|id, _| world.contains(*id));
@@ -3076,9 +3092,7 @@ impl<'a> LayoutInputMap<'a> {
                     .saturating_mul(std::mem::size_of::<PassInput<'_>>()),
             );
         }
-        let mut nodes = ids.iter().max().map_or_else(Default::default, |&highest| {
-            crate::store::DenseNodeMap::with_highest(highest)
-        });
+        let mut nodes = crate::store::DenseNodeMap::with_highest_of(ids);
         let mut containers = 0;
         for &id in ids {
             let input = self
@@ -3093,10 +3107,10 @@ impl<'a> LayoutInputMap<'a> {
         // context and plans: size the tables once rather than regrowing them.
         // The dense ones index ids up to the highest, whatever holds a slot.
         if let Some(&highest) = ids.iter().max() {
-            self.used_padding.reserve_through(highest);
-            self.contexts.reserve_through(highest);
-            self.far_start.reserve_through(highest);
-            self.measure_plans.reserve_through(highest);
+            self.used_padding.reserve_through(highest, ids.len());
+            self.contexts.reserve_through(highest, ids.len());
+            self.far_start.reserve_through(highest, ids.len());
+            self.measure_plans.reserve_through(highest, ids.len());
         }
         self.container_plans.reserve(containers);
         Ok(())
@@ -3987,11 +4001,7 @@ impl PassIntrinsicCache {
             // baseline and cross-context consumers.
             cache: crate::intrinsic_cache::PassIntrinsicFacts::with_capacity(capacity),
             used_order: Vec::with_capacity(capacity),
-            used_newest: {
-                let mut newest = crate::store::DenseNodeMap::default();
-                newest.reserve(capacity);
-                newest
-            },
+            used_newest: crate::store::DenseNodeMap::default(),
             used_older: Vec::with_capacity(capacity),
             retired_facts: Vec::new(),
             consulted_plans: Vec::new(),
@@ -4007,9 +4017,9 @@ impl PassIntrinsicCache {
 
     /// Room for every id up to `highest` in the per-node tables a full pass
     /// fills.
-    fn reserve_through(&mut self, highest: StableNodeId) {
-        self.used_newest.reserve_through(highest);
-        self.cache.reserve_through(highest);
+    fn reserve_through(&mut self, highest: StableNodeId, entries: usize) {
+        self.used_newest.reserve_through(highest, entries);
+        self.cache.reserve_through(highest, entries);
     }
 
     fn levels(&mut self, recursion: recursion::Recursion) -> &mut recursion::LevelStack {

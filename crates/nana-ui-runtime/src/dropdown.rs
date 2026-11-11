@@ -453,7 +453,11 @@ impl ComponentView for Dropdown {
                 }
             })
         }),
-        hooks: Some(|hooks| hooks.dropdown = Some(&DROPDOWN_HOOKS)),
+        hooks: Some(|hooks| {
+            hooks.dropdown = Some(&DROPDOWN_HOOKS);
+            crate::framework::routes::option_list(hooks);
+            crate::framework::routes::dropdown(hooks);
+        }),
         pointer: Some(&crate::framework::DROPDOWN_MENU_POINTER),
         ..crate::TypeBehavior::NONE
     };

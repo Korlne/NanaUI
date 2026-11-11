@@ -1,7 +1,7 @@
 use std::fmt;
 use std::num::NonZeroU64;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::{Arc, Mutex};
 
 use crate::frame::FrameContext;
 use crate::policy::GpuDeviceState;
@@ -312,11 +312,28 @@ pub struct GpuDeviceLost {
 #[derive(Default)]
 struct LossState {
     lost: AtomicBool,
+    /// The first report of this loss has been recorded.
+    recorded: AtomicBool,
     report: Mutex<Option<GpuDeviceLost>>,
 }
 
 impl LossState {
+    /// Runs on whichever thread WGPU noticed the loss on (or an embedder's).
+    /// The first report is recorded as a `gpu.device_lost` fault with a
+    /// `device-lost` snapshot before this returns: a driver reset is often
+    /// the last thing a process does, so it must not wait for the
+    /// diagnostics worker's next poll.
     fn mark(&self, report: GpuDeviceLost) {
+        if !self.recorded.swap(true, Ordering::AcqRel) {
+            let reason = u64::from(report.reason == GpuLossReason::Destroyed);
+            let message = format!("{:?}: {}", report.reason, report.message);
+            let _ = nana_diagnostics::fault_with_snapshot(
+                &nana_diagnostics::framework::gpu::DEVICE_LOST,
+                &[nana_diagnostics::Field::new("reason", reason)],
+                Some(&message),
+                "device-lost",
+            );
+        }
         if let Ok(mut slot) = self.report.lock() {
             slot.get_or_insert(report);
         }
@@ -334,12 +351,6 @@ pub(crate) struct GpuInner {
     /// Whether WGPU trusts the WebGPU format table on this device, rather
     /// than asking the adapter (see [`GpuContext::format_features`]).
     webgpu_format_table: bool,
-    /// Serializes queue work against `Surface::configure`, which waits for the
-    /// GPU to go idle: a submit racing it from another thread fails with
-    /// `GpuWaitTimeout`. Every submit and upload the contract performs holds
-    /// it for reading only for the duration of the call; reconfiguration takes
-    /// it for writing.
-    submission: RwLock<()>,
     loss: Arc<LossState>,
     next_frame: AtomicU64,
     pub(crate) next_submission: AtomicU64,
@@ -350,6 +361,11 @@ pub(crate) struct GpuInner {
     /// Writes made outside a frame (and those of discarded frames), landed
     /// by the next submission on this device.
     pub(crate) pending_uploads: Mutex<crate::upload::UploadBatch>,
+    /// What the device's pipeline cache is saved under; `None` without one.
+    pub(crate) pipeline_cache_key: Option<crate::PipelineCacheKey>,
+    /// The device's default pipeline cache (`wgpu::Device::set_default_pipeline_cache`
+    /// holds it weakly, so it lives here).
+    pub(crate) pipeline_cache: Mutex<Option<wgpu::PipelineCache>>,
 }
 
 /// The one device a process renders with. Cloning is cheap and keeps the
@@ -402,6 +418,23 @@ impl GpuContext {
                 .contains(wgpu::DownlevelFlags::WEBGPU_TEXTURE_FORMAT_SUPPORT);
         let generation = DeviceGeneration::next();
         let policy = GpuDeviceState::new(generation);
+        // Every pipeline on the device, the framework's or not, goes through
+        // one cache the host can persist (see `pipeline_cache`).
+        let pipeline_cache_key = device
+            .features()
+            .contains(wgpu::Features::PIPELINE_CACHE)
+            .then(|| {
+                crate::PipelineCacheKey::new(
+                    capabilities.backend,
+                    capabilities.vendor_id,
+                    capabilities.device_id,
+                )
+            })
+            .flatten();
+        let pipeline_cache = pipeline_cache_key
+            .as_ref()
+            .and_then(|_| crate::pipeline_cache::create(&device, None));
+        let pipeline_cache_key = pipeline_cache.as_ref().and(pipeline_cache_key);
         Self {
             inner: Arc::new(GpuInner {
                 generation,
@@ -411,7 +444,6 @@ impl GpuContext {
                 adapter_info,
                 capabilities,
                 webgpu_format_table,
-                submission: RwLock::new(()),
                 loss,
                 next_frame: AtomicU64::new(1),
                 next_submission: AtomicU64::new(1),
@@ -419,6 +451,8 @@ impl GpuContext {
                 policy,
                 upload_ring: crate::upload::UploadRing::new(),
                 pending_uploads: Mutex::new(crate::upload::UploadBatch::default()),
+                pipeline_cache_key,
+                pipeline_cache: Mutex::new(pipeline_cache),
             }),
         }
     }
@@ -594,7 +628,6 @@ impl GpuContext {
     /// `wgpu-interop` and read what they uploaded.
     pub fn flush_uploads(&self) {
         // In submission order, as a frame takes them: see `FrameContext::submit`.
-        let _submission = self.lock_submission();
         let _order = self
             .inner
             .submission_order
@@ -736,20 +769,6 @@ impl GpuContext {
                 found,
             })
         }
-    }
-
-    pub(crate) fn lock_submission(&self) -> RwLockReadGuard<'_, ()> {
-        self.inner
-            .submission
-            .read()
-            .unwrap_or_else(|error| error.into_inner())
-    }
-
-    pub(crate) fn lock_reconfigure(&self) -> RwLockWriteGuard<'_, ()> {
-        self.inner
-            .submission
-            .write()
-            .unwrap_or_else(|error| error.into_inner())
     }
 
     pub(crate) fn mark_lost(&self, report: GpuDeviceLost) {

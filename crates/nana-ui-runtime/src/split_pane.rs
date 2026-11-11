@@ -339,6 +339,9 @@ pub(crate) fn split_direction(axis: SplitAxis) -> FlexDirection {
 
 impl ComponentView for SplitPane {
     const BEHAVIOR: crate::TypeBehavior<Self> = crate::TypeBehavior {
+        hooks: Some(|hooks| {
+            crate::framework::routes::split_pane(hooks);
+        }),
         slot_assembler: Some(crate::AppContext::assemble_split_pane),
         ..crate::TypeBehavior::NONE
     };

@@ -699,17 +699,9 @@ impl<Program: RuntimeProgram> WindowManager<Program> {
         self.graphics.acquire(&mut host.surface)
     }
     pub(super) fn recover_device(&mut self, _event_loop: &dyn ActiveEventLoop) {
-        // Present only on the first attempt after a loss; retries find none.
-        if let Some(lost) = self.graphics.take_device_lost_report() {
-            nana_diagnostics::fault!(
-                nana_diagnostics::framework::gpu::DEVICE_LOST,
-                reason = u64::from(lost.reason == nana_gpu::GpuLossReason::Destroyed);
-                "{:?}: {}",
-                lost.reason,
-                lost.message
-            );
-            nana_diagnostics::snapshot("device-lost");
-        }
+        // Marks the loss handled. `nana-gpu` already recorded the
+        // `gpu.device_lost` fault and its snapshot when the loss arrived.
+        let _ = self.graphics.take_device_lost_report();
         if self.embedded {
             self.render_suspended = true;
             self.next_gpu_retry = None;
