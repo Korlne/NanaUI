@@ -285,6 +285,10 @@ struct LineOut {
     @location(4) @interpolate(flat) ids: vec4<u32>,
 }
 
+// Line and area draws run only with a segment instance (`ChartGpu::draw` in
+// `scene_paint/chart.rs` skips an empty `0..segments` range, `segments` being
+// `count` closed and `count - 1` open), so every `% count` and `% segments`
+// below sees `count >= 1` and `segments >= 1`: none divides by zero.
 fn line_segment_end(draw: GpuDraw, segment: u32) -> u32 {
     let count = draw.a.y;
     let next = segment + 1u;
@@ -347,6 +351,7 @@ fn chart_line_fs(input: LineOut) -> @location(0) vec4<f32> {
         for (var side = 0u; side < 2u; side = side + 1u) {
             var other: i32 = i32(segment) + select(-i32(step), i32(step), side == 1u);
             if closed {
+                // `segments >= 1`: see `line_segment_end`.
                 other = ((other % i32(segments)) + i32(segments)) % i32(segments);
                 if u32(other) == segment {
                     continue;
@@ -431,6 +436,7 @@ fn chart_area_vs(@builtin(vertex_index) vertex_index: u32, @builtin(instance_ind
     let p0 = chart_point(i0, t);
     let p1 = chart_point(i1, t);
     // Neighbouring points, for a reach both cells sharing a side agree on.
+    // `count >= 1` here: see `line_segment_end`.
     var prev = p0;
     var next = p1;
     if closed || segment > 0u {

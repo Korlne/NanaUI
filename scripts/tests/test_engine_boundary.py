@@ -9,7 +9,7 @@ boundary = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(boundary)
 
 class EngineBoundaryTests(unittest.TestCase):
-    def graph(self, edges, versions=None, root="nana-ui-runtime"):
+    def graph(self, edges, versions=None, root="nana-ui-runtime", registry=()):
         names = sorted({root, *edges, *(child for children in edges.values() for child in children)})
         return {
             "workspace_members": [root],
@@ -22,11 +22,20 @@ class EngineBoundaryTests(unittest.TestCase):
                     "name": name.split("@")[0],
                     "version": (versions or {}).get(name, "1.0.0"),
                     "targets": [],
+                    # The vendored fork unless `registry` names the package.
+                    "manifest_path": str(self.manifest_of(name, registry)),
                 }
                 for name in names
             ],
             "resolve": {"nodes": [{"id": name, "deps": [{"pkg": child, "dep_kinds": [{"kind": None}]} for child in edges.get(name, [])]} for name in names]},
         }
+    def manifest_of(self, name, registry):
+        crate = name.split("@")[0]
+        if crate in boundary.FORKED_WGPU_PACKAGES and name not in registry:
+            return boundary.FORKED_WGPU_DIR / crate / "Cargo.toml"
+        if name in registry:
+            return Path.home() / ".cargo" / "registry" / "src" / "index.crates.io-1949cf8c6b5b557f" / f"{crate}-1.0.0" / "Cargo.toml"
+        return boundary.ROOT / "crates" / crate / "Cargo.toml"
     def text_crate(self, source):
         root = Path(tempfile.mkdtemp())
         (root / "src").mkdir()
@@ -40,9 +49,22 @@ class EngineBoundaryTests(unittest.TestCase):
         data = self.graph({"nana-ui-runtime": ["wgpu"]})
         next(node for node in data["resolve"]["nodes"] if node["id"] == "nana-ui-runtime")["deps"][0]["dep_kinds"][0]["kind"] = "dev"
         self.assertEqual(boundary.check_dependency_graph(data), [])
-    def test_multiple_wgpu_major_versions_are_rejected(self):
-        data = self.graph({"host": ["wgpu@29", "wgpu@30"]}, {"wgpu@29": "29.0.0", "wgpu@30": "30.0.1"})
-        self.assertTrue(any("multiple WGPU" in failure for failure in boundary.check_dependency_graph(data)))
+    def test_the_vendored_wgpu_fork_is_accepted(self):
+        data = self.graph({"host": ["wgpu", "naga"]}, root="host")
+        self.assertEqual(boundary.check_dependency_graph(data), [])
+    def test_a_registry_wgpu_beside_the_fork_is_rejected(self):
+        data = self.graph(
+            {"host": ["wgpu@30", "egui-wgpu"], "egui-wgpu": ["wgpu@29"]},
+            {"wgpu@29": "29.0.0", "wgpu@30": "30.0.1"},
+            root="host",
+            registry={"wgpu@29"},
+        )
+        failures = boundary.check_dependency_graph(data)
+        self.assertEqual(len(failures), 1)
+        self.assertIn("wgpu 29.0.0 is not NanaUI's fork in third_party/wgpu", failures[0])
+    def test_a_registry_naga_is_rejected(self):
+        data = self.graph({"host": ["naga"]}, root="host", registry={"naga"})
+        self.assertTrue(any(failure.startswith("naga 1.0.0 is not NanaUI's fork") for failure in boundary.check_dependency_graph(data)))
     def test_nana_text_must_not_have_a_product_edge_to_the_engine_it_replaces(self):
         failures = boundary.check_dependency_graph(
             self.graph({"nana-text": ["helper"], "helper": ["cosmic-text"]}, root="nana-text")
